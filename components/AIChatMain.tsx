@@ -8,6 +8,13 @@ import {
   User,
   Bot,
   Sparkles,
+  Share2,
+  Settings,
+  Image as ImageIcon,
+  FileText,
+  X,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
 
@@ -19,6 +26,7 @@ interface AIChatMainProps {
   onModelSelect: (model: string) => void
   onChatUpdate: (chat: Chat) => void
   onCreateGroupChat: (name: string) => Promise<void>
+  onDeleteChat?: () => void
 }
 
 export default function AIChatMain({
@@ -29,11 +37,19 @@ export default function AIChatMain({
   onModelSelect,
   onChatUpdate,
   onCreateGroupChat,
+  onDeleteChat,
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [shareLink, setShareLink] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [showImageDialog, setShowImageDialog] = useState(false)
+  const [showDocumentDialog, setShowDocumentDialog] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     scrollToBottom()
@@ -156,6 +172,72 @@ export default function AIChatMain({
     return selectedModel
   }
 
+  const handleShareChat = async () => {
+    if (!chat) return
+    
+    try {
+      const res = await fetch('/api/chat/group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: chat.title || 'Shared Chat' }),
+      })
+      const data = await res.json()
+      if (data.groupChat) {
+        const link = `${window.location.origin}/ai-chat/group/${data.groupChat.id}`
+        setShareLink(link)
+        setShowShareDialog(true)
+      }
+    } catch (error) {
+      console.error('Error creating share link:', error)
+    }
+  }
+
+  const copyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareLink)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error('Failed to copy:', error)
+    }
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Handle document upload
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const fileContent = reader.result as string
+        // Add file content to input
+        setInput(prev => prev + `\n[Document: ${file.name}]\n${fileContent}`)
+      }
+      reader.readAsText(file)
+      setShowDocumentDialog(false)
+    }
+  }
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const imageData = reader.result as string
+        // Add image reference to input
+        setInput(prev => prev + `\n[Image: ${file.name}]\n`)
+        // Store image in chat or handle separately
+      }
+      reader.readAsDataURL(file)
+      setShowImageDialog(false)
+    }
+  }
+
+  const handleGenerateImage = () => {
+    // This would trigger image generation via API
+    setInput(prev => prev + '\n[Generate image based on conversation]')
+    setShowImageDialog(false)
+  }
+
   if (!chat) {
     return (
       <div className="flex-1 flex flex-col bg-[var(--background)]">
@@ -221,14 +303,35 @@ export default function AIChatMain({
     <div className="flex-1 flex flex-col bg-[var(--background)]">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
-        <button
-          onClick={onModelSelectorToggle}
-          className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-        >
-          {getModelName()}
-        </button>
-        <div className="text-sm text-[var(--text-secondary)]">
-          {chat.title}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onModelSelectorToggle}
+            className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Settings className="w-4 h-4" />
+            <span>{getModelName()}</span>
+          </button>
+          {onDeleteChat && (
+            <button
+              onClick={onDeleteChat}
+              className="p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              title="Delete chat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-sm text-[var(--text-secondary)] hidden sm:block">
+            {chat.title}
+          </div>
+          <button
+            onClick={handleShareChat}
+            className="p-2 text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+            title="Share chat"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -300,6 +403,22 @@ export default function AIChatMain({
       {/* Input */}
       <div className="px-4 py-4 border-t border-[var(--border-color)] bg-[var(--background)]">
         <div className="max-w-3xl mx-auto">
+          <div className="flex gap-2 mb-2">
+            <button
+              onClick={() => setShowDocumentDialog(true)}
+              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              title="Upload document"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowImageDialog(true)}
+              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              title="Upload or generate image"
+            >
+              <ImageIcon className="w-4 h-4" />
+            </button>
+          </div>
           <div className="relative bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl shadow-sm focus-within:border-[var(--accent-blue)] focus-within:shadow-md transition-all">
             <textarea
               ref={textareaRef}
@@ -323,6 +442,165 @@ export default function AIChatMain({
           </p>
         </div>
       </div>
+
+      {/* Share Dialog */}
+      <AnimatePresence>
+        {showShareDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowShareDialog(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">Share Chat</h3>
+                <button
+                  onClick={() => setShowShareDialog(false)}
+                  className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-[var(--text-secondary)]" />
+                </button>
+              </div>
+              <p className="text-sm text-[var(--text-secondary)] mb-4">
+                Share this link with your colleagues to collaborate in real-time:
+              </p>
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={shareLink}
+                  readOnly
+                  className="flex-1 px-3 py-2 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)]"
+                />
+                <button
+                  onClick={copyShareLink}
+                  className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Image Dialog */}
+      <AnimatePresence>
+        {showImageDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowImageDialog(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">Image Options</h3>
+                <button
+                  onClick={() => setShowImageDialog(false)}
+                  className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-[var(--text-secondary)]" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                  <span>Upload Image</span>
+                </button>
+                <button
+                  onClick={handleGenerateImage}
+                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  <span>Generate Image</span>
+                </button>
+              </div>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Document Dialog */}
+      <AnimatePresence>
+        {showDocumentDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowDocumentDialog(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">Upload Document</h3>
+                <button
+                  onClick={() => setShowDocumentDialog(false)}
+                  className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-[var(--text-secondary)]" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
+                >
+                  <FileText className="w-5 h-5" />
+                  <span>Upload from Device</span>
+                </button>
+                <button
+                  onClick={() => {
+                    // Google Drive integration would go here
+                    alert('Google Drive integration coming soon')
+                  }}
+                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
+                >
+                  <FileText className="w-5 h-5" />
+                  <span>Import from Google Drive</span>
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.pdf,.doc,.docx"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -233,6 +233,7 @@ export default function AIChatPage() {
               console.error('Error creating group chat:', error)
             }
           }}
+          onDeleteChat={currentChat ? () => deleteChat(currentChat.id) : undefined}
         />
 
         {isModelSelectorOpen && (
