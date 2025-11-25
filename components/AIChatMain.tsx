@@ -88,7 +88,12 @@ export default function AIChatMain({
       }
       onChatUpdate(updatedChat)
     } else {
-      const updatedMessages = [...chat.messages, userMessage]
+      // Usa un ID temporaneo per i messaggi nuovi
+      const tempUserMessage: Message = {
+        ...userMessage,
+        id: `temp-${Date.now()}`,
+      }
+      const updatedMessages = [...chat.messages, tempUserMessage]
       updatedChat = {
         ...chat,
         messages: updatedMessages,
@@ -176,14 +181,34 @@ export default function AIChatMain({
     if (!chat) return
     
     try {
-      const res = await fetch('/api/chat/group', {
+      // Crea una chat condivisa nel database
+      const res = await fetch('/api/chat/shared', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: chat.title || 'Shared Chat' }),
+        body: JSON.stringify({
+          title: chat.title || 'Shared Chat',
+          model: chat.model || selectedModel,
+        }),
       })
       const data = await res.json()
-      if (data.groupChat) {
-        const link = `${window.location.origin}/ai-chat/group/${data.groupChat.id}`
+      if (data.success && data.chat) {
+        // Migra i messaggi esistenti alla chat condivisa
+        if (chat.messages.length > 0) {
+          for (const message of chat.messages) {
+            await fetch(`/api/chat/shared/${data.chat.id}/message`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                role: message.role,
+                content: message.content,
+                userId: 'migrated',
+                userName: 'System',
+              }),
+            })
+          }
+        }
+        
+        const link = data.chat.shareLink || `${window.location.origin}/ai-chat/shared/${data.chat.id}`
         setShareLink(link)
         setShowShareDialog(true)
       }
