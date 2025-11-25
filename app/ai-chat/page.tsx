@@ -46,6 +46,7 @@ export default function AIChatPage() {
     const savedChats = localStorage.getItem('ai-chats')
     const savedProjects = localStorage.getItem('ai-projects')
     const savedCurrentChat = localStorage.getItem('current-chat-id')
+    const initialMessage = localStorage.getItem('initial-message')
 
     if (savedChats) {
       const parsed = JSON.parse(savedChats).map((chat: any) => ({
@@ -68,7 +69,71 @@ export default function AIChatPage() {
     if (savedProjects) {
       setProjects(JSON.parse(savedProjects))
     }
+
+    // Se c'è un messaggio iniziale, crea una nuova chat
+    if (initialMessage) {
+      const newChat: Chat = {
+        id: Date.now().toString(),
+        title: initialMessage.slice(0, 50),
+        messages: [{
+          id: Date.now().toString(),
+          role: 'user',
+          content: initialMessage,
+          timestamp: new Date(),
+        }],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        model: selectedModel,
+      }
+      setChats((prev) => [newChat, ...prev])
+      setCurrentChat(newChat)
+      // Rimuovi il messaggio iniziale dal localStorage
+      localStorage.removeItem('initial-message')
+      
+      // Invia automaticamente il messaggio all'AI
+      setTimeout(() => {
+        handleInitialMessage(newChat, initialMessage)
+      }, 500)
+    }
   }, [])
+
+  const handleInitialMessage = async (chat: Chat, message: string) => {
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: message }],
+          model: selectedModel,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to get response')
+      }
+
+      const data = await response.json()
+      
+      if (data.message) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: data.message,
+          timestamp: new Date(),
+        }
+
+        const updatedChat: Chat = {
+          ...chat,
+          messages: [...chat.messages, assistantMessage],
+          updatedAt: new Date(),
+        }
+
+        updateChat(updatedChat)
+      }
+    } catch (error) {
+      console.error('Error sending initial message:', error)
+    }
+  }
 
   // Save chats to localStorage whenever they change
   useEffect(() => {
