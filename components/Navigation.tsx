@@ -38,7 +38,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }, [])
   
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home, href: '/home' },
+    { id: 'home', label: 'Home', icon: Home, href: '/' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/#services' },
     { id: 'team', label: 'Team', icon: Users, href: '/#team' },
     { id: 'clients', label: 'Clients', icon: Star, href: '/#clients' },
@@ -46,35 +46,39 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
   const handleNavClick = (item: typeof navItems[0]) => {
     if (item.href.startsWith('/#')) {
-      // Scroll to section on home page
-      if (pathname === '/') {
+      // Navigate to home page and scroll to section
+      if (pathname !== '/') {
+        router.push(item.href)
+      } else {
         const section = item.href.replace('/#', '')
         setActiveSection?.(section)
         const element = document.getElementById(section)
         if (element) {
           element.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
+      }
+    } else if (item.href === '/') {
+      // Navigate to home
+      if (pathname !== '/') {
+        router.push('/')
       } else {
-        // Navigate to home page section
-        window.location.href = item.href
+        // Scroll to top
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        setActiveSection?.(null)
       }
     }
   }
 
   const isActive = (item: typeof navItems[0]) => {
     if (item.id === 'home') {
-      return pathname === '/home'
+      return pathname === '/' && !activeSection
     }
     return pathname === '/' && activeSection === item.id
   }
 
   const handleItemClick = (item: typeof navItems[0], e: React.MouseEvent) => {
-    if (item.href.startsWith('/home')) {
-      e.preventDefault()
-      router.push('/home')
-    } else {
-      handleNavClick(item)
-    }
+    e.preventDefault()
+    handleNavClick(item)
   }
 
   return (
@@ -83,15 +87,14 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       <nav className="hidden md:flex fixed top-0 left-0 right-0 z-50 glass-strong">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/">
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="text-2xl font-bold gradient-text cursor-pointer"
-              >
-                Facevoice AI
-              </motion.div>
-            </Link>
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              onClick={() => router.push('/ai-chat')}
+              className="text-2xl font-bold gradient-text cursor-pointer"
+            >
+              FacevoiceAI
+            </motion.div>
             
             <div className="flex items-center gap-6">
               {navItems.map((item) => {
