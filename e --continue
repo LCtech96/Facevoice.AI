@@ -1,0 +1,39 @@
+[1mdiff --git a/app/ai-chat/page.tsx b/app/ai-chat/page.tsx[m
+[1mindex 7660820..b2d566c 100644[m
+[1m--- a/app/ai-chat/page.tsx[m
+[1m+++ b/app/ai-chat/page.tsx[m
+[36m@@ -48,7 +48,7 @@[m [mexport default function AIChatPage() {[m
+   const [user, setUser] = useState<User | null>(null)[m
+   const [loading, setLoading] = useState(true)[m
+   const [showAuthModal, setShowAuthModal] = useState(false)[m
+[31m-  const [trinacriaImage, setTrinacriaImage] = useState('/team/Trinacria.png')[m
+[32m+[m[32m  const [trinacriaImage, setTrinacriaImage] = useState('/team/Trinacria.jpg')[m
+   const supabase = createClient()[m
+ [m
+   // Check authentication status[m
+[36m@@ -240,10 +240,8 @@[m [mexport default function AIChatPage() {[m
+             priority[m
+             quality={90}[m
+             onError={() => {[m
+[31m-              // Fallback a .jpg se .png non esiste[m
+[31m-              if (trinacriaImage.includes('Trinacria.png')) {[m
+[31m-                setTrinacriaImage('/team/Trinacria.jpg')[m
+[31m-              }[m
+[32m+[m[32m              // Fallback se l'immagine non carica[m
+[32m+[m[32m              console.warn('Immagine Trinacria non trovata')[m
+             }}[m
+           />[m
+           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--background-end)]" />[m
+[36m@@ -278,10 +276,8 @@[m [mexport default function AIChatPage() {[m
+           priority[m
+           quality={90}[m
+           onError={() => {[m
+[31m-            // Fallback a .jpg se .png non esiste[m
+[31m-            if (trinacriaImage.includes('Trinacria.png')) {[m
+[31m-              setTrinacriaImage('/team/Trinacria.jpg')[m
+[31m-            }[m
+[32m+[m[32m            // Fallback se l'immagine non carica[m
+[32m+[m[32m            console.warn('Immagine Trinacria non trovata')[m
+           }}[m
+         />[m
+         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--background-end)]" />[m
