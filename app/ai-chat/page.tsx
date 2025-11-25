@@ -2,14 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
-import Navigation from '@/components/Navigation'
-import ThemeSwitcher from '@/components/ThemeSwitcher'
 import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
-import LiquidGlass from '@/components/LiquidGlass'
-import Hero from '@/components/Hero'
 
 export interface Message {
   id: string
@@ -41,9 +36,8 @@ export default function AIChatPage() {
   const [currentChat, setCurrentChat] = useState<Chat | null>(null)
   const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [trinacriaImage, setTrinacriaImage] = useState('/team/Trinacria.jpg')
 
   // Load chats from localStorage on mount
   useEffect(() => {
@@ -187,42 +181,8 @@ export default function AIChatPage() {
   )
 
   return (
-    <main className="min-h-screen relative">
-      {/* Immagine di sfondo Trinacria */}
-      <div className="fixed inset-0 z-0">
-        <Image
-          src={trinacriaImage}
-          alt="Trinacria background"
-          fill
-          className="object-cover opacity-20"
-          priority
-          quality={90}
-          onError={() => {
-            // Fallback se l'immagine non carica
-            console.warn('Immagine Trinacria non trovata')
-          }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--background-end)]" />
-      </div>
-      
-      <LiquidGlass />
-      <ThemeSwitcher />
-      <Navigation 
-        activeSection="chat" 
-        setActiveSection={(section) => {
-          if (section !== 'chat') {
-            router.push('/')
-          }
-        }} 
-      />
-
-      {/* Spacing per desktop navigation */}
-      <div className="hidden md:block h-20" />
-      
-      {/* Spacing per mobile navigation */}
-      <div className="md:hidden h-4" />
-
-      <div className="flex h-[calc(100vh-5rem)] sm:h-[calc(100vh-5rem)] gap-1 sm:gap-2 px-1 sm:px-2 relative z-10">
+    <main className="min-h-screen bg-[var(--background)] flex">
+      <div className="flex w-full h-screen">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}
@@ -283,9 +243,6 @@ export default function AIChatPage() {
           />
         )}
       </div>
-      
-      {/* Spacing per mobile navigation bottom */}
-      <div className="md:hidden h-20" />
     </main>
   )
 }

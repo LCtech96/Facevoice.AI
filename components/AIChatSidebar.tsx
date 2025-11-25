@@ -33,11 +33,11 @@ interface AIChatSidebarProps {
 }
 
 const PROJECT_COLORS = [
-  '#3B82F6', // blue
-  '#10B981', // green
-  '#F59E0B', // yellow
-  '#EF4444', // red
-  '#8B5CF6', // purple
+  '#007AFF', // iOS Blue
+  '#34C759', // iOS Green
+  '#FF9500', // iOS Orange
+  '#FF3B30', // iOS Red
+  '#AF52DE', // iOS Purple
 ]
 
 export default function AIChatSidebar({
@@ -84,9 +84,9 @@ export default function AIChatSidebar({
     return (
       <button
         onClick={onToggleSidebar}
-        className="fixed left-4 top-24 z-40 p-2 glass-strong rounded-lg"
+        className="fixed left-4 top-4 z-40 p-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-sm hover:shadow-md transition-all"
       >
-        <Menu className="w-5 h-5 text-coral-red" />
+        <Menu className="w-5 h-5 text-[var(--text-primary)]" />
       </button>
     )
   }
@@ -95,211 +95,76 @@ export default function AIChatSidebar({
     <motion.div
       initial={{ x: -300 }}
       animate={{ x: 0 }}
-      className="w-56 sm:w-64 glass-strong border-r border-coral-red/30 flex flex-col h-full rounded-r-3xl backdrop-blur-xl shadow-2xl"
+      className="w-64 bg-[var(--background-secondary)] border-r border-[var(--border-color)] flex flex-col h-full"
     >
       {/* Header */}
-      <div className="p-3 sm:p-4 border-b border-coral-red/30 flex items-center justify-between backdrop-blur-xl">
+      <div className="p-3 border-b border-[var(--border-color)]">
         <button
           onClick={onNewChat}
-          className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 glass rounded-2xl hover:glass-strong transition-all flex-1 border-2 border-transparent hover:border-coral-red/30 touch-manipulation"
+          className="flex items-center gap-2 px-3 py-2 w-full bg-[var(--accent-blue)] text-white rounded-lg hover:opacity-90 transition-all font-medium text-sm"
         >
-          <MessageSquare className="w-4 h-4 text-coral-red flex-shrink-0" />
-          <span className="text-xs sm:text-sm text-coral-red font-medium">New Chat</span>
-        </button>
-        <button
-          onClick={onToggleSidebar}
-          className="p-2 glass rounded-2xl hover:glass-strong transition-all ml-2 border-2 border-transparent hover:border-coral-red/30 touch-manipulation flex-shrink-0"
-        >
-          <X className="w-4 h-4 text-coral-red" />
+          <Plus className="w-4 h-4" />
+          <span>New Chat</span>
         </button>
       </div>
 
       {/* Search */}
-      <div className="p-3 sm:p-4 border-b border-coral-red/30">
+      <div className="p-3 border-b border-[var(--border-color)]">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-coral-red/50" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Cerca chat"
-            className="w-full pl-10 pr-4 py-2.5 sm:py-3 glass-strong rounded-2xl text-xs sm:text-sm text-coral-red placeholder-coral-red/60 focus:outline-none focus:border-coral-red border border-coral-red/40 transition-all backdrop-blur-xl"
+            placeholder="Search chats"
+            className="w-full pl-10 pr-4 py-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:border-transparent"
           />
         </div>
       </div>
 
-      {/* Navigation */}
-      <div className="p-3 sm:p-4 border-b border-coral-red/30 space-y-2">
-            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-xs sm:text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass touch-manipulation">
-              <Search className="w-4 h-4" />
-              <span>Cerca Chat</span>
-            </button>
-            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-xs sm:text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass touch-manipulation">
-              <BookOpen className="w-4 h-4" />
-              <span>Libreria</span>
-            </button>
-      </div>
-
-
-      {/* Projects */}
-      <div className="p-3 sm:p-4 border-b border-coral-red/30 flex-1 overflow-y-auto">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-coral-red/50 uppercase">Progetti</h3>
-          <button
-            onClick={() => setShowNewProject(!showNewProject)}
-            className="p-1 hover:glass-strong rounded transition-all touch-manipulation"
-          >
-            <FolderPlus className="w-4 h-4 text-coral-red" />
-          </button>
-        </div>
-
-        <AnimatePresence>
-          {showNewProject && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mb-2 p-2 glass rounded-lg"
-            >
-              <input
-                type="text"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="Project name"
-                className="w-full mb-2 px-2 py-1 glass rounded text-sm text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-transparent"
-                onKeyPress={(e) => e.key === 'Enter' && handleCreateProject()}
-                autoFocus
-              />
-              <div className="flex gap-1 mb-2">
-                {PROJECT_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => setSelectedColor(color)}
-                    className={`w-6 h-6 rounded-full border-2 ${
-                      selectedColor === color ? 'border-coral-red' : 'border-transparent'
-                    }`}
-                    style={{ backgroundColor: color }}
-                  />
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCreateProject}
-                  className="flex-1 px-2 py-1 glass-strong rounded text-sm text-coral-red hover:border-coral-red border-2 border-transparent transition-all"
-                >
-                  Create
-                </button>
-                <button
-                  onClick={() => {
-                    setShowNewProject(false)
-                    setNewProjectName('')
-                  }}
-                  className="px-2 py-1 glass rounded text-sm text-coral-red"
-                >
-                  Cancel
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="space-y-1">
-          {projects.map((project) => (
-            <div key={project.id} className="group">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => toggleProject(project.id)}
-                  className="flex items-center gap-2 flex-1 px-2 py-1.5 text-sm text-coral-red/70 hover:text-coral-red transition-colors"
-                >
-                  {expandedProjects.has(project.id) ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: project.color }}
-                  />
-                  <span className="flex-1 text-left truncate">{project.name}</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (confirm(`Sei sicuro di voler eliminare il progetto "${project.name}"?`)) {
-                      onDeleteProject(project.id)
-                    }
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-1 hover:glass-strong rounded transition-all"
-                  title="Elimina progetto"
-                >
-                  <Trash2 className="w-3 h-3 text-coral-red/50 hover:text-coral-red" />
-                </button>
-              </div>
-              <AnimatePresence>
-                {expandedProjects.has(project.id) && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="ml-6 space-y-1"
-                  >
-                    {project.chats.map((chat) => (
-                      <button
-                        key={chat.id}
-                        onClick={() => onSelectChat(chat)}
-                        className={`w-full px-2 py-1 text-xs text-left rounded truncate transition-colors ${
-                          currentChat?.id === chat.id
-                            ? 'text-coral-red-light glass-strong'
-                            : 'text-coral-red/60 hover:text-coral-red hover:glass'
-                        }`}
-                      >
-                        {chat.title}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Chat History */}
-      <div className="p-3 sm:p-4 border-t border-coral-red/30 backdrop-blur-xl">
-        <h3 className="text-xs font-semibold text-coral-red/50 uppercase mb-2">Le Tue Chat</h3>
-        <div className="space-y-1 max-h-64 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-2">
+        <div className="space-y-1">
           {chats.map((chat) => (
             <div
               key={chat.id}
-              className={`group flex items-center gap-2 px-2 py-1.5 rounded transition-colors ${
+              className={`group flex items-center gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
                 currentChat?.id === chat.id
-                  ? 'glass-strong text-coral-red-light'
-                  : 'hover:glass text-coral-red/70'
+                  ? 'bg-[var(--accent-blue)] text-white'
+                  : 'hover:bg-[var(--background-secondary)] text-[var(--text-primary)]'
               }`}
+              onClick={() => onSelectChat(chat)}
             >
+              <MessageSquare className="w-4 h-4 flex-shrink-0" />
+              <span className="flex-1 text-left text-sm truncate">{chat.title}</span>
               <button
-                onClick={() => onSelectChat(chat)}
-                className="flex-1 text-left text-xs sm:text-sm truncate touch-manipulation"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteChat(chat.id)
+                }}
+                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-black/10 rounded transition-all"
               >
-                {chat.title}
-              </button>
-              <button
-                onClick={() => onDeleteChat(chat.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:glass-strong rounded transition-all touch-manipulation"
-              >
-                <Trash2 className="w-3 h-3 text-coral-red/50 hover:text-coral-red" />
+                <Trash2 className="w-3 h-3" />
               </button>
             </div>
           ))}
           {chats.length === 0 && (
-            <p className="text-xs text-coral-red/50 text-center py-4">
-              Nessuna chat ancora. Creane una per iniziare!
+            <p className="text-xs text-[var(--text-secondary)] text-center py-8">
+              No chats yet. Create one to get started!
             </p>
           )}
         </div>
       </div>
 
+      {/* Close button for mobile */}
+      <div className="p-3 border-t border-[var(--border-color)] md:hidden">
+        <button
+          onClick={onToggleSidebar}
+          className="w-full px-3 py-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
+        >
+          Close
+        </button>
+      </div>
     </motion.div>
   )
 }
-
