@@ -14,21 +14,22 @@ export async function POST(
     const body = await request.json()
     const { userId, comment, userName } = body
 
-    if (!userId || !comment) {
-      return NextResponse.json({ error: 'User ID and comment required' }, { status: 400 })
+    if (!comment || !comment.trim()) {
+      return NextResponse.json({ error: 'Comment is required' }, { status: 400 })
     }
 
-    // Usa il nome utente passato dal client, altrimenti usa un fallback
-    const finalUserName = userName || userId.substring(0, 8) || 'User'
+    // Permetti commenti anonimi - genera un ID temporaneo se non fornito
+    const finalUserId = userId || `anon_${Date.now()}_${Math.random().toString(36).substring(7)}`
+    const finalUserName = userName || (userId ? userId.substring(0, 8) : 'Guest') || 'Guest'
 
     // Aggiungi commento
     const { data, error } = await supabase
       .from('tool_comments')
       .insert({
         tool_id: params.id,
-        user_id: userId,
+        user_id: finalUserId,
         user_name: finalUserName,
-        comment: comment,
+        comment: comment.trim(),
         created_at: new Date().toISOString(),
       })
       .select()

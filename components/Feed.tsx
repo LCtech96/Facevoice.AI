@@ -12,6 +12,7 @@ export interface AITool {
   coverImage: string
   category: string
   link: string
+  videoUrl?: string
   likes: number
   comments: number
   shares: number

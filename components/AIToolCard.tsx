@@ -23,48 +23,73 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   const [loadingComments, setLoadingComments] = useState(false)
 
   const loadComments = async () => {
-    if (showComments && comments.length === 0) {
-      setLoadingComments(true)
-      try {
-        const response = await fetch(`/api/tools/${tool.id}/comments`)
-        if (response.ok) {
-          const data = await response.json()
-          setComments(data.comments || [])
-        }
-      } catch (error) {
-        console.error('Error loading comments:', error)
-      } finally {
-        setLoadingComments(false)
+    setLoadingComments(true)
+    try {
+      const response = await fetch(`/api/tools/${tool.id}/comments`)
+      if (response.ok) {
+        const data = await response.json()
+        setComments(data.comments || [])
       }
+    } catch (error) {
+      console.error('Error loading comments:', error)
+    } finally {
+      setLoadingComments(false)
     }
   }
 
   const handleToggleComments = () => {
-    setShowComments(!showComments)
-    if (!showComments) {
+    const newShowComments = !showComments
+    setShowComments(newShowComments)
+    if (newShowComments) {
       loadComments()
     }
   }
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!commentText.trim() || !user) return
+    if (!commentText.trim()) return
 
-    const commentToSubmit = commentText
+    const commentToSubmit = commentText.trim()
     setCommentText('')
+    
+    // Genera nome utente
+    const userName = user 
+      ? (user.email?.split('@')[0] || user.user_metadata?.full_name || 'User')
+      : 'Guest'
+    const userId = user?.id || `anon_${Date.now()}`
     
     // Aggiungi commento localmente immediatamente
     const newComment = {
       id: Date.now().toString(),
-      userId: user.id,
-      userName: user.email?.split('@')[0] || user.user_metadata?.full_name || 'User',
+      userId: userId,
+      userName: userName,
       text: commentToSubmit,
       createdAt: new Date().toISOString(),
     }
     setComments((prev) => [newComment, ...prev])
     
     // Invia al server
-    onComment(commentToSubmit)
+    try {
+      const response = await fetch(`/api/tools/${tool.id}/comment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId,
+          comment: commentToSubmit,
+          userName: userName,
+        }),
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        // Aggiorna contatore commenti
+        onComment(commentToSubmit)
+        // Ricarica commenti per avere l'ID corretto dal server
+        loadComments()
+      }
+    } catch (error) {
+      console.error('Error submitting comment:', error)
+    }
   }
 
   return (
@@ -74,23 +99,37 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
         isHighlighted ? 'border-coral-red ring-4 ring-coral-red ring-opacity-50' : 'border-coral-red/20'
       }`}
     >
-      {/* Cover Image */}
+      {/* Cover Image/Video */}
       <div className="relative w-full h-64 bg-gradient-to-br from-coral-red/20 to-coral-red/5">
-        <Image
-          src={tool.coverImage}
-          alt={tool.name}
-          fill
-          className="object-cover"
-          onError={(e) => {
-            // Fallback se l'immagine non carica
-            const target = e.target as HTMLImageElement
-            target.style.display = 'none'
-          }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        {tool.videoUrl ? (
+          <video
+            src={tool.videoUrl}
+            className="w-full h-full object-cover"
+            controls
+            loop
+            muted
+            playsInline
+          />
+        ) : (
+          <>
+            <Image
+              src={tool.coverImage}
+              alt={tool.name}
+              fill
+              className="object-cover"
+              unoptimized
+              onError={(e) => {
+                // Fallback se l'immagine non carica
+                const target = e.target as HTMLImageElement
+                target.style.display = 'none'
+              }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+          </>
+        )}
         
         {/* Category Badge */}
-        <div className="absolute top-4 left-4">
+        <div className="absolute top-4 left-4 z-10">
           <span className="px-3 py-1 glass rounded-full text-xs font-medium text-coral-red">
             {tool.category}
           </span>
@@ -196,31 +235,23 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
                 )}
               </div>
 
-              {/* Comment Form */}
-              {user && (
-                <form onSubmit={handleSubmitComment} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
-                    placeholder="Scrivi una recensione..."
-                    className="flex-1 px-4 py-2 glass rounded-xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!commentText.trim()}
-                    className="px-4 py-2 glass-strong rounded-xl text-coral-red hover:border-coral-red border-2 border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Send className="w-5 h-5" />
-                  </button>
-                </form>
-              )}
-
-              {!user && (
-                <div className="text-center py-2 text-coral-red/70 text-sm">
-                  Accedi per lasciare una recensione
-                </div>
-              )}
+              {/* Comment Form - Ora disponibile per tutti */}
+              <form onSubmit={handleSubmitComment} className="flex gap-2">
+                <input
+                  type="text"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder={user ? "Scrivi una recensione..." : "Scrivi una recensione (come Guest)..."}
+                  className="flex-1 px-4 py-2 glass rounded-xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
+                />
+                <button
+                  type="submit"
+                  disabled={!commentText.trim()}
+                  className="px-4 py-2 glass-strong rounded-xl text-coral-red hover:border-coral-red border-2 border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </form>
             </motion.div>
           )}
         </AnimatePresence>
