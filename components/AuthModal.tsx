@@ -210,8 +210,8 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
           )}
 
           <div className="space-y-4">
-            {/* Google Sign In Button */}
-            {mode === 'signin' && (
+            {/* Google Sign In Button - Temporaneamente disabilitato */}
+            {/* {mode === 'signin' && (
               <button
                 onClick={handleGoogleSignIn}
                 disabled={loading}
@@ -243,7 +243,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                   </>
                 )}
               </button>
-            )}
+            )} */}
 
             {!googleOnly && (
               <div>

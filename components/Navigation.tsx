@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { MessageSquare, Users, Briefcase, Star, Home } from 'lucide-react'
+import { Users, Briefcase, Star, Home } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -39,7 +39,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   
   const navItems = [
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
-    { id: 'chat', label: 'AI Chat', icon: MessageSquare, href: '/ai-chat' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/#services' },
     { id: 'team', label: 'Team', icon: Users, href: '/#team' },
     { id: 'clients', label: 'Clients', icon: Star, href: '/#clients' },
@@ -62,45 +61,15 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
   }
 
-  const handleAIChatClick = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    
-    // Se l'utente non è autenticato, avvia direttamente il login con Google
-    if (!user) {
-      try {
-        const { error: oauthError } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: `${window.location.origin}/auth/callback`,
-          },
-        })
-        
-        if (oauthError) {
-          console.error('Errore durante il login con Google:', oauthError)
-        }
-      } catch (err) {
-        console.error('Errore durante il login con Google:', err)
-      }
-    } else {
-      // Se l'utente è autenticato, naviga normalmente
-      router.push('/ai-chat')
-    }
-  }
-
   const isActive = (item: typeof navItems[0]) => {
     if (item.id === 'home') {
       return pathname === '/home'
-    }
-    if (item.id === 'chat') {
-      return pathname?.startsWith('/ai-chat')
     }
     return pathname === '/' && activeSection === item.id
   }
 
   const handleItemClick = (item: typeof navItems[0], e: React.MouseEvent) => {
-    if (item.href.startsWith('/ai-chat')) {
-      handleAIChatClick(e)
-    } else if (item.href.startsWith('/home')) {
+    if (item.href.startsWith('/home')) {
       e.preventDefault()
       router.push('/home')
     } else {

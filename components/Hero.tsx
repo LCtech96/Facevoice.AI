@@ -1,7 +1,6 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Sparkles, ArrowDown } from 'lucide-react'
 import Image from 'next/image'
 
 export default function Hero() {
@@ -32,26 +31,9 @@ export default function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
         >
-          <Sparkles className="w-16 h-16 mx-auto mb-6 text-coral-red" />
-          <h1 className="text-6xl md:text-8xl font-bold mb-6 gradient-text">
-            Facevoice AI
+          <h1 className="text-6xl md:text-8xl font-bold gradient-text">
+            FacevoiceAI
           </h1>
-          <p className="text-2xl md:text-3xl text-coral-red-light mb-8">
-            Advanced AI Solutions & Blockchain Development
-          </p>
-          <p className="text-xl text-coral-red/80 max-w-2xl mx-auto">
-            Transforming businesses with cutting-edge AI integration, 
-            blockchain technology, and innovative automation systems.
-          </p>
-        </motion.div>
-        
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1, duration: 0.8 }}
-          className="mt-12"
-        >
-          <ArrowDown className="w-8 h-8 mx-auto text-coral-red animate-bounce" />
         </motion.div>
       </div>
     </section>
