@@ -25,6 +25,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="it" className="dark">
+      <head>
+        <link rel="icon" href="/team/Trinacria.jpg" type="image/jpeg" />
+        <link rel="shortcut icon" href="/team/Trinacria.jpg" type="image/jpeg" />
+        <link rel="apple-touch-icon" href="/team/Trinacria.jpg" />
+      </head>
       <body className={montserrat.className}>{children}</body>
     </html>
   )
