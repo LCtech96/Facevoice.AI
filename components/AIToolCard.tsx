@@ -100,7 +100,19 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
       {/* Content */}
       <div className="p-6">
         {/* Title and Description */}
-        <h3 className="text-2xl font-bold text-coral-red-light mb-2">{tool.name}</h3>
+        <div className="flex items-start justify-between mb-2">
+          <h3 className="text-2xl font-bold text-coral-red-light">{tool.name}</h3>
+          {tool.link && (
+            <a
+              href={tool.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 glass rounded-lg text-sm font-medium text-coral-red hover:glass-strong transition-all"
+            >
+              Visita →
+            </a>
+          )}
+        </div>
         <p className="text-coral-red/70 mb-4 leading-relaxed">{tool.description}</p>
 
         {/* Actions */}
