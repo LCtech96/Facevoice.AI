@@ -11,6 +11,11 @@ const montserrat = Montserrat({
 export const metadata: Metadata = {
   title: 'Facevoice AI - Advanced AI Solutions',
   description: 'AI Integration, Blockchain Development, and Technical Consulting',
+  icons: {
+    icon: '/team/Trinacria.jpg',
+    shortcut: '/team/Trinacria.jpg',
+    apple: '/team/Trinacria.jpg',
+  },
 }
 
 export default function RootLayout({
