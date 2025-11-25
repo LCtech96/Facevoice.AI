@@ -7,7 +7,7 @@ export default function Home() {
   const router = useRouter()
 
   useEffect(() => {
-    router.push('/ai-chat')
+    router.push('/home')
   }, [router])
 
   return (

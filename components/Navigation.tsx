@@ -41,7 +41,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/home#services' },
     { id: 'team', label: 'Team', icon: Users, href: '/home#team' },
-    { id: 'clients', label: 'Clients', icon: Star, href: '/home#clients' },
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
