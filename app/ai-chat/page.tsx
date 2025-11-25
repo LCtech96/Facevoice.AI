@@ -9,9 +9,6 @@ import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import LiquidGlass from '@/components/LiquidGlass'
-import AuthModal from '@/components/AuthModal'
-import { createClient } from '@/lib/supabase-client'
-import type { User } from '@supabase/supabase-js'
 
 export interface Message {
   id: string
@@ -45,44 +42,10 @@ export default function AIChatPage() {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [showAuthModal, setShowAuthModal] = useState(false)
   const [trinacriaImage, setTrinacriaImage] = useState('/team/Trinacria.jpg')
-  const supabase = createClient()
-
-  // Check authentication status
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      setLoading(false)
-      
-      if (!user) {
-        setShowAuthModal(true)
-      }
-    }
-
-    checkUser()
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        setShowAuthModal(false)
-      } else {
-        setShowAuthModal(true)
-      }
-    })
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [])
 
   // Load chats from localStorage on mount
   useEffect(() => {
-    if (!user) return
     
     const savedChats = localStorage.getItem('ai-chats')
     const savedProjects = localStorage.getItem('ai-projects')
@@ -109,7 +72,7 @@ export default function AIChatPage() {
     if (savedProjects) {
       setProjects(JSON.parse(savedProjects))
     }
-  }, [user])
+  }, [])
 
   // Save chats to localStorage whenever they change
   useEffect(() => {
@@ -214,11 +177,6 @@ export default function AIChatPage() {
     setProjects((prev) => prev.filter((project) => project.id !== projectId))
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    router.push('/')
-  }
 
   const filteredChats = chats.filter((chat) =>
     chat.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -226,43 +184,6 @@ export default function AIChatPage() {
       msg.content.toLowerCase().includes(searchQuery.toLowerCase())
     )
   )
-
-  if (loading) {
-    return (
-      <main className="min-h-screen relative">
-        {/* Immagine di sfondo Trinacria */}
-        <div className="fixed inset-0 z-0">
-          <Image
-            src={trinacriaImage}
-            alt="Trinacria background"
-            fill
-            className="object-cover opacity-20"
-            priority
-            quality={90}
-            onError={() => {
-              // Fallback se l'immagine non carica
-              console.warn('Immagine Trinacria non trovata')
-            }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--background-end)]" />
-        </div>
-        
-        <LiquidGlass />
-        <ThemeSwitcher />
-        <Navigation 
-          activeSection="chat" 
-          setActiveSection={(section) => {
-            if (section !== 'chat') {
-              router.push('/')
-            }
-          }} 
-        />
-        <div className="flex items-center justify-center h-[calc(100vh-5rem)] mt-20 relative z-10">
-          <div className="text-coral-red">Caricamento...</div>
-        </div>
-      </main>
-    )
-  }
 
   return (
     <main className="min-h-screen relative">
@@ -293,19 +214,6 @@ export default function AIChatPage() {
           }
         }} 
       />
-      
-          <AuthModal
-            isOpen={showAuthModal}
-            onClose={() => {
-              if (!user) {
-                router.push('/')
-              }
-            }}
-            onSuccess={() => {
-              setShowAuthModal(false)
-            }}
-            googleOnly={true}
-          />
 
       {/* Spacing per desktop navigation */}
       <div className="hidden md:block h-20" />
@@ -313,15 +221,7 @@ export default function AIChatPage() {
       {/* Spacing per mobile navigation */}
       <div className="md:hidden h-4" />
 
-      {!user ? (
-        <div className="flex items-center justify-center h-[calc(100vh-5rem)] relative z-10">
-          <div className="text-center">
-            <p className="text-coral-red mb-4">Autenticazione richiesta</p>
-            <p className="text-coral-red/70 text-sm">Effettua il login per utilizzare la Chat AI</p>
-          </div>
-        </div>
-      ) : (
-        <div className="flex h-[calc(100vh-5rem)] gap-2 px-2 relative z-10">
+      <div className="flex h-[calc(100vh-5rem)] gap-2 px-2 relative z-10">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}
@@ -336,7 +236,6 @@ export default function AIChatPage() {
           onDeleteProject={deleteProject}
           onAddChatToProject={addChatToProject}
           onSearchChange={setSearchQuery}
-          onLogout={handleLogout}
         />
 
         <AIChatMain
@@ -382,8 +281,7 @@ export default function AIChatPage() {
             onClose={() => setIsModelSelectorOpen(false)}
           />
         )}
-        </div>
-      )}
+      </div>
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

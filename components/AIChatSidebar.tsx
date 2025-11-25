@@ -13,7 +13,6 @@ import {
   Plus,
   X,
   Menu,
-  LogOut,
 } from 'lucide-react'
 import { Chat, Project } from '@/app/ai-chat/page'
 
@@ -31,7 +30,6 @@ interface AIChatSidebarProps {
   onDeleteProject: (projectId: string) => void
   onAddChatToProject: (chatId: string, projectId: string) => void
   onSearchChange: (query: string) => void
-  onLogout: () => void
 }
 
 const PROJECT_COLORS = [
@@ -56,7 +54,6 @@ export default function AIChatSidebar({
   onDeleteProject,
   onAddChatToProject,
   onSearchChange,
-  onLogout,
 }: AIChatSidebarProps) {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [showNewProject, setShowNewProject] = useState(false)
@@ -315,16 +312,6 @@ export default function AIChatSidebar({
         </div>
       </div>
 
-      {/* Logout Button */}
-      <div className="p-4 border-t border-coral-red/20">
-        <button
-          onClick={onLogout}
-          className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Logout</span>
-        </button>
-      </div>
     </motion.div>
   )
 }
