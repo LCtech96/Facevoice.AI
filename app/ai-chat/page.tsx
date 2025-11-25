@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Navigation from '@/components/Navigation'
 import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
@@ -181,8 +182,13 @@ export default function AIChatPage() {
   )
 
   return (
-    <main className="min-h-screen bg-[var(--background)] flex">
-      <div className="flex w-full h-screen">
+    <main className="min-h-screen bg-[var(--background)] flex flex-col">
+      <Navigation />
+      
+      {/* Spacing for desktop navigation */}
+      <div className="hidden md:block h-16" />
+      
+      <div className="flex flex-1 w-full h-[calc(100vh-4rem)] md:h-[calc(100vh-4rem)] overflow-hidden relative">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}
@@ -243,6 +249,9 @@ export default function AIChatPage() {
           />
         )}
       </div>
+      
+      {/* Spacing for mobile navigation */}
+      <div className="md:hidden h-20" />
     </main>
   )
 }

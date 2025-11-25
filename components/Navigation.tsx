@@ -1,8 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Users, Briefcase, Star, Home } from 'lucide-react'
-import Link from 'next/link'
+import { Users, Briefcase, Star, Home, MessageSquare } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-client'
@@ -38,42 +37,43 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }, [])
   
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home, href: '/' },
-    { id: 'services', label: 'Services', icon: Briefcase, href: '/#services' },
-    { id: 'team', label: 'Team', icon: Users, href: '/#team' },
-    { id: 'clients', label: 'Clients', icon: Star, href: '/#clients' },
+    { id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' },
+    { id: 'home', label: 'Home', icon: Home, href: '/home' },
+    { id: 'services', label: 'Services', icon: Briefcase, href: '/home#services' },
+    { id: 'team', label: 'Team', icon: Users, href: '/home#team' },
+    { id: 'clients', label: 'Clients', icon: Star, href: '/home#clients' },
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
-    if (item.href.startsWith('/#')) {
+    if (item.href.startsWith('/home#')) {
       // Navigate to home page and scroll to section
-      if (pathname !== '/') {
+      if (pathname !== '/home') {
         router.push(item.href)
       } else {
-        const section = item.href.replace('/#', '')
+        const section = item.href.replace('/home#', '')
         setActiveSection?.(section)
-        const element = document.getElementById(section)
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }
+        setTimeout(() => {
+          const element = document.getElementById(section)
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        }, 100)
       }
-    } else if (item.href === '/') {
-      // Navigate to home
-      if (pathname !== '/') {
-        router.push('/')
-      } else {
-        // Scroll to top
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-        setActiveSection?.(null)
-      }
+    } else if (item.href === '/home') {
+      router.push('/home')
+    } else if (item.href === '/ai-chat') {
+      router.push('/ai-chat')
     }
   }
 
   const isActive = (item: typeof navItems[0]) => {
-    if (item.id === 'home') {
-      return pathname === '/' && !activeSection
+    if (item.id === 'chat') {
+      return pathname === '/ai-chat'
     }
-    return pathname === '/' && activeSection === item.id
+    if (item.id === 'home') {
+      return pathname === '/home' && !activeSection
+    }
+    return pathname === '/home' && activeSection === item.id
   }
 
   const handleItemClick = (item: typeof navItems[0], e: React.MouseEvent) => {
@@ -84,19 +84,19 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   return (
     <>
       {/* Desktop Navigation - Top */}
-      <nav className="hidden md:flex fixed top-0 left-0 right-0 z-50 glass-strong">
-        <div className="container mx-auto px-6 py-4">
+      <nav className="hidden md:flex fixed top-0 left-0 right-0 z-50 bg-[var(--background)]/80 backdrop-blur-xl border-b border-[var(--border-color)]">
+        <div className="container mx-auto px-6 py-3">
           <div className="flex items-center justify-between">
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               onClick={() => router.push('/ai-chat')}
-              className="text-2xl font-bold gradient-text cursor-pointer"
+              className="text-xl font-semibold text-[var(--text-primary)] cursor-pointer"
             >
               FacevoiceAI
             </motion.div>
             
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
               {navItems.map((item) => {
                 const Icon = item.icon
                 const active = isActive(item)
@@ -104,17 +104,17 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 return (
                   <motion.button
                     key={item.id}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={(e) => handleItemClick(item, e)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg glass transition-all ${
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-sm font-medium ${
                       active
-                        ? 'text-coral-light border-coral-red border-2'
-                        : 'text-coral hover:glass-strong'
+                        ? 'bg-[var(--accent-blue)] text-white'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
                     }`}
                   >
-                    <Icon size={20} />
-                    <span className="hidden sm:inline">{item.label}</span>
+                    <Icon size={18} />
+                    <span>{item.label}</span>
                   </motion.button>
                 )
               })}
@@ -124,8 +124,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       </nav>
 
       {/* Mobile Navigation - Bottom */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 glass-strong border-t border-coral-red/20">
-        <div className="flex items-center justify-around px-2 py-2 safe-area-bottom">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom">
+        <div className="flex items-center justify-around px-2 py-2">
           {navItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
@@ -135,10 +135,10 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 key={item.id}
                 whileTap={{ scale: 0.9 }}
                 onClick={(e) => handleItemClick(item, e)}
-                className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-xl glass transition-all min-w-[60px] ${
+                className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-xl transition-all min-w-[60px] ${
                   active
-                    ? 'text-coral-light border-coral-red border-2'
-                    : 'text-coral hover:glass-strong'
+                    ? 'text-[var(--accent-blue)]'
+                    : 'text-[var(--text-secondary)]'
                 }`}
               >
                 <Icon size={22} />
@@ -151,4 +151,3 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     </>
   )
 }
-
