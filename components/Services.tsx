@@ -51,22 +51,22 @@ const services = [
 
 export default function Services() {
   return (
-    <section id="services" className="min-h-screen py-24 px-6 relative">
+    <section id="services" className="min-h-screen py-24 px-6 bg-[var(--background)]">
       <motion.div
         initial={{ opacity: 0, y: 50 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ duration: 0.8 }}
-        className="container mx-auto"
+        className="container mx-auto max-w-6xl"
       >
-        <h2 className="text-5xl md:text-6xl font-bold text-center mb-4 gradient-text">
+        <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
           Our Services
         </h2>
-        <p className="text-xl text-coral-red-light text-center mb-16 max-w-2xl mx-auto">
+        <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
           Comprehensive solutions to drive your business forward
         </p>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {services.map((service, index) => {
             const Icon = service.icon
             return (
@@ -76,17 +76,17 @@ export default function Services() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                whileHover={{ scale: 1.05, y: -10 }}
-                className="glass-strong p-8 rounded-2xl cursor-pointer group"
+                whileHover={{ scale: 1.02, y: -5 }}
+                className="bg-[var(--card-background)] border border-[var(--border-color)] p-6 rounded-2xl cursor-pointer hover:shadow-lg transition-all"
               >
-                <div className="mb-6">
-                  <div className="w-16 h-16 glass rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <Icon className="w-8 h-8 text-coral-red" />
+                <div className="mb-4">
+                  <div className="w-12 h-12 bg-[var(--accent-blue)]/10 rounded-xl flex items-center justify-center mb-4">
+                    <Icon className="w-6 h-6 text-[var(--accent-blue)]" />
                   </div>
-                  <h3 className="text-2xl font-bold text-coral-red-light mb-3">
+                  <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
                     {service.title}
                   </h3>
-                  <p className="text-coral-red/70 leading-relaxed">
+                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
                     {service.description}
                   </p>
                 </div>
@@ -98,4 +98,3 @@ export default function Services() {
     </section>
   )
 }
-

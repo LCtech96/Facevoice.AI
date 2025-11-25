@@ -44,8 +44,8 @@ function TeamMemberImage({ member }: { member: TeamMember }) {
   if (!imageUrl || imageError) {
     return (
       <div className="relative w-full h-full">
-        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-500/10 to-blue-500/5">
-          <span className="text-6xl font-bold text-coral-red">
+        <div className="w-full h-full flex items-center justify-center bg-[var(--accent-blue)]/10">
+          <span className="text-4xl font-bold text-[var(--accent-blue)]">
             {initials}
           </span>
         </div>
@@ -112,37 +112,37 @@ export default function Team() {
 
   if (loading) {
     return (
-      <section id="team" className="min-h-screen py-24 px-6 relative">
+      <section id="team" className="min-h-screen py-24 px-6 bg-[var(--background)]">
         <div className="container mx-auto text-center">
-          <p className="text-coral-red-light text-xl">Loading team...</p>
+          <p className="text-[var(--text-secondary)] text-xl">Loading team...</p>
         </div>
       </section>
     )
   }
 
   return (
-    <section id="team" className="min-h-screen py-24 px-6 relative">
+    <section id="team" className="min-h-screen py-24 px-6 bg-[var(--background)]">
       <motion.div
         initial={{ opacity: 0, y: 50 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ duration: 0.8 }}
-        className="container mx-auto"
+        className="container mx-auto max-w-6xl"
       >
-        <h2 className="text-5xl md:text-6xl font-bold text-center mb-4 gradient-text">
+        <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
           Our Team
         </h2>
-        <p className="text-xl text-coral-red-light text-center mb-16 max-w-2xl mx-auto">
+        <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
           Meet the talented individuals driving innovation
         </p>
         
         {teamMembers.length === 0 ? (
           <div className="text-center py-16">
-            <p className="text-coral-red/70 text-xl">No team members found.</p>
+            <p className="text-[var(--text-secondary)] text-xl">No team members found.</p>
           </div>
         ) : (
           <div className="flex justify-center">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl">
               {teamMembers.map((member, index) => (
                 <motion.div
                   key={member.id}
@@ -150,39 +150,39 @@ export default function Team() {
                   whileInView={{ opacity: 1, scale: 1 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.6, delay: index * 0.1 }}
-                  whileHover={{ scale: 1.05 }}
-                  className="glass-strong p-8 rounded-2xl text-center group"
+                  whileHover={{ scale: 1.02, y: -5 }}
+                  className="bg-[var(--card-background)] border border-[var(--border-color)] p-6 rounded-2xl text-center group hover:shadow-lg transition-all"
                 >
                   <div className="mb-6 relative">
-                    <div className="w-48 h-48 mx-auto rounded-full overflow-hidden glass border-4 border-coral-red/30 group-hover:border-coral-red transition-colors relative">
+                    <div className="w-32 h-32 mx-auto rounded-full overflow-hidden border-2 border-[var(--border-color)] relative">
                       <TeamMemberImage member={member} />
                     </div>
                   </div>
                   <div className="flex items-center justify-center gap-2 mb-2">
-                    <h3 className="text-2xl font-bold text-coral-red-light">
+                    <h3 className="text-xl font-semibold text-[var(--text-primary)]">
                       {member.name}
                     </h3>
                     {member.is_contractor && (
-                      <div className="flex items-center gap-1 px-2 py-1 glass rounded-full" title="Contractor">
-                        <Briefcase className="w-4 h-4 text-coral-red" />
-                        <span className="text-xs text-coral-red font-semibold">Contractor</span>
+                      <div className="flex items-center gap-1 px-2 py-1 bg-[var(--background-secondary)] rounded-full" title="Contractor">
+                        <Briefcase className="w-3 h-3 text-[var(--text-secondary)]" />
+                        <span className="text-xs text-[var(--text-secondary)] font-medium">Contractor</span>
                       </div>
                     )}
                   </div>
-                  <p className="text-coral-red mb-4 font-semibold">{member.role}</p>
-                  <p className="text-coral-red/70 mb-6 text-sm leading-relaxed min-h-[3rem]">
+                  <p className="text-[var(--accent-blue)] mb-3 font-medium text-sm">{member.role}</p>
+                  <p className="text-[var(--text-secondary)] mb-6 text-sm leading-relaxed min-h-[3rem]">
                     {member.description || `Expert in the role of ${member.role.toLowerCase()}, contributing specialized skills to the team's success.`}
                   </p>
-                  <div className="flex justify-center gap-4">
+                  <div className="flex justify-center gap-3">
                     {member.linkedin && (
                       <a
                         href={member.linkedin}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-3 glass rounded-full hover:glass-strong transition-all"
+                        className="p-2 bg-[var(--background-secondary)] rounded-full hover:bg-[var(--accent-blue)]/10 transition-all"
                         aria-label="LinkedIn"
                       >
-                        <Linkedin className="w-5 h-5 text-coral-red" />
+                        <Linkedin className="w-4 h-4 text-[var(--text-primary)]" />
                       </a>
                     )}
                     {member.x && (
@@ -190,10 +190,10 @@ export default function Team() {
                         href={member.x}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-3 glass rounded-full hover:glass-strong transition-all"
+                        className="p-2 bg-[var(--background-secondary)] rounded-full hover:bg-[var(--accent-blue)]/10 transition-all"
                         aria-label="X (Twitter)"
                       >
-                        <svg className="w-5 h-5 text-coral-red" viewBox="0 0 24 24" fill="currentColor">
+                        <svg className="w-4 h-4 text-[var(--text-primary)]" viewBox="0 0 24 24" fill="currentColor">
                           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
                         </svg>
                       </a>
@@ -203,10 +203,10 @@ export default function Team() {
                         href={member.google}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-3 glass rounded-full hover:glass-strong transition-all"
+                        className="p-2 bg-[var(--background-secondary)] rounded-full hover:bg-[var(--accent-blue)]/10 transition-all"
                         aria-label="Google"
                       >
-                        <svg className="w-5 h-5 text-coral-red" viewBox="0 0 24 24" fill="currentColor">
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
                           <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
                           <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
@@ -219,19 +219,19 @@ export default function Team() {
                         href={member.instagram}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-3 glass rounded-full hover:glass-strong transition-all"
+                        className="p-2 bg-[var(--background-secondary)] rounded-full hover:bg-[var(--accent-blue)]/10 transition-all"
                         aria-label="Instagram"
                       >
-                        <Instagram className="w-5 h-5 text-coral-red" />
+                        <Instagram className="w-4 h-4 text-[var(--text-primary)]" />
                       </a>
                     )}
                     {member.email && (
                       <a
                         href={`mailto:${member.email}`}
-                        className="p-3 glass rounded-full hover:glass-strong transition-all"
+                        className="p-2 bg-[var(--background-secondary)] rounded-full hover:bg-[var(--accent-blue)]/10 transition-all"
                         aria-label="Email"
                       >
-                        <Mail className="w-5 h-5 text-coral-red" />
+                        <Mail className="w-4 h-4 text-[var(--text-primary)]" />
                       </a>
                     )}
                   </div>
