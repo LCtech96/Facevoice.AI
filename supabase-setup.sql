@@ -65,7 +65,7 @@ FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 INSERT INTO team_members (name, role, description, email, linkedin) VALUES
   ('Luca Corrao', 'CEO & Founder', 'Visionary leader with expertise in AI and blockchain technologies', 'luca@facevoice.ai', 'https://linkedin.com/in/luca-corrao'),
   ('Sevara Urmanaeva', 'CMO', 'Strategic marketing expert driving brand growth and digital innovation', 'sevara@facevoice.ai', 'https://linkedin.com/in/sevara-urmanaeva'),
-  ('Giuseppe Delli Paoli', 'AI & Automation Specialist', 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology', 'giuseppe@facevoice.ai', 'https://linkedin.com/in/giuseppe-delli-paoli'),
+  ('Giuseppe Delli Paoli', 'Co-founder, AI & Automation Specialist', 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology', 'giuseppe@facevoice.ai', 'https://linkedin.com/in/giuseppe-delli-paoli'),
   ('Sara Siddique', 'Data Engineer, Data Scientist', 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights', 'sara@facevoice.ai', 'https://linkedin.com/in/sara-siddique'),
   ('Jonh Mcnova', 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)', 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems', 'jonh@facevoice.ai', 'https://linkedin.com/in/jonh-mcnova'),
   ('Leonardo Alotta', 'Chief Financial Officer (CFO)', 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations', 'leonardo@facevoice.ai', 'https://linkedin.com/in/leonardo-alotta'),

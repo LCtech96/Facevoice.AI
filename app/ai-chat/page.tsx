@@ -9,6 +9,7 @@ import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import LiquidGlass from '@/components/LiquidGlass'
+import Hero from '@/components/Hero'
 
 export interface Message {
   id: string
@@ -221,7 +222,7 @@ export default function AIChatPage() {
       {/* Spacing per mobile navigation */}
       <div className="md:hidden h-4" />
 
-      <div className="flex h-[calc(100vh-5rem)] gap-2 px-2 relative z-10">
+      <div className="flex h-[calc(100vh-5rem)] sm:h-[calc(100vh-5rem)] gap-1 sm:gap-2 px-1 sm:px-2 relative z-10">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}

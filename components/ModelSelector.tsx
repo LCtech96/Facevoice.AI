@@ -94,37 +94,37 @@ export default function ModelSelector({
 }: ModelSelectorProps) {
   return (
     <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="absolute inset-0 glass-strong backdrop-blur-sm z-40 flex items-start justify-center pt-20"
-        onClick={onClose}
-      >
         <motion.div
-          initial={{ scale: 0.95, opacity: 0, y: -20 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 0.95, opacity: 0, y: -20 }}
-          onClick={(e) => e.stopPropagation()}
-          className="glass-strong rounded-2xl border-2 border-coral-red/30 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 glass-strong backdrop-blur-sm z-40 flex items-start justify-center pt-12 sm:pt-20 px-2"
+          onClick={onClose}
         >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: -20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: -20 }}
+            onClick={(e) => e.stopPropagation()}
+            className="glass-strong rounded-2xl border border-coral-red/40 max-w-2xl w-full mx-2 sm:mx-4 max-h-[85vh] sm:max-h-[80vh] overflow-y-auto backdrop-blur-xl shadow-2xl"
+          >
           {/* Header */}
-          <div className="p-6 border-b border-coral-red/20 flex items-center justify-between sticky top-0 glass-strong backdrop-blur-sm z-10">
-            <h2 className="text-2xl font-bold text-coral-red-light">ChatGPT</h2>
+          <div className="p-6 border-b border-coral-red/30 flex items-center justify-between sticky top-0 glass-strong backdrop-blur-xl z-10">
+            <h2 className="text-xl sm:text-2xl font-bold text-coral-red-light">Seleziona Modello AI</h2>
             <button
               onClick={onClose}
-              className="p-2 glass rounded-lg hover:glass-strong transition-all"
+              className="p-2 glass rounded-lg hover:glass-strong transition-all touch-manipulation"
             >
               <X className="w-5 h-5 text-coral-red" />
             </button>
           </div>
 
           {/* Available Models */}
-          <div className="p-6">
-            <h3 className="text-sm font-semibold text-coral-red/50 uppercase mb-4">
-              Available Models
+          <div className="p-4 sm:p-6">
+            <h3 className="text-xs sm:text-sm font-semibold text-coral-red/50 uppercase mb-3 sm:mb-4">
+              Modelli Disponibili
             </h3>
-            <div className="space-y-2 mb-6">
+            <div className="space-y-2 mb-4 sm:mb-6">
               {AVAILABLE_MODELS.map((model) => (
                 <button
                   key={model.id}
@@ -132,7 +132,7 @@ export default function ModelSelector({
                     onSelect(model.id)
                     onClose()
                   }}
-                  className={`w-full p-4 glass rounded-lg border-2 transition-all text-left ${
+                  className={`w-full p-3 sm:p-4 glass rounded-lg border-2 transition-all text-left touch-manipulation ${
                     selectedModel === model.id
                       ? 'border-coral-red glass-strong'
                       : 'border-transparent hover:glass-strong'
@@ -158,14 +158,14 @@ export default function ModelSelector({
             </div>
 
             {/* Coming Soon Models */}
-            <h3 className="text-sm font-semibold text-coral-red/50 uppercase mb-4">
-              Coming Soon
+            <h3 className="text-xs sm:text-sm font-semibold text-coral-red/50 uppercase mb-3 sm:mb-4">
+              In Arrivo
             </h3>
             <div className="space-y-2">
               {COMING_SOON_MODELS.map((model) => (
                 <div
                   key={model.id}
-                  className="w-full p-4 glass rounded-lg border-2 border-transparent opacity-60 cursor-not-allowed"
+                  className="w-full p-3 sm:p-4 glass rounded-lg border-2 border-transparent opacity-60 cursor-not-allowed"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">

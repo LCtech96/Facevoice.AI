@@ -95,72 +95,59 @@ export default function AIChatSidebar({
     <motion.div
       initial={{ x: -300 }}
       animate={{ x: 0 }}
-      className="w-64 glass-strong border-r border-coral-red/20 flex flex-col h-full rounded-r-3xl"
+      className="w-56 sm:w-64 glass-strong border-r border-coral-red/30 flex flex-col h-full rounded-r-3xl backdrop-blur-xl shadow-2xl"
     >
       {/* Header */}
-      <div className="p-4 border-b border-coral-red/20 flex items-center justify-between">
+      <div className="p-3 sm:p-4 border-b border-coral-red/30 flex items-center justify-between backdrop-blur-xl">
         <button
           onClick={onNewChat}
-          className="flex items-center gap-2 px-4 py-3 glass rounded-2xl hover:glass-strong transition-all w-full border-2 border-transparent hover:border-coral-red/30"
+          className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 glass rounded-2xl hover:glass-strong transition-all flex-1 border-2 border-transparent hover:border-coral-red/30 touch-manipulation"
         >
-          <MessageSquare className="w-4 h-4 text-coral-red" />
-          <span className="text-sm text-coral-red font-medium">New Chat</span>
+          <MessageSquare className="w-4 h-4 text-coral-red flex-shrink-0" />
+          <span className="text-xs sm:text-sm text-coral-red font-medium">New Chat</span>
         </button>
         <button
           onClick={onToggleSidebar}
-          className="p-2 glass rounded-2xl hover:glass-strong transition-all ml-2 border-2 border-transparent hover:border-coral-red/30"
+          className="p-2 glass rounded-2xl hover:glass-strong transition-all ml-2 border-2 border-transparent hover:border-coral-red/30 touch-manipulation flex-shrink-0"
         >
           <X className="w-4 h-4 text-coral-red" />
         </button>
       </div>
 
       {/* Search */}
-      <div className="p-4 border-b border-coral-red/20">
+      <div className="p-3 sm:p-4 border-b border-coral-red/30">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-coral-red/50" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search chats"
-            className="w-full pl-10 pr-4 py-3 glass-strong rounded-2xl text-sm text-coral-red placeholder-coral-red/60 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
+            placeholder="Cerca chat"
+            className="w-full pl-10 pr-4 py-2.5 sm:py-3 glass-strong rounded-2xl text-xs sm:text-sm text-coral-red placeholder-coral-red/60 focus:outline-none focus:border-coral-red border border-coral-red/40 transition-all backdrop-blur-xl"
           />
         </div>
       </div>
 
       {/* Navigation */}
-      <div className="p-4 border-b border-coral-red/20 space-y-2">
-            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass">
+      <div className="p-3 sm:p-4 border-b border-coral-red/30 space-y-2">
+            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-xs sm:text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass touch-manipulation">
               <Search className="w-4 h-4" />
-              <span>Search Chat</span>
+              <span>Cerca Chat</span>
             </button>
-            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass">
+            <button className="flex items-center gap-2 w-full px-3 py-2.5 text-xs sm:text-sm text-coral-red/70 hover:text-coral-red transition-colors rounded-2xl hover:glass touch-manipulation">
               <BookOpen className="w-4 h-4" />
-              <span>Library</span>
+              <span>Libreria</span>
             </button>
       </div>
 
-      {/* GPT Section */}
-      <div className="p-4 border-b border-coral-red/20">
-        <h3 className="text-xs font-semibold text-coral-red/50 uppercase mb-2">GPT</h3>
-        <button className="flex items-center gap-2 w-full px-2 py-2 text-sm text-coral-red/70 hover:text-coral-red transition-colors">
-          <div className="w-4 h-4 grid grid-cols-2 gap-0.5">
-            <div className="w-full h-full bg-coral-red rounded-sm"></div>
-            <div className="w-full h-full bg-coral-red rounded-sm"></div>
-            <div className="w-full h-full bg-coral-red rounded-sm"></div>
-            <div className="w-full h-full bg-coral-red rounded-sm"></div>
-          </div>
-          <span>Explore</span>
-        </button>
-      </div>
 
       {/* Projects */}
-      <div className="p-4 border-b border-coral-red/20 flex-1 overflow-y-auto">
+      <div className="p-3 sm:p-4 border-b border-coral-red/30 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-coral-red/50 uppercase">Projects</h3>
+          <h3 className="text-xs font-semibold text-coral-red/50 uppercase">Progetti</h3>
           <button
             onClick={() => setShowNewProject(!showNewProject)}
-            className="p-1 hover:glass-strong rounded transition-all"
+            className="p-1 hover:glass-strong rounded transition-all touch-manipulation"
           >
             <FolderPlus className="w-4 h-4 text-coral-red" />
           </button>
@@ -278,8 +265,8 @@ export default function AIChatSidebar({
       </div>
 
       {/* Chat History */}
-      <div className="p-4 border-t border-coral-red/20">
-        <h3 className="text-xs font-semibold text-coral-red/50 uppercase mb-2">Your Chats</h3>
+      <div className="p-3 sm:p-4 border-t border-coral-red/30 backdrop-blur-xl">
+        <h3 className="text-xs font-semibold text-coral-red/50 uppercase mb-2">Le Tue Chat</h3>
         <div className="space-y-1 max-h-64 overflow-y-auto">
           {chats.map((chat) => (
             <div
@@ -292,13 +279,13 @@ export default function AIChatSidebar({
             >
               <button
                 onClick={() => onSelectChat(chat)}
-                className="flex-1 text-left text-sm truncate"
+                className="flex-1 text-left text-xs sm:text-sm truncate touch-manipulation"
               >
                 {chat.title}
               </button>
               <button
                 onClick={() => onDeleteChat(chat.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:glass-strong rounded transition-all"
+                className="opacity-0 group-hover:opacity-100 p-1 hover:glass-strong rounded transition-all touch-manipulation"
               >
                 <Trash2 className="w-3 h-3 text-coral-red/50 hover:text-coral-red" />
               </button>
@@ -306,7 +293,7 @@ export default function AIChatSidebar({
           ))}
           {chats.length === 0 && (
             <p className="text-xs text-coral-red/50 text-center py-4">
-              No chats yet. Create one to get started!
+              Nessuna chat ancora. Creane una per iniziare!
             </p>
           )}
         </div>

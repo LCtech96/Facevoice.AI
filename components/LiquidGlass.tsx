@@ -33,11 +33,11 @@ export default function LiquidGlass() {
           </defs>
           <path
             d="M200,80 Q280,120 320,200 T340,320 Q320,400 260,450 T160,470 Q80,440 50,360 T40,220 Q60,130 140,90 Z"
-            fill="rgba(255, 255, 255, 0.08)"
+            fill="rgba(0, 191, 255, 0.12)"
             filter="url(#liquid-filter-1)"
             style={{
-              backdropFilter: 'blur(40px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+              backdropFilter: 'blur(60px) saturate(200%)',
+              WebkitBackdropFilter: 'blur(60px) saturate(200%)',
             }}
           />
         </svg>
@@ -72,11 +72,11 @@ export default function LiquidGlass() {
           </defs>
           <path
             d="M225,70 Q330,100 390,180 T410,300 Q390,380 320,430 T200,440 Q90,410 40,320 T30,180 Q55,90 150,60 Z"
-            fill="rgba(255, 255, 255, 0.07)"
+            fill="rgba(0, 191, 255, 0.1)"
             filter="url(#liquid-filter-2)"
             style={{
-              backdropFilter: 'blur(40px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+              backdropFilter: 'blur(60px) saturate(200%)',
+              WebkitBackdropFilter: 'blur(60px) saturate(200%)',
             }}
           />
         </svg>
@@ -111,11 +111,11 @@ export default function LiquidGlass() {
           </defs>
           <path
             d="M190,60 Q270,90 330,160 T350,280 Q330,360 270,410 T160,420 Q70,390 30,300 T20,160 Q45,75 130,50 Z"
-            fill="rgba(255, 255, 255, 0.06)"
+            fill="rgba(0, 191, 255, 0.08)"
             filter="url(#liquid-filter-3)"
             style={{
-              backdropFilter: 'blur(40px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+              backdropFilter: 'blur(60px) saturate(200%)',
+              WebkitBackdropFilter: 'blur(60px) saturate(200%)',
             }}
           />
         </svg>
@@ -150,11 +150,11 @@ export default function LiquidGlass() {
           </defs>
           <path
             d="M175,50 Q250,80 300,150 T320,270 Q300,350 240,390 T140,380 Q60,350 30,260 T20,140 Q45,60 120,40 Z"
-            fill="rgba(255, 255, 255, 0.07)"
+            fill="rgba(0, 191, 255, 0.1)"
             filter="url(#liquid-filter-4)"
             style={{
-              backdropFilter: 'blur(40px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+              backdropFilter: 'blur(60px) saturate(200%)',
+              WebkitBackdropFilter: 'blur(60px) saturate(200%)',
             }}
           />
         </svg>
