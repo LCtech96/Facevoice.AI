@@ -72,23 +72,8 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
         <Hero />
       </div>
       
-      {/* Services Section */}
-      <div id="services">
-        <Services />
-      </div>
-      
-      {/* Team Section */}
-      <div id="team">
-        <Team />
-      </div>
-      
-      {/* Clients Section */}
-      <div id="clients">
-        <Clients />
-      </div>
-      
-      {/* Feed Section */}
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
+      {/* Feed Section - Stile Social Media */}
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
         <Feed user={user} highlightedToolId={toolIdRef.current} />
       </div>
       
