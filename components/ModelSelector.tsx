@@ -250,7 +250,7 @@ export default function ModelSelector({
                         </span>
                       </div>
                       <p className="text-xs text-[var(--text-secondary)] mb-1">
-                        {model.provider} • Requires {model.requiresKey}
+                        {model.provider}
                       </p>
                       <p className="text-sm text-[var(--text-secondary)]">
                         {model.description}
