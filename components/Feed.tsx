@@ -42,7 +42,7 @@ const mockAITools: AITool[] = [
     id: 'runway',
     name: 'Runway',
     description: 'Generazione Video (Gen-3) e VFX. Piattaforma avanzata per creare video AI professionali con effetti visivi.',
-    coverImage: 'https://runwayml.com/og-image.jpg',
+    coverImage: '/team/Runway.png',
     category: 'Video & VFX',
     link: 'https://runwayml.com/',
     likes: 456,
