@@ -389,6 +389,7 @@ const mockAITools: AITool[] = [
 export default function Feed({ user, highlightedToolId, searchQuery = '', categoryFilter }: FeedProps) {
   const [tools, setTools] = useState<AITool[]>([])
   const [loading, setLoading] = useState(true)
+  const [searching, setSearching] = useState(false)
   const [filteredTools, setFilteredTools] = useState<AITool[]>([])
 
   useEffect(() => {
@@ -425,103 +426,93 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
     loadTools()
   }, [user, highlightedToolId])
 
-  // Filtro semantico intelligente per i tools
+  // Filtro intelligente basato su LLM per i tools
   useEffect(() => {
     if (!searchQuery && !categoryFilter) {
       setFilteredTools([])
+      setSearching(false)
       return
     }
 
-    const query = searchQuery.toLowerCase().trim()
-    const filtered = tools.filter((tool) => {
-      // Filtro per categoria se specificato
-      if (categoryFilter && !tool.category.toLowerCase().includes(categoryFilter.toLowerCase())) {
-        return false
+    // Debounce per evitare troppe chiamate API
+    const timeoutId = setTimeout(() => {
+      const performSearch = async () => {
+      // Se c'è solo categoryFilter senza searchQuery, filtra per categoria
+      if (!searchQuery && categoryFilter) {
+        const filtered = tools.filter((tool) =>
+          tool.category.toLowerCase().includes(categoryFilter.toLowerCase())
+        )
+        setFilteredTools(filtered)
+        setSearching(false)
+        return
       }
 
-      // Se non c'è query di ricerca, mostra tutti i tools della categoria
-      if (!query) {
-        return true
-      }
+      // Se c'è searchQuery, usa l'API LLM per ricerca intelligente
+      if (searchQuery && searchQuery.trim().length > 0) {
+        setSearching(true)
+        try {
+          const response = await fetch('/api/tools/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: searchQuery.trim() }),
+          })
 
-      // Matching semantico basato su keywords e funzionalità
-      const toolText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
-      
-      // Keywords per matching semantico
-      const semanticMatches: { [key: string]: string[] } = {
-        // Voce e Audio
-        'voce': ['elevenlabs', 'murf', 'speechify', 'descript'],
-        'audio': ['elevenlabs', 'murf', 'speechify', 'descript', 'otter'],
-        'modificare voce': ['elevenlabs', 'murf'],
-        'text to speech': ['elevenlabs', 'murf', 'speechify'],
-        'tts': ['elevenlabs', 'murf', 'speechify'],
-        'sintesi vocale': ['elevenlabs', 'murf', 'speechify'],
-        'clonare voce': ['elevenlabs', 'murf'],
-        
-        // Video
-        'video': ['higgsfield', 'runway', 'domoai', 'synthesia', 'pika', 'google-veo', 'kling-ai', 'descript', 'opus-clip'],
-        'generare video': ['higgsfield', 'runway', 'domoai', 'pika', 'google-veo', 'kling-ai'],
-        'creare video': ['higgsfield', 'runway', 'domoai', 'pika', 'google-veo', 'kling-ai'],
-        'video ai': ['higgsfield', 'runway', 'domoai', 'synthesia', 'pika', 'google-veo', 'kling-ai'],
-        'animazione': ['domoai', 'runway', 'higgsfield'],
-        'vfx': ['runway', 'higgsfield'],
-        'avatar': ['synthesia'],
-        'avatar parlanti': ['synthesia'],
-        
-        // Immagini
-        'immagine': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram', 'khroma', 'vrew'],
-        'generare immagini': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
-        'creare immagini': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
-        'immagini ai': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
-        'art': ['midjourney', 'leonardo', 'stable-diffusion'],
-        'arte': ['midjourney', 'leonardo', 'stable-diffusion'],
-        
-        // Design e UI
-        'design': ['figma', 'khroma', 'leonardo'],
-        'ui': ['figma', 'khroma'],
-        'ux': ['figma', 'khroma'],
-        'colori': ['khroma'],
-        'palette': ['khroma'],
-        
-        // Contenuti e Testo
-        'testo': ['chatgpt', 'claude', 'gemini', 'notion', 'otter'],
-        'scrivere': ['chatgpt', 'claude', 'gemini', 'notion'],
-        'contenuti': ['chatgpt', 'claude', 'gemini', 'notion'],
-        'chat': ['chatgpt', 'claude', 'gemini'],
-        'assistente': ['chatgpt', 'claude', 'gemini'],
-        
-        // Produttività
-        'nota': ['notion'],
-        'note': ['notion'],
-        'organizzare': ['notion'],
-        'trascrizione': ['otter', 'descript'],
-        'transcribe': ['otter', 'descript'],
-      }
+          if (response.ok) {
+            const data = await response.json()
+            const relevantToolIds = data.toolIds || []
 
-      // Controlla matching semantico
-      for (const [keyword, toolIds] of Object.entries(semanticMatches)) {
-        if (query.includes(keyword)) {
-          if (toolIds.includes(tool.id)) {
-            return true
+            // Filtra i tools basandosi sugli ID rilevanti
+            let filtered = tools.filter((tool) => {
+              // Se ci sono toolIds rilevanti dall'LLM, usa quelli
+              if (relevantToolIds.length > 0) {
+                return relevantToolIds.includes(tool.id)
+              }
+              // Altrimenti fallback a ricerca semplice
+              const toolText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
+              return toolText.includes(searchQuery.toLowerCase())
+            })
+
+            // Applica anche il filtro categoria se presente
+            if (categoryFilter) {
+              filtered = filtered.filter((tool) =>
+                tool.category.toLowerCase().includes(categoryFilter.toLowerCase())
+              )
+            }
+
+            setFilteredTools(filtered)
+          } else {
+            // Fallback a ricerca semplice in caso di errore
+            const query = searchQuery.toLowerCase().trim()
+            const filtered = tools.filter((tool) => {
+              if (categoryFilter && !tool.category.toLowerCase().includes(categoryFilter.toLowerCase())) {
+                return false
+              }
+              const toolText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
+              return toolText.includes(query)
+            })
+            setFilteredTools(filtered)
           }
+        } catch (error) {
+          console.error('Errore nella ricerca intelligente:', error)
+          // Fallback a ricerca semplice
+          const query = searchQuery.toLowerCase().trim()
+          const filtered = tools.filter((tool) => {
+            if (categoryFilter && !tool.category.toLowerCase().includes(categoryFilter.toLowerCase())) {
+              return false
+            }
+            const toolText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
+            return toolText.includes(query)
+          })
+          setFilteredTools(filtered)
+        } finally {
+          setSearching(false)
         }
       }
-
-      // Matching diretto su nome, descrizione e categoria
-      if (toolText.includes(query)) {
-        return true
-      }
-
-      // Matching parziale su singole parole
-      const queryWords = query.split(/\s+/)
-      const matchesAllWords = queryWords.every(word => 
-        word.length > 2 && toolText.includes(word)
-      )
       
-      return matchesAllWords
-    })
+      performSearch()
+    }, searchQuery && searchQuery.trim().length > 0 ? 500 : 0) // Debounce di 500ms solo per ricerche con query
 
-    setFilteredTools(filtered)
+    return () => clearTimeout(timeoutId)
   }, [tools, searchQuery, categoryFilter])
 
   const checkUserLike = async (toolId: string, userId: string): Promise<boolean> => {
@@ -646,6 +637,8 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
     )
   }
 
+  const displayTools = (filteredTools.length > 0 || searchQuery || categoryFilter) ? filteredTools : tools
+
   return (
     <div className="space-y-6">
       <motion.div
@@ -655,9 +648,20 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
       >
         <h1 className="text-4xl font-bold gradient-text mb-2">AI Tools Feed</h1>
         <p className="text-coral-red/70">Scopri e interagisci con i migliori strumenti AI</p>
+        {searching && (
+          <p className="text-sm text-coral-red/60 mt-2">🔍 Ricerca intelligente in corso...</p>
+        )}
+        {searchQuery && !searching && filteredTools.length === 0 && (
+          <p className="text-sm text-coral-red/60 mt-2">Nessun risultato trovato per "{searchQuery}"</p>
+        )}
+        {searchQuery && !searching && filteredTools.length > 0 && (
+          <p className="text-sm text-coral-red/60 mt-2">
+            Trovati {filteredTools.length} strumento{filteredTools.length !== 1 ? 'i' : ''} per "{searchQuery}"
+          </p>
+        )}
       </motion.div>
 
-      {(filteredTools.length > 0 || searchQuery || categoryFilter ? filteredTools : tools).map((tool, index) => (
+      {displayTools.map((tool, index) => (
         <motion.div
           key={tool.id}
           id={`tool-${tool.id}`}
