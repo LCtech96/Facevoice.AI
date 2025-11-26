@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
+import Team from '@/components/Team'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -67,6 +68,11 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero">
         <Hero />
+      </div>
+      
+      {/* Team Section */}
+      <div id="team">
+        <Team />
       </div>
       
       {/* Feed Section - Stile Social Media */}
