@@ -301,23 +301,42 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
               </div>
 
               {/* Comments List */}
-              <div className="space-y-3 max-h-64 overflow-y-auto mb-4">
+              <div className="space-y-3 max-h-96 overflow-y-auto mb-4 pr-2">
                 {loadingComments ? (
-                  <div className="text-center py-4 text-coral-red/70">Caricamento...</div>
+                  <div className="text-center py-4 text-coral-red/70">Caricamento commenti...</div>
                 ) : comments.length === 0 ? (
-                  <div className="text-center py-4 text-coral-red/70">Nessuna recensione ancora</div>
+                  <div className="text-center py-4 text-coral-red/70">
+                    <p>Nessuna recensione ancora</p>
+                    <p className="text-xs mt-2 text-coral-red/50">Sii il primo a lasciare una recensione!</p>
+                  </div>
                 ) : (
-                  comments.map((comment) => (
-                    <div key={comment.id} className="glass p-3 rounded-xl">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-coral-red text-sm">{comment.user_name}</span>
-                        <span className="text-xs text-coral-red/50">
-                          {new Date(comment.created_at).toLocaleDateString('it-IT')}
-                        </span>
-                      </div>
-                      <p className="text-coral-red/80 text-sm">{comment.comment}</p>
+                  <>
+                    <div className="text-xs text-coral-red/50 mb-2">
+                      {comments.length} {comments.length === 1 ? 'recensione' : 'recensioni'} verificata{comments.length === 1 ? '' : 'e'}
                     </div>
-                  ))
+                    {comments.map((comment) => (
+                      <div key={comment.id} className="glass p-4 rounded-xl border border-coral-red/10 hover:border-coral-red/30 transition-all">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-8 h-8 rounded-full bg-coral-red/20 flex items-center justify-center">
+                            <span className="text-coral-red text-xs font-bold">
+                              {comment.user_name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex-1">
+                            <span className="font-semibold text-coral-red text-sm block">{comment.user_name}</span>
+                            <span className="text-xs text-coral-red/50">
+                              {new Date(comment.created_at).toLocaleDateString('it-IT', {
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric'
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-coral-red/90 text-sm leading-relaxed pl-10">{comment.comment}</p>
+                      </div>
+                    ))}
+                  </>
                 )}
               </div>
 
