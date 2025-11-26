@@ -12,52 +12,69 @@ const supabase = createClient(
 async function sendVerificationEmail(email: string, verificationLink: string, userName: string) {
   const RESEND_API_KEY = process.env.RESEND_API_KEY
   
+  console.log('Attempting to send verification email...')
+  console.log('RESEND_API_KEY exists:', !!RESEND_API_KEY)
+  console.log('Email:', email)
+  console.log('Link:', verificationLink)
+  
   if (RESEND_API_KEY) {
     try {
+      const emailData = {
+        from: 'onboarding@resend.dev', // Dominio di test Resend
+        to: email,
+        subject: 'Verifica il tuo commento su FacevoiceAI',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #333;">Ciao ${userName}!</h2>
+            <p>Grazie per aver lasciato un commento su FacevoiceAI.</p>
+            <p>Per pubblicare il tuo commento, clicca sul link qui sotto per verificare la tua email:</p>
+            <p style="text-align: center; margin: 30px 0;">
+              <a href="${verificationLink}" 
+                 style="background-color: #007bff; color: white; padding: 12px 24px; 
+                        text-decoration: none; border-radius: 5px; display: inline-block;">
+                Verifica Email
+              </a>
+            </p>
+            <p style="color: #666; font-size: 12px;">
+              Oppure copia e incolla questo link nel browser:<br>
+              <span style="word-break: break-all;">${verificationLink}</span>
+            </p>
+            <p style="color: #666; font-size: 12px;">
+              Questo link scadrà tra 24 ore. Se non hai richiesto questo commento, puoi ignorare questa email.
+            </p>
+          </div>
+        `,
+      }
+      
+      console.log('Sending email via Resend API...')
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${RESEND_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          from: 'FacevoiceAI <onboarding@resend.dev>', // Usa dominio di test Resend (cambia con il tuo dominio verificato in produzione)
-          to: email,
-          subject: 'Verifica il tuo commento su FacevoiceAI',
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #333;">Ciao ${userName}!</h2>
-              <p>Grazie per aver lasciato un commento su FacevoiceAI.</p>
-              <p>Per pubblicare il tuo commento, clicca sul link qui sotto per verificare la tua email:</p>
-              <p style="text-align: center; margin: 30px 0;">
-                <a href="${verificationLink}" 
-                   style="background-color: #007bff; color: white; padding: 12px 24px; 
-                          text-decoration: none; border-radius: 5px; display: inline-block;">
-                  Verifica Email
-                </a>
-              </p>
-              <p style="color: #666; font-size: 12px;">
-                Questo link scadrà tra 24 ore. Se non hai richiesto questo commento, puoi ignorare questa email.
-              </p>
-            </div>
-          `,
-        }),
+        body: JSON.stringify(emailData),
       })
       
+      const responseData = await response.json().catch(() => ({}))
+      console.log('Resend API response status:', response.status)
+      console.log('Resend API response data:', JSON.stringify(responseData, null, 2))
+      
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        console.error('Resend API error:', error)
-        throw new Error('Failed to send email')
+        console.error('Resend API error:', responseData)
+        throw new Error(`Failed to send email: ${responseData.message || response.statusText}`)
       }
       
+      console.log('Email sent successfully!')
       return true
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending verification email:', error)
+      console.error('Error details:', error.message, error.stack)
       throw error
     }
   } else {
     // In sviluppo, logga l'email invece di inviarla
-    console.log('=== EMAIL DI VERIFICA (SVILUPPO) ===')
+    console.log('=== EMAIL DI VERIFICA (SVILUPPO - RESEND_API_KEY non configurato) ===')
     console.log('To:', email)
     console.log('Link:', verificationLink)
     console.log('=====================================')
@@ -156,7 +173,7 @@ export async function POST(
     }
 
     // Determina se l'email è stata inviata o solo loggata
-    const emailSent = !!process.env.RESEND_API_KEY
+    const hasResendKey = !!process.env.RESEND_API_KEY
     
     return NextResponse.json({ 
       success: true, 
@@ -164,9 +181,12 @@ export async function POST(
       comments: count || 0,
       message: emailSent 
         ? 'Commento salvato! Controlla la tua email per verificarlo e pubblicarlo.'
+        : hasResendKey
+        ? `Commento salvato! Errore nell'invio email: ${emailError?.message || 'Sconosciuto'}. Link di verifica: ${verificationLink}`
         : 'Commento salvato! Controlla i log del server per il link di verifica.',
       requiresVerification: true,
-      verificationLink: emailSent ? undefined : verificationLink // Invia il link se email non configurata
+      verificationLink: emailSent ? undefined : verificationLink, // Invia il link se email non inviata
+      emailError: emailError ? emailError.message : undefined
     })
   } catch (error) {
     console.error('Error in POST /api/tools/[id]/comment:', error)
