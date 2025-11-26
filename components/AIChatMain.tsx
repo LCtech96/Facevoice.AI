@@ -438,18 +438,6 @@ export default function AIChatMain({
               )}
             </motion.button>
           )}
-          <button
-            onClick={handleShareChat}
-            disabled={isMigrating}
-            className="p-2 text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors disabled:opacity-50"
-            title="Share chat"
-          >
-            {isMigrating ? (
-              <div className="w-4 h-4 border-2 border-[var(--text-primary)] border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <Share2 className="w-4 h-4" />
-            )}
-          </button>
         </div>
       </div>
 
