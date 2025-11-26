@@ -172,12 +172,10 @@ export default function SharedChatPage() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                messages: updatedChat.messages
-                  .filter((m) => m.role !== 'system')
-                  .map((m) => ({
-                    role: m.role,
-                    content: m.content,
-                  })),
+                messages: updatedChat.messages.map((m) => ({
+                  role: m.role,
+                  content: m.content,
+                })),
                 model: selectedModel,
               }),
             })
