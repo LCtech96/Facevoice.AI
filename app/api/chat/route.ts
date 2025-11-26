@@ -15,6 +15,94 @@ const GROQ_MODELS: Record<string, string> = {
   'llama-3.1-70b-versatile': 'llama-3.3-70b-versatile', // Redirect to newer version
 }
 
+// Gemini model mapping
+const GEMINI_MODELS: Record<string, string> = {
+  'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-pro': 'gemini-2.5-pro',
+  'gemini-1.5-pro': 'gemini-1.5-pro',
+  'gemini-1.5-flash': 'gemini-1.5-flash',
+  'gemini-1.5-flash-lite': 'gemini-1.5-flash-lite',
+  // Legacy aliases
+  'gemini-pro': 'gemini-1.5-pro',
+  'gemini-flash': 'gemini-1.5-flash',
+}
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
+
+// Helper function to call Gemini API
+async function callGeminiAPI(messages: any[], model: string, systemMessage?: string) {
+  const geminiModel = GEMINI_MODELS[model] || model
+  
+  // Convert messages to Gemini format
+  const contents: any[] = []
+  
+  // Add system message as first user message if provided
+  if (systemMessage) {
+    contents.push({
+      role: 'user',
+      parts: [{ text: systemMessage }],
+    })
+    contents.push({
+      role: 'model',
+      parts: [{ text: 'Understood. I will follow these guidelines.' }],
+    })
+  }
+  
+  // Convert chat messages to Gemini format
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      // Skip system messages, already handled above
+      continue
+    }
+    
+    const role = msg.role === 'assistant' ? 'model' : 'user'
+    contents.push({
+      role,
+      parts: [{ text: String(msg.content).trim() }],
+    })
+  }
+  
+  const response = await fetch(
+    `${GEMINI_API_URL}/models/${geminiModel}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': GEMINI_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 8192,
+        },
+      }),
+    }
+  )
+  
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.error?.message || `Gemini API error: ${response.status}`)
+  }
+  
+  const data = await response.json()
+  
+  if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
+    throw new Error('Invalid response from Gemini API')
+  }
+  
+  return {
+    message: data.candidates[0].content.parts[0].text,
+    model: data.modelVersion || geminiModel,
+    usage: data.usageMetadata ? {
+      prompt_tokens: data.usageMetadata.promptTokenCount,
+      completion_tokens: data.usageMetadata.candidatesTokenCount,
+      total_tokens: data.usageMetadata.totalTokenCount,
+    } : undefined,
+  }
+}
+
 export async function POST(req: NextRequest) {
   let requestBody: any
   try {
@@ -116,7 +204,37 @@ ${availableTools}
       ? validMessages
       : [systemMessage, ...validMessages]
 
-    // Use Groq-compatible model name
+    // Check if it's a Gemini model
+    const isGeminiModel = model.startsWith('gemini-') || GEMINI_MODELS[model]
+    
+    if (isGeminiModel) {
+      if (!GEMINI_API_KEY) {
+        return NextResponse.json(
+          { error: 'Gemini API key not configured. Please set GEMINI_API_KEY or GOOGLE_API_KEY environment variable.' },
+          { status: 500 }
+        )
+      }
+      
+      console.log('Sending request to Gemini with model:', model, 'Messages count:', messagesWithSystem.length)
+      
+      // Extract system message if present
+      const systemMsg = messagesWithSystem.find(m => m.role === 'system')
+      const userMessages = messagesWithSystem.filter(m => m.role !== 'system')
+      
+      const result = await callGeminiAPI(
+        userMessages,
+        model,
+        systemMsg?.content as string
+      )
+      
+      return NextResponse.json({
+        message: result.message,
+        model: result.model,
+        usage: result.usage,
+      })
+    }
+    
+    // Use Groq for other models
     const groqModel = GROQ_MODELS[model] || 'llama-3.1-8b-instant'
 
     console.log('Sending request to Groq with model:', groqModel, 'Messages count:', messagesWithSystem.length)

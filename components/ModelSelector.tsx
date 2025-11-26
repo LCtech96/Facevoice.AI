@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
 
 interface ModelSelectorProps {
   selectedModel: string
@@ -9,30 +10,75 @@ interface ModelSelectorProps {
   onClose: () => void
 }
 
+// Note: Server-side API keys (GEMINI_API_KEY) are not accessible from client
+// We'll show Gemini models as available and let the server handle errors gracefully
+const getApiKeyStatus = () => {
+  return {
+    hasGroqKey: true, // Groq is available by default
+    hasGeminiKey: true, // Assume available - server will return error if not configured
+    hasOpenAIKey: false,
+    hasAnthropicKey: false,
+  }
+}
+
 // Available models (Groq models are available by default)
-const AVAILABLE_MODELS = [
-  {
-    id: 'llama-3.1-8b-instant',
-    name: 'Llama 3.1 8B',
-    provider: 'Groq',
-    description: 'Fast and efficient model - Best for quick responses',
-    available: true,
-  },
-  {
-    id: 'llama-3.3-70b-versatile',
-    name: 'Llama 3.3 70B',
-    provider: 'Groq',
-    description: 'Most intelligent model - Advanced reasoning and capabilities',
-    available: true,
-  },
-  {
-    id: 'mixtral-8x7b-32768',
-    name: 'Mixtral 8x7B',
-    provider: 'Groq',
-    description: 'High-quality model with extended context window',
-    available: true,
-  },
-]
+const getAvailableModels = () => {
+  const apiKeys = getApiKeyStatus()
+  
+  const models = [
+    {
+      id: 'llama-3.1-8b-instant',
+      name: 'Llama 3.1 8B',
+      provider: 'Groq',
+      description: 'Fast and efficient model - Best for quick responses',
+      available: apiKeys.hasGroqKey,
+    },
+    {
+      id: 'llama-3.3-70b-versatile',
+      name: 'Llama 3.3 70B',
+      provider: 'Groq',
+      description: 'Most intelligent model - Advanced reasoning and capabilities',
+      available: apiKeys.hasGroqKey,
+    },
+    {
+      id: 'mixtral-8x7b-32768',
+      name: 'Mixtral 8x7B',
+      provider: 'Groq',
+      description: 'High-quality model with extended context window',
+      available: apiKeys.hasGroqKey,
+    },
+    {
+      id: 'gemini-2.5-flash',
+      name: 'Gemini 2.5 Flash',
+      provider: 'Google',
+      description: 'Latest fast model with multimodal capabilities (text, images, video)',
+      available: apiKeys.hasGeminiKey,
+    },
+    {
+      id: 'gemini-2.5-pro',
+      name: 'Gemini 2.5 Pro',
+      provider: 'Google',
+      description: 'Most advanced Gemini model with extended reasoning',
+      available: apiKeys.hasGeminiKey,
+    },
+    {
+      id: 'gemini-1.5-pro',
+      name: 'Gemini 1.5 Pro',
+      provider: 'Google',
+      description: 'Advanced model with 1M token context window',
+      available: apiKeys.hasGeminiKey,
+    },
+    {
+      id: 'gemini-1.5-flash',
+      name: 'Gemini 1.5 Flash',
+      provider: 'Google',
+      description: 'Fast and efficient with multimodal support',
+      available: apiKeys.hasGeminiKey,
+    },
+  ]
+  
+  return models
+}
 
 // Coming soon models (require API keys)
 const COMING_SOON_MODELS = [
@@ -78,13 +124,6 @@ const COMING_SOON_MODELS = [
     description: 'Fast and efficient model',
     requiresKey: 'Anthropic API Key',
   },
-  {
-    id: 'gemini-pro',
-    name: 'Gemini Pro',
-    provider: 'Google',
-    description: 'Google\'s advanced AI model',
-    requiresKey: 'Google API Key',
-  },
 ]
 
 export default function ModelSelector({
@@ -92,6 +131,16 @@ export default function ModelSelector({
   onSelect,
   onClose,
 }: ModelSelectorProps) {
+  const [availableModels, setAvailableModels] = useState(getAvailableModels())
+  
+  useEffect(() => {
+    // Check API key availability on mount
+    setAvailableModels(getAvailableModels())
+  }, [])
+  
+  const models = availableModels.filter(m => m.available)
+  const comingSoon = availableModels.filter(m => !m.available)
+  
   return (
     <AnimatePresence>
       <motion.div
@@ -125,7 +174,7 @@ export default function ModelSelector({
               Available Models
             </h3>
             <div className="space-y-2 mb-6">
-              {AVAILABLE_MODELS.map((model) => (
+              {models.length > 0 ? models.map((model) => (
                 <button
                   key={model.id}
                   onClick={() => {
@@ -171,15 +220,21 @@ export default function ModelSelector({
                     </div>
                   </div>
                 </button>
-              ))}
+              )) : (
+                <p className="text-sm text-[var(--text-secondary)] text-center py-4">
+                  No models available. Please configure API keys.
+                </p>
+              )}
             </div>
 
             {/* Coming Soon Models */}
-            <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase mb-3">
-              Coming Soon
-            </h3>
-            <div className="space-y-2">
-              {COMING_SOON_MODELS.map((model) => (
+            {comingSoon.length > 0 && (
+              <>
+                <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase mb-3">
+                  Coming Soon
+                </h3>
+                <div className="space-y-2">
+                  {comingSoon.map((model) => (
                 <div
                   key={model.id}
                   className="w-full p-4 text-left rounded-xl border bg-[var(--card-background)] border-[var(--border-color)] opacity-60 cursor-not-allowed"
@@ -203,8 +258,10 @@ export default function ModelSelector({
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </motion.div>
       </motion.div>
