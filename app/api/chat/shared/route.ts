@@ -29,7 +29,23 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const shareLink = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/ai-chat/shared/${chat.id}`
+    // Ottieni l'URL base dalla richiesta o dalla variabile d'ambiente
+    const getBaseUrl = () => {
+      // In produzione, usa la variabile d'ambiente o l'header della richiesta
+      if (process.env.NEXT_PUBLIC_BASE_URL) {
+        return process.env.NEXT_PUBLIC_BASE_URL
+      }
+      // Se non c'è la variabile d'ambiente, prova a costruire l'URL dall'header
+      const host = req.headers.get('host')
+      const protocol = req.headers.get('x-forwarded-proto') || 'https'
+      if (host) {
+        return `${protocol}://${host}`
+      }
+      // Fallback per sviluppo locale
+      return 'http://localhost:3000'
+    }
+    
+    const shareLink = `${getBaseUrl()}/ai-chat/shared/${chat.id}`
 
     return NextResponse.json({
       success: true,

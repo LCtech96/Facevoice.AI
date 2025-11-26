@@ -246,7 +246,8 @@ export default function AIChatMain({
         console.log(`Verified: ${verifyData.chat?.messages?.length || 0} messages in database`)
       }
       
-      const link = data.chat.shareLink || `${window.location.origin}/ai-chat/shared/${data.chat.id}`
+      // Usa sempre window.location.origin per ottenere l'URL corretto (locale o produzione)
+      const link = `${window.location.origin}/ai-chat/shared/${data.chat.id}`
       console.log('Share link:', link)
       setShareLink(link)
       setShowShareDialog(true)
