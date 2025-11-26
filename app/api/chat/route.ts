@@ -153,8 +153,8 @@ async function callClaudeAPI(messages: any[], model: string, systemMessage?: str
   })
   
   // Extract text from response
-  const textContent = response.content.find((block: any) => block.type === 'text')
-  const message = textContent?.text || ''
+  const textBlock = response.content.find((block: any): block is { type: 'text'; text: string } => block.type === 'text')
+  const message = textBlock?.text || ''
   
   if (!message) {
     throw new Error('Invalid response from Claude API')
