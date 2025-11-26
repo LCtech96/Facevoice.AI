@@ -147,12 +147,21 @@ export async function POST(
     const verificationLink = `${baseUrl}/api/tools/comments/verify?token=${verificationToken}`
 
     // Invia email di verifica
+    let emailSent = false
+    let emailError: any = null
     try {
       await sendVerificationEmail(userEmail.trim(), verificationLink, finalUserName)
-    } catch (emailError) {
-      console.error('Error sending verification email:', emailError)
+      emailSent = true
+      console.log('✅ Verification email sent successfully to:', userEmail.trim())
+    } catch (err) {
+      emailError = err
+      console.error('❌ Error sending verification email:', err)
+      // Logga il link di verifica nella console per sviluppo
+      console.log('=== LINK DI VERIFICA (fallback) ===')
+      console.log('Email:', userEmail.trim())
+      console.log('Link:', verificationLink)
+      console.log('=====================================')
       // Non fallire se l'email non viene inviata, ma logga l'errore
-      // In produzione potresti voler gestire questo diversamente
     }
 
     // Conta solo i commenti verificati
