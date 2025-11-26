@@ -27,6 +27,7 @@ interface AIChatMainProps {
   onChatUpdate: (chat: Chat) => void
   onCreateGroupChat: (name: string) => Promise<void>
   onDeleteChat?: () => void
+  isSharedChat?: boolean // Indica se è una chat condivisa
 }
 
 export default function AIChatMain({
@@ -38,6 +39,7 @@ export default function AIChatMain({
   onChatUpdate,
   onCreateGroupChat,
   onDeleteChat,
+  isSharedChat = false,
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -69,8 +71,10 @@ export default function AIChatMain({
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
 
+    // Per le chat condivise, usa sempre un ID temporaneo
+    // La pagina shared gestirà il salvataggio nel database
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: isSharedChat ? `temp-${Date.now()}` : Date.now().toString(),
       role: 'user',
       content: input.trim(),
       timestamp: new Date(),
@@ -88,12 +92,7 @@ export default function AIChatMain({
       }
       onChatUpdate(updatedChat)
     } else {
-      // Usa un ID temporaneo per i messaggi nuovi
-      const tempUserMessage: Message = {
-        ...userMessage,
-        id: `temp-${Date.now()}`,
-      }
-      const updatedMessages = [...chat.messages, tempUserMessage]
+      const updatedMessages = [...chat.messages, userMessage]
       updatedChat = {
         ...chat,
         messages: updatedMessages,
@@ -104,6 +103,12 @@ export default function AIChatMain({
     }
 
     setInput('')
+    
+    // Per le chat condivise, non gestire l'AI qui - la pagina shared lo farà
+    if (isSharedChat) {
+      return
+    }
+
     setIsLoading(true)
 
     try {

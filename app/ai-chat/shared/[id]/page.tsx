@@ -86,9 +86,15 @@ export default function SharedChatPage() {
   useEffect(() => {
     if (!chatId) return
 
+    console.log('Setting up Realtime subscription for chat:', chatId)
+
     // Crea un canale per questa chat
     const channel = supabase
-      .channel(`shared-chat-${chatId}`)
+      .channel(`shared-chat-${chatId}`, {
+        config: {
+          broadcast: { self: true },
+        },
+      })
       .on(
         'postgres_changes',
         {
@@ -98,6 +104,7 @@ export default function SharedChatPage() {
           filter: `chat_id=eq.${chatId}`,
         },
         (payload) => {
+          console.log('Realtime event received:', payload)
           const newMessage = payload.new as any
           const message: Message = {
             id: newMessage.id,
@@ -106,12 +113,23 @@ export default function SharedChatPage() {
             timestamp: new Date(newMessage.created_at),
           }
 
+          console.log('New message from Realtime:', {
+            id: message.id,
+            role: message.role,
+            content: message.content.substring(0, 50) + '...',
+          })
+
           setChat((prev) => {
-            if (!prev) return prev
-            // Evita duplicati
-            if (prev.messages.some((m) => m.id === message.id)) {
+            if (!prev) {
+              console.warn('Received Realtime message but chat is null')
               return prev
             }
+            // Evita duplicati
+            if (prev.messages.some((m) => m.id === message.id)) {
+              console.log('Message already exists, skipping:', message.id)
+              return prev
+            }
+            console.log('Adding new message to chat. Total messages:', prev.messages.length + 1)
             return {
               ...prev,
               messages: [...prev.messages, message],
@@ -120,11 +138,19 @@ export default function SharedChatPage() {
           })
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        console.log('Realtime subscription status:', status)
+        if (status === 'SUBSCRIBED') {
+          console.log('✓ Successfully subscribed to Realtime updates')
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('✗ Realtime subscription error')
+        }
+      })
 
     channelRef.current = channel
 
     return () => {
+      console.log('Unsubscribing from Realtime channel')
       channel.unsubscribe()
     }
   }, [chatId, supabase])
@@ -132,16 +158,23 @@ export default function SharedChatPage() {
   const isProcessingRef = useRef(false)
 
   const updateChat = async (updatedChat: Chat) => {
-    if (isProcessingRef.current) return
-    
+    // Aggiorna sempre lo stato locale immediatamente per feedback visivo
     setChat(updatedChat)
     
-    // Se c'è un nuovo messaggio utente, invialo al server
+    // Se c'è un nuovo messaggio utente con ID temporaneo, salvalo nel database
     const lastMessage = updatedChat.messages[updatedChat.messages.length - 1]
-    if (lastMessage && lastMessage.role === 'user' && (lastMessage.id.startsWith('temp-') || lastMessage.id.match(/^\d+$/))) {
+    if (lastMessage && lastMessage.role === 'user' && lastMessage.id.startsWith('temp-')) {
+      // Evita di processare lo stesso messaggio due volte
+      if (isProcessingRef.current) {
+        console.log('Already processing a message, skipping duplicate')
+        return
+      }
+      
       isProcessingRef.current = true
-      // Salva il messaggio utente nel database
+      console.log('Processing new user message:', lastMessage.content)
+      
       try {
+        // Salva il messaggio utente nel database
         const response = await fetch(`/api/chat/shared/${chatId}/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -153,51 +186,79 @@ export default function SharedChatPage() {
           }),
         })
 
-        if (response.ok) {
-          const data = await response.json()
-          // Aggiorna l'ID del messaggio con quello del server
-          setChat((prev) => {
-            if (!prev) return prev
-            return {
-              ...prev,
-              messages: prev.messages.map((msg) =>
-                msg.id === lastMessage.id ? { ...msg, id: data.message.id } : msg
-              ),
-            }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          console.error('Error saving user message:', errorData)
+          isProcessingRef.current = false
+          return
+        }
+
+        const data = await response.json()
+        console.log('User message saved to database:', data.message.id)
+        
+        // Aggiorna l'ID del messaggio con quello del server
+        setChat((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            messages: prev.messages.map((msg) =>
+              msg.id === lastMessage.id ? { ...msg, id: data.message.id } : msg
+            ),
+          }
+        })
+
+        // Prepara i messaggi per l'AI (solo user e assistant, escludi system)
+        const messagesForAI = updatedChat.messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({
+            role: m.role,
+            content: m.content,
+          }))
+
+        // Invia il messaggio all'AI
+        console.log('Sending to AI, messages count:', messagesForAI.length)
+        try {
+          const aiResponse = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: messagesForAI,
+              model: selectedModel,
+            }),
           })
 
-          // Invia il messaggio all'AI
-          try {
-            const aiResponse = await fetch('/api/chat', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: updatedChat.messages.map((m) => ({
-                  role: m.role,
-                  content: m.content,
-                })),
-                model: selectedModel,
-              }),
-            })
-
-            if (aiResponse.ok) {
-              const aiData = await aiResponse.json()
-              
-              // Salva la risposta dell'AI nel database
-              await fetch(`/api/chat/shared/${chatId}/message`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  role: 'assistant',
-                  content: aiData.message,
-                  userId: null,
-                  userName: 'AI',
-                }),
-              })
-            }
-          } catch (error) {
-            console.error('Error getting AI response:', error)
+          if (!aiResponse.ok) {
+            const errorData = await aiResponse.json().catch(() => ({}))
+            console.error('Error getting AI response:', errorData)
+            isProcessingRef.current = false
+            return
           }
+
+          const aiData = await aiResponse.json()
+          console.log('AI response received:', aiData.message.substring(0, 50) + '...')
+          
+          // Salva la risposta dell'AI nel database
+          // Questo triggerà Realtime e tutti vedranno il messaggio
+          const aiMessageResponse = await fetch(`/api/chat/shared/${chatId}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              role: 'assistant',
+              content: aiData.message,
+              userId: null,
+              userName: 'AI',
+            }),
+          })
+
+          if (aiMessageResponse.ok) {
+            const aiMessageData = await aiMessageResponse.json()
+            console.log('AI response saved to database:', aiMessageData.message.id)
+          } else {
+            const errorData = await aiMessageResponse.json().catch(() => ({}))
+            console.error('Error saving AI response:', errorData)
+          }
+        } catch (error) {
+          console.error('Error getting AI response:', error)
         }
       } catch (error) {
         console.error('Error saving message:', error)
@@ -244,6 +305,7 @@ export default function SharedChatPage() {
           }}
           onChatUpdate={updateChat}
           onCreateGroupChat={async () => {}}
+          isSharedChat={true}
         />
 
         {isModelSelectorOpen && (
