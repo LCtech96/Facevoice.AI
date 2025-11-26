@@ -19,6 +19,10 @@ export default function ParticleBackground() {
   const isMouseMovingRef = useRef(false)
   const mouseXRef = useRef(0)
   const mouseYRef = useRef(0)
+  // Traccia la velocità del mouse per far seguire le particelle - devono essere a livello componente
+  const lastMouseXRef = useRef(0)
+  const lastMouseYRef = useRef(0)
+  const lastMouseTimeRef = useRef(Date.now())
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -62,11 +66,6 @@ export default function ParticleBackground() {
     for (let i = 0; i < maxParticles; i++) {
       particlesRef.current.push(createParticle())
     }
-
-    // Traccia la velocità del mouse per far seguire le particelle
-    const lastMouseXRef = useRef(0)
-    const lastMouseYRef = useRef(0)
-    const lastMouseTimeRef = useRef(Date.now())
 
     // Genera particelle quando il mouse si muove
     const generateParticles = (event: MouseEvent, mouseVx: number, mouseVy: number) => {
