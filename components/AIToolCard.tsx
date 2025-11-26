@@ -48,12 +48,24 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   const loadComments = async () => {
     setLoadingComments(true)
     try {
-      const response = await fetch(`/api/tools/${tool.id}/comments`)
+      console.log('Loading comments for tool:', tool.id)
+      const response = await fetch(`/api/tools/${tool.id}/comments`, {
+        cache: 'no-store', // Forza il fetch senza cache
+        headers: {
+          'Cache-Control': 'no-cache',
+        }
+      })
+      
+      console.log('Comments API response status:', response.status)
+      
       if (response.ok) {
         const data = await response.json()
+        console.log('Comments loaded:', data.comments?.length || 0, 'comments')
+        console.log('Comments data:', data.comments)
         setComments(data.comments || [])
       } else {
-        console.error('Failed to load comments:', response.status, response.statusText)
+        const errorText = await response.text()
+        console.error('Failed to load comments:', response.status, response.statusText, errorText)
         // Mostra array vuoto invece di errore per non bloccare l'UI
         setComments([])
       }
@@ -77,9 +89,19 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   // Ricarica i commenti quando la sezione viene aperta
   useEffect(() => {
     if (showComments) {
+      console.log('Comments section opened, loading comments for tool:', tool.id)
       loadComments()
     }
   }, [showComments, tool.id])
+  
+  // Ricarica i commenti anche quando il componente viene montato se la sezione è già aperta
+  useEffect(() => {
+    if (showComments && comments.length === 0 && !loadingComments) {
+      console.log('Comments section is open but empty, reloading...')
+      loadComments()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault()
