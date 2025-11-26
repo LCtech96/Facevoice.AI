@@ -558,7 +558,7 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
         <p className="text-coral-red/70">Scopri e interagisci con i migliori strumenti AI</p>
       </motion.div>
 
-      {tools.map((tool, index) => (
+      {(filteredTools.length > 0 || searchQuery || categoryFilter ? filteredTools : tools).map((tool, index) => (
         <motion.div
           key={tool.id}
           id={`tool-${tool.id}`}
