@@ -416,14 +416,14 @@ export default function AIChatMain({
           )}
           
           {/* Bottone Chat Condivisa - In alto a destra */}
-          {!isSharedChat && chat && (
+          {!isSharedChat && (
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleShareChat}
-              disabled={isMigrating}
+              disabled={isMigrating || !chat}
               className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent-blue)] text-white rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Condividi Chat"
+              title={chat ? "Condividi Chat" : "Crea una chat per condividere"}
             >
               {isMigrating ? (
                 <>
