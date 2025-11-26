@@ -79,7 +79,7 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
     if (showComments) {
       loadComments()
     }
-  }, [showComments])
+  }, [showComments, tool.id])
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault()

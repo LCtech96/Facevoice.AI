@@ -68,29 +68,46 @@ export async function GET(request: NextRequest) {
       console.warn('Could not update comment count:', updateError)
     }
 
-    // Determina l'URL base per il redirect
+    // Determina l'URL base per il redirect - usa sempre il dominio principale in produzione
     const getBaseUrl = () => {
+      // Priorità 1: Variabile d'ambiente esplicita
       if (process.env.NEXT_PUBLIC_BASE_URL) {
         return process.env.NEXT_PUBLIC_BASE_URL
       }
+      
+      // Priorità 2: Dominio principale (facevoice.ai) in produzione
       const host = request.headers.get('host') || ''
       if (host.includes('facevoice.ai')) {
         const protocol = request.headers.get('x-forwarded-proto') || 'https'
-        return `${protocol}://${host.includes('www.') ? host : 'www.' + host.replace('www.', '')}`
+        // Assicurati di usare www.facevoice.ai
+        if (host.includes('www.')) {
+          return `${protocol}://${host}`
+        } else {
+          return `${protocol}://www.facevoice.ai`
+        }
       }
-      const origin = request.headers.get('origin')
-      if (origin && !origin.includes('vercel.app')) {
-        return origin
-      }
+      
+      // Priorità 3: In produzione, usa sempre facevoice.ai
       if (process.env.NODE_ENV === 'production') {
         return 'https://www.facevoice.ai'
       }
+      
+      // Fallback: localhost in sviluppo
       return 'http://localhost:3000'
     }
     
     const baseUrl = getBaseUrl()
+    const redirectUrl = `${baseUrl}/home?tool=${comment.tool_id}&verified=success`
+    
+    console.log('Comment verified successfully:', {
+      commentId: comment.id,
+      toolId: comment.tool_id,
+      redirectUrl,
+      baseUrl
+    })
+    
     // Reindirizza alla pagina home con il tool evidenziato
-    return NextResponse.redirect(new URL(`/home?tool=${comment.tool_id}&verified=success`, baseUrl))
+    return NextResponse.redirect(redirectUrl)
   } catch (error) {
     console.error('Error in GET /api/tools/comments/verify:', error)
     return NextResponse.redirect(new URL('/home?error=internal-error', request.url))

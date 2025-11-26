@@ -12,6 +12,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    console.log('Fetching comments for tool:', params.id)
+    
     const { data, error } = await supabase
       .from('tool_comments')
       .select('id, user_id, user_name, comment, created_at')
@@ -27,6 +29,8 @@ export async function GET(
       return NextResponse.json({ comments: [] })
     }
 
+    console.log(`Found ${data?.length || 0} verified comments for tool ${params.id}`)
+    
     return NextResponse.json({ comments: data || [] })
   } catch (error) {
     console.error('Error in GET /api/tools/[id]/comments:', error)
