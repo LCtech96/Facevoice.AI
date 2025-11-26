@@ -26,14 +26,30 @@ export default function SharedChatPage() {
 
     const loadChat = async () => {
       try {
+        console.log('Loading shared chat with ID:', chatId)
         const response = await fetch(`/api/chat/shared?id=${chatId}`)
+        
+        if (!response.ok) {
+          console.error('Failed to fetch chat:', response.status, response.statusText)
+          setIsLoading(false)
+          return
+        }
+        
         const data = await response.json()
+        console.log('API response:', data)
 
         if (data.success && data.chat) {
+          console.log(`Chat loaded: ${data.chat.title}`)
+          console.log(`Messages count: ${data.chat.messages?.length || 0}`)
+          
+          if (data.chat.messages && data.chat.messages.length > 0) {
+            console.log('Sample message:', data.chat.messages[0])
+          }
+          
           const loadedChat: Chat = {
             id: data.chat.id,
             title: data.chat.title,
-            messages: data.chat.messages.map((msg: any) => ({
+            messages: (data.chat.messages || []).map((msg: any) => ({
               id: msg.id,
               role: msg.role as 'user' | 'assistant',
               content: msg.content,
@@ -43,8 +59,18 @@ export default function SharedChatPage() {
             updatedAt: new Date(data.chat.updated_at),
             model: data.chat.model || selectedModel,
           }
+          
+          console.log('Final loaded chat:', {
+            id: loadedChat.id,
+            title: loadedChat.title,
+            messagesCount: loadedChat.messages.length,
+            firstMessage: loadedChat.messages[0]?.content?.substring(0, 50),
+          })
+          
           setChat(loadedChat)
           setSelectedModel(loadedChat.model || selectedModel)
+        } else {
+          console.error('Failed to load chat - no success or chat data:', data)
         }
       } catch (error) {
         console.error('Error loading shared chat:', error)
