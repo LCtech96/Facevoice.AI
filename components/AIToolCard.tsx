@@ -19,7 +19,10 @@ interface AIToolCardProps {
 export default function AIToolCard({ tool, user, onLike, onComment, onShare, isHighlighted = false }: AIToolCardProps) {
   const [showComments, setShowComments] = useState(false)
   const [commentText, setCommentText] = useState('')
-  const [comments, setComments] = useState<Array<{ id: string; userId: string; userName: string; text: string; createdAt: string }>>([])
+  const [userEmail, setUserEmail] = useState('')
+  const [showEmailInput, setShowEmailInput] = useState(false)
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
+  const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; comment: string; created_at: string }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
 
   const loadComments = async () => {
@@ -29,9 +32,14 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
       if (response.ok) {
         const data = await response.json()
         setComments(data.comments || [])
+      } else {
+        console.error('Failed to load comments:', response.status, response.statusText)
+        // Mostra array vuoto invece di errore per non bloccare l'UI
+        setComments([])
       }
     } catch (error) {
       console.error('Error loading comments:', error)
+      setComments([])
     } finally {
       setLoadingComments(false)
     }
@@ -49,26 +57,29 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
     e.preventDefault()
     if (!commentText.trim()) return
 
+    // Se l'email non è stata inserita, mostra il campo email
+    if (!userEmail.trim() && !user?.email) {
+      setShowEmailInput(true)
+      return
+    }
+
     const commentToSubmit = commentText.trim()
-    setCommentText('')
+    const emailToUse = user?.email || userEmail.trim()
+    
+    // Validazione email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(emailToUse)) {
+      alert('Inserisci un\'email valida')
+      return
+    }
     
     // Genera nome utente
     const userName = user 
       ? (user.email?.split('@')[0] || user.user_metadata?.full_name || 'User')
-      : 'Guest'
+      : emailToUse.split('@')[0] || 'Guest'
     const userId = user?.id || `anon_${Date.now()}`
     
-    // Aggiungi commento localmente immediatamente
-    const newComment = {
-      id: Date.now().toString(),
-      userId: userId,
-      userName: userName,
-      text: commentToSubmit,
-      createdAt: new Date().toISOString(),
-    }
-    setComments((prev) => [newComment, ...prev])
-    
-    // Invia al server
+    // Invia al server (non aggiungere localmente, aspetta verifica)
     try {
       const response = await fetch(`/api/tools/${tool.id}/comment`, {
         method: 'POST',
@@ -77,18 +88,36 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
           userId: userId,
           comment: commentToSubmit,
           userName: userName,
+          userEmail: emailToUse,
         }),
       })
       
       if (response.ok) {
         const data = await response.json()
-        // Aggiorna contatore commenti
-        onComment(commentToSubmit)
-        // Ricarica commenti per avere l'ID corretto dal server
-        loadComments()
+        
+        // Mostra messaggio di verifica
+        if (data.requiresVerification) {
+          setVerificationMessage(data.message || 'Commento salvato! Controlla la tua email per verificarlo.')
+          setCommentText('')
+          setUserEmail('')
+          setShowEmailInput(false)
+          // Ricarica commenti dopo un po' (il commento non sarà visibile finché non verificato)
+          setTimeout(() => {
+            loadComments()
+          }, 2000)
+        } else {
+          // Se non richiede verifica (utente autenticato), aggiorna subito
+          onComment(commentToSubmit)
+          loadComments()
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        console.error('Failed to submit comment:', response.status, errorData)
+        alert(errorData.error || 'Errore nel salvare il commento. Riprova più tardi.')
       }
     } catch (error) {
       console.error('Error submitting comment:', error)
+      alert('Errore nel salvare il commento. Riprova più tardi.')
     }
   }
 
@@ -119,9 +148,9 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
               className="object-cover"
               unoptimized
               onError={(e) => {
-                // Fallback se l'immagine non carica
+                // Fallback a placeholder se l'immagine non carica
                 const target = e.target as HTMLImageElement
-                target.style.display = 'none'
+                target.src = '/team/placeholder.svg'
               }}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
@@ -224,33 +253,63 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
                   comments.map((comment) => (
                     <div key={comment.id} className="glass p-3 rounded-xl">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-coral-red text-sm">{comment.userName}</span>
+                        <span className="font-semibold text-coral-red text-sm">{comment.user_name}</span>
                         <span className="text-xs text-coral-red/50">
-                          {new Date(comment.createdAt).toLocaleDateString('it-IT')}
+                          {new Date(comment.created_at).toLocaleDateString('it-IT')}
                         </span>
                       </div>
-                      <p className="text-coral-red/80 text-sm">{comment.text}</p>
+                      <p className="text-coral-red/80 text-sm">{comment.comment}</p>
                     </div>
                   ))
                 )}
               </div>
 
-              {/* Comment Form - Ora disponibile per tutti */}
-              <form onSubmit={handleSubmitComment} className="flex gap-2">
-                <input
-                  type="text"
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder={user ? "Scrivi una recensione..." : "Scrivi una recensione (come Guest)..."}
-                  className="flex-1 px-4 py-2 glass rounded-xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
-                />
-                <button
-                  type="submit"
-                  disabled={!commentText.trim()}
-                  className="px-4 py-2 glass-strong rounded-xl text-coral-red hover:border-coral-red border-2 border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Send className="w-5 h-5" />
-                </button>
+              {/* Messaggio di verifica */}
+              {verificationMessage && (
+                <div className="mb-4 p-3 glass rounded-xl border-2 border-coral-red/50">
+                  <p className="text-sm text-coral-red">{verificationMessage}</p>
+                  <button
+                    onClick={() => setVerificationMessage(null)}
+                    className="mt-2 text-xs text-coral-red/70 hover:text-coral-red underline"
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+
+              {/* Comment Form - Richiede email per verifica */}
+              <form onSubmit={handleSubmitComment} className="space-y-2">
+                {showEmailInput && !user?.email && (
+                  <input
+                    type="email"
+                    value={userEmail}
+                    onChange={(e) => setUserEmail(e.target.value)}
+                    placeholder="Inserisci la tua email per verificare il commento"
+                    className="w-full px-4 py-2 glass rounded-xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
+                    required
+                  />
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder={user ? "Scrivi una recensione..." : "Scrivi una recensione..."}
+                    className="flex-1 px-4 py-2 glass rounded-xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!commentText.trim() || (showEmailInput && !userEmail.trim())}
+                    className="px-4 py-2 glass-strong rounded-xl text-coral-red hover:border-coral-red border-2 border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </div>
+                {!user && (
+                  <p className="text-xs text-coral-red/60">
+                    * Sarà richiesta la verifica email per pubblicare il commento
+                  </p>
+                )}
               </form>
             </motion.div>
           )}

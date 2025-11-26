@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Groq from 'groq-sdk'
+import Anthropic from '@anthropic-ai/sdk'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY || '',
+})
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || '',
 })
 
 // Groq model mapping - Updated with currently available models
@@ -27,8 +32,22 @@ const GEMINI_MODELS: Record<string, string> = {
   'gemini-flash': 'gemini-1.5-flash',
 }
 
+// Claude (Anthropic) model mapping
+const CLAUDE_MODELS: Record<string, string> = {
+  'claude-3-opus': 'claude-3-opus-20240229',
+  'claude-3-sonnet': 'claude-3-sonnet-20240229',
+  'claude-3-haiku': 'claude-3-haiku-20240307',
+  'claude-3-5-sonnet': 'claude-3-5-sonnet-20241022',
+  'claude-3-5-haiku': 'claude-3-5-haiku-20241022',
+  // Legacy aliases
+  'claude-opus': 'claude-3-opus-20240229',
+  'claude-sonnet': 'claude-3-sonnet-20240229',
+  'claude-haiku': 'claude-3-haiku-20240307',
+}
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || ''
 
 // Helper function to call Gemini API
 async function callGeminiAPI(messages: any[], model: string, systemMessage?: string) {
@@ -99,6 +118,55 @@ async function callGeminiAPI(messages: any[], model: string, systemMessage?: str
       prompt_tokens: data.usageMetadata.promptTokenCount,
       completion_tokens: data.usageMetadata.candidatesTokenCount,
       total_tokens: data.usageMetadata.totalTokenCount,
+    } : undefined,
+  }
+}
+
+// Helper function to call Claude (Anthropic) API
+async function callClaudeAPI(messages: any[], model: string, systemMessage?: string) {
+  const claudeModel = CLAUDE_MODELS[model] || model
+  
+  // Convert messages to Claude format
+  // Claude uses a different format: array of Message objects
+  const claudeMessages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  
+  // Filter out system messages and convert to Claude format
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      continue // System messages are handled separately
+    }
+    
+    // Claude only supports 'user' and 'assistant' roles
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      claudeMessages.push({
+        role: msg.role as 'user' | 'assistant',
+        content: String(msg.content).trim(),
+      })
+    }
+  }
+  
+  const response = await anthropic.messages.create({
+    model: claudeModel,
+    max_tokens: 4096,
+    system: systemMessage || 'You are a helpful AI assistant.',
+    messages: claudeMessages,
+  })
+  
+  // Extract text from response
+  const textContent = response.content.find((block: any) => block.type === 'text')
+  const message = textContent?.text || ''
+  
+  if (!message) {
+    throw new Error('Invalid response from Claude API')
+  }
+  
+  return {
+    message,
+    model: response.model,
+    usage: response.usage ? {
+      prompt_tokens: response.usage.input_tokens,
+      completion_tokens: response.usage.output_tokens,
+      total_tokens: response.usage.input_tokens + response.usage.output_tokens,
     } : undefined,
   }
 }
@@ -204,6 +272,36 @@ ${availableTools}
       ? validMessages
       : [systemMessage, ...validMessages]
 
+    // Check if it's a Claude model
+    const isClaudeModel = model.startsWith('claude-') || CLAUDE_MODELS[model]
+    
+    if (isClaudeModel) {
+      if (!ANTHROPIC_API_KEY) {
+        return NextResponse.json(
+          { error: 'Anthropic API key not configured. Please set ANTHROPIC_API_KEY environment variable.' },
+          { status: 500 }
+        )
+      }
+      
+      console.log('Sending request to Claude with model:', model, 'Messages count:', messagesWithSystem.length)
+      
+      // Extract system message if present
+      const systemMsg = messagesWithSystem.find(m => m.role === 'system')
+      const userMessages = messagesWithSystem.filter(m => m.role !== 'system')
+      
+      const result = await callClaudeAPI(
+        userMessages,
+        model,
+        systemMsg?.content as string
+      )
+      
+      return NextResponse.json({
+        message: result.message,
+        model: result.model,
+        usage: result.usage,
+      })
+    }
+    
     // Check if it's a Gemini model
     const isGeminiModel = model.startsWith('gemini-') || GEMINI_MODELS[model]
     

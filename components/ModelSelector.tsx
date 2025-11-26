@@ -17,7 +17,7 @@ const getApiKeyStatus = () => {
     hasGroqKey: true, // Groq is available by default
     hasGeminiKey: true, // Assume available - server will return error if not configured
     hasOpenAIKey: false,
-    hasAnthropicKey: false,
+    hasAnthropicKey: true, // Assume available - server will return error if not configured
   }
 }
 
@@ -75,6 +75,27 @@ const getAvailableModels = () => {
       description: 'Fast and efficient with multimodal support',
       available: apiKeys.hasGeminiKey,
     },
+    {
+      id: 'claude-3-opus',
+      name: 'Claude 3 Opus',
+      provider: 'Anthropic',
+      description: 'Most powerful model - Best for complex reasoning',
+      available: apiKeys.hasAnthropicKey,
+    },
+    {
+      id: 'claude-3-sonnet',
+      name: 'Claude 3 Sonnet',
+      provider: 'Anthropic',
+      description: 'Balanced performance and speed - Great for most tasks',
+      available: apiKeys.hasAnthropicKey,
+    },
+    {
+      id: 'claude-3-haiku',
+      name: 'Claude 3 Haiku',
+      provider: 'Anthropic',
+      description: 'Fast and efficient - Best for quick responses',
+      available: apiKeys.hasAnthropicKey,
+    },
   ]
   
   return models
@@ -102,27 +123,6 @@ const COMING_SOON_MODELS = [
     provider: 'OpenAI',
     description: 'Fast and cost-effective model',
     requiresKey: 'OpenAI API Key',
-  },
-  {
-    id: 'claude-3-opus',
-    name: 'Claude 3 Opus',
-    provider: 'Anthropic',
-    description: 'Anthropic\'s most powerful model',
-    requiresKey: 'Anthropic API Key',
-  },
-  {
-    id: 'claude-3-sonnet',
-    name: 'Claude 3 Sonnet',
-    provider: 'Anthropic',
-    description: 'Balanced performance and speed',
-    requiresKey: 'Anthropic API Key',
-  },
-  {
-    id: 'claude-3-haiku',
-    name: 'Claude 3 Haiku',
-    provider: 'Anthropic',
-    description: 'Fast and efficient model',
-    requiresKey: 'Anthropic API Key',
   },
 ]
 

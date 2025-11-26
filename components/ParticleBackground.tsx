@@ -25,6 +25,7 @@ export default function ParticleBackground() {
   const lastMouseXRef = useRef(0)
   const lastMouseYRef = useRef(0)
   const lastMouseTimeRef = useRef(Date.now())
+  const autoGenerateIntervalRef = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -42,11 +43,11 @@ export default function ParticleBackground() {
     window.addEventListener('resize', resizeCanvas)
 
     // Configurazione particelle
-    const maxParticles = 200 // Più particelle per un effetto più espanso
+    const maxParticles = 300 // Più particelle per un effetto più espanso
     const minRadius = 0.5 // Particelle molto piccole
     const maxRadius = 1.5
     const minSpeed = 0.1 // Movimento molto lento
-    const maxSpeed = 0.3
+    const maxSpeed = 0.6
 
     // Colori per le particelle (bianco/grigio chiaro)
     const colors = ['rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.4)', 'rgba(255, 255, 255, 0.3)', 'rgba(200, 200, 200, 0.5)']
@@ -79,7 +80,7 @@ export default function ParticleBackground() {
       
       // Crea più particelle se il mouse si muove velocemente, meno se si muove lentamente
       // Minimo 3 particelle, massimo 10
-      const baseParticles = 3
+      const baseParticles = 6
       const speedMultiplier = Math.min(mouseSpeed / 50, 1) // Normalizza la velocità
       const particlesToCreate = baseParticles + Math.floor(speedMultiplier * 7)
       
@@ -159,6 +160,59 @@ export default function ParticleBackground() {
 
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseout', handleMouseOut)
+
+    // Rileva se siamo su un dispositivo touch (mobile)
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+
+    // Genera particelle automatiche su mobile (dove non c'è mouse)
+    const generateAutoParticles = () => {
+      if (!isTouchDevice) return // Solo su mobile
+      
+      // Genera 2-4 particelle ogni 800-1500ms in posizioni casuali
+      const particlesToCreate = Math.floor(Math.random() * 3) + 2 // 2-4 particelle
+      
+      for (let i = 0; i < particlesToCreate; i++) {
+        // Posizione casuale sullo schermo
+        const x = Math.random() * canvas.width
+        const y = Math.random() * canvas.height
+        
+        // Velocità casuale ma lenta
+        const speed = Math.random() * maxSpeed + minSpeed
+        const angle = Math.random() * Math.PI * 2 // Direzione casuale
+        
+        const particle: Particle = {
+          x,
+          y,
+          radius: Math.random() * (maxRadius - minRadius) + minRadius,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          opacity: Math.random() * 0.4 + 0.3, // Opacità media per particelle auto-generate
+          createdAt: Date.now(),
+          initialOpacity: Math.random() * 0.4 + 0.3,
+        }
+        particlesRef.current.push(particle)
+      }
+    }
+
+    // Avvia generazione automatica su mobile
+    if (isTouchDevice) {
+      // Genera particelle iniziali extra su mobile
+      for (let i = 0; i < 50; i++) {
+        particlesRef.current.push(createParticle())
+      }
+      
+      // Genera particelle automaticamente ogni 800-1500ms
+      const scheduleNextGeneration = () => {
+        const delay = Math.random() * 700 + 800 // 800-1500ms
+        autoGenerateIntervalRef.current = setTimeout(() => {
+          generateAutoParticles()
+          scheduleNextGeneration() // Programma la prossima generazione
+        }, delay)
+      }
+      
+      scheduleNextGeneration()
+    }
 
     // Anima le particelle
     const animate = () => {
@@ -243,6 +297,9 @@ export default function ParticleBackground() {
       window.removeEventListener('mouseout', handleMouseOut)
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (autoGenerateIntervalRef.current) {
+        clearTimeout(autoGenerateIntervalRef.current)
       }
     }
   }, [])
