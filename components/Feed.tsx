@@ -425,6 +425,105 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
     loadTools()
   }, [user, highlightedToolId])
 
+  // Filtro semantico intelligente per i tools
+  useEffect(() => {
+    if (!searchQuery && !categoryFilter) {
+      setFilteredTools([])
+      return
+    }
+
+    const query = searchQuery.toLowerCase().trim()
+    const filtered = tools.filter((tool) => {
+      // Filtro per categoria se specificato
+      if (categoryFilter && !tool.category.toLowerCase().includes(categoryFilter.toLowerCase())) {
+        return false
+      }
+
+      // Se non c'è query di ricerca, mostra tutti i tools della categoria
+      if (!query) {
+        return true
+      }
+
+      // Matching semantico basato su keywords e funzionalità
+      const toolText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
+      
+      // Keywords per matching semantico
+      const semanticMatches: { [key: string]: string[] } = {
+        // Voce e Audio
+        'voce': ['elevenlabs', 'murf', 'speechify', 'descript'],
+        'audio': ['elevenlabs', 'murf', 'speechify', 'descript', 'otter'],
+        'modificare voce': ['elevenlabs', 'murf'],
+        'text to speech': ['elevenlabs', 'murf', 'speechify'],
+        'tts': ['elevenlabs', 'murf', 'speechify'],
+        'sintesi vocale': ['elevenlabs', 'murf', 'speechify'],
+        'clonare voce': ['elevenlabs', 'murf'],
+        
+        // Video
+        'video': ['higgsfield', 'runway', 'domoai', 'synthesia', 'pika', 'google-veo', 'kling-ai', 'descript', 'opus-clip'],
+        'generare video': ['higgsfield', 'runway', 'domoai', 'pika', 'google-veo', 'kling-ai'],
+        'creare video': ['higgsfield', 'runway', 'domoai', 'pika', 'google-veo', 'kling-ai'],
+        'video ai': ['higgsfield', 'runway', 'domoai', 'synthesia', 'pika', 'google-veo', 'kling-ai'],
+        'animazione': ['domoai', 'runway', 'higgsfield'],
+        'vfx': ['runway', 'higgsfield'],
+        'avatar': ['synthesia'],
+        'avatar parlanti': ['synthesia'],
+        
+        // Immagini
+        'immagine': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram', 'khroma', 'vrew'],
+        'generare immagini': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
+        'creare immagini': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
+        'immagini ai': ['midjourney', 'dall-e', 'leonardo', 'stable-diffusion', 'ideogram'],
+        'art': ['midjourney', 'leonardo', 'stable-diffusion'],
+        'arte': ['midjourney', 'leonardo', 'stable-diffusion'],
+        
+        // Design e UI
+        'design': ['figma', 'khroma', 'leonardo'],
+        'ui': ['figma', 'khroma'],
+        'ux': ['figma', 'khroma'],
+        'colori': ['khroma'],
+        'palette': ['khroma'],
+        
+        // Contenuti e Testo
+        'testo': ['chatgpt', 'claude', 'gemini', 'notion', 'otter'],
+        'scrivere': ['chatgpt', 'claude', 'gemini', 'notion'],
+        'contenuti': ['chatgpt', 'claude', 'gemini', 'notion'],
+        'chat': ['chatgpt', 'claude', 'gemini'],
+        'assistente': ['chatgpt', 'claude', 'gemini'],
+        
+        // Produttività
+        'nota': ['notion'],
+        'note': ['notion'],
+        'organizzare': ['notion'],
+        'trascrizione': ['otter', 'descript'],
+        'transcribe': ['otter', 'descript'],
+      }
+
+      // Controlla matching semantico
+      for (const [keyword, toolIds] of Object.entries(semanticMatches)) {
+        if (query.includes(keyword)) {
+          if (toolIds.includes(tool.id)) {
+            return true
+          }
+        }
+      }
+
+      // Matching diretto su nome, descrizione e categoria
+      if (toolText.includes(query)) {
+        return true
+      }
+
+      // Matching parziale su singole parole
+      const queryWords = query.split(/\s+/)
+      const matchesAllWords = queryWords.every(word => 
+        word.length > 2 && toolText.includes(word)
+      )
+      
+      return matchesAllWords
+    })
+
+    setFilteredTools(filtered)
+  }, [tools, searchQuery, categoryFilter])
+
   const checkUserLike = async (toolId: string, userId: string): Promise<boolean> => {
     try {
       const response = await fetch(`/api/tools/${toolId}/like?userId=${userId}`)
