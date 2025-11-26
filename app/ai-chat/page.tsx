@@ -299,6 +299,17 @@ export default function AIChatPage() {
             }
           }}
           onDeleteChat={currentChat ? () => deleteChat(currentChat.id) : undefined}
+          onShowProjects={() => {
+            // Apri la sidebar se è chiusa per mostrare i progetti
+            if (!sidebarOpen) {
+              setSidebarOpen(true)
+            }
+          }}
+          onCreateProject={() => {
+            // Apri la sidebar e mostra il form per creare un progetto
+            setSidebarOpen(true)
+            // Il form per creare progetti è già nella sidebar
+          }}
         />
 
         {isModelSelectorOpen && (

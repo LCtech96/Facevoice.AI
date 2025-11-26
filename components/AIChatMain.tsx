@@ -15,6 +15,8 @@ import {
   X,
   Copy,
   Check,
+  FolderPlus,
+  Users,
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
 
@@ -28,6 +30,8 @@ interface AIChatMainProps {
   onCreateGroupChat: (name: string) => Promise<void>
   onDeleteChat?: () => void
   isSharedChat?: boolean // Indica se è una chat condivisa
+  onCreateProject?: () => void // Callback per creare progetti
+  onShowProjects?: () => void // Callback per mostrare progetti
 }
 
 export default function AIChatMain({
@@ -40,6 +44,8 @@ export default function AIChatMain({
   onCreateGroupChat,
   onDeleteChat,
   isSharedChat = false,
+  onCreateProject,
+  onShowProjects,
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -381,7 +387,7 @@ export default function AIChatMain({
             className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
           >
             <Settings className="w-4 h-4" />
-            <span>{getModelName()}</span>
+            <span className="hidden sm:inline">{getModelName()}</span>
           </button>
           {onDeleteChat && (
             <button
@@ -397,6 +403,41 @@ export default function AIChatMain({
           <div className="text-sm text-[var(--text-secondary)] hidden sm:block">
             {chat.title}
           </div>
+          
+          {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
+          {!isSharedChat && (onCreateProject || onShowProjects) && (
+            <button
+              onClick={onShowProjects || onCreateProject}
+              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              title="Progetti e Impostazioni"
+            >
+              <FolderPlus className="w-4 h-4" />
+            </button>
+          )}
+          
+          {/* Bottone Chat Condivisa - In alto a destra */}
+          {!isSharedChat && chat && (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleShareChat}
+              disabled={isMigrating}
+              className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent-blue)] text-white rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Condividi Chat"
+            >
+              {isMigrating ? (
+                <>
+                  <Sparkles className="w-4 h-4 animate-pulse" />
+                  <span className="hidden sm:inline">Condividendo...</span>
+                </>
+              ) : (
+                <>
+                  <Users className="w-4 h-4" />
+                  <span className="hidden sm:inline">Condividi</span>
+                </>
+              )}
+            </motion.button>
+          )}
           <button
             onClick={handleShareChat}
             disabled={isMigrating}

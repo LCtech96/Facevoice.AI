@@ -6,6 +6,7 @@ import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
 import Team from '@/components/Team'
+import Services from '@/components/Services'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -68,6 +69,11 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero">
         <Hero />
+      </div>
+      
+      {/* Services Section */}
+      <div id="services">
+        <Services />
       </div>
       
       {/* Team Section */}
