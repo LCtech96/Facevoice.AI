@@ -10,6 +10,8 @@ interface Particle {
   vy: number
   color: string
   opacity: number
+  createdAt: number // Timestamp di creazione
+  initialOpacity: number // Opacità iniziale per calcolare il fade
 }
 
 export default function ParticleBackground() {
@@ -50,7 +52,8 @@ export default function ParticleBackground() {
     const colors = ['rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.4)', 'rgba(255, 255, 255, 0.3)', 'rgba(200, 200, 200, 0.5)']
 
     // Crea particelle iniziali distribuite su tutta l'area
-    const createParticle = (x?: number, y?: number): Particle => {
+    const createParticle = (x?: number, y?: number, isMouseGenerated: boolean = false): Particle => {
+      const opacity = isMouseGenerated ? (Math.random() * 0.4 + 0.5) : (Math.random() * 0.5 + 0.3)
       return {
         x: x ?? Math.random() * canvas.width,
         y: y ?? Math.random() * canvas.height,
@@ -58,7 +61,9 @@ export default function ParticleBackground() {
         vx: (Math.random() - 0.5) * maxSpeed,
         vy: (Math.random() - 0.5) * maxSpeed,
         color: colors[Math.floor(Math.random() * colors.length)],
-        opacity: Math.random() * 0.5 + 0.3,
+        opacity: opacity,
+        createdAt: Date.now(),
+        initialOpacity: opacity,
       }
     }
 
@@ -67,7 +72,7 @@ export default function ParticleBackground() {
       particlesRef.current.push(createParticle())
     }
 
-    // Genera particelle quando il mouse si muove
+    // Genera particelle quando il mouse si muove - PRODUZIONE INFINITA
     const generateParticles = (event: MouseEvent, mouseVx: number, mouseVy: number) => {
       // Calcola la velocità del mouse per determinare quante particelle creare
       const mouseSpeed = Math.sqrt(mouseVx * mouseVx + mouseVy * mouseVy)
@@ -78,9 +83,8 @@ export default function ParticleBackground() {
       const speedMultiplier = Math.min(mouseSpeed / 50, 1) // Normalizza la velocità
       const particlesToCreate = baseParticles + Math.floor(speedMultiplier * 7)
       
-      const maxTotalParticles = maxParticles * 2.5 // Limite più alto per permettere più particelle
-
-      for (let i = 0; i < particlesToCreate && particlesRef.current.length < maxTotalParticles; i++) {
+      // RIMOSSO IL LIMITE - Produzione infinita di particelle
+      for (let i = 0; i < particlesToCreate; i++) {
         // Aggiungi un po' di randomicità alla posizione per evitare che siano tutte sovrapposte
         const offsetX = (Math.random() - 0.5) * 15
         const offsetY = (Math.random() - 0.5) * 15
@@ -93,6 +97,7 @@ export default function ParticleBackground() {
         const followStrength = Math.min(mouseSpeed / 100, 0.8) // Più forte se il mouse si muove velocemente
         const randomComponent = 0.3 // Componente casuale ridotta per seguire meglio
         
+        const initialOpacity = Math.random() * 0.4 + 0.5
         const particle: Particle = {
           x: event.x + offsetX,
           y: event.y + offsetY,
@@ -101,7 +106,9 @@ export default function ParticleBackground() {
           vx: directionX * followStrength * maxSpeed + (Math.random() - 0.5) * maxSpeed * randomComponent,
           vy: directionY * followStrength * maxSpeed + (Math.random() - 0.5) * maxSpeed * randomComponent,
           color: colors[Math.floor(Math.random() * colors.length)],
-          opacity: Math.random() * 0.4 + 0.5, // Opacità più alta per le particelle generate dal mouse
+          opacity: initialOpacity,
+          createdAt: Date.now(), // Timestamp di creazione
+          initialOpacity: initialOpacity,
         }
         particlesRef.current.push(particle)
       }
@@ -177,24 +184,41 @@ export default function ParticleBackground() {
         particle.x = Math.max(0, Math.min(canvas.width, particle.x))
         particle.y = Math.max(0, Math.min(canvas.height, particle.y))
 
-        // Riduci gradualmente la dimensione e l'opacità
-        // Le particelle generate dal mouse (opacità iniziale > 0.4) scompaiono più velocemente
-        const isMouseGenerated = particle.opacity > 0.4
+        // Calcola l'età della particella in millisecondi
+        const age = Date.now() - particle.createdAt
+        const isMouseGenerated = particle.initialOpacity > 0.4
+
         if (isMouseGenerated) {
-          // Particelle generate dal mouse: scompaiono più velocemente per creare un flusso continuo
-          particle.radius *= 0.995
-          particle.opacity *= 0.992
+          // Particelle generate dal mouse: iniziano a scomparire dopo 3 secondi (3000ms)
+          if (age > 3000) {
+            // Dopo 3 secondi, inizia il fade out
+            const fadeStartTime = 3000
+            const fadeDuration = 2000 // 2 secondi per scomparire completamente
+            const fadeProgress = Math.min((age - fadeStartTime) / fadeDuration, 1)
+            
+            // Riduci opacità e dimensione durante il fade
+            particle.opacity = particle.initialOpacity * (1 - fadeProgress)
+            particle.radius *= 0.998
+          } else {
+            // Nei primi 3 secondi, mantieni opacità e dimensione stabili
+            particle.opacity = particle.initialOpacity
+          }
         } else {
           // Particelle base: scompaiono più lentamente
           particle.radius *= 0.999
           particle.opacity *= 0.998
         }
 
-        // Rimuovi particelle troppo piccole o troppo trasparenti
-        if (particle.radius <= 0.1 || particle.opacity <= 0.05) {
+        // Rimuovi particelle troppo piccole, troppo trasparenti o troppo vecchie
+        const shouldRemove = 
+          particle.radius <= 0.1 || 
+          particle.opacity <= 0.05 ||
+          (isMouseGenerated && age > 5000) // Rimuovi dopo 5 secondi totali (3s + 2s fade)
+
+        if (shouldRemove) {
           particlesRef.current.splice(i, 1)
           // Mantieni sempre un numero minimo di particelle base
-          if (particlesRef.current.length < maxParticles) {
+          if (!isMouseGenerated && particlesRef.current.length < maxParticles) {
             particlesRef.current.push(createParticle())
           }
           continue
