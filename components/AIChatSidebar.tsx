@@ -95,8 +95,17 @@ export default function AIChatSidebar({
     <motion.div
       initial={{ x: -300 }}
       animate={{ x: 0 }}
-      className="w-64 bg-[var(--background-secondary)] border-r border-[var(--border-color)] flex flex-col h-full"
+      className="w-64 bg-[var(--background-secondary)] border-r border-[var(--border-color)] flex flex-col h-full relative"
     >
+      {/* Close Button - Top Right */}
+      <button
+        onClick={onToggleSidebar}
+        className="absolute top-3 right-3 z-50 p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-hover)] rounded-lg transition-colors"
+        title="Close sidebar"
+      >
+        <X className="w-4 h-4" />
+      </button>
+
       {/* Header */}
       <div className="p-3 border-b border-[var(--border-color)]">
         <button
