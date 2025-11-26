@@ -319,6 +319,46 @@ export default function AIChatMain({
   if (!chat) {
     return (
       <div className="flex-1 flex flex-col bg-[var(--background)]">
+        {/* Header - Always visible */}
+        <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onModelSelectorToggle}
+              className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">{getModelName()}</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
+            {!isSharedChat && (onCreateProject || onShowProjects) && (
+              <button
+                onClick={onShowProjects || onCreateProject}
+                className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+                title="Progetti e Impostazioni"
+              >
+                <FolderPlus className="w-4 h-4" />
+              </button>
+            )}
+            
+            {/* Bottone Chat Condivisa - In alto a destra (disabilitato quando non c'è chat) */}
+            {!isSharedChat && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleShareChat}
+                disabled={true}
+                className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent-blue)]/50 text-white rounded-lg text-sm cursor-not-allowed opacity-50"
+                title="Crea una chat per condividere"
+              >
+                <Users className="w-4 h-4" />
+                <span className="hidden sm:inline">Condividi</span>
+              </motion.button>
+            )}
+          </div>
+        </div>
+        
         {/* Empty State - ChatGPT Style */}
         <div className="flex-1 flex flex-col items-center justify-center px-4 max-w-3xl mx-auto w-full">
           <div className="mb-8">

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Linkedin, Mail, Instagram, Twitter, Briefcase } from 'lucide-react'
 import Image from 'next/image'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-client'
 
 interface TeamMember {
   id: number
@@ -75,6 +75,7 @@ function TeamMemberImage({ member }: { member: TeamMember }) {
 export default function Team() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
+  const supabase = createClient()
 
   useEffect(() => {
     fetchTeamMembers()
