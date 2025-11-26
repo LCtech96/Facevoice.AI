@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Image from 'next/image'
 import { Heart, MessageCircle, Share2, Send, X } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 import type { AITool } from './Feed'
 import type { User } from '@supabase/supabase-js'
 
@@ -17,6 +18,7 @@ interface AIToolCardProps {
 }
 
 export default function AIToolCard({ tool, user, onLike, onComment, onShare, isHighlighted = false }: AIToolCardProps) {
+  const searchParams = useSearchParams()
   const [showComments, setShowComments] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [userEmail, setUserEmail] = useState('')
@@ -24,6 +26,24 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
   const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; comment: string; created_at: string }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
+
+  // Controlla se siamo tornati dalla verifica e apri/ricarica i commenti
+  useEffect(() => {
+    const verified = searchParams.get('verified')
+    const toolId = searchParams.get('tool')
+    
+    if (verified === 'success' && toolId === tool.id) {
+      // Apri la sezione commenti e ricarica
+      setShowComments(true)
+      loadComments()
+      // Mostra messaggio di successo
+      setVerificationMessage('Commento verificato con successo! Il tuo commento è ora visibile.')
+      // Rimuovi il messaggio dopo 5 secondi
+      setTimeout(() => {
+        setVerificationMessage(null)
+      }, 5000)
+    }
+  }, [searchParams, tool.id])
 
   const loadComments = async () => {
     setLoadingComments(true)
@@ -49,9 +69,17 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
     const newShowComments = !showComments
     setShowComments(newShowComments)
     if (newShowComments) {
+      // Ricarica sempre i commenti quando si apre la sezione
       loadComments()
     }
   }
+
+  // Ricarica i commenti quando la sezione viene aperta
+  useEffect(() => {
+    if (showComments) {
+      loadComments()
+    }
+  }, [showComments])
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault()
