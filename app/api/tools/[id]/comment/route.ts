@@ -140,37 +140,24 @@ export async function POST(
       }, { status: 500 })
     }
 
-    // Genera link di verifica - usa sempre il dominio principale in produzione
+    // Genera link di verifica - FORZA sempre www.facevoice.ai in produzione
     const getBaseUrl = () => {
-      // Priorità 1: Variabile d'ambiente esplicita
+      // In produzione, usa SEMPRE facevoice.ai, indipendentemente da dove arriva la richiesta
+      // Questo evita problemi con domini Vercel temporanei
       if (process.env.NEXT_PUBLIC_BASE_URL) {
-        return process.env.NEXT_PUBLIC_BASE_URL
+        // Se è configurato, usalo solo se non contiene vercel.app
+        if (!process.env.NEXT_PUBLIC_BASE_URL.includes('vercel.app')) {
+          return process.env.NEXT_PUBLIC_BASE_URL
+        }
       }
       
-      // Priorità 2: Dominio principale (facevoice.ai) in produzione
-      const host = request.headers.get('host') || ''
-      if (host.includes('facevoice.ai')) {
-        const protocol = request.headers.get('x-forwarded-proto') || 'https'
-        return `${protocol}://${host.includes('www.') ? host : 'www.' + host.replace('www.', '')}`
-      }
-      
-      // Priorità 3: Origin dalla richiesta (ma evita domini Vercel di default)
-      const origin = request.headers.get('origin')
-      if (origin && !origin.includes('vercel.app') && !origin.includes('localhost')) {
-        return origin
-      }
-      
-      // Priorità 4: Costruisci da host (ma evita vercel.app)
-      if (host && !host.includes('vercel.app') && !host.includes('localhost')) {
-        const protocol = request.headers.get('x-forwarded-proto') || 'https'
-        return `${protocol}://${host}`
-      }
-      
-      // Fallback: usa facevoice.ai in produzione, localhost in sviluppo
-      if (process.env.NODE_ENV === 'production') {
+      // In produzione, usa SEMPRE www.facevoice.ai
+      // Controlla se siamo in produzione (Vercel imposta automaticamente VERCEL=1)
+      if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
         return 'https://www.facevoice.ai'
       }
       
+      // In sviluppo locale
       return 'http://localhost:3000'
     }
     
@@ -180,6 +167,8 @@ export async function POST(
     console.log('Generated verification link:', verificationLink)
     console.log('Base URL source:', {
       NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL,
+      VERCEL: process.env.VERCEL,
+      NODE_ENV: process.env.NODE_ENV,
       host: request.headers.get('host'),
       origin: request.headers.get('origin'),
       finalBaseUrl: baseUrl
