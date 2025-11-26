@@ -96,7 +96,7 @@ export default function GroupChatPage() {
               <h2 className="text-lg font-bold text-coral-red-light">Group Chat</h2>
             </div>
             <p className="text-sm text-coral-red/70">
-              Your personal ChatGPT memory is never used in group chats.
+              Chat condivisa in tempo reale con i tuoi colleghi.
             </p>
           </div>
 
@@ -124,9 +124,9 @@ export default function GroupChatPage() {
           </div>
 
           <div className="p-3 glass rounded-lg">
-            <p className="text-xs text-coral-red/50 mb-1">ChatGPT can make mistakes.</p>
+            <p className="text-xs text-coral-red/50 mb-1">L'AI può commettere errori.</p>
             <p className="text-xs text-coral-red/50">
-              Make sure to verify important information.
+              Verifica sempre le informazioni importanti.
             </p>
           </div>
 

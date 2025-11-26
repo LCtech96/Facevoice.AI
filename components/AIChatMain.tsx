@@ -177,9 +177,12 @@ export default function AIChatMain({
     return selectedModel
   }
 
+  const [isMigrating, setIsMigrating] = useState(false)
+
   const handleShareChat = async () => {
     if (!chat) return
     
+    setIsMigrating(true)
     try {
       // Crea una chat condivisa nel database
       const res = await fetch('/api/chat/shared', {
@@ -191,29 +194,67 @@ export default function AIChatMain({
         }),
       })
       const data = await res.json()
-      if (data.success && data.chat) {
-        // Migra i messaggi esistenti alla chat condivisa
-        if (chat.messages.length > 0) {
-          for (const message of chat.messages) {
-            await fetch(`/api/chat/shared/${data.chat.id}/message`, {
+      
+      if (!data.success || !data.chat) {
+        console.error('Failed to create shared chat:', data)
+        alert('Errore nella creazione della chat condivisa. Riprova.')
+        setIsMigrating(false)
+        return
+      }
+
+      console.log('Created shared chat:', data.chat.id)
+      
+      // Migra i messaggi esistenti alla chat condivisa
+      if (chat.messages.length > 0) {
+        console.log(`Migrating ${chat.messages.length} messages to shared chat ${data.chat.id}...`)
+        
+        // Migra sequenzialmente per evitare problemi
+        for (let i = 0; i < chat.messages.length; i++) {
+          const message = chat.messages[i]
+          try {
+            const response = await fetch(`/api/chat/shared/${data.chat.id}/message`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 role: message.role,
                 content: message.content,
                 userId: 'migrated',
-                userName: 'System',
+                userName: message.role === 'user' ? 'User' : 'AI',
               }),
             })
+            
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}))
+              console.error(`Error migrating message ${i + 1}/${chat.messages.length}:`, errorData)
+            } else {
+              const result = await response.json()
+              console.log(`✓ Migrated message ${i + 1}/${chat.messages.length} (ID: ${result.message?.id})`)
+            }
+            
+            // Piccolo delay per evitare rate limiting
+            await new Promise(resolve => setTimeout(resolve, 50))
+          } catch (error) {
+            console.error(`Error migrating message ${i + 1}:`, error)
           }
         }
         
-        const link = data.chat.shareLink || `${window.location.origin}/ai-chat/shared/${data.chat.id}`
-        setShareLink(link)
-        setShowShareDialog(true)
+        console.log('✓ Migration completed')
+        
+        // Verifica che i messaggi siano stati salvati
+        const verifyRes = await fetch(`/api/chat/shared?id=${data.chat.id}`)
+        const verifyData = await verifyRes.json()
+        console.log(`Verified: ${verifyData.chat?.messages?.length || 0} messages in database`)
       }
+      
+      const link = data.chat.shareLink || `${window.location.origin}/ai-chat/shared/${data.chat.id}`
+      console.log('Share link:', link)
+      setShareLink(link)
+      setShowShareDialog(true)
+      setIsMigrating(false)
     } catch (error) {
       console.error('Error creating share link:', error)
+      alert('Errore nella creazione della chat condivisa. Controlla la console per i dettagli.')
+      setIsMigrating(false)
     }
   }
 
@@ -352,10 +393,15 @@ export default function AIChatMain({
           </div>
           <button
             onClick={handleShareChat}
-            className="p-2 text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+            disabled={isMigrating}
+            className="p-2 text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors disabled:opacity-50"
             title="Share chat"
           >
-            <Share2 className="w-4 h-4" />
+            {isMigrating ? (
+              <div className="w-4 h-4 border-2 border-[var(--text-primary)] border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Share2 className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
