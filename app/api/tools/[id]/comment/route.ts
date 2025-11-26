@@ -19,32 +19,32 @@ async function sendVerificationEmail(email: string, verificationLink: string, us
   
   if (RESEND_API_KEY) {
     try {
-      const emailData = {
-        from: 'onboarding@resend.dev', // Dominio di test Resend
-        to: email,
-        subject: 'Verifica il tuo commento su FacevoiceAI',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #333;">Ciao ${userName}!</h2>
-            <p>Grazie per aver lasciato un commento su FacevoiceAI.</p>
-            <p>Per pubblicare il tuo commento, clicca sul link qui sotto per verificare la tua email:</p>
-            <p style="text-align: center; margin: 30px 0;">
-              <a href="${verificationLink}" 
-                 style="background-color: #007bff; color: white; padding: 12px 24px; 
-                        text-decoration: none; border-radius: 5px; display: inline-block;">
-                Verifica Email
-              </a>
-            </p>
-            <p style="color: #666; font-size: 12px;">
-              Oppure copia e incolla questo link nel browser:<br>
-              <span style="word-break: break-all;">${verificationLink}</span>
-            </p>
-            <p style="color: #666; font-size: 12px;">
-              Questo link scadrà tra 24 ore. Se non hai richiesto questo commento, puoi ignorare questa email.
-            </p>
-          </div>
-        `,
-      }
+        const emailData = {
+            from: 'FacevoiceAI <noreply@facevoice.ai>', // Cambiato da onboarding@resend.dev
+            to: email,
+            subject: 'Verifica il tuo commento su FacevoiceAI',
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #333;">Ciao ${userName}!</h2>
+                <p>Grazie per aver lasciato un commento su FacevoiceAI.</p>
+                <p>Per pubblicare il tuo commento, clicca sul link qui sotto per verificare la tua email:</p>
+                <p style="text-align: center; margin: 30px 0;">
+                  <a href="${verificationLink}" 
+                     style="background-color: #007bff; color: white; padding: 12px 24px; 
+                            text-decoration: none; border-radius: 5px; display: inline-block;">
+                    Verifica Email
+                  </a>
+                </p>
+                <p style="color: #666; font-size: 12px;">
+                  Oppure copia e incolla questo link nel browser:<br>
+                  <span style="word-break: break-all;">${verificationLink}</span>
+                </p>
+                <p style="color: #666; font-size: 12px;">
+                  Questo link scadrà tra 24 ore. Se non hai richiesto questo commento, puoi ignorare questa email.
+                </p>
+              </div>
+            `,
+          }
       
       console.log('Sending email via Resend API...')
       const response = await fetch('https://api.resend.com/emails', {
