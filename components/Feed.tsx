@@ -31,7 +31,7 @@ const mockAITools: AITool[] = [
     id: 'higgsfield',
     name: 'Higgsfield',
     description: 'Video e Generazione Stile con estensione Chrome. Crea video AI, effetti VFX, animazioni e contenuti visivi professionali.',
-    coverImage: 'https://higgsfield.ai/og-image.png',
+    coverImage: '/team/Higgsfield.png',
     category: 'Video & Stile',
     link: 'https://chromewebstore.google.com/detail/higgsfield-instant/oohmjaflbknghbidmaoonmchcodhmkgj',
     likes: 342,
