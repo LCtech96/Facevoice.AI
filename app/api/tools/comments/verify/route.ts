@@ -68,8 +68,29 @@ export async function GET(request: NextRequest) {
       console.warn('Could not update comment count:', updateError)
     }
 
+    // Determina l'URL base per il redirect
+    const getBaseUrl = () => {
+      if (process.env.NEXT_PUBLIC_BASE_URL) {
+        return process.env.NEXT_PUBLIC_BASE_URL
+      }
+      const host = request.headers.get('host') || ''
+      if (host.includes('facevoice.ai')) {
+        const protocol = request.headers.get('x-forwarded-proto') || 'https'
+        return `${protocol}://${host.includes('www.') ? host : 'www.' + host.replace('www.', '')}`
+      }
+      const origin = request.headers.get('origin')
+      if (origin && !origin.includes('vercel.app')) {
+        return origin
+      }
+      if (process.env.NODE_ENV === 'production') {
+        return 'https://www.facevoice.ai'
+      }
+      return 'http://localhost:3000'
+    }
+    
+    const baseUrl = getBaseUrl()
     // Reindirizza alla pagina home con il tool evidenziato
-    return NextResponse.redirect(new URL(`/home?tool=${comment.tool_id}&verified=success`, request.url))
+    return NextResponse.redirect(new URL(`/home?tool=${comment.tool_id}&verified=success`, baseUrl))
   } catch (error) {
     console.error('Error in GET /api/tools/comments/verify:', error)
     return NextResponse.redirect(new URL('/home?error=internal-error', request.url))

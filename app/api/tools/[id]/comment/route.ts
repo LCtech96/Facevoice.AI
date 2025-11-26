@@ -140,11 +140,50 @@ export async function POST(
       }, { status: 500 })
     }
 
-    // Genera link di verifica
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
-                   request.headers.get('origin') || 
-                   'http://localhost:3000'
+    // Genera link di verifica - usa sempre il dominio principale in produzione
+    const getBaseUrl = () => {
+      // Priorità 1: Variabile d'ambiente esplicita
+      if (process.env.NEXT_PUBLIC_BASE_URL) {
+        return process.env.NEXT_PUBLIC_BASE_URL
+      }
+      
+      // Priorità 2: Dominio principale (facevoice.ai) in produzione
+      const host = request.headers.get('host') || ''
+      if (host.includes('facevoice.ai')) {
+        const protocol = request.headers.get('x-forwarded-proto') || 'https'
+        return `${protocol}://${host.includes('www.') ? host : 'www.' + host.replace('www.', '')}`
+      }
+      
+      // Priorità 3: Origin dalla richiesta (ma evita domini Vercel di default)
+      const origin = request.headers.get('origin')
+      if (origin && !origin.includes('vercel.app') && !origin.includes('localhost')) {
+        return origin
+      }
+      
+      // Priorità 4: Costruisci da host (ma evita vercel.app)
+      if (host && !host.includes('vercel.app') && !host.includes('localhost')) {
+        const protocol = request.headers.get('x-forwarded-proto') || 'https'
+        return `${protocol}://${host}`
+      }
+      
+      // Fallback: usa facevoice.ai in produzione, localhost in sviluppo
+      if (process.env.NODE_ENV === 'production') {
+        return 'https://www.facevoice.ai'
+      }
+      
+      return 'http://localhost:3000'
+    }
+    
+    const baseUrl = getBaseUrl()
     const verificationLink = `${baseUrl}/api/tools/comments/verify?token=${verificationToken}`
+    
+    console.log('Generated verification link:', verificationLink)
+    console.log('Base URL source:', {
+      NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL,
+      host: request.headers.get('host'),
+      origin: request.headers.get('origin'),
+      finalBaseUrl: baseUrl
+    })
 
     // Invia email di verifica
     let emailSent = false
