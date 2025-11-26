@@ -53,7 +53,7 @@ const mockAITools: AITool[] = [
     id: 'domoai',
     name: 'DomoAI',
     description: 'Generazione Video e Animazione tramite Discord. Trasforma immagini in video animati con AI.',
-    coverImage: 'https://domoai.app/og-image.png',
+    coverImage: '/team/Domoai.png',
     category: 'Video & Animazione',
     link: 'https://domoai.app/',
     likes: 289,
