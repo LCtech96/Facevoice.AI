@@ -69,24 +69,39 @@ export default function ParticleBackground() {
 
     // Genera particelle quando il mouse si muove
     const generateParticles = (event: MouseEvent, mouseVx: number, mouseVy: number) => {
-      // Crea 5-8 particelle per movimento del mouse
-      const particlesToCreate = 5 + Math.floor(Math.random() * 4)
-      const maxTotalParticles = maxParticles * 2 // Limite più alto per permettere più particelle
+      // Calcola la velocità del mouse per determinare quante particelle creare
+      const mouseSpeed = Math.sqrt(mouseVx * mouseVx + mouseVy * mouseVy)
+      
+      // Crea più particelle se il mouse si muove velocemente, meno se si muove lentamente
+      // Minimo 3 particelle, massimo 10
+      const baseParticles = 3
+      const speedMultiplier = Math.min(mouseSpeed / 50, 1) // Normalizza la velocità
+      const particlesToCreate = baseParticles + Math.floor(speedMultiplier * 7)
+      
+      const maxTotalParticles = maxParticles * 2.5 // Limite più alto per permettere più particelle
 
       for (let i = 0; i < particlesToCreate && particlesRef.current.length < maxTotalParticles; i++) {
         // Aggiungi un po' di randomicità alla posizione per evitare che siano tutte sovrapposte
-        const offsetX = (Math.random() - 0.5) * 20
-        const offsetY = (Math.random() - 0.5) * 20
+        const offsetX = (Math.random() - 0.5) * 15
+        const offsetY = (Math.random() - 0.5) * 15
+        
+        // Calcola la direzione del movimento del mouse
+        const directionX = mouseVx !== 0 ? mouseVx / Math.max(Math.abs(mouseVx), 1) : (Math.random() - 0.5)
+        const directionY = mouseVy !== 0 ? mouseVy / Math.max(Math.abs(mouseVy), 1) : (Math.random() - 0.5)
+        
+        // Le particelle seguono meglio la direzione del mouse
+        const followStrength = Math.min(mouseSpeed / 100, 0.8) // Più forte se il mouse si muove velocemente
+        const randomComponent = 0.3 // Componente casuale ridotta per seguire meglio
         
         const particle: Particle = {
           x: event.x + offsetX,
           y: event.y + offsetY,
           radius: Math.random() * (maxRadius - minRadius) + minRadius,
-          // Le particelle seguono la direzione del mouse con una componente casuale
-          vx: mouseVx * 0.3 + (Math.random() - 0.5) * maxSpeed * 0.5,
-          vy: mouseVy * 0.3 + (Math.random() - 0.5) * maxSpeed * 0.5,
+          // Le particelle seguono la direzione del mouse con una componente casuale più piccola
+          vx: directionX * followStrength * maxSpeed + (Math.random() - 0.5) * maxSpeed * randomComponent,
+          vy: directionY * followStrength * maxSpeed + (Math.random() - 0.5) * maxSpeed * randomComponent,
           color: colors[Math.floor(Math.random() * colors.length)],
-          opacity: Math.random() * 0.5 + 0.4, // Opacità leggermente più alta per le particelle generate dal mouse
+          opacity: Math.random() * 0.4 + 0.5, // Opacità più alta per le particelle generate dal mouse
         }
         particlesRef.current.push(particle)
       }
@@ -96,11 +111,29 @@ export default function ParticleBackground() {
     const handleMouseMove = (event: MouseEvent) => {
       isMouseMovingRef.current = true
       
-      // Calcola la velocità del mouse
+      // Calcola la velocità del mouse in modo più accurato
       const now = Date.now()
-      const timeDelta = now - lastMouseTimeRef.current
-      const mouseVx = (event.x - lastMouseXRef.current) / Math.max(timeDelta, 1) * 10
-      const mouseVy = (event.y - lastMouseYRef.current) / Math.max(timeDelta, 1) * 10
+      const timeDelta = Math.max(now - lastMouseTimeRef.current, 1) // Minimo 1ms per evitare divisioni per zero
+      
+      // Calcola la distanza percorsa
+      const dx = event.x - lastMouseXRef.current
+      const dy = event.y - lastMouseYRef.current
+      
+      // Calcola la velocità in pixel per frame (normalizzata)
+      const mouseVx = (dx / timeDelta) * 16 // 16ms = ~60fps
+      const mouseVy = (dy / timeDelta) * 16
+      
+      // Se è il primo movimento, inizializza i valori
+      if (lastMouseXRef.current === 0 && lastMouseYRef.current === 0) {
+        lastMouseXRef.current = event.x
+        lastMouseYRef.current = event.y
+        lastMouseTimeRef.current = now
+        mouseXRef.current = event.x
+        mouseYRef.current = event.y
+        // Genera particelle anche al primo movimento
+        generateParticles(event, 0, 0)
+        return
+      }
       
       // Aggiorna i riferimenti
       lastMouseXRef.current = event.x
@@ -109,7 +142,7 @@ export default function ParticleBackground() {
       mouseXRef.current = event.x
       mouseYRef.current = event.y
       
-      // Genera particelle che seguono il movimento del mouse
+      // Genera particelle che seguono il movimento del mouse (sempre, anche se il mouse si muove lentamente)
       generateParticles(event, mouseVx, mouseVy)
     }
 
