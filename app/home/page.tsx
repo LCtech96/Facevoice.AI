@@ -15,6 +15,10 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   const router = useRouter()
   const toolIdRef = useRef<string | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined)
+  const [showServices, setShowServices] = useState(false)
+  const [showTeam, setShowTeam] = useState(false)
 
   // Gestisci redirect da link condiviso
   useEffect(() => {
@@ -41,9 +45,27 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   // Gestisci scroll quando cambia activeSection
   useEffect(() => {
     if (activeSection) {
-      const element = document.getElementById(activeSection)
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      if (activeSection === 'services') {
+        setShowServices(true)
+        setTimeout(() => {
+          const element = document.getElementById(activeSection)
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        }, 100)
+      } else if (activeSection === 'team') {
+        setShowTeam(true)
+        setTimeout(() => {
+          const element = document.getElementById(activeSection)
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        }, 100)
+      } else {
+        const element = document.getElementById(activeSection)
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
       }
     }
   }, [activeSection])
@@ -58,7 +80,17 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
-      <Navigation activeSection={activeSection} setActiveSection={setActiveSection} />
+      <Navigation 
+        activeSection={activeSection} 
+        setActiveSection={(section) => {
+          setActiveSection(section)
+          if (section === 'services') {
+            setShowServices(true)
+          } else if (section === 'team') {
+            setShowTeam(true)
+          }
+        }} 
+      />
       
       {/* Spacing per desktop navigation */}
       <div className="hidden md:block h-16" />
@@ -68,23 +100,46 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       
       {/* Hero Section */}
       <div id="hero">
-        <Hero />
+        <Hero 
+          onSearchChange={(query) => {
+            setSearchQuery(query)
+            // Se la query contiene una categoria, filtra per quella
+            const categories = ['Video', 'Immagine', 'UX/UI', 'Contenuti', 'Audio', 'Produttività']
+            const foundCategory = categories.find(cat => 
+              query.toLowerCase().includes(cat.toLowerCase())
+            )
+            if (foundCategory) {
+              setCategoryFilter(foundCategory)
+            } else {
+              setCategoryFilter(undefined)
+            }
+          }}
+        />
       </div>
       
-      {/* Services Section */}
-      <div id="services">
-        <Services />
+      {/* Feed Section - Stile Social Media - Subito dopo Hero */}
+      <div id="ai-tools-feed" className="container mx-auto px-4 py-8 max-w-4xl">
+        <Feed 
+          user={user} 
+          highlightedToolId={toolIdRef.current}
+          searchQuery={searchQuery}
+          categoryFilter={categoryFilter}
+        />
       </div>
       
-      {/* Team Section */}
-      <div id="team">
-        <Team />
-      </div>
+      {/* Services Section - Mostrata solo quando si clicca su Services */}
+      {showServices && (
+        <div id="services">
+          <Services />
+        </div>
+      )}
       
-      {/* Feed Section - Stile Social Media */}
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <Feed user={user} highlightedToolId={toolIdRef.current} />
-      </div>
+      {/* Team Section - Mostrata solo quando si clicca su Team */}
+      {showTeam && (
+        <div id="team">
+          <Team />
+        </div>
+      )}
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

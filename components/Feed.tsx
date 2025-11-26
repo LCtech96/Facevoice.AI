@@ -22,6 +22,8 @@ export interface AITool {
 interface FeedProps {
   user: User | null
   highlightedToolId?: string | null
+  searchQuery?: string
+  categoryFilter?: string
 }
 
 // Mock data per gli AI tools
@@ -384,9 +386,10 @@ const mockAITools: AITool[] = [
   },
 ]
 
-export default function Feed({ user, highlightedToolId }: FeedProps) {
+export default function Feed({ user, highlightedToolId, searchQuery = '', categoryFilter }: FeedProps) {
   const [tools, setTools] = useState<AITool[]>([])
   const [loading, setLoading] = useState(true)
+  const [filteredTools, setFilteredTools] = useState<AITool[]>([])
 
   useEffect(() => {
     // Simula caricamento dati

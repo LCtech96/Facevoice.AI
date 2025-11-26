@@ -6,7 +6,12 @@ import { motion } from 'framer-motion'
 import { Send } from 'lucide-react'
 import ParticleBackground from './ParticleBackground'
 
-export default function Hero() {
+interface HeroProps {
+  onSearchChange?: (query: string) => void
+  onCategoryFilter?: (category: string) => void
+}
+
+export default function Hero({ onSearchChange, onCategoryFilter }: HeroProps) {
   const router = useRouter()
   const [input, setInput] = useState('')
 
@@ -14,12 +19,32 @@ export default function Hero() {
     e.preventDefault()
     if (!input.trim()) return
 
-    // Salva il messaggio iniziale nel localStorage per la chat
+    // Se c'è un callback per il filtro, usa quello per filtrare i tool
+    if (onSearchChange) {
+      onSearchChange(input.trim())
+      // Scroll al feed
+      setTimeout(() => {
+        const feedElement = document.getElementById('ai-tools-feed')
+        if (feedElement) {
+          feedElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 100)
+      return
+    }
+
+    // Altrimenti, comportamento originale: salva e naviga alla chat
     const initialMessage = input.trim()
     localStorage.setItem('initial-message', initialMessage)
-    
-    // Naviga alla pagina AI chat
     router.push('/ai-chat')
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setInput(value)
+    // Aggiorna il filtro in tempo reale se c'è il callback
+    if (onSearchChange) {
+      onSearchChange(value)
+    }
   }
 
   return (
@@ -49,8 +74,8 @@ export default function Hero() {
               <input
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Chiedi qualcosa all'AI..."
+                onChange={handleInputChange}
+                placeholder={onSearchChange ? "Cerca AI tools per categoria o nome..." : "Chiedi qualcosa all'AI..."}
                 className="w-full px-6 py-4 pr-14 bg-transparent rounded-2xl text-white placeholder-gray-400 focus:outline-none text-lg"
               />
               <button
