@@ -97,7 +97,14 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
         
         // Mostra messaggio di verifica
         if (data.requiresVerification) {
-          setVerificationMessage(data.message || 'Commento salvato! Controlla la tua email per verificarlo.')
+          let message = data.message || 'Commento salvato! Controlla la tua email per verificarlo.'
+          
+          // Se c'è un link di verifica (email non configurata), mostralo
+          if (data.verificationLink) {
+            message += `\n\nLink di verifica: ${data.verificationLink}`
+          }
+          
+          setVerificationMessage(message)
           setCommentText('')
           setUserEmail('')
           setShowEmailInput(false)

@@ -10,9 +10,6 @@ const supabase = createClient(
 
 // Funzione per inviare email di verifica
 async function sendVerificationEmail(email: string, verificationLink: string, userName: string) {
-  // Usa Resend o un altro servizio email
-  // Per ora, logghiamo l'email (in produzione usa un servizio reale)
-  
   const RESEND_API_KEY = process.env.RESEND_API_KEY
   
   if (RESEND_API_KEY) {
@@ -24,7 +21,7 @@ async function sendVerificationEmail(email: string, verificationLink: string, us
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: 'FacevoiceAI <noreply@facevoice.ai>', // Cambia con il tuo dominio verificato
+          from: 'FacevoiceAI <onboarding@resend.dev>', // Usa dominio di test Resend (cambia con il tuo dominio verificato in produzione)
           to: email,
           subject: 'Verifica il tuo commento su FacevoiceAI',
           html: `
@@ -158,12 +155,18 @@ export async function POST(
       console.warn('Could not update comment count in ai_tools:', updateError)
     }
 
+    // Determina se l'email è stata inviata o solo loggata
+    const emailSent = !!process.env.RESEND_API_KEY
+    
     return NextResponse.json({ 
       success: true, 
       comment: data,
       comments: count || 0,
-      message: 'Commento salvato! Controlla la tua email per verificarlo e pubblicarlo.',
-      requiresVerification: true
+      message: emailSent 
+        ? 'Commento salvato! Controlla la tua email per verificarlo e pubblicarlo.'
+        : 'Commento salvato! Controlla i log del server per il link di verifica.',
+      requiresVerification: true,
+      verificationLink: emailSent ? undefined : verificationLink // Invia il link se email non configurata
     })
   } catch (error) {
     console.error('Error in POST /api/tools/[id]/comment:', error)
