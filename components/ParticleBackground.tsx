@@ -177,9 +177,18 @@ export default function ParticleBackground() {
         particle.x = Math.max(0, Math.min(canvas.width, particle.x))
         particle.y = Math.max(0, Math.min(canvas.height, particle.y))
 
-        // Riduci gradualmente la dimensione e l'opacità per le particelle generate dal mouse
-        particle.radius *= 0.999
-        particle.opacity *= 0.998
+        // Riduci gradualmente la dimensione e l'opacità
+        // Le particelle generate dal mouse (opacità iniziale > 0.4) scompaiono più velocemente
+        const isMouseGenerated = particle.opacity > 0.4
+        if (isMouseGenerated) {
+          // Particelle generate dal mouse: scompaiono più velocemente per creare un flusso continuo
+          particle.radius *= 0.995
+          particle.opacity *= 0.992
+        } else {
+          // Particelle base: scompaiono più lentamente
+          particle.radius *= 0.999
+          particle.opacity *= 0.998
+        }
 
         // Rimuovi particelle troppo piccole o troppo trasparenti
         if (particle.radius <= 0.1 || particle.opacity <= 0.05) {
