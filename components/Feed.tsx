@@ -435,8 +435,7 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
     }
 
     // Debounce per evitare troppe chiamate API
-    const timeoutId = setTimeout(() => {
-      const performSearch = async () => {
+    const performSearch = async () => {
       // Se c'è solo categoryFilter senza searchQuery, filtra per categoria
       if (!searchQuery && categoryFilter) {
         const filtered = tools.filter((tool) =>
@@ -508,9 +507,13 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
           setSearching(false)
         }
       }
-      
+    }
+
+    // Debounce di 500ms solo per ricerche con query
+    const delay = searchQuery && searchQuery.trim().length > 0 ? 500 : 0
+    const timeoutId = setTimeout(() => {
       performSearch()
-    }, searchQuery && searchQuery.trim().length > 0 ? 500 : 0) // Debounce di 500ms solo per ricerche con query
+    }, delay)
 
     return () => clearTimeout(timeoutId)
   }, [tools, searchQuery, categoryFilter])
