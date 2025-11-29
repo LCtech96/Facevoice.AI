@@ -423,8 +423,30 @@ export default function AIChatMain({
     <div className="flex-1 flex flex-col bg-[var(--background)]">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
-        {/* Left side - empty on mobile when sidebar closed to leave space for hamburger */}
-        <div className={`flex items-center gap-2 ${!sidebarOpen ? 'md:flex hidden' : 'flex'}`}>
+        {/* Left side - Empty on mobile to leave space for hamburger, show delete button on desktop */}
+        <div className="flex items-center gap-2">
+          {/* Delete button - only on desktop */}
+          {onDeleteChat && (
+            <button
+              onClick={onDeleteChat}
+              className="hidden md:flex p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              title="Delete chat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        
+        {/* Center - Chat title (hidden on mobile) */}
+        <div className="flex-1 text-center hidden md:block">
+          <div className="text-sm text-[var(--text-secondary)]">
+            {chat.title}
+          </div>
+        </div>
+        
+        {/* Right side - Settings and other buttons (ALWAYS on right, especially on mobile) */}
+        <div className="flex items-center gap-2">
+          {/* Settings button - ALWAYS on the right side */}
           <button
             onClick={onModelSelectorToggle}
             className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
@@ -432,28 +454,17 @@ export default function AIChatMain({
             <Settings className="w-4 h-4" />
             <span className="hidden sm:inline">{getModelName()}</span>
           </button>
+          
+          {/* Delete button - only on mobile */}
           {onDeleteChat && (
             <button
               onClick={onDeleteChat}
-              className="p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              className="md:hidden p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
               title="Delete chat"
             >
               <X className="w-4 h-4" />
             </button>
           )}
-        </div>
-        {/* Right side - Settings button on mobile when sidebar closed */}
-        {!sidebarOpen && (
-          <div className="md:hidden flex items-center">
-            <button
-              onClick={onModelSelectorToggle}
-              className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-        <div className="flex items-center gap-2">
           <div className="text-sm text-[var(--text-secondary)] hidden sm:block">
             {chat.title}
           </div>
