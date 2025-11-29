@@ -465,9 +465,6 @@ export default function AIChatMain({
               <X className="w-4 h-4" />
             </button>
           )}
-          <div className="text-sm text-[var(--text-secondary)] hidden sm:block">
-            {chat.title}
-          </div>
           
           {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
           {!isSharedChat && (onCreateProject || onShowProjects) && (
