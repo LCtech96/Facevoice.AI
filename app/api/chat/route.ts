@@ -94,7 +94,7 @@ async function callGeminiAPI(messages: any[], model: string, systemMessage?: str
         contents,
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 8192, // Limite per piano gratuito: fino a 8192 token
         },
       }),
     }
@@ -102,7 +102,18 @@ async function callGeminiAPI(messages: any[], model: string, systemMessage?: str
   
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.error?.message || `Gemini API error: ${response.status}`)
+    const errorMessage = errorData.error?.message || `Gemini API error: ${response.status}`
+    
+    // Gestione errori specifici del piano gratuito
+    if (response.status === 429) {
+      throw new Error('Rate limit raggiunto. Il piano gratuito ha limiti di richieste per minuto. Riprova tra qualche secondo.')
+    }
+    
+    if (response.status === 403 && errorMessage.includes('quota')) {
+      throw new Error('Quota giornaliera esaurita. Il piano gratuito ha limiti giornalieri. Riprova domani.')
+    }
+    
+    throw new Error(errorMessage)
   }
   
   const data = await response.json()
