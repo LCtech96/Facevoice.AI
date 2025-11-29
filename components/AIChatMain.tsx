@@ -422,10 +422,9 @@ export default function AIChatMain({
   return (
     <div className="flex-1 flex flex-col bg-[var(--background)]">
       {/* Header */}
-      <div className={`px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between ${
-        !sidebarOpen ? 'md:pl-4 pl-16' : 'pl-4'
-      }`}>
-        <div className="flex items-center gap-2">
+      <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
+        {/* Left side - empty on mobile when sidebar closed to leave space for hamburger */}
+        <div className={`flex items-center gap-2 ${!sidebarOpen ? 'md:flex hidden' : 'flex'}`}>
           <button
             onClick={onModelSelectorToggle}
             className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
@@ -443,6 +442,17 @@ export default function AIChatMain({
             </button>
           )}
         </div>
+        {/* Right side - Settings button on mobile when sidebar closed */}
+        {!sidebarOpen && (
+          <div className="md:hidden flex items-center">
+            <button
+              onClick={onModelSelectorToggle}
+              className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <div className="text-sm text-[var(--text-secondary)] hidden sm:block">
             {chat.title}
