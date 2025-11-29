@@ -32,6 +32,7 @@ interface AIChatMainProps {
   isSharedChat?: boolean // Indica se è una chat condivisa
   onCreateProject?: () => void // Callback per creare progetti
   onShowProjects?: () => void // Callback per mostrare progetti
+  sidebarOpen?: boolean // Stato del sidebar per gestire il layout mobile
 }
 
 export default function AIChatMain({
@@ -46,6 +47,7 @@ export default function AIChatMain({
   isSharedChat = false,
   onCreateProject,
   onShowProjects,
+  sidebarOpen = false,
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -420,7 +422,9 @@ export default function AIChatMain({
   return (
     <div className="flex-1 flex flex-col bg-[var(--background)]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
+      <div className={`px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between ${
+        !sidebarOpen ? 'md:pl-4 pl-16' : 'pl-4'
+      }`}>
         <div className="flex items-center gap-2">
           <button
             onClick={onModelSelectorToggle}

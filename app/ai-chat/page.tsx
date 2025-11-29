@@ -275,6 +275,7 @@ export default function AIChatPage() {
           selectedModel={selectedModel}
           isModelSelectorOpen={isModelSelectorOpen}
           onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
+          sidebarOpen={sidebarOpen}
           onModelSelect={(model) => {
             setSelectedModel(model)
             if (currentChat) {
