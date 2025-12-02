@@ -69,7 +69,6 @@ INSERT INTO team_members (name, role, description, email, linkedin, image_url) V
   ('Sara Siddique', 'Data Engineer, Data Scientist', 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights', 'sara@facevoice.ai', 'https://linkedin.com/in/sara-siddique', '/team/Sara professionale fv.png'),
   ('Jonh Mcnova', 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)', 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems', 'jonh@facevoice.ai', 'https://linkedin.com/in/jonh-mcnova', '/team/Jonh professionale fv.png'),
   ('Leonardo Alotta', 'Chief Financial Officer (CFO)', 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations', 'leonardo@facevoice.ai', 'https://linkedin.com/in/leonardo-alotta', '/team/Leonardo professionale fv.png'),
-  ('Abraham Caur', 'Product Manager (PM), UX/UI Designer', 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences', 'abraham@facevoice.ai', 'https://linkedin.com/in/abraham-caur', '/team/Abraham professionale fv.png'),
-  ('Alessio', 'Client Success Manager', 'Dedicated to ensuring client satisfaction and success, building strong relationships and driving value for our partners', 'alessio@facevoice.ai', NULL, '/team/Alessio professionale fv.png')
+  ('Abraham Caur', 'Product Manager (PM), UX/UI Designer', 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences', 'abraham@facevoice.ai', 'https://linkedin.com/in/abraham-caur', '/team/Abraham professionale fv.png')
 ON CONFLICT DO NOTHING;
 
