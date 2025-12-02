@@ -43,3 +43,9 @@ CREATE POLICY "Anyone can verify tool_comments" ON tool_comments
   USING (true)
   WITH CHECK (true);
 
+
+
+
+
+
+

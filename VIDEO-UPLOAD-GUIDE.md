@@ -197,3 +197,9 @@ WHERE id = 'higgsfield';
 - [Video Optimization Guide](https://web.dev/fast/#optimize-your-images-and-video)
 - [FFmpeg Compression Guide](https://trac.ffmpeg.org/wiki/Encode/H.264)
 
+
+
+
+
+
+

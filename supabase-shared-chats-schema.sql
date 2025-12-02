@@ -73,3 +73,9 @@ CREATE POLICY "Anyone can insert shared chat messages"
   ON shared_chat_messages FOR INSERT
   WITH CHECK (true);
 
+
+
+
+
+
+

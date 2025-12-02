@@ -67,3 +67,9 @@ Puoi modificare la funzione `sendVerificationEmail` in `app/api/tools/[id]/comme
 - Gli utenti autenticati possono usare la loro email di account
 - In sviluppo, le email vengono loggate nella console invece di essere inviate
 
+
+
+
+
+
+

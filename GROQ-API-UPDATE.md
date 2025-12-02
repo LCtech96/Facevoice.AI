@@ -36,3 +36,8 @@ La GROQ_API_KEY deve essere aggiornata manualmente sul dashboard Vercel.
 
 Dopo il deploy, testa la chat AI per verificare che i modelli Groq funzionino correttamente.
 
+
+
+
+
+

@@ -16,3 +16,9 @@ git commit -m "fix: Update Trinacria image extension from .png to .jpg"
 # Push to remote
 git push origin main
 
+
+
+
+
+
+

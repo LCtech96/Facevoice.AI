@@ -19,3 +19,9 @@ CREATE POLICY "Anyone can read tool_comments" ON tool_comments
   FOR SELECT 
   USING (true);
 
+
+
+
+
+
+

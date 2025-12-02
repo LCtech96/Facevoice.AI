@@ -106,3 +106,9 @@ Se vuoi testare subito senza configurare email:
 
 Il commento funzionerà comunque, solo che devi copiare manualmente il link dai log invece di riceverlo via email.
 
+
+
+
+
+
+

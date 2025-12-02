@@ -73,3 +73,9 @@ La sincronizzazione funziona tramite **Supabase Realtime**:
 - Il sistema evita duplicati controllando gli ID dei messaggi
 - Se persistono, verifica la logica di sincronizzazione
 
+
+
+
+
+
+

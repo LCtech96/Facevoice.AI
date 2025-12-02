@@ -50,3 +50,9 @@ Dopo aver eseguito la migrazione:
 - Gli utenti anonimi vengono identificati come "Guest" o con un ID temporaneo
 - Le immagini che falliscono vengono automaticamente sostituite con un placeholder
 
+
+
+
+
+
+

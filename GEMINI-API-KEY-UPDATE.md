@@ -65,3 +65,8 @@ Dopo il deploy, testa la chat AI per verificare che i modelli Gemini funzionino 
 - [Gemini API Pricing](https://ai.google.dev/pricing)
 - [Google AI Studio](https://ai.google.dev/)
 
+
+
+
+
+

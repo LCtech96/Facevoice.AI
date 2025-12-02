@@ -9,3 +9,5 @@ WHERE name ILIKE '%Mattia%' OR name ILIKE '%Orlando%';
 SELECT * FROM team_members WHERE name ILIKE '%Mattia%' OR name ILIKE '%Orlando%';
 -- Dovrebbe restituire 0 righe
 
+
+

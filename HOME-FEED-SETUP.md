@@ -153,3 +153,9 @@ Registra una condivisione e aggiorna il contatore.
 - Le immagini di copertina usano `/team/Trinacria.png` come default
 - Il sistema supporta sia utenti autenticati che non autenticati (con limitazioni)
 
+
+
+
+
+
+

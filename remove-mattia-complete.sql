@@ -20,3 +20,5 @@ WHERE
 
 -- Se la query sopra restituisce 0 righe, Mattia è stato completamente rimosso
 
+
+

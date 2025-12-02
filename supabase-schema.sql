@@ -87,3 +87,9 @@ CREATE POLICY "Anyone can read tool_shares" ON tool_shares FOR SELECT USING (tru
 -- Policy: chiunque può creare condivisioni
 CREATE POLICY "Anyone can create tool_shares" ON tool_shares FOR INSERT WITH CHECK (true);
 
+
+
+
+
+
+

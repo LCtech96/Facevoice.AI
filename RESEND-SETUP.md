@@ -44,3 +44,9 @@ Dopo aver aggiunto la variabile su Vercel:
 
 Per maggiori informazioni: https://resend.com/pricing
 
+
+
+
+
+
+

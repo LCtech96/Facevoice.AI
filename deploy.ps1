@@ -14,3 +14,9 @@ git push origin main
 
 Write-Host "`nDeploy completato! Vercel dovrebbe rilevare automaticamente il nuovo commit e avviare un nuovo build."
 
+
+
+
+
+
+

@@ -24,3 +24,5 @@ WHERE id = 10 OR name ILIKE '%Mattia%' OR name ILIKE '%Orlando%';
 -- Se la query sopra restituisce 0 righe, Mattia è stato COMPLETAMENTE rimosso
 -- La card non dovrebbe più apparire sul sito
 
+
+

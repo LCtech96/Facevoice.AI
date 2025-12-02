@@ -37,3 +37,9 @@ Then proceed with steps 2-4 above.
 - Updated the Trinacria image path from `/team/Trinacria.png` to `/team/Trinacria.jpg`
 - Simplified the error handling for the image loading
 
+
+
+
+
+
+
