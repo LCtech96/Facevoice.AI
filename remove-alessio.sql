@@ -17,3 +17,6 @@ WHERE name ILIKE '%Alessio%';
 
 -- Se la query sopra restituisce 0 righe, Alessio è stato completamente rimosso
 
+
+
+

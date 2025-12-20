@@ -1,53 +1,16 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Send } from 'lucide-react'
 import Image from 'next/image'
 import ParticleBackground from './ParticleBackground'
 import { MarketingBadgesHero } from './ui/marketing-badges-hero'
+import AIToolsCircularGallery from './AIToolsCircularGallery'
 
 interface HeroProps {
-  onSearchChange?: (query: string) => void
-  onCategoryFilter?: (category: string) => void
+  // Props mantenute per compatibilità ma non più usate
 }
 
-export default function Hero({ onSearchChange, onCategoryFilter }: HeroProps) {
-  const router = useRouter()
-  const [input, setInput] = useState('')
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim()) return
-
-    // Se c'è un callback per il filtro, usa quello per filtrare i tool
-    if (onSearchChange) {
-      onSearchChange(input.trim())
-      // Scroll al feed
-      setTimeout(() => {
-        const feedElement = document.getElementById('ai-tools-feed')
-        if (feedElement) {
-          feedElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }
-      }, 100)
-      return
-    }
-
-    // Altrimenti, comportamento originale: salva e naviga alla chat
-    const initialMessage = input.trim()
-    localStorage.setItem('initial-message', initialMessage)
-    router.push('/ai-chat')
-  }
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setInput(value)
-    // Aggiorna il filtro in tempo reale se c'è il callback
-    if (onSearchChange) {
-      onSearchChange(value)
-    }
-  }
+export default function Hero({}: HeroProps = {}) {
 
   return (
     <section className="min-h-screen flex items-center justify-center relative pt-16 px-6 bg-black overflow-hidden">
@@ -90,25 +53,10 @@ export default function Hero({ onSearchChange, onCategoryFilter }: HeroProps) {
             Innovative AI solutions for your business
           </p>
 
-          {/* Barra di input */}
-          <form onSubmit={handleSubmit} className="w-full max-w-2xl">
-            <div className="relative bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 shadow-lg focus-within:border-white/40 transition-all">
-              <input
-                type="text"
-                value={input}
-                onChange={handleInputChange}
-                placeholder={onSearchChange ? "Cerca AI tools per categoria o nome..." : "Chiedi qualcosa all'AI..."}
-                className="w-full px-6 py-4 pr-14 bg-transparent rounded-2xl text-white placeholder-gray-400 focus:outline-none text-lg"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 p-3 bg-white text-black rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            </div>
-          </form>
+          {/* Circular Gallery con AI Tools */}
+          <div className="w-full mt-8">
+            <AIToolsCircularGallery />
+          </div>
         </motion.div>
       </div>
     </section>
