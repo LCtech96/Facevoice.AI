@@ -8,9 +8,10 @@ const supabase = createClient(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
 
@@ -22,7 +23,7 @@ export async function GET(
     const { data, error } = await supabase
       .from('tool_likes')
       .select('id')
-      .eq('tool_id', params.id)
+      .eq('tool_id', id)
       .eq('user_id', userId)
       .single()
 
@@ -39,9 +40,10 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     const { userId, isLiked } = body
 
@@ -54,7 +56,7 @@ export async function POST(
       const { error } = await supabase
         .from('tool_likes')
         .upsert({
-          tool_id: params.id,
+          tool_id: id,
           user_id: userId,
           created_at: new Date().toISOString(),
         })
@@ -68,7 +70,7 @@ export async function POST(
       const { error } = await supabase
         .from('tool_likes')
         .delete()
-        .eq('tool_id', params.id)
+        .eq('tool_id', id)
         .eq('user_id', userId)
 
       if (error) {
@@ -81,12 +83,12 @@ export async function POST(
     const { count } = await supabase
       .from('tool_likes')
       .select('*', { count: 'exact', head: true })
-      .eq('tool_id', params.id)
+      .eq('tool_id', id)
 
     await supabase
       .from('ai_tools')
       .update({ likes: count || 0 })
-      .eq('id', params.id)
+      .eq('id', id)
 
     return NextResponse.json({ success: true, likes: count || 0 })
   } catch (error) {
@@ -94,6 +96,9 @@ export async function POST(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+
+
 
 
 

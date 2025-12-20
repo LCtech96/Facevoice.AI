@@ -8,12 +8,13 @@ const supabase = createClient(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File
-    const toolId = params.id
+    const { id } = await params
+    const toolId = id
 
     if (!file || !toolId) {
       return NextResponse.json(
@@ -84,6 +85,9 @@ export async function POST(
     )
   }
 }
+
+
+
 
 
 

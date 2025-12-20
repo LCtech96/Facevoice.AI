@@ -9,12 +9,13 @@ const supabase = createClient(
 // Aggiungi un messaggio a una chat condivisa
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const body = await request.json()
     const { role, content, userId, userName } = body
-    const chatId = params.id
+    const { id } = await params
+    const chatId = id
 
     if (!role || !content) {
       return NextResponse.json(
@@ -63,6 +64,9 @@ export async function POST(
     )
   }
 }
+
+
+
 
 
 

@@ -8,14 +8,15 @@ const supabase = createClient(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     // Registra condivisione
     const { error } = await supabase
       .from('tool_shares')
       .insert({
-        tool_id: params.id,
+        tool_id: id,
         created_at: new Date().toISOString(),
       })
 
@@ -28,12 +29,12 @@ export async function POST(
     const { count } = await supabase
       .from('tool_shares')
       .select('*', { count: 'exact', head: true })
-      .eq('tool_id', params.id)
+      .eq('tool_id', id)
 
     await supabase
       .from('ai_tools')
       .update({ shares: count || 0 })
-      .eq('id', params.id)
+      .eq('id', id)
 
     return NextResponse.json({ success: true, shares: count || 0 })
   } catch (error) {
@@ -41,6 +42,9 @@ export async function POST(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+
+
 
 
 

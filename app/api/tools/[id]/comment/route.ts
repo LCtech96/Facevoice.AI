@@ -84,9 +84,10 @@ async function sendVerificationEmail(email: string, verificationLink: string, us
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     const { userId, comment, userName, userEmail } = body
 
@@ -118,7 +119,7 @@ export async function POST(
     const { data, error } = await supabase
       .from('tool_comments')
       .insert({
-        tool_id: params.id,
+        tool_id: id,
         user_id: finalUserId,
         user_name: finalUserName,
         user_email: userEmail.trim().toLowerCase(),
@@ -196,7 +197,7 @@ export async function POST(
     const { count } = await supabase
       .from('tool_comments')
       .select('*', { count: 'exact', head: true })
-      .eq('tool_id', params.id)
+      .eq('tool_id', id)
       .eq('is_verified', true)
 
     // Prova ad aggiornare ai_tools, ma non fallire se la tabella non esiste
@@ -204,7 +205,7 @@ export async function POST(
       await supabase
         .from('ai_tools')
         .update({ comments: count || 0 })
-        .eq('id', params.id)
+        .eq('id', id)
     } catch (updateError) {
       console.warn('Could not update comment count in ai_tools:', updateError)
     }

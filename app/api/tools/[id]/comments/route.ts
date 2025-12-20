@@ -9,15 +9,16 @@ const supabase = createClient(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    console.log('Fetching comments for tool:', params.id)
+    const { id } = await params
+    console.log('Fetching comments for tool:', id)
     
     const { data, error } = await supabase
       .from('tool_comments')
       .select('id, user_id, user_name, comment, created_at')
-      .eq('tool_id', params.id)
+      .eq('tool_id', id)
       .eq('is_verified', true) // Mostra solo commenti verificati
       .order('created_at', { ascending: false })
       .limit(50)
@@ -29,7 +30,7 @@ export async function GET(
       return NextResponse.json({ comments: [] })
     }
 
-    console.log(`Found ${data?.length || 0} verified comments for tool ${params.id}`)
+    console.log(`Found ${data?.length || 0} verified comments for tool ${id}`)
     
     return NextResponse.json({ comments: data || [] })
   } catch (error) {
