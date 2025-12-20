@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useRef } from "react"
+import type React from "react"
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, forwardRef } from "react"
 import { cn } from "@/lib/utils"
 import { X, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
@@ -196,9 +197,6 @@ export function AnimatedFolder({ title, projects, className }: AnimatedFolderPro
     </>
   )
 }
-
-import type React from "react"
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react"
 
 interface ImageLightboxProps {
   projects: Project[]
@@ -542,8 +540,6 @@ function ImageLightbox({
     </div>
   )
 }
-
-import { forwardRef } from "react"
 
 interface ProjectCardProps {
   image: string
