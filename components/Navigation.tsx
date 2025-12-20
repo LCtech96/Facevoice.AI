@@ -40,7 +40,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' },
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/home#services' },
-    { id: 'team', label: 'Team', icon: Users, href: '/home#team' },
+    { id: 'team', label: 'Team', icon: Users, href: '/team' },
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
@@ -62,6 +62,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/home')
     } else if (item.href === '/ai-chat') {
       router.push('/ai-chat')
+    } else if (item.href === '/team') {
+      router.push('/team')
     }
   }
 
@@ -71,6 +73,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'home') {
       return pathname === '/home' && !activeSection
+    }
+    if (item.id === 'team') {
+      return pathname === '/team'
     }
     return pathname === '/home' && activeSection === item.id
   }

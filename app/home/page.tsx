@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
-import Team from '@/components/Team'
 import Services from '@/components/Services'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
@@ -18,7 +17,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined)
   const [showServices, setShowServices] = useState(false)
-  const [showTeam, setShowTeam] = useState(false)
 
   // Gestisci redirect da link condiviso
   useEffect(() => {
@@ -53,14 +51,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
             element.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
         }, 100)
-      } else if (activeSection === 'team') {
-        setShowTeam(true)
-        setTimeout(() => {
-          const element = document.getElementById(activeSection)
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
-        }, 100)
       } else {
         const element = document.getElementById(activeSection)
         if (element) {
@@ -86,8 +76,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
           setActiveSection(section)
           if (section === 'services') {
             setShowServices(true)
-          } else if (section === 'team') {
-            setShowTeam(true)
           }
         }} 
       />
@@ -131,13 +119,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {showServices && (
         <div id="services">
           <Services />
-        </div>
-      )}
-      
-      {/* Team Section - Mostrata solo quando si clicca su Team */}
-      {showTeam && (
-        <div id="team">
-          <Team />
         </div>
       )}
       
