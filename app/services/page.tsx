@@ -5,6 +5,8 @@ import Navigation from '@/components/Navigation'
 import Services from '@/components/Services'
 import EarbudShowcase from '@/components/ui/spatial-product-showcase'
 import { MarketingBadges } from '@/components/ui/marketing-badges'
+import { MultiStepForm } from '@/components/ui/multistep-form'
+import HeroButtonExpandable from '@/components/ui/hero-button-expendable'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -77,6 +79,22 @@ export default function ServicesPage() {
                   Marketing Badges
                 </h3>
                 <MarketingBadges />
+              </div>
+            </div>
+            
+            {/* Seconda coppia */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="w-full flex flex-col items-center">
+                <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-4 text-center">
+                  Multi-Step Form
+                </h3>
+                <MultiStepForm />
+              </div>
+              <div className="w-full">
+                <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-4 text-center">
+                  Hero Button Expandable
+                </h3>
+                <HeroButtonExpandable />
               </div>
             </div>
           </div>
