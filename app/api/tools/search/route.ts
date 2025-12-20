@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { AI_TOOLS_DETAILED_INFO } from '@/lib/ai-tools-info'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -67,12 +68,6 @@ const AI_TOOLS = [
     name: 'Muapi.ai',
     description: 'API per Effetti Video. Integra effetti video AI avanzati nelle tue applicazioni.',
     category: 'Video & API',
-  },
-  {
-    id: 'aitryon',
-    name: 'AITryOn',
-    description: 'Video di Prodotto per E-commerce. Genera video di prodotti per il tuo negozio online con AI.',
-    category: 'Video & E-commerce',
   },
   // Immagini e Grafica
   {
@@ -226,31 +221,81 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ toolIds: matched.map(t => t.id) })
     }
 
-    // Prepara il prompt per Claude
-    const toolsDescription = AI_TOOLS.map(tool => 
-      `- ${tool.name} (ID: ${tool.id}): ${tool.description} [Categoria: ${tool.category}]`
-    ).join('\n')
+    // Prepara le informazioni dettagliate per i tool disponibili
+    const toolsWithDetails = AI_TOOLS.map(tool => {
+      const detailedInfo = AI_TOOLS_DETAILED_INFO[tool.id]
+      if (detailedInfo) {
+        return {
+          id: tool.id,
+          name: tool.name,
+          description: tool.description,
+          category: tool.category,
+          pricing: detailedInfo.pricing,
+          bestFor: detailedInfo.bestFor,
+          strengths: detailedInfo.strengths,
+          limitations: detailedInfo.limitations,
+          useCase: detailedInfo.useCase,
+        }
+      }
+      return {
+        id: tool.id,
+        name: tool.name,
+        description: tool.description,
+        category: tool.category,
+      }
+    })
+
+    const toolsDescription = toolsWithDetails.map(tool => {
+      let desc = `- ${tool.name} (ID: ${tool.id}): ${tool.description} [Categoria: ${tool.category}]`
+      if ('bestFor' in tool && tool.bestFor) {
+        desc += `\n  Migliore per: ${tool.bestFor.join(', ')}`
+      }
+      if ('strengths' in tool && tool.strengths) {
+        desc += `\n  Punti di forza: ${tool.strengths.join('; ')}`
+      }
+      if ('pricing' in tool && tool.pricing) {
+        if (tool.pricing.free) {
+          desc += `\n  Pricing: Gratuito disponibile`
+        }
+        if (tool.pricing.plans && tool.pricing.plans.length > 0) {
+          desc += `\n  Pricing: ${tool.pricing.plans.map(p => `${p.name} ${p.price}`).join(', ')}`
+        }
+      }
+      if ('useCase' in tool && tool.useCase) {
+        desc += `\n  Quando usarlo: ${tool.useCase}`
+      }
+      return desc
+    }).join('\n\n')
 
     const systemPrompt = `Sei un assistente esperto che aiuta gli utenti a trovare gli AI Tools più rilevanti per le loro esigenze.
 
-Analizza la richiesta dell'utente e gli AI Tools disponibili. Restituisci SOLO un array JSON di ID dei tool più rilevanti, ordinati per rilevanza (dal più rilevante al meno rilevante).
+Analizza la richiesta dell'utente e gli AI Tools disponibili (con informazioni su pricing, punti di forza, limitazioni e casi d'uso).
 
-Criteri di rilevanza:
-1. Corrispondenza diretta con la richiesta (es. "modificare voce" → ElevenLabs)
-2. Corrispondenza semantica (es. "generare video" → Runway, Higgsfield, Pika Labs)
-3. Corrispondenza per categoria
-4. Corrispondenza parziale per funzionalità
+IMPORTANTE: Quando la richiesta chiede consigli su quale tool usare (es. "quale tool per generare video?", "quale AI potrei usare per..."), devi:
+1. Identificare i tool più rilevanti
+2. Ordinarli per rilevanza considerando pricing, qualità, e adattamento all'uso specifico
+3. Fornire spiegazioni concise sul PERCHÉ ogni tool è consigliato, basandoti su documentazione, pricing e caratteristiche reali (NON su marketing del sito)
 
-Restituisci massimo 10 tool, ma solo quelli realmente rilevanti. Se nessun tool è rilevante, restituisci un array vuoto.
+Criteri di rilevanza e ranking:
+1. Corrispondenza diretta con la richiesta
+2. Pricing accessibile (preferire free/low-cost se appropriato)
+3. Qualità e punti di forza reali del tool
+4. Adattamento all'uso specifico menzionato
+5. Limiti e quando NON è adatto
 
-Formato risposta: {"toolIds": ["id1", "id2", "id3"]}`
+Restituisci un JSON con:
+- toolIds: array di ID ordinati per rilevanza (max 5-8 tool, solo quelli davvero rilevanti)
+- explanations: oggetto con chiave=ID del tool e valore=spiegazione breve (2-3 frasi) sul perché è consigliato
+
+Formato risposta: {"toolIds": ["id1", "id2"], "explanations": {"id1": "spiegazione perché id1 è consigliato", "id2": "spiegazione perché id2 è consigliato"}}`
 
     const userPrompt = `Richiesta utente: "${query}"
 
-AI Tools disponibili:
+AI Tools disponibili con informazioni dettagliate:
 ${toolsDescription}
 
-Quali AI Tools sono più rilevanti per questa richiesta? Restituisci solo l'array JSON con gli ID ordinati per rilevanza.`
+Quali AI Tools sono più rilevanti per questa richiesta? 
+Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascuno.`
 
     // Chiama Claude
     const response = await anthropic.messages.create({
@@ -273,12 +318,17 @@ Quali AI Tools sono più rilevanti per questa richiesta? Restituisci solo l'arra
 
     // Prova a parsare la risposta JSON
     let toolIds: string[] = []
+    let explanations: Record<string, string> = {}
+    
     try {
       // Cerca JSON nella risposta (potrebbe avere testo prima/dopo)
       const jsonMatch = responseText.match(/\{[\s\S]*"toolIds"[\s\S]*\}/)
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0])
         toolIds = Array.isArray(parsed.toolIds) ? parsed.toolIds : []
+        explanations = parsed.explanations && typeof parsed.explanations === 'object' 
+          ? parsed.explanations 
+          : {}
       } else {
         // Fallback: cerca array diretto
         const arrayMatch = responseText.match(/\[[\s\S]*\]/)
@@ -303,8 +353,26 @@ Quali AI Tools sono più rilevanti per questa richiesta? Restituisci solo l'arra
     const validToolIds = toolIds.filter(id => 
       AI_TOOLS.some(tool => tool.id === id)
     )
+    
+    // Aggiungi spiegazioni dai dati dettagliati se mancanti
+    const finalExplanations: Record<string, string> = {}
+    validToolIds.forEach(id => {
+      if (explanations[id]) {
+        finalExplanations[id] = explanations[id]
+      } else {
+        // Genera spiegazione dai dati dettagliati
+        const detailedInfo = AI_TOOLS_DETAILED_INFO[id]
+        if (detailedInfo) {
+          const tool = AI_TOOLS.find(t => t.id === id)
+          finalExplanations[id] = `${detailedInfo.useCase || tool?.description}${detailedInfo.pricing?.free ? ' Piano gratuito disponibile.' : ''}`
+        }
+      }
+    })
 
-    return NextResponse.json({ toolIds: validToolIds })
+    return NextResponse.json({ 
+      toolIds: validToolIds,
+      explanations: finalExplanations 
+    })
   } catch (error) {
     console.error('Errore nella ricerca AI Tools:', error)
     

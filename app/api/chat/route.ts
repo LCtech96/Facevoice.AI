@@ -234,7 +234,6 @@ VIDEO & STILE:
 - Descript: Editor Video Basato su Testo
 - OpusClip: Clip Brevi e Riutilizzo Contenuti
 - Muapi.ai: API per Effetti Video
-- AITryOn: Video di Prodotto per E-commerce
 
 IMMAGINI & GRAFICA:
 - Midjourney: Generazione di Immagini artistiche

@@ -139,17 +139,6 @@ const mockAITools: AITool[] = [
     comments: 28,
     shares: 41,
   },
-  {
-    id: 'aitryon',
-    name: 'AITryOn',
-    description: 'Video di Prodotto per E-commerce. Genera video di prodotti per il tuo negozio online con AI.',
-    coverImage: '/team/placeholder.svg',
-    category: 'Video & E-commerce',
-    link: 'https://aitryon.ai/',
-    likes: 201,
-    comments: 35,
-    shares: 59,
-  },
   // Immagini e Grafica
   {
     id: 'midjourney',
@@ -391,6 +380,7 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
   const [loading, setLoading] = useState(true)
   const [searching, setSearching] = useState(false)
   const [filteredTools, setFilteredTools] = useState<AITool[]>([])
+  const [toolExplanations, setToolExplanations] = useState<Record<string, string>>({})
 
   useEffect(() => {
     // Simula caricamento dati
@@ -428,8 +418,9 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
 
   // Filtro intelligente basato su LLM per i tools
   useEffect(() => {
-    if (!searchQuery && !categoryFilter) {
+      if (!searchQuery && !categoryFilter) {
       setFilteredTools([])
+      setToolExplanations({}) // Pulisci spiegazioni
       setSearching(false)
       return
     }
@@ -442,6 +433,7 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
           tool.category.toLowerCase().includes(categoryFilter.toLowerCase())
         )
         setFilteredTools(filtered)
+        setToolExplanations({}) // Pulisci spiegazioni quando non c'è ricerca
         setSearching(false)
         return
       }
@@ -459,6 +451,10 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
           if (response.ok) {
             const data = await response.json()
             const relevantToolIds = data.toolIds || []
+            const explanations = data.explanations || {}
+
+            // Salva le spiegazioni
+            setToolExplanations(explanations)
 
             // Filtra i tools basandosi sugli ID rilevanti
             let filtered = tools.filter((tool) => {
@@ -671,7 +667,28 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: index * 0.1 }}
+          className="space-y-3"
         >
+          {/* Mostra spiegazione se disponibile (solo per risultati di ricerca) */}
+          {toolExplanations[tool.id] && searchQuery && (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="bg-[var(--accent-blue)]/10 border border-[var(--accent-blue)]/30 rounded-lg p-4 mb-2"
+            >
+              <div className="flex items-start gap-2">
+                <span className="text-[var(--accent-blue)] text-lg">💡</span>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
+                    Perché questo tool:
+                  </p>
+                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                    {toolExplanations[tool.id]}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
           <AIToolCard
             tool={tool}
             user={user}
