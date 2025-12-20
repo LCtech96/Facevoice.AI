@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Send } from 'lucide-react'
+import Image from 'next/image'
 import ParticleBackground from './ParticleBackground'
 import { MarketingBadgesHero } from './ui/marketing-badges-hero'
 
@@ -66,10 +67,25 @@ export default function Hero({ onSearchChange, onCategoryFilter }: HeroProps) {
             <MarketingBadgesHero />
           </div>
           
-          {/* Titolo spostato più in alto */}
-          <h1 className="text-6xl md:text-8xl font-bold text-white mb-4">
-            FacevoiceAI
-          </h1>
+          {/* Logo FacevoiceAI */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
+            className="mb-4 w-full max-w-full flex justify-center"
+          >
+            <div className="relative w-full max-w-[280px] sm:max-w-[380px] md:max-w-[480px] lg:max-w-[600px] xl:max-w-[700px] aspect-auto">
+              <Image
+                src="/Facevoice.png"
+                alt="FacevoiceAI"
+                width={700}
+                height={200}
+                className="w-full h-auto object-contain"
+                priority
+                quality={90}
+              />
+            </div>
+          </motion.div>
           <p className="text-xl md:text-2xl text-gray-300 mb-8">
             Innovative AI solutions for your business
           </p>
