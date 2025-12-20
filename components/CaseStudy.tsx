@@ -31,8 +31,18 @@ export default function CaseStudy() {
           className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl overflow-hidden shadow-xl"
         >
           {/* Header con immagine/header */}
-          <div className="bg-gradient-to-r from-orange-600 to-red-600 p-8 md:p-12 text-white">
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div 
+            className="relative p-8 md:p-12 text-white overflow-hidden"
+            style={{
+              backgroundImage: 'url(/sfondo.png)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+            }}
+          >
+            {/* Overlay scuro per leggibilità */}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/60 to-black/50 z-0"></div>
+            <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <MapPin className="w-5 h-5" />
@@ -54,6 +64,7 @@ export default function CaseStudy() {
                 <span>Visita il sito</span>
                 <ExternalLink className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </a>
+            </div>
             </div>
           </div>
 
