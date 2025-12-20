@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import Services from '@/components/Services'
+import CaseStudy from '@/components/CaseStudy'
 import EarbudShowcase from '@/components/ui/spatial-product-showcase'
 import { MarketingBadges } from '@/components/ui/marketing-badges'
 import { MultiStepForm } from '@/components/ui/multistep-form'
@@ -61,6 +62,9 @@ export default function ServicesPage() {
       
       {/* Services Section */}
       <Services />
+      
+      {/* Case Study Section */}
+      <CaseStudy />
       
       {/* Website Examples & Effects Section */}
       <section className="py-24 px-6 bg-[var(--background)]">
