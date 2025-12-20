@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Send } from 'lucide-react'
 import ParticleBackground from './ParticleBackground'
+import { MarketingBadgesHero } from './ui/marketing-badges-hero'
 
 interface HeroProps {
   onSearchChange?: (query: string) => void
@@ -60,6 +61,11 @@ export default function Hero({ onSearchChange, onCategoryFilter }: HeroProps) {
           transition={{ duration: 0.8 }}
           className="flex flex-col items-center"
         >
+          {/* Marketing Badges sopra il titolo */}
+          <div className="mb-6 w-full max-w-md">
+            <MarketingBadgesHero />
+          </div>
+          
           {/* Titolo spostato più in alto */}
           <h1 className="text-6xl md:text-8xl font-bold text-white mb-4">
             FacevoiceAI
