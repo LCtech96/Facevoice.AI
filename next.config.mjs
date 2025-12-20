@@ -148,6 +148,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: '**.gemini.google.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
     ],
   },
 }
