@@ -65,7 +65,6 @@ export default function CaseStudy() {
                 <ExternalLink className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </a>
             </div>
-            </div>
           </div>
 
           {/* Contenuto principale */}
