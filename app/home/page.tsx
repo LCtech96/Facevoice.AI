@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
-import Services from '@/components/Services'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -16,7 +15,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined)
-  const [showServices, setShowServices] = useState(false)
 
   // Gestisci redirect da link condiviso
   useEffect(() => {
@@ -43,19 +41,9 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   // Gestisci scroll quando cambia activeSection
   useEffect(() => {
     if (activeSection) {
-      if (activeSection === 'services') {
-        setShowServices(true)
-        setTimeout(() => {
-          const element = document.getElementById(activeSection)
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
-        }, 100)
-      } else {
-        const element = document.getElementById(activeSection)
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }
+      const element = document.getElementById(activeSection)
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     }
   }, [activeSection])
@@ -72,12 +60,7 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
     <main className="min-h-screen bg-[var(--background)]">
       <Navigation 
         activeSection={activeSection} 
-        setActiveSection={(section) => {
-          setActiveSection(section)
-          if (section === 'services') {
-            setShowServices(true)
-          }
-        }} 
+        setActiveSection={setActiveSection} 
       />
       
       {/* Spacing per desktop navigation */}
@@ -114,13 +97,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
           categoryFilter={categoryFilter}
         />
       </div>
-      
-      {/* Services Section - Mostrata solo quando si clicca su Services */}
-      {showServices && (
-        <div id="services">
-          <Services />
-        </div>
-      )}
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />
