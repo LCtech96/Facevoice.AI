@@ -57,6 +57,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Sistema di matching automatico tra candidati e offerte di lavoro',
         'Chatbot per rispondere alle domande dei candidati 24/7',
       ],
+      'Healthcare': [
+        'AI per analisi immagini mediche (raggi X, risonanze) con accuratezza del 95%+',
+        'Sistema predittivo per identificare pazienti a rischio di complicazioni post-operatorie',
+        'Chatbot medico per triage iniziale e prenotazione visite, riducendo attese del 40%',
+      ],
+      'E-commerce': [
+        'Raccomandazioni prodotti personalizzate che aumentano le vendite del 30%',
+        'AI per pricing dinamico basato su domanda, concorrenza e stagionalità',
+        'Sistema anti-frode che analizza pattern di acquisto e previene transazioni sospette',
+      ],
+      'Real Estate': [
+        'AI per valutazione automatica immobiliare basata su dati di mercato e caratteristiche',
+        'Sistema di matching intelligente tra richieste clienti e proprietà disponibili',
+        'Analisi predittiva per identificare aree con potenziale di crescita valore immobiliare',
+      ],
+      'Education': [
+        'AI per personalizzazione percorsi formativi basata su stile apprendimento',
+        'Sistema di valutazione automatica compiti e feedback istantaneo agli studenti',
+        'Tutor virtuale che adatta difficoltà esercizi in base alle performance dello studente',
+      ],
+      'Finance': [
+        'AI per analisi rischio creditizio che riduce default del 25%',
+        'Sistema di trading algoritmico che esegue operazioni in millisecondi',
+        'Rilevamento anomalie transazioni per prevenire frodi finanziarie in tempo reale',
+      ],
+      'Legal': [
+        'AI per ricerca documenti legali che riduce tempi ricerca del 70%',
+        'Sistema di analisi contratti che identifica clausole a rischio automaticamente',
+        'Assistente virtuale per risposte a domande legali comuni 24/7',
+      ],
+      'Manufacturing': [
+        'AI per manutenzione predittiva che riduce downtime del 35%',
+        'Sistema di controllo qualità automatico con riconoscimento difetti in produzione',
+        'Ottimizzazione produzione in tempo reale basata su domanda e risorse disponibili',
+      ],
+      'Hospitality': [
+        'AI per pricing dinamico camere d\'hotel basato su occupazione e eventi locali',
+        'Sistema di personalizzazione esperienza ospiti basato su preferenze storiche',
+        'Chatbot per gestione prenotazioni e richieste ospiti, riducendo costi supporto del 50%',
+      ],
+      'Retail': [
+        'AI per previsione domanda che riduce stock-out del 20% e sprechi del 15%',
+        'Sistema di analisi comportamento clienti in-store per ottimizzare layout',
+        'Raccomandazioni prodotti cross-sell che aumentano valore ordine medio del 25%',
+      ],
+      'Transportation': [
+        'AI per ottimizzazione rotte che riduce consumi carburante del 15%',
+        'Sistema predittivo manutenzione flotte che previene guasti e riduce costi',
+        'Analisi traffico in tempo reale per routing dinamico e riduzione tempi consegna',
+      ],
+      'Marketing': [
+        'AI per segmentazione clienti avanzata che migliora conversioni del 40%',
+        'Sistema di ottimizzazione campagne pubblicitarie con A/B testing automatico',
+        'Analisi sentiment social media per monitorare brand reputation in tempo reale',
+      ],
     },
     '2': { // Blockchain Development
       'Restaurant': [
@@ -78,6 +133,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Verifica certificati e qualifiche su blockchain',
         'Sistema di pagamento automatico per consulenti',
         'Portfolio digitale verificato per i candidati',
+      ],
+      'Healthcare': [
+        'Cartella clinica immutabile su blockchain per sicurezza e privacy dati pazienti',
+        'Tracciabilità farmaci dalla produzione alla somministrazione per prevenire contraffazioni',
+        'Smart contract per gestione consensi informati e autorizzazioni mediche',
+      ],
+      'E-commerce': [
+        'Sistema di autenticazione prodotti di lusso con certificazione blockchain',
+        'Smart contract per vendite automatiche con pagamento condizionale alla consegna',
+        'Programma fedeltà basato su token blockchain con ricompense verificabili',
+      ],
+      'Real Estate': [
+        'Registro immobiliare su blockchain per transazioni trasparenti e verificabili',
+        'Smart contract per compravendite automatiche con pagamenti escrow',
+        'Certificazione digitale proprietà e documenti catastali immutabili',
+      ],
+      'Education': [
+        'Certificati accademici verificabili su blockchain per prevenire falsificazioni',
+        'Sistema di crediti formativi trasferibili tra istituzioni educative',
+        'Portfolio digitale verificato competenze e progetti studenti',
+      ],
+      'Finance': [
+        'Sistema di pagamenti cross-border istantanei con costi ridotti del 80%',
+        'Smart contract per prestiti automatici con condizioni trasparenti',
+        'Registro immutabile transazioni per audit e conformità normativa',
+      ],
+      'Legal': [
+        'Registro notarile digitale su blockchain per documenti legalmente validi',
+        'Smart contract per accordi automatici con esecuzione garantita',
+        'Sistema di timestamping documenti per prova data certa in tribunale',
+      ],
+      'Manufacturing': [
+        'Tracciabilità completa supply chain dal fornitore al cliente finale',
+        'Certificazione qualità prodotti con dati immutabili su blockchain',
+        'Smart contract per pagamenti automatici fornitori basati su consegne verificate',
+      ],
+      'Hospitality': [
+        'Sistema di verifica identità ospiti con privacy garantita',
+        'Programma fedeltà con token blockchain trasferibili tra hotel',
+        'Smart contract per prenotazioni con pagamenti automatici e cancellazioni',
+      ],
+      'Retail': [
+        'Tracciabilità prodotti alimentari per garantire origine e qualità',
+        'Sistema anti-contraffazione con certificazione blockchain per prodotti premium',
+        'Programma fedeltà con ricompense verificabili e trasferibili',
+      ],
+      'Transportation': [
+        'Registro immutabile manutenzioni veicoli per sicurezza e valore rivendita',
+        'Smart contract per noleggi automatici con pagamenti basati su utilizzo',
+        'Tracciabilità spedizioni con proof-of-delivery verificabile',
+      ],
+      'Marketing': [
+        'Sistema di verifica autenticità influencer e engagement reale',
+        'Smart contract per campagne pubblicitarie con pagamenti basati su risultati',
+        'Registro trasparente spese marketing per accountability e ROI verificabile',
       ],
     },
     '3': { // Full-Stack Development
@@ -101,6 +211,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Dashboard per recruiter con pipeline e statistiche',
         'App mobile per candidati per cercare e candidarsi a posizioni',
       ],
+      'Healthcare': [
+        'Piattaforma telemedicina con video-consulti, prescrizioni digitali e cartella clinica',
+        'App mobile pazienti per prenotazioni, risultati esami e reminder farmaci',
+        'Sistema gestionale cliniche con agenda, fatturazione e reportistica integrata',
+      ],
+      'E-commerce': [
+        'Marketplace multi-vendor con gestione venditori, prodotti e commissioni automatiche',
+        'App mobile shopping con AR per provare prodotti virtualmente prima dell\'acquisto',
+        'Dashboard venditori con analytics vendite, inventario e gestione ordini in tempo reale',
+      ],
+      'Real Estate': [
+        'Portale immobiliare con virtual tour 360°, calcolo mutuo e documenti digitali',
+        'App mobile per agenti con CRM integrato, geolocalizzazione proprietà e contatti clienti',
+        'Piattaforma gestione contratti con firma digitale, pagamenti e notifiche automatiche',
+      ],
+      'Education': [
+        'LMS completo con video-lezioni, quiz interattivi, forum e valutazioni automatiche',
+        'App mobile studenti per accesso corsi, compiti e comunicazioni con docenti',
+        'Dashboard insegnanti per creare contenuti, monitorare progressi e generare report',
+      ],
+      'Finance': [
+        'Piattaforma banking online con investimenti, prestiti e gestione portafoglio',
+        'App mobile per pagamenti, bonifici istantanei e notifiche transazioni in tempo reale',
+        'Dashboard advisor finanziari con analisi clienti, raccomandazioni e report personalizzati',
+      ],
+      'Legal': [
+        'Portale clienti per gestione pratiche, documenti e comunicazioni con avvocati',
+        'Sistema gestionale studi legali con fatturazione, scadenze e archiviazione documenti',
+        'App mobile per consulenze legali rapide, ricerca precedenti e calcolo onorari',
+      ],
+      'Manufacturing': [
+        'Sistema MES (Manufacturing Execution System) per controllo produzione in tempo reale',
+        'App mobile operatori per segnalazione guasti, manutenzioni e accesso documentazione',
+        'Dashboard manager con KPI produzione, qualità e efficienza macchinari',
+      ],
+      'Hospitality': [
+        'Sistema PMS (Property Management System) integrato con booking engine e channel manager',
+        'App mobile ospiti per check-in digitale, servizi hotel e richieste concierge',
+        'Dashboard manager con occupazione, revenue management e analisi soddisfazione clienti',
+      ],
+      'Retail': [
+        'Piattaforma e-commerce B2B con gestione ordini, catalogo e fatturazione automatica',
+        'App mobile venditori con inventario, prezzi e ordini in tempo reale',
+        'Dashboard manager con vendite, margini, rotazione stock e previsioni domanda',
+      ],
+      'Transportation': [
+        'Sistema TMS (Transportation Management System) per ottimizzazione logistica e routing',
+        'App mobile autisti con navigazione, tracciamento consegne e comunicazione clienti',
+        'Dashboard operazioni con monitoraggio flotta, consumi e manutenzioni programmate',
+      ],
+      'Marketing': [
+        'Piattaforma marketing automation con email, SMS, social e analytics integrati',
+        'App mobile per gestione campagne, approvazioni contenuti e monitoraggio performance',
+        'Dashboard CMO con ROI campagne, lead generation e analisi customer journey',
+      ],
     },
     '4': { // Technical Consulting
       'Restaurant': [
@@ -122,6 +287,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Strategia per digitalizzare il processo di recruiting',
         'Consulenza su ATS (Applicant Tracking System) e strumenti HR',
         'Ottimizzazione del processo di selezione e onboarding',
+      ],
+      'Healthcare': [
+        'Audit sistemi informativi sanitari e roadmap per conformità GDPR e normativa',
+        'Consulenza migrazione cloud per ridurre costi infrastruttura del 40%',
+        'Strategia integrazione sistemi legacy con nuove piattaforme digitali',
+      ],
+      'E-commerce': [
+        'Analisi performance sito e ottimizzazione conversioni con aumento vendite del 35%',
+        'Consulenza scelta piattaforma e-commerce (Shopify, WooCommerce, custom)',
+        'Strategia migrazione dati e integrazione sistemi esistenti senza interruzioni',
+      ],
+      'Real Estate': [
+        'Audit processi digitali e identificazione inefficienze con risparmio costi del 30%',
+        'Consulenza implementazione CRM immobiliare e integrazione portali',
+        'Strategia digitalizzazione documenti e automazione pratiche notarili',
+      ],
+      'Education': [
+        'Analisi infrastruttura IT scuole e roadmap per didattica digitale',
+        'Consulenza scelta LMS (Learning Management System) e strumenti collaborativi',
+        'Strategia sicurezza dati studenti e conformità privacy (GDPR)',
+      ],
+      'Finance': [
+        'Audit sicurezza sistemi bancari e conformità normativa (MIFID, PSD2)',
+        'Consulenza architettura cloud per resilienza e disaster recovery',
+        'Strategia open banking e integrazione API per servizi innovativi',
+      ],
+      'Legal': [
+        'Analisi workflow studi legali e automazione processi ripetitivi',
+        'Consulenza sistemi document management e archiviazione digitale',
+        'Strategia sicurezza dati clienti e conformità normativa professionale',
+      ],
+      'Manufacturing': [
+        'Audit sistemi produzione e roadmap Industry 4.0 e IoT',
+        'Consulenza integrazione ERP con sistemi produzione e magazzino',
+        'Strategia manutenzione predittiva e riduzione downtime del 40%',
+      ],
+      'Hospitality': [
+        'Analisi sistemi prenotazioni e ottimizzazione revenue management',
+        'Consulenza integrazione PMS con OTA (Booking, Expedia) e channel manager',
+        'Strategia personalizzazione esperienza ospiti e customer loyalty',
+      ],
+      'Retail': [
+        'Audit sistemi punto vendita e strategia omnicanale integrata',
+        'Consulenza integrazione e-commerce con sistemi magazzino e logistica',
+        'Strategia dati clienti per personalizzazione e aumento vendite del 25%',
+      ],
+      'Transportation': [
+        'Analisi sistemi logistica e ottimizzazione costi operativi',
+        'Consulenza implementazione TMS e integrazione con partner',
+        'Strategia tracking real-time e miglioramento customer experience',
+      ],
+      'Marketing': [
+        'Audit stack tecnologico marketing e identificazione gap strumenti',
+        'Consulenza integrazione CRM, marketing automation e analytics',
+        'Strategia data-driven marketing con aumento ROI campagne del 50%',
       ],
     },
     '5': { // Automation Systems
@@ -145,6 +365,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Sistema automatico per programmare colloqui e inviare reminder',
         'Automazione onboarding nuovi dipendenti',
       ],
+      'Healthcare': [
+        'Automazione prenotazioni visite con invio reminder SMS e email',
+        'Sistema automatico per gestione prescrizioni e rinnovi farmaci',
+        'Automazione fatturazione e invio documenti a pazienti e assicurazioni',
+      ],
+      'E-commerce': [
+        'Automazione gestione inventario con riordini automatici quando stock basso',
+        'Sistema automatico per aggiornamento prezzi basato su concorrenza e margini',
+        'Automazione email marketing con campagne personalizzate basate su comportamento acquisti',
+      ],
+      'Real Estate': [
+        'Automazione aggiornamento annunci immobiliari su tutti i portali simultaneamente',
+        'Sistema automatico per invio documenti e reminder scadenze contratti',
+        'Automazione lead nurturing con email personalizzate basate su preferenze ricerca',
+      ],
+      'Education': [
+        'Automazione correzione compiti e quiz con feedback automatico agli studenti',
+        'Sistema automatico per invio materiali didattici e reminder scadenze',
+        'Automazione generazione report progressi studenti e comunicazione genitori',
+      ],
+      'Finance': [
+        'Automazione approvazione prestiti per importi sotto soglia con analisi rischio AI',
+        'Sistema automatico per riconciliazione conti e rilevamento anomalie transazioni',
+        'Automazione reportistica regolamentare e invio documenti a autorità competenti',
+      ],
+      'Legal': [
+        'Automazione ricerca precedenti giurisprudenziali e documenti rilevanti',
+        'Sistema automatico per calcolo scadenze processuali e invio alert',
+        'Automazione generazione contratti standard e documenti legali da template',
+      ],
+      'Manufacturing': [
+        'Automazione controllo qualità con ispezione automatica prodotti e scarto difetti',
+        'Sistema automatico per gestione ordini produzione basata su domanda prevista',
+        'Automazione manutenzione preventiva con allarmi basati su sensori IoT',
+      ],
+      'Hospitality': [
+        'Automazione pricing camere basato su occupazione, eventi e domanda prevista',
+        'Sistema automatico per check-in/out digitale e invio chiavi virtuali',
+        'Automazione gestione prenotazioni con sincronizzazione OTA e channel manager',
+      ],
+      'Retail': [
+        'Automazione riordini prodotti con previsione domanda e ottimizzazione stock',
+        'Sistema automatico per gestione promozioni e sconti basati su stagionalità',
+        'Automazione sincronizzazione inventario tra negozi fisici e e-commerce',
+      ],
+      'Transportation': [
+        'Automazione ottimizzazione rotte consegne basata su traffico e priorità',
+        'Sistema automatico per tracciamento spedizioni e notifiche clienti',
+        'Automazione manutenzione veicoli con scheduling basato su chilometraggio e utilizzo',
+      ],
+      'Marketing': [
+        'Automazione lead scoring e qualificazione con invio a vendite quando pronto',
+        'Sistema automatico per A/B testing campagne e ottimizzazione budget in tempo reale',
+        'Automazione generazione report performance e dashboard executive automatici',
+      ],
     },
     '6': { // AI Agents Development
       'Restaurant': [
@@ -166,6 +441,61 @@ const getSectorExamples = (serviceId: number, sector: string): string[] => {
         'Agente AI per rispondere a domande dei candidati',
         'Assistente virtuale per pre-screening candidati',
         'AI agent per programmare colloqui e inviare feedback',
+      ],
+      'Healthcare': [
+        'Assistente AI per triage pazienti che valuta urgenza e indirizza a specialista corretto',
+        'Agente virtuale per rispondere a domande comuni su sintomi e farmaci 24/7',
+        'AI agent per monitoraggio pazienti cronici con alert automatici a medici',
+      ],
+      'E-commerce': [
+        'Assistente shopping AI che suggerisce prodotti e risponde a domande in tempo reale',
+        'Agente virtuale per gestione resi e rimborsi con approvazione automatica quando possibile',
+        'AI agent per supporto clienti che risolve il 70% delle richieste senza intervento umano',
+      ],
+      'Real Estate': [
+        'Assistente immobiliare AI che risponde a domande su proprietà e quartieri',
+        'Agente virtuale per pre-qualificazione clienti e matching con budget disponibile',
+        'AI agent per programmare visite e follow-up automatico con potenziali acquirenti',
+      ],
+      'Education': [
+        'Tutor AI personalizzato che adatta spiegazioni allo stile apprendimento studente',
+        'Assistente virtuale per rispondere a domande studenti su corsi e compiti 24/7',
+        'AI agent per creazione automatica quiz e esercizi basati su contenuti lezione',
+      ],
+      'Finance': [
+        'Consulente finanziario AI che fornisce consigli investimenti basati su profilo rischio',
+        'Assistente virtuale per gestione portafoglio con analisi performance e suggerimenti',
+        'AI agent per monitoraggio mercati e alert automatici su opportunità investimento',
+      ],
+      'Legal': [
+        'Assistente legale AI per risposte a domande comuni su contratti e normative',
+        'Agente virtuale per ricerca precedenti giurisprudenziali e documenti rilevanti',
+        'AI agent per analisi contratti con identificazione clausole a rischio e suggerimenti',
+      ],
+      'Manufacturing': [
+        'Assistente produzione AI che monitora macchinari e suggerisce ottimizzazioni',
+        'Agente virtuale per troubleshooting guasti con diagnosi automatica e soluzioni',
+        'AI agent per analisi dati produzione e raccomandazioni miglioramento efficienza',
+      ],
+      'Hospitality': [
+        'Concierge virtuale AI per rispondere a richieste ospiti e suggerire attività locali',
+        'Assistente prenotazioni AI che gestisce modifiche e cancellazioni automaticamente',
+        'AI agent per personalizzazione esperienza ospiti basata su preferenze e storia',
+      ],
+      'Retail': [
+        'Assistente vendite AI che aiuta clienti a trovare prodotti e risponde a domande',
+        'Agente virtuale per gestione reclami con risoluzione automatica quando possibile',
+        'AI agent per analisi comportamento clienti e suggerimenti prodotti personalizzati',
+      ],
+      'Transportation': [
+        'Assistente logistica AI per ottimizzazione rotte e gestione emergenze',
+        'Agente virtuale per supporto clienti su tracciamento spedizioni e ritardi',
+        'AI agent per monitoraggio flotta con alert manutenzioni e ottimizzazione consumi',
+      ],
+      'Marketing': [
+        'Assistente marketing AI che suggerisce strategie campagne basate su dati storici',
+        'Agente virtuale per creazione automatica contenuti social e post ottimizzati',
+        'AI agent per analisi competitor e identificazione opportunità di mercato',
       ],
     },
   }
