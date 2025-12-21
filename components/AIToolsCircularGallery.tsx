@@ -211,7 +211,7 @@ export default function AIToolsCircularGallery() {
 
   return (
     <>
-      <div className="w-full h-[500px] md:h-[600px]">
+      <div className="w-full h-[350px] sm:h-[450px] md:h-[550px] lg:h-[600px] relative touch-pan-y">
         <CircularGallery
           items={galleryItems}
           bend={3}

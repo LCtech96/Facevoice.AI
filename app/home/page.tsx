@@ -71,32 +71,20 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       
       {/* Hero Section */}
       <div id="hero">
-        <Hero 
-          onSearchChange={(query) => {
-            setSearchQuery(query)
-            // Se la query contiene una categoria, filtra per quella
-            const categories = ['Video', 'Immagine', 'UX/UI', 'Contenuti', 'Audio', 'Produttività']
-            const foundCategory = categories.find(cat => 
-              query.toLowerCase().includes(cat.toLowerCase())
-            )
-            if (foundCategory) {
-              setCategoryFilter(foundCategory)
-            } else {
-              setCategoryFilter(undefined)
-            }
-          }}
-        />
+        <Hero />
       </div>
       
-      {/* Feed Section - Stile Social Media - Subito dopo Hero */}
-      <div id="ai-tools-feed" className="container mx-auto px-4 py-8 max-w-4xl">
-        <Feed 
-          user={user} 
-          highlightedToolId={toolIdRef.current}
-          searchQuery={searchQuery}
-          categoryFilter={categoryFilter}
-        />
-      </div>
+      {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}
+      {(searchQuery || categoryFilter) && (
+        <div id="ai-tools-feed" className="container mx-auto px-4 py-8 max-w-4xl">
+          <Feed 
+            user={user} 
+            highlightedToolId={toolIdRef.current}
+            searchQuery={searchQuery}
+            categoryFilter={categoryFilter}
+          />
+        </div>
+      )}
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

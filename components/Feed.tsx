@@ -38,16 +38,18 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
   const [toolExplanations, setToolExplanations] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    // Simula caricamento dati
+    // Carica tool solo quando c'è una ricerca o un filtro
     const loadTools = async () => {
-      // In futuro, caricherà da API/Supabase
-      // Per ora usa mock data
-      // Filtra i tool che sono già nella CircularGallery per evitare duplicati
-      const circularGalleryToolIds = new Set(allAITools.map(tool => tool.id))
-      const filteredTools = mockAITools.filter(tool => !circularGalleryToolIds.has(tool.id))
-      
+      if (!searchQuery && !categoryFilter) {
+        // Non mostrare nulla quando non c'è ricerca
+        setTools([])
+        setLoading(false)
+        return
+      }
+
+      // Carica tutti i tool quando c'è una ricerca
       const toolsWithLikes = await Promise.all(
-        filteredTools.map(async (tool) => {
+        allAITools.map(async (tool) => {
           // Verifica se l'utente ha già messo like
           const isLiked = user ? await checkUserLike(tool.id, user.id) : false
           return { ...tool, isLiked }
@@ -55,6 +57,21 @@ export default function Feed({ user, highlightedToolId, searchQuery = '', catego
       )
       setTools(toolsWithLikes)
       setLoading(false)
+      
+      // Scroll al tool evidenziato dopo il caricamento
+      if (highlightedToolId) {
+        setTimeout(() => {
+          const element = document.getElementById(`tool-${highlightedToolId}`)
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            // Evidenzia il tool
+            element.classList.add('ring-4', 'ring-coral-red', 'ring-opacity-50')
+            setTimeout(() => {
+              element.classList.remove('ring-4', 'ring-coral-red', 'ring-opacity-50')
+            }, 3000)
+          }
+        }, 500)
+      }
 
       // Scroll al tool evidenziato dopo il caricamento
       if (highlightedToolId) {
