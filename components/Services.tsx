@@ -608,7 +608,7 @@ export default function Services() {
           Comprehensive solutions to drive your business forward
         </p>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {services.map((service, index) => {
             const Icon = service.icon
             return (
@@ -620,16 +620,16 @@ export default function Services() {
                 transition={{ duration: 0.6, delay: index * 0.1 }}
                 whileHover={{ scale: 1.02, y: -5 }}
                 onClick={() => setSelectedService(service)}
-                className="bg-[var(--card-background)] border border-[var(--border-color)] p-6 rounded-2xl cursor-pointer hover:shadow-lg transition-all"
+                className="bg-[var(--card-background)] border border-[var(--border-color)] p-4 rounded-xl cursor-pointer hover:shadow-lg transition-all"
               >
-                <div className="mb-4">
-                  <div className="w-12 h-12 bg-[var(--accent-blue)]/10 rounded-xl flex items-center justify-center mb-4">
-                    <Icon className="w-6 h-6 text-[var(--accent-blue)]" />
+                <div className="mb-3">
+                  <div className="w-10 h-10 bg-[var(--accent-blue)]/10 rounded-lg flex items-center justify-center mb-3">
+                    <Icon className="w-5 h-5 text-[var(--accent-blue)]" />
                   </div>
-                  <h3 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+                  <h3 className="text-base font-semibold text-[var(--text-primary)] mb-2">
                     {service.title}
                   </h3>
-                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                  <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                     {service.description}
                   </p>
                 </div>

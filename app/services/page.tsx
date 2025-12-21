@@ -63,9 +63,6 @@ export default function ServicesPage() {
       {/* Services Section */}
       <Services />
       
-      {/* Case Study Section */}
-      <CaseStudy />
-      
       {/* Website Examples & Effects Section */}
       <section className="py-24 px-6 bg-[var(--background)]">
         <div className="container mx-auto max-w-7xl">
@@ -209,6 +206,9 @@ export default function ServicesPage() {
           </div>
         </div>
       </section>
+      
+      {/* Case Study Section */}
+      <CaseStudy />
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

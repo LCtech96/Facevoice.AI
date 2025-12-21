@@ -178,6 +178,9 @@ export default function CaseStudy() {
                 <p className="text-sm text-[var(--text-secondary)] mt-2 opacity-80">
                   Personalizzabile e scalabile in base alle tue esigenze
                 </p>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-3 opacity-60 leading-relaxed">
+                  Manutenzione gratuita per i primi 6 mesi. Successivamente, il costo è di €25/mese minimo con possibilità di bloccare un tetto massimo mensile.
+                </p>
               </div>
             </div>
           </div>
