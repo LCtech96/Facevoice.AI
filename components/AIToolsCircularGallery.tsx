@@ -23,6 +23,7 @@ export default function AIToolsCircularGallery() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; comment: string; created_at: string }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
+  const [submittingComment, setSubmittingComment] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -99,7 +100,12 @@ export default function AIToolsCircularGallery() {
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!commentText.trim() || !selectedTool) return
+    e.stopPropagation()
+    
+    // Previeni doppi submit
+    if (submittingComment || !commentText.trim() || !selectedTool) {
+      return
+    }
 
     // Se l'email non è stata inserita, mostra il campo email
     if (!userEmail.trim() && !user?.email) {
@@ -118,11 +124,15 @@ export default function AIToolsCircularGallery() {
       return
     }
     
+    // Imposta loading
+    setSubmittingComment(true)
+    setErrorMessage(null)
+    
     // Genera nome utente
     const userName = user 
       ? (user.email?.split('@')[0] || user.user_metadata?.full_name || 'User')
       : emailToUse.split('@')[0] || 'Guest'
-    const userId = user?.id || `anon_${Date.now()}`
+    const userId = user?.id || `anon_${Date.now()}_${Math.random().toString(36).substring(7)}`
     
     // Invia al server (non aggiungere localmente, aspetta verifica)
     try {
@@ -137,42 +147,49 @@ export default function AIToolsCircularGallery() {
         }),
       })
       
-      if (response.ok) {
-        const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      
+      // Mostra messaggio di verifica
+      if (data.requiresVerification) {
+        let message = data.message || 'Commento salvato! Controlla la tua email per verificarlo.'
         
-        // Mostra messaggio di verifica
-        if (data.requiresVerification) {
-          let message = data.message || 'Commento salvato! Controlla la tua email per verificarlo.'
-          
-          // Se c'è un link di verifica (email non configurata), mostralo come link cliccabile
-          if (data.verificationLink) {
-            message += '\n\nSe non ricevi l\'email, usa questo link:'
-          }
-          
-          setVerificationMessage(message)
-          setVerificationLink(data.verificationLink || null)
-          setCommentText('')
-          setUserEmail('')
-          setShowEmailInput(false)
-          setErrorMessage(null)
-          // Ricarica commenti dopo un po'
-          setTimeout(() => {
+        // Se c'è un link di verifica (email non configurata), mostralo come link cliccabile
+        if (data.verificationLink) {
+          message += '\n\nSe non ricevi l\'email, usa questo link:'
+        }
+        
+        setVerificationMessage(message)
+        setVerificationLink(data.verificationLink || null)
+        setCommentText('')
+        setUserEmail('')
+        setShowEmailInput(false)
+        setErrorMessage(null)
+        
+        // Ricarica commenti dopo un po'
+        setTimeout(() => {
+          if (selectedTool) {
             loadComments()
-          }, 2000)
-        } else {
-          // Se non richiede verifica (utente autenticato), aggiorna subito
+          }
+        }, 2000)
+      } else {
+        // Se non richiede verifica (utente autenticato), aggiorna subito
+        if (selectedTool) {
           loadComments()
         }
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        console.error('Failed to submit comment:', response.status, errorData)
-        setErrorMessage(errorData.error || 'Errore nel salvare il commento. Riprova più tardi.')
-        setTimeout(() => setErrorMessage(null), 5000)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting comment:', error)
-      setErrorMessage('Errore nel salvare il commento. Riprova più tardi.')
+      const errorMsg = error?.message?.includes('HTTP error') 
+        ? 'Errore di connessione. Controlla la tua connessione internet e riprova.'
+        : 'Errore nel salvare il commento. Riprova più tardi.'
+      setErrorMessage(errorMsg)
       setTimeout(() => setErrorMessage(null), 5000)
+    } finally {
+      setSubmittingComment(false)
     }
   }
 
@@ -443,7 +460,7 @@ export default function AIToolsCircularGallery() {
                       )}
 
                       {/* Comment Form - Richiede email per verifica */}
-                      <form onSubmit={handleSubmitComment} className="space-y-2 flex-shrink-0 mt-auto">
+                      <form onSubmit={handleSubmitComment} className="space-y-2 flex-shrink-0 mt-auto" noValidate>
                         {showEmailInput && !user?.email && (
                           <input
                             type="email"
@@ -464,10 +481,14 @@ export default function AIToolsCircularGallery() {
                           />
                           <button
                             type="submit"
-                            disabled={!commentText.trim() || (showEmailInput && !userEmail.trim())}
+                            disabled={submittingComment || !commentText.trim() || (showEmailInput && !userEmail.trim())}
                             className="px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                           >
-                            <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                            {submittingComment ? (
+                              <span className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+                            ) : (
+                              <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                            )}
                           </button>
                         </div>
                         {!user && (
