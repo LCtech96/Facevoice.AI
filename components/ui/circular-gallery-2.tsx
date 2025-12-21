@@ -570,14 +570,31 @@ class App {
   }
 
   createRenderer() {
-    this.renderer = new Renderer({
-      alpha: true,
-      antialias: true,
-      dpr: Math.min(window.devicePixelRatio || 1, 2),
-    });
-    this.gl = this.renderer.gl;
-    this.gl.clearColor(0, 0, 0, 0);
-    this.container.appendChild(this.gl.canvas);
+    try {
+      this.renderer = new Renderer({
+        alpha: true,
+        antialias: true,
+        dpr: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      this.gl = this.renderer.gl;
+      
+      // Check if WebGL is actually available
+      if (!this.gl) {
+        console.error('WebGL not supported');
+        return;
+      }
+      
+      this.gl.clearColor(0, 0, 0, 0);
+      
+      // Ensure canvas has proper dimensions
+      this.gl.canvas.style.width = '100%';
+      this.gl.canvas.style.height = '100%';
+      this.gl.canvas.style.display = 'block';
+      
+      this.container.appendChild(this.gl.canvas);
+    } catch (error) {
+      console.error('Failed to create WebGL renderer:', error);
+    }
   }
 
   createCamera() {

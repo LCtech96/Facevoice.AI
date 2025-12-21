@@ -211,7 +211,7 @@ export default function AIToolsCircularGallery() {
 
   return (
     <>
-      <div className="w-full h-[350px] sm:h-[450px] md:h-[550px] lg:h-[600px] relative touch-pan-y">
+      <div className="w-full h-full min-h-[350px] sm:min-h-[450px] md:min-h-[550px] lg:min-h-[600px] relative touch-pan-y -webkit-touch-callout-none" style={{ WebkitTouchCallout: 'none' }}>
         <CircularGallery
           items={galleryItems}
           bend={3}
