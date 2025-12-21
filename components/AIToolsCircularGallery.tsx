@@ -19,6 +19,8 @@ export default function AIToolsCircularGallery() {
   const [userEmail, setUserEmail] = useState('')
   const [showEmailInput, setShowEmailInput] = useState(false)
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
+  const [verificationLink, setVerificationLink] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; comment: string; created_at: string }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
   const [user, setUser] = useState<User | null>(null)
@@ -111,7 +113,8 @@ export default function AIToolsCircularGallery() {
     // Validazione email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailRegex.test(emailToUse)) {
-      alert('Inserisci un\'email valida')
+      setErrorMessage('Inserisci un\'email valida')
+      setTimeout(() => setErrorMessage(null), 5000)
       return
     }
     
@@ -141,15 +144,17 @@ export default function AIToolsCircularGallery() {
         if (data.requiresVerification) {
           let message = data.message || 'Commento salvato! Controlla la tua email per verificarlo.'
           
-          // Se c'è un link di verifica (email non configurata), mostralo
+          // Se c'è un link di verifica (email non configurata), mostralo come link cliccabile
           if (data.verificationLink) {
-            message += `\n\nLink di verifica: ${data.verificationLink}`
+            message += '\n\nSe non ricevi l\'email, usa questo link:'
           }
           
           setVerificationMessage(message)
+          setVerificationLink(data.verificationLink || null)
           setCommentText('')
           setUserEmail('')
           setShowEmailInput(false)
+          setErrorMessage(null)
           // Ricarica commenti dopo un po'
           setTimeout(() => {
             loadComments()
@@ -161,11 +166,13 @@ export default function AIToolsCircularGallery() {
       } else {
         const errorData = await response.json().catch(() => ({}))
         console.error('Failed to submit comment:', response.status, errorData)
-        alert(errorData.error || 'Errore nel salvare il commento. Riprova più tardi.')
+        setErrorMessage(errorData.error || 'Errore nel salvare il commento. Riprova più tardi.')
+        setTimeout(() => setErrorMessage(null), 5000)
       }
     } catch (error) {
       console.error('Error submitting comment:', error)
-      alert('Errore nel salvare il commento. Riprova più tardi.')
+      setErrorMessage('Errore nel salvare il commento. Riprova più tardi.')
+      setTimeout(() => setErrorMessage(null), 5000)
     }
   }
 
@@ -194,8 +201,15 @@ export default function AIToolsCircularGallery() {
           url: shareUrl,
         })
       } else {
-        await navigator.clipboard.writeText(shareUrl)
-        alert('Link copiato negli appunti!')
+        try {
+          await navigator.clipboard.writeText(shareUrl)
+          // Mostra un feedback visivo invece di alert
+          setErrorMessage('Link copiato negli appunti!')
+          setTimeout(() => setErrorMessage(null), 3000)
+        } catch (err) {
+          setErrorMessage('Impossibile copiare il link. Apri il tool per condividerlo.')
+          setTimeout(() => setErrorMessage(null), 5000)
+        }
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
@@ -229,7 +243,13 @@ export default function AIToolsCircularGallery() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4"
-            onClick={() => setSelectedTool(null)}
+                   onClick={() => {
+                     setSelectedTool(null)
+                     setVerificationMessage(null)
+                     setVerificationLink(null)
+                     setErrorMessage(null)
+                     setShowComments(false)
+                   }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -248,7 +268,13 @@ export default function AIToolsCircularGallery() {
                   className="w-full h-full object-cover"
                 />
                 <button
-                  onClick={() => setSelectedTool(null)}
+                   onClick={() => {
+                     setSelectedTool(null)
+                     setVerificationMessage(null)
+                     setVerificationLink(null)
+                     setErrorMessage(null)
+                     setShowComments(false)
+                   }}
                   className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-full transition-colors"
                 >
                   <X className="w-5 h-5 text-white" />
@@ -375,12 +401,40 @@ export default function AIToolsCircularGallery() {
                         )}
                       </div>
 
+                      {/* Messaggio di errore */}
+                      {errorMessage && (
+                        <div className="mb-3 sm:mb-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border-2 border-red-200 dark:border-red-800 flex-shrink-0">
+                          <p className="text-xs sm:text-sm text-red-900 dark:text-red-100 whitespace-pre-line">{errorMessage}</p>
+                          <button
+                            onClick={() => setErrorMessage(null)}
+                            className="mt-2 text-xs text-red-700 dark:text-red-300 hover:text-red-900 dark:hover:text-red-100 underline"
+                          >
+                            Chiudi
+                          </button>
+                        </div>
+                      )}
+
                       {/* Messaggio di verifica */}
                       {verificationMessage && (
                         <div className="mb-3 sm:mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl border-2 border-blue-200 dark:border-blue-800 flex-shrink-0">
                           <p className="text-xs sm:text-sm text-blue-900 dark:text-blue-100 whitespace-pre-line">{verificationMessage}</p>
+                          {verificationLink && (
+                            <div className="mt-2">
+                              <a
+                                href={verificationLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs sm:text-sm text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline break-all"
+                              >
+                                {verificationLink}
+                              </a>
+                            </div>
+                          )}
                           <button
-                            onClick={() => setVerificationMessage(null)}
+                            onClick={() => {
+                              setVerificationMessage(null)
+                              setVerificationLink(null)
+                            }}
                             className="mt-2 text-xs text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline"
                           >
                             Chiudi
