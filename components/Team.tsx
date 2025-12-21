@@ -236,6 +236,11 @@ export default function Team() {
                       </a>
                     )}
                   </div>
+                  {member.is_contractor && (
+                    <p className="text-[8px] text-[var(--text-secondary)]/60 mt-2 opacity-50">
+                      AI Generated
+                    </p>
+                  )}
                 </motion.div>
               ))}
             </div>
