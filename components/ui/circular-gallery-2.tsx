@@ -520,13 +520,13 @@ class App {
   viewport!: { width: number; height: number };
   raf!: number;
   mouse: { x: number; y: number } = { x: 0, y: 0 };
-  boundOnResize: () => void;
-  boundOnWheel: (e: WheelEvent) => void;
-  boundOnTouchDown: (e: MouseEvent | TouchEvent) => void;
-  boundOnTouchMove: (e: MouseEvent | TouchEvent) => void;
-  boundOnTouchUp: () => void;
-  boundOnClick: (e: MouseEvent) => void;
-  boundOnMouseMove: (e: MouseEvent) => void;
+  boundOnResize!: () => void;
+  boundOnWheel!: (e: WheelEvent) => void;
+  boundOnTouchDown!: (e: MouseEvent | TouchEvent) => void;
+  boundOnTouchMove!: (e: MouseEvent | TouchEvent) => void;
+  boundOnTouchUp!: () => void;
+  boundOnClick!: (e: MouseEvent) => void;
+  boundOnMouseMove!: (e: MouseEvent) => void;
   onItemClick?: (index: number) => void;
 
   constructor(
