@@ -181,9 +181,21 @@ export default function AIChatWidget() {
   }
 
   const handleReportBug = () => {
-    // Apre un link per segnalare un bug o mostra un messaggio
-    const bugReportUrl = 'mailto:lucacorrao1996@gmail.com?subject=Segnalazione Bug - Assistente AI&body=Descrivi il bug che hai riscontrato:'
-    window.location.href = bugReportUrl
+    // Genera messaggio per segnalazione bug via WhatsApp
+    const bugMessage = `🐛 *Segnalazione Bug - Assistente AI Facevoice AI*\n\n` +
+      `*Data:* ${new Date().toLocaleString('it-IT')}\n\n` +
+      `*Descrizione del Bug:*\n` +
+      `[Descrivi qui il bug che hai riscontrato]\n\n` +
+      `*Dettagli Tecnici:*\n` +
+      `- Dispositivo: ${navigator.userAgent.includes('iPhone') ? 'iPhone' : navigator.userAgent.includes('Android') ? 'Android' : 'Desktop'}\n` +
+      `- Browser: ${navigator.userAgent}\n` +
+      `- Timestamp: ${new Date().toISOString()}\n\n` +
+      `_Grazie per la segnalazione!_`
+    
+    const phoneNumber = '+393514206353'
+    const encodedMessage = encodeURIComponent(bugMessage)
+    const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${encodedMessage}`
+    window.open(whatsappUrl, '_blank')
   }
 
   return (
@@ -209,7 +221,7 @@ export default function AIChatWidget() {
             exit={{ opacity: 0, y: 20, scale: 0.9 }}
             transition={{ duration: 0.2 }}
             ref={chatWindowRef}
-            className="fixed bottom-32 left-1/2 -translate-x-1/2 md:bottom-24 md:left-auto md:right-6 md:translate-x-0 z-50 w-[calc(100vw-1rem)] max-w-[90vw] md:w-96 md:max-w-md h-[calc(100vh-10rem)] max-h-[75vh] md:h-[600px] md:max-h-[600px] bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] flex flex-col overflow-hidden relative"
+            className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-2xl relative bottom-20 left-1/2 -translate-x-1/2 w-[calc(100vw-1rem)] max-w-[92vw] h-[calc(100vh-8rem)] max-h-[70vh] sm:bottom-24 sm:w-[calc(100vw-2rem)] sm:max-w-md sm:h-[calc(100vh-10rem)] sm:max-h-[75vh] md:bottom-24 md:left-auto md:right-6 md:translate-x-0 md:w-96 md:max-w-md md:h-[600px] md:max-h-[600px] lg:w-[420px] lg:h-[650px]"
           >
             {/* Messages with MessagingConversation */}
             <div className="flex-1 overflow-hidden bg-[var(--background)] relative">
