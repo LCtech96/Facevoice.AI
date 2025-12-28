@@ -139,6 +139,53 @@ export default function AIChatWidget() {
     window.open(whatsappUrl, '_blank')
   }
 
+  const handleDeleteChat = () => {
+    if (confirm('Sei sicuro di voler cancellare questa conversazione?')) {
+      setMessages([
+        {
+          id: 1,
+          role: 'assistant',
+          content: 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?',
+          timestamp: new Date(),
+        },
+      ])
+      setShowWhatsAppButton(false)
+    }
+  }
+
+  const handleSendEmail = async () => {
+    try {
+      // Prepara i messaggi per l'API
+      const messagesToSend = messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp.toISOString(),
+      }))
+
+      const response = await fetch('/api/chat-widget/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: messagesToSend }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Errore nell\'invio dell\'email')
+      }
+
+      const data = await response.json()
+      alert('Email inviata con successo! Riceverai il riassunto della conversazione a lucacorrao1996@gmail.com')
+    } catch (error) {
+      console.error('Error sending email:', error)
+      alert('Si è verificato un errore nell\'invio dell\'email. Riprova più tardi.')
+    }
+  }
+
+  const handleReportBug = () => {
+    // Apre un link per segnalare un bug o mostra un messaggio
+    const bugReportUrl = 'mailto:lucacorrao1996@gmail.com?subject=Segnalazione Bug - Assistente AI&body=Descrivi il bug che hai riscontrato:'
+    window.location.href = bugReportUrl
+  }
+
   return (
     <>
       {/* Floating Button - Right side, just above nav bar */}
@@ -162,7 +209,7 @@ export default function AIChatWidget() {
             exit={{ opacity: 0, y: 20, scale: 0.9 }}
             transition={{ duration: 0.2 }}
             ref={chatWindowRef}
-            className="fixed bottom-32 right-4 md:bottom-24 md:right-6 z-50 w-[calc(100vw-2rem)] md:w-96 max-w-md h-[calc(100vh-9rem)] md:h-[600px] max-h-[600px] bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] flex flex-col overflow-hidden relative"
+            className="fixed bottom-32 left-1/2 -translate-x-1/2 md:bottom-24 md:left-auto md:right-6 md:translate-x-0 z-50 w-[calc(100vw-1rem)] max-w-[90vw] md:w-96 md:max-w-md h-[calc(100vh-10rem)] max-h-[75vh] md:h-[600px] md:max-h-[600px] bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] flex flex-col overflow-hidden relative"
           >
             {/* Messages with MessagingConversation */}
             <div className="flex-1 overflow-hidden bg-[var(--background)] relative">
@@ -204,6 +251,14 @@ export default function AIChatWidget() {
                   status: 'online',
                 }}
                 className="h-full"
+                onDeleteChat={handleDeleteChat}
+                onSendEmail={handleSendEmail}
+                onReportBug={handleReportBug}
+                rawMessages={messages.map(m => ({
+                  role: m.role,
+                  content: m.content,
+                  timestamp: m.timestamp,
+                }))}
               />
               {isLoading && (
                 <motion.div

@@ -10,6 +10,8 @@ import {
   UserMinus2,
   Bot,
   User,
+  Mail,
+  Bug,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -45,6 +47,10 @@ interface MessagingConversationProps {
   };
   className?: string;
   onMessageAction?: (action: string, messageId: number | string) => void;
+  onDeleteChat?: () => void;
+  onSendEmail?: () => void;
+  onReportBug?: () => void;
+  rawMessages?: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: Date }>;
 }
 
 const STATUS_COLORS: Record<StatusType, string> = {
@@ -67,7 +73,15 @@ function StatusBadge({ status }: { status: StatusType }) {
 }
 
 // Redesigned user actions block (for conversation - header)
-function UserActionsMenu() {
+function UserActionsMenu({
+  onDeleteChat,
+  onSendEmail,
+  onReportBug,
+}: {
+  onDeleteChat?: () => void;
+  onSendEmail?: () => void;
+  onReportBug?: () => void;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -88,35 +102,34 @@ function UserActionsMenu() {
       <DropdownMenuContent className="min-w-36 rounded-lg bg-popover p-1 shadow-xl">
         <div className="flex flex-col gap-1">
           <Button
-            className="w-full justify-start gap-2 rounded bg-transparent text-rose-600 hover:bg-accent"
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <UserMinus2
-              aria-hidden="true"
-              className="size-4"
-              focusable="false"
-            />
-            <span className="font-medium text-xs">Block User</span>
-          </Button>
-          <Button
             className="w-full justify-start gap-2 rounded bg-transparent text-destructive hover:bg-accent"
             size="sm"
             type="button"
             variant="ghost"
+            onClick={onDeleteChat}
           >
             <Trash2 aria-hidden="true" className="size-4" focusable="false" />
-            <span className="font-medium text-xs">Delete Conversation</span>
+            <span className="font-medium text-xs">Cancella chat</span>
+          </Button>
+          <Button
+            className="w-full justify-start gap-2 rounded bg-transparent text-blue-600 hover:bg-accent"
+            size="sm"
+            type="button"
+            variant="ghost"
+            onClick={onSendEmail}
+          >
+            <Mail aria-hidden="true" className="size-4" focusable="false" />
+            <span className="font-medium text-xs">Invia email</span>
           </Button>
           <Button
             className="w-full justify-start gap-2 rounded bg-transparent text-yellow-600 hover:bg-accent"
             size="sm"
             type="button"
             variant="ghost"
+            onClick={onReportBug}
           >
-            <Flag aria-hidden="true" className="size-4" focusable="false" />
-            <span className="font-medium text-xs">Report User</span>
+            <Bug aria-hidden="true" className="size-4" focusable="false" />
+            <span className="font-medium text-xs">Segnala un bug</span>
           </Button>
         </div>
       </DropdownMenuContent>
@@ -212,6 +225,10 @@ export default function MessagingConversation({
   otherUser,
   className,
   onMessageAction,
+  onDeleteChat,
+  onSendEmail,
+  onReportBug,
+  rawMessages,
 }: MessagingConversationProps) {
   const DEMO_USER = {
     id: "user-123",
@@ -258,7 +275,11 @@ export default function MessagingConversation({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <UserActionsMenu />
+          <UserActionsMenu
+            onDeleteChat={onDeleteChat}
+            onSendEmail={onSendEmail}
+            onReportBug={onReportBug}
+          />
         </div>
       </CardHeader>
 
