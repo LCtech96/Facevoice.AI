@@ -170,7 +170,7 @@ export default function CaseStudy() {
               <div className="bg-[var(--accent-blue)]/10 rounded-xl p-6 text-center">
                 <p className="text-sm text-[var(--text-secondary)] mb-2">Prezzo base</p>
                 <p className="text-4xl font-bold text-[var(--text-primary)] mb-2">
-                  €499
+                  €699
                 </p>
                 <p className="text-lg text-[var(--text-secondary)]">
                   Sito "chiavi in mano" completo di tutte le funzionalità
@@ -179,8 +179,24 @@ export default function CaseStudy() {
                   Personalizzabile e scalabile in base alle tue esigenze
                 </p>
                 <p className="text-[10px] text-[var(--text-secondary)] mt-3 opacity-60 leading-relaxed">
-                  Manutenzione gratuita per i primi 6 mesi. Successivamente, il costo è di €25/mese minimo con possibilità di bloccare un tetto massimo mensile.
+                  Manutenzione gratuita per i primi 5 mesi. Successivamente, il costo è di €25/mese minimo con possibilità di bloccare un tetto massimo mensile.
                 </p>
+                
+                {/* Bottone WhatsApp */}
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    const phoneNumber = '+393514206353'
+                    const message = encodeURIComponent('Ciao! Sono interessato al servizio di Personalizzazione Totale. Vorrei maggiori informazioni.')
+                    const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${message}`
+                    window.open(whatsappUrl, '_blank')
+                  }}
+                  className="mt-6 w-full flex items-center justify-center gap-2 bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition-colors font-medium"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  <span>Contattaci su WhatsApp</span>
+                </motion.button>
               </div>
             </div>
           </div>
