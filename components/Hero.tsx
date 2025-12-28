@@ -3,7 +3,6 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 import ParticleBackground from './ParticleBackground'
-import AIToolsCircularGallery from './AIToolsCircularGallery'
 
 interface HeroProps {
   // Props mantenute per compatibilità ma non più usate
@@ -12,12 +11,12 @@ interface HeroProps {
 export default function Hero({}: HeroProps = {}) {
 
   return (
-    <section className="min-h-screen flex items-center justify-center relative pt-4 sm:pt-6 md:pt-8 px-4 sm:px-6 bg-black overflow-hidden">
+    <section className="min-h-[60vh] sm:min-h-[70vh] flex items-center justify-center relative pt-2 sm:pt-4 md:pt-6 px-4 sm:px-6 bg-black overflow-hidden">
       {/* Particle Background */}
       <ParticleBackground />
       
       {/* Content */}
-      <div className="text-center z-10 max-w-5xl relative w-full h-full flex flex-col justify-start py-4 sm:py-6 md:py-8">
+      <div className="text-center z-10 max-w-5xl relative w-full flex flex-col justify-center py-2 sm:py-4 md:py-6">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -46,11 +45,6 @@ export default function Hero({}: HeroProps = {}) {
           <p className="text-base sm:text-lg md:text-xl lg:text-2xl text-gray-300 mb-3 sm:mb-4 md:mb-6 px-2 flex-shrink-0">
             Innovative AI solutions for your business
           </p>
-
-          {/* Circular Gallery con AI Tools */}
-          <div className="w-full h-full flex-1 flex items-center justify-center min-h-[350px] sm:min-h-[450px] md:min-h-[550px]">
-            <AIToolsCircularGallery />
-          </div>
         </motion.div>
       </div>
     </section>

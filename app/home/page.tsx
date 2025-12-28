@@ -9,6 +9,7 @@ import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
 import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
 import { MarketingBadgesHero } from '@/components/ui/marketing-badges-hero'
+import AIToolsCircularGallery from '@/components/AIToolsCircularGallery'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -79,7 +80,7 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       </div>
       
       {/* Call to Action Section */}
-      <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
+      <div className="container mx-auto px-4 py-4 md:py-6 max-w-4xl">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -122,7 +123,7 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       </div>
       
       {/* Contact Form Section */}
-      <div id="contact" className="container mx-auto px-4 py-16 max-w-4xl">
+      <div id="contact" className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
           <h2 className="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-4 text-center">
             Contattaci
@@ -146,9 +147,24 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
         </div>
       )}
       
+      {/* AI Tools Circular Gallery alla fine della pagina */}
+      <div id="ai-tools" className="container mx-auto px-4 py-8 md:py-12 max-w-6xl">
+        <div className="text-center mb-6 md:mb-8">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-2 md:mb-4">
+            AI Tools
+          </h2>
+          <p className="text-sm sm:text-base md:text-lg text-[var(--text-secondary)] max-w-2xl mx-auto">
+            Esplora la nostra collezione di strumenti AI per potenziare il tuo business
+          </p>
+        </div>
+        <div className="relative w-full min-h-[350px] sm:min-h-[450px] md:min-h-[550px] lg:min-h-[600px]">
+          <AIToolsCircularGallery />
+        </div>
+      </div>
+      
       {/* Marketing Badges alla fine della pagina */}
-      <div className="container mx-auto px-4 py-16 max-w-4xl">
-        <div className="relative min-h-[400px] flex items-center justify-center">
+      <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
+        <div className="relative min-h-[300px] sm:min-h-[400px] flex items-center justify-center">
           <MarketingBadgesHero />
         </div>
       </div>
