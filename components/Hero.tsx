@@ -3,7 +3,6 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 import ParticleBackground from './ParticleBackground'
-import { MarketingBadgesHero } from './ui/marketing-badges-hero'
 import AIToolsCircularGallery from './AIToolsCircularGallery'
 
 interface HeroProps {
@@ -13,7 +12,7 @@ interface HeroProps {
 export default function Hero({}: HeroProps = {}) {
 
   return (
-    <section className="min-h-screen flex items-center justify-center relative pt-12 sm:pt-16 px-4 sm:px-6 bg-black overflow-hidden">
+    <section className="min-h-screen flex items-center justify-center relative pt-4 sm:pt-6 md:pt-8 px-4 sm:px-6 bg-black overflow-hidden">
       {/* Particle Background */}
       <ParticleBackground />
       
@@ -25,11 +24,6 @@ export default function Hero({}: HeroProps = {}) {
           transition={{ duration: 0.8 }}
           className="flex flex-col items-center w-full h-full"
         >
-          {/* Marketing Badges sopra il titolo */}
-          <div className="mb-3 sm:mb-4 md:mb-6 w-full max-w-md flex-shrink-0">
-            <MarketingBadgesHero />
-          </div>
-          
           {/* Logo FacevoiceAI */}
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}

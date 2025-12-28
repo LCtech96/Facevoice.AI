@@ -8,6 +8,7 @@ import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
 import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
+import { MarketingBadgesHero } from '@/components/ui/marketing-badges-hero'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -144,6 +145,13 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
           />
         </div>
       )}
+      
+      {/* Marketing Badges alla fine della pagina */}
+      <div className="container mx-auto px-4 py-16 max-w-4xl">
+        <div className="relative min-h-[400px] flex items-center justify-center">
+          <MarketingBadgesHero />
+        </div>
+      </div>
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />
