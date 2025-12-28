@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
+import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -72,6 +73,19 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero">
         <Hero />
+      </div>
+      
+      {/* Contact Form Section */}
+      <div id="contact" className="container mx-auto px-4 py-16 max-w-4xl">
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          <h2 className="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-4 text-center">
+            Contattaci
+          </h2>
+          <p className="text-[var(--text-secondary)] mb-8 text-center max-w-2xl">
+            Compila il form per inviarci una richiesta direttamente su WhatsApp. Ti risponderemo il prima possibile!
+          </p>
+          <WhatsAppContactForm />
+        </div>
       </div>
       
       {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}

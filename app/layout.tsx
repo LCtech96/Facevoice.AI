@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Montserrat } from 'next/font/google'
 import './globals.css'
+import AIChatWidget from '@/components/AIChatWidget'
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -30,7 +31,10 @@ export default function RootLayout({
         <link rel="shortcut icon" href="/team/Trinacria.jpg" type="image/jpeg" />
         <link rel="apple-touch-icon" href="/team/Trinacria.jpg" />
       </head>
-      <body className={montserrat.className}>{children}</body>
+      <body className={montserrat.className}>
+        {children}
+        <AIChatWidget />
+      </body>
     </html>
   )
 }
