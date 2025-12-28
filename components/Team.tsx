@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Linkedin, Mail, Instagram, Twitter, Briefcase } from 'lucide-react'
 import Image from 'next/image'
@@ -76,6 +76,7 @@ export default function Team() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const insertingRef = useRef(false)
 
   useEffect(() => {
     fetchTeamMembers()
@@ -97,16 +98,62 @@ export default function Team() {
         .order('id', { ascending: true })
 
       if (error) {
-        console.error('Error fetching team members:', error)
+        console.error('Error fetching team members:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        })
         setTeamMembers([])
       } else {
         setTeamMembers(data || [])
+        // Se non ci sono membri, prova a inserirli automaticamente
+        if ((!data || data.length === 0) && !insertingRef.current) {
+          insertingRef.current = true
+          console.log('No team members found. Attempting to insert...')
+          await insertTeamMembers()
+          insertingRef.current = false
+        }
       }
-    } catch (error) {
-      console.error('Unexpected error:', error)
+    } catch (error: any) {
+      console.error('Unexpected error:', {
+        message: error?.message,
+        stack: error?.stack,
+        error,
+      })
       setTeamMembers([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const insertTeamMembers = async () => {
+    try {
+      const response = await fetch('/api/team/reinsert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        console.log('Team members inserted:', result)
+        // Ricarica i membri del team direttamente da Supabase
+        const { data, error } = await supabase
+          .from('team_members')
+          .select('*')
+          .order('id', { ascending: true })
+        
+        if (!error && data) {
+          setTeamMembers(data)
+        }
+      } else {
+        const error = await response.json()
+        console.error('Error inserting team members:', error)
+      }
+    } catch (error) {
+      console.error('Error calling insert API:', error)
     }
   }
 
