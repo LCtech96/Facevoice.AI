@@ -9,7 +9,6 @@ import {
   Bot,
   Sparkles,
   Share2,
-  Settings,
   Image as ImageIcon,
   FileText,
   X,
@@ -339,13 +338,7 @@ export default function AIChatMain({
         {/* Header - Always visible */}
         <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              onClick={onModelSelectorToggle}
-              className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">{getModelName()}</span>
-            </button>
+            {/* Model selector removed */}
           </div>
           <div className="flex items-center gap-2">
             {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
@@ -460,15 +453,6 @@ export default function AIChatMain({
         
         {/* Right side - Settings and other buttons (ALWAYS on right, especially on mobile) */}
         <div className="flex items-center gap-2">
-          {/* Settings button - ALWAYS on the right side */}
-          <button
-            onClick={onModelSelectorToggle}
-            className="px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors flex items-center gap-2"
-          >
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">{getModelName()}</span>
-          </button>
-          
           {/* Delete button - only on mobile */}
           {onDeleteChat && (
             <button
