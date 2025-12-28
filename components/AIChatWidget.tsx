@@ -30,10 +30,17 @@ export default function AIChatWidget() {
   const [showWhatsAppButton, setShowWhatsAppButton] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (isOpen && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+    // Auto-focus textarea when chat opens
+    if (isOpen && textareaRef.current) {
+      setTimeout(() => {
+        textareaRef.current?.focus()
+      }, 100)
     }
   }, [messages, isOpen])
 
@@ -104,6 +111,14 @@ export default function AIChatWidget() {
       handleSend()
     }
   }
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+    }
+  }, [input])
 
   const generateConversationSummary = () => {
     const userMessages = messages.filter(m => m.role === 'user')
@@ -206,7 +221,7 @@ export default function AIChatWidget() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsOpen(false)}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 pointer-events-auto"
           />
         )}
       </AnimatePresence>
@@ -219,10 +234,11 @@ export default function AIChatWidget() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
-              w-[95vw] h-[85vh] max-w-[500px] max-h-[700px]
-              md:w-[500px] md:h-[700px]
-              flex flex-col bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden"
+            className="fixed z-[60] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
+              w-[95vw] max-w-[500px]
+              h-[calc(85vh-100px)] max-h-[calc(100vh-140px)]
+              md:w-[500px] md:h-[700px] md:max-h-[700px]
+              flex flex-col bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -347,12 +363,14 @@ export default function AIChatWidget() {
             <div className="p-4 border-t border-[var(--border-color)] bg-[var(--background-secondary)]">
               <div className="flex gap-2 items-end">
                 <textarea
+                  ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onKeyDown={handleKeyPress}
                   placeholder="Scrivi un messaggio..."
                   className="flex-1 px-3 py-2 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all resize-none max-h-24 text-sm"
                   rows={1}
+                  disabled={isLoading}
                 />
                 <motion.button
                   whileHover={{ scale: 1.05 }}
