@@ -20,6 +20,101 @@ interface TeamMember {
   is_contractor: boolean | null
 }
 
+// Fallback data quando Supabase non è disponibile
+const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
+  {
+    id: 1,
+    name: 'Luca Corrao',
+    role: 'CEO & Founder',
+    description: 'Visionary leader with expertise in AI and blockchain technologies',
+    email: 'luca@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/luca-corrao',
+    image_url: '/team/Luca professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 2,
+    name: 'Sevara Urmanaeva',
+    role: 'CMO',
+    description: 'Strategic marketing expert driving brand growth and digital innovation',
+    email: 'sevara@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/sevara-urmanaeva',
+    image_url: '/team/Sevara professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 3,
+    name: 'Giuseppe Delli Paoli',
+    role: 'Co-founder, AI & Automation Specialist',
+    description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
+    email: 'giuseppe@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/giuseppe-delli-paoli',
+    image_url: '/team/Giuseppe professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 4,
+    name: 'Sara Siddique',
+    role: 'Data Engineer, Data Scientist',
+    description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
+    email: 'sara@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/sara-siddique',
+    image_url: '/team/Sara professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 5,
+    name: 'Jonh Mcnova',
+    role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
+    description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
+    email: 'jonh@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/jonh-mcnova',
+    image_url: '/team/Jonh professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 6,
+    name: 'Leonardo Alotta',
+    role: 'Chief Financial Officer (CFO)',
+    description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
+    email: 'leonardo@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/leonardo-alotta',
+    image_url: '/team/Leonardo professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 7,
+    name: 'Abraham Caur',
+    role: 'Product Manager (PM), UX/UI Designer',
+    description: 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences',
+    email: 'abraham@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/abraham-caur',
+    image_url: '/team/Abraham professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+]
+
 // Componente per l'immagine del team member con fallback
 function TeamMemberImage({ member }: { member: TeamMember }) {
   const [imageError, setImageError] = useState(false)
@@ -87,33 +182,49 @@ export default function Team() {
       // Verifica che Supabase sia configurato
       if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
         console.warn('Supabase URL not configured. Using fallback data.')
-        setTeamMembers([])
+        setTeamMembers(FALLBACK_TEAM_MEMBERS)
         setLoading(false)
         return
       }
 
-      const { data, error } = await supabase
-        .from('team_members')
-        .select('*')
-        .order('id', { ascending: true })
+      try {
+        const { data, error } = await supabase
+          .from('team_members')
+          .select('*')
+          .order('id', { ascending: true })
 
-      if (error) {
-        console.error('Error fetching team members:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        })
-        setTeamMembers([])
-      } else {
-        setTeamMembers(data || [])
-        // Se non ci sono membri, prova a inserirli automaticamente
-        if ((!data || data.length === 0) && !insertingRef.current) {
-          insertingRef.current = true
-          console.log('No team members found. Attempting to insert...')
-          await insertTeamMembers()
-          insertingRef.current = false
+        if (error) {
+          console.error('Error fetching team members:', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          })
+          // Usa fallback in caso di errore
+          console.warn('Using fallback team members due to error')
+          setTeamMembers(FALLBACK_TEAM_MEMBERS)
+        } else if (data && data.length > 0) {
+          setTeamMembers(data)
+        } else {
+          // Se non ci sono membri, prova a inserirli automaticamente
+          if (!insertingRef.current) {
+            insertingRef.current = true
+            console.log('No team members found. Attempting to insert...')
+            await insertTeamMembers()
+            insertingRef.current = false
+          } else {
+            // Se l'inserimento è in corso, usa fallback temporaneamente
+            setTeamMembers(FALLBACK_TEAM_MEMBERS)
+          }
         }
+      } catch (fetchError: any) {
+        // Errore di rete o connessione (ERR_NAME_NOT_RESOLVED, etc.)
+        console.error('Network error fetching team members:', {
+          message: fetchError?.message,
+          name: fetchError?.name,
+        })
+        console.warn('Using fallback team members due to network error')
+        setTeamMembers(FALLBACK_TEAM_MEMBERS)
       }
     } catch (error: any) {
       console.error('Unexpected error:', {
@@ -121,7 +232,8 @@ export default function Team() {
         stack: error?.stack,
         error,
       })
-      setTeamMembers([])
+      // Usa fallback anche in caso di errore inatteso
+      setTeamMembers(FALLBACK_TEAM_MEMBERS)
     } finally {
       setLoading(false)
     }
