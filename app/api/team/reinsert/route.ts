@@ -28,8 +28,8 @@ const teamMembers = [
     name: 'Giuseppe Delli Paoli',
     role: 'Co-founder, AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
-    email: 'giuseppe@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/giuseppe-delli-paoli',
+    email: null,
+    linkedin: null,
     image_url: '/team/Giuseppe professionale fv.png',
   },
   {
