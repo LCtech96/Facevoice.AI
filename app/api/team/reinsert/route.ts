@@ -68,37 +68,72 @@ const teamMembers = [
 
 export async function POST(request: NextRequest) {
   try {
-    // Prima elimina tutti i membri esistenti (opzionale - commenta se vuoi solo aggiungere)
-    // const { error: deleteError } = await supabase
-    //   .from('team_members')
-    //   .delete()
-    //   .neq('id', 0) // Elimina tutti
-    
-    // if (deleteError) {
-    //   console.error('Error deleting team members:', deleteError)
-    // }
+    const results = []
+    const errors = []
 
-    // Inserisci i membri del team
-    const { data, error } = await supabase
-      .from('team_members')
-      .upsert(teamMembers, {
-        onConflict: 'name', // Usa 'name' come chiave unica, oppure aggiungi un campo unico nella tabella
-        ignoreDuplicates: false, // Se true, ignora i duplicati; se false, li aggiorna
-      })
-      .select()
+    // Inserisci ogni membro del team individualmente per gestire meglio i conflitti
+    for (const member of teamMembers) {
+      // Prima verifica se esiste già
+      const { data: existing } = await supabase
+        .from('team_members')
+        .select('id, name')
+        .eq('name', member.name)
+        .single()
 
-    if (error) {
-      console.error('Error inserting team members:', error)
+      if (existing) {
+        // Aggiorna il membro esistente
+        const { data, error } = await supabase
+          .from('team_members')
+          .update({
+            role: member.role,
+            description: member.description,
+            email: member.email,
+            linkedin: member.linkedin,
+            image_url: member.image_url,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('name', member.name)
+          .select()
+          .single()
+
+        if (error) {
+          errors.push({ member: member.name, error: error.message })
+        } else {
+          results.push(data)
+        }
+      } else {
+        // Inserisci nuovo membro
+        const { data, error } = await supabase
+          .from('team_members')
+          .insert(member)
+          .select()
+          .single()
+
+        if (error) {
+          errors.push({ member: member.name, error: error.message })
+        } else {
+          results.push(data)
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      console.error('Errors inserting team members:', errors)
       return NextResponse.json(
-        { error: 'Errore nell\'inserimento dei membri del team', details: error.message },
-        { status: 500 }
+        { 
+          success: true,
+          message: `${results.length} membri inseriti/aggiornati, ${errors.length} errori`,
+          data: results,
+          errors,
+        },
+        { status: 200 }
       )
     }
 
     return NextResponse.json({
       success: true,
-      message: `${data?.length || teamMembers.length} membri del team inseriti/aggiornati con successo`,
-      data,
+      message: `${results.length} membri del team inseriti/aggiornati con successo`,
+      data: results,
     })
   } catch (error: any) {
     console.error('Unexpected error:', error)
