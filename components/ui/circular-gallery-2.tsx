@@ -876,7 +876,7 @@ const CircularGallery = ({
       }
       
       if (originalUnhandledRejection) {
-        originalUnhandledRejection(event);
+        originalUnhandledRejection.call(window, event);
       }
     };
     
