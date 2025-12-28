@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, X, Bot, User, MessageCircle, Phone } from 'lucide-react'
+import { Send, X, Bot, Phone } from 'lucide-react'
 import MessagingConversation from '@/components/ui/messaging-conversation'
 
 interface Message {
@@ -12,13 +12,39 @@ interface Message {
   timestamp: Date
 }
 
+// Configurazione della chat - facilmente modificabile
+const CHAT_CONFIG = {
+  initialMessage: 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?',
+  whatsAppNumber: '+393514206353',
+  emailRecipient: 'lucacorrao1996@gmail.com',
+  // Dimensioni responsive
+  sizes: {
+    mobile: {
+      width: '90vw',
+      maxWidth: '400px',
+      height: '80vh',
+      maxHeight: '600px',
+    },
+    tablet: {
+      width: '85vw',
+      maxWidth: '450px',
+      height: '75vh',
+      maxHeight: '650px',
+    },
+    desktop: {
+      width: '380px',
+      height: '600px',
+    },
+  },
+}
+
 export default function AIChatWidget() {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
       role: 'assistant',
-      content: 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?',
+      content: CHAT_CONFIG.initialMessage,
       timestamp: new Date(),
     },
   ])
@@ -57,13 +83,11 @@ export default function AIChatWidget() {
       timestamp: new Date(),
     }
 
-    // Aggiungi il messaggio utente all'interfaccia immediatamente
     setMessages((prev) => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
 
     try {
-      // Prepara i messaggi da inviare (escluso il nuovo messaggio utente per evitare duplicati)
       const messagesToSend = messages.map(m => ({
         role: m.role,
         content: m.content,
@@ -133,7 +157,7 @@ export default function AIChatWidget() {
 
   const handleWhatsAppClick = () => {
     const summary = generateConversationSummary()
-    const phoneNumber = '+393514206353'
+    const phoneNumber = CHAT_CONFIG.whatsAppNumber
     const encodedMessage = encodeURIComponent(summary)
     const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${encodedMessage}`
     window.open(whatsappUrl, '_blank')
@@ -145,7 +169,7 @@ export default function AIChatWidget() {
         {
           id: 1,
           role: 'assistant',
-          content: 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?',
+          content: CHAT_CONFIG.initialMessage,
           timestamp: new Date(),
         },
       ])
@@ -155,7 +179,6 @@ export default function AIChatWidget() {
 
   const handleSendEmail = async () => {
     try {
-      // Prepara i messaggi per l'API
       const messagesToSend = messages.map(m => ({
         role: m.role,
         content: m.content,
@@ -173,7 +196,7 @@ export default function AIChatWidget() {
       }
 
       const data = await response.json()
-      alert('Email inviata con successo! Riceverai il riassunto della conversazione a lucacorrao1996@gmail.com')
+      alert(`Email inviata con successo! Riceverai il riassunto della conversazione a ${CHAT_CONFIG.emailRecipient}`)
     } catch (error) {
       console.error('Error sending email:', error)
       alert('Si è verificato un errore nell\'invio dell\'email. Riprova più tardi.')
@@ -181,7 +204,6 @@ export default function AIChatWidget() {
   }
 
   const handleReportBug = () => {
-    // Genera messaggio per segnalazione bug via WhatsApp
     const bugMessage = `🐛 *Segnalazione Bug - Assistente AI Facevoice AI*\n\n` +
       `*Data:* ${new Date().toLocaleString('it-IT')}\n\n` +
       `*Descrizione del Bug:*\n` +
@@ -192,7 +214,7 @@ export default function AIChatWidget() {
       `- Timestamp: ${new Date().toISOString()}\n\n` +
       `_Grazie per la segnalazione!_`
     
-    const phoneNumber = '+393514206353'
+    const phoneNumber = CHAT_CONFIG.whatsAppNumber
     const encodedMessage = encodeURIComponent(bugMessage)
     const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${encodedMessage}`
     window.open(whatsappUrl, '_blank')
@@ -200,7 +222,7 @@ export default function AIChatWidget() {
 
   return (
     <>
-      {/* Floating Button - Right side, just above nav bar */}
+      {/* Floating Button */}
       <motion.button
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
@@ -208,20 +230,43 @@ export default function AIChatWidget() {
         whileTap={{ scale: 0.9 }}
         onClick={() => setIsOpen(!isOpen)}
         className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 w-16 h-16 rounded-full bg-[var(--accent-blue)] text-white shadow-lg hover:shadow-xl transition-all flex items-center justify-center font-semibold text-lg"
+        aria-label={isOpen ? 'Chiudi chat' : 'Apri chat AI'}
       >
         {isOpen ? <X size={24} /> : 'AI'}
       </motion.button>
 
-      {/* Chat Window - Right side, positioned above button */}
+      {/* Overlay scuro quando la chat è aperta */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsOpen(false)}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:bg-black/30"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Chat Window - Centrata su mobile, a destra su desktop */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ duration: 0.2 }}
             ref={chatWindowRef}
-            className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-2xl relative bottom-20 left-[55%] -translate-x-1/2 w-[calc(100vw-1rem)] max-w-[85vw] h-[calc(100vh-8rem)] max-h-[70vh] sm:bottom-24 sm:left-[58%] sm:w-[calc(100vw-2rem)] sm:max-w-sm sm:h-[calc(100vh-10rem)] sm:max-h-[75vh] md:bottom-24 md:left-auto md:right-4 md:translate-x-0 md:w-80 md:max-w-sm md:h-[600px] md:max-h-[600px] lg:right-4 lg:w-[340px] lg:h-[650px]"
+            className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-2xl
+              /* Mobile - Centrata */
+              left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
+              w-[90vw] max-w-[400px] h-[80vh] max-h-[600px]
+              /* Tablet */
+              sm:w-[85vw] sm:max-w-[450px] sm:h-[75vh] sm:max-h-[650px]
+              /* Desktop - A destra */
+              md:left-auto md:right-6 md:top-auto md:bottom-24 md:translate-x-0 md:translate-y-0
+              md:w-[380px] md:h-[600px]"
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Messages with MessagingConversation */}
             <div className="flex-1 overflow-hidden bg-[var(--background)] relative">
@@ -335,6 +380,7 @@ export default function AIChatWidget() {
                   onClick={handleSend}
                   disabled={!input.trim() || isLoading}
                   className="p-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue-light)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Invia messaggio"
                 >
                   <Send className="w-5 h-5" />
                 </motion.button>
@@ -346,4 +392,3 @@ export default function AIChatWidget() {
     </>
   )
 }
-
