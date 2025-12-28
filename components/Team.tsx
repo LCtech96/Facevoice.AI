@@ -156,6 +156,8 @@ function TeamMemberImage({ member }: { member: TeamMember }) {
         alt={member.name}
         fill
         className="object-cover"
+        loading="eager"
+        priority
         onError={() => {
           setImageError(true)
           setImageUrl(null)
@@ -194,14 +196,14 @@ export default function Team() {
           .order('id', { ascending: true })
 
         if (error) {
-          console.error('Error fetching team members:', {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code,
-          })
+          // Log solo in sviluppo, non in produzione
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('Error fetching team members (using fallback):', {
+              message: error.message,
+              code: error.code,
+            })
+          }
           // Usa fallback in caso di errore
-          console.warn('Using fallback team members due to error')
           setTeamMembers(FALLBACK_TEAM_MEMBERS)
         } else if (data && data.length > 0) {
           setTeamMembers(data)
@@ -219,19 +221,22 @@ export default function Team() {
         }
       } catch (fetchError: any) {
         // Errore di rete o connessione (ERR_NAME_NOT_RESOLVED, etc.)
-        console.error('Network error fetching team members:', {
-          message: fetchError?.message,
-          name: fetchError?.name,
-        })
-        console.warn('Using fallback team members due to network error')
+        // Log solo in sviluppo, non in produzione
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('Network error fetching team members (using fallback):', {
+            message: fetchError?.message,
+            name: fetchError?.name,
+          })
+        }
         setTeamMembers(FALLBACK_TEAM_MEMBERS)
       }
     } catch (error: any) {
-      console.error('Unexpected error:', {
-        message: error?.message,
-        stack: error?.stack,
-        error,
-      })
+      // Log solo in sviluppo
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('Unexpected error (using fallback):', {
+          message: error?.message,
+        })
+      }
       // Usa fallback anche in caso di errore inatteso
       setTeamMembers(FALLBACK_TEAM_MEMBERS)
     } finally {
