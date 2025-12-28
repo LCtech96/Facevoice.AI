@@ -19,7 +19,6 @@ import {
   Users,
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
-import MessagingConversation from '@/components/ui/messaging-conversation'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 
 interface AIChatMainProps {
@@ -519,69 +518,48 @@ export default function AIChatMain({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-hidden">
-        <MessagingConversation
-          messages={[
-            ...chat.messages.map((msg) => ({
-              id: msg.id,
-              text: msg.content,
-              sender: {
-                id: msg.role === 'user' ? 'user-123' : 'assistant-456',
-                name: msg.role === 'user' ? 'You' : 'FacevoiceAI',
-                avatar: msg.role === 'user' 
-                  ? 'https://api.dicebear.com/9.x/glass/svg?seed=you'
-                  : 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
-              },
-              time: msg.timestamp.toLocaleTimeString('it-IT', {
-                hour: '2-digit',
-                minute: '2-digit',
-              }),
-            })),
-            ...(isLoading ? [{
-              id: 'loading',
-              text: '...',
-              sender: {
-                id: 'assistant-456',
-                name: 'FacevoiceAI',
-                avatar: 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
-              },
-              time: new Date().toLocaleTimeString('it-IT', {
-                hour: '2-digit',
-                minute: '2-digit',
-              }),
-            }] : []),
-          ]}
-          otherUser={{
-            id: 'assistant-456',
-            name: 'FacevoiceAI',
-            avatar: 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
-            status: 'online',
-          }}
-          className="h-full"
-        />
-        {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="absolute bottom-20 left-4 flex gap-2 justify-start z-10"
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {chat.messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            <div className="w-8 h-8 rounded-full bg-[var(--accent-blue)] flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-white" />
+            {msg.role === 'assistant' && (
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+            )}
+            <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+              msg.role === 'user'
+                ? 'bg-[var(--accent-blue)] text-white'
+                : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
+            }`}>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              <p className="text-xs opacity-70 mt-1">
+                {msg.timestamp.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+              </p>
             </div>
-            <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-3">
-              <div className="flex gap-1.5">
-                <div className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce" />
-                <div
-                  className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
-                  style={{ animationDelay: '0.2s' }}
-                />
-                <div
-                  className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
-                  style={{ animationDelay: '0.4s' }}
-                />
+            {msg.role === 'user' && (
+              <div className="w-8 h-8 rounded-full bg-[var(--accent-blue)]/20 flex items-center justify-center flex-shrink-0">
+                <User className="w-4 h-4 text-[var(--accent-blue)]" />
+              </div>
+            )}
+          </div>
+        ))}
+        
+        {isLoading && (
+          <div className="flex gap-3 justify-start">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-white" />
+            </div>
+            <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-2">
+              <div className="flex gap-1">
+                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" />
+                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>

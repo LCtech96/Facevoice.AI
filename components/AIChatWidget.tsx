@@ -226,7 +226,7 @@ export default function AIChatWidget() {
         )}
       </AnimatePresence>
 
-      {/* Chat Window - Sempre centrata */}
+      {/* Chat Window - Sempre centrata e completamente visibile su mobile */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -234,10 +234,15 @@ export default function AIChatWidget() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed z-[60] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
-              w-[95vw] max-w-[500px]
-              h-[calc(85vh-100px)] max-h-[calc(100vh-140px)]
-              md:w-[500px] md:h-[700px] md:max-h-[700px]
+            className="fixed z-[60] 
+              right-4 left-auto
+              md:left-1/2 md:-translate-x-1/2 md:right-auto
+              top-[2.5vh] bottom-[100px]
+              md:top-1/2 md:-translate-y-1/2 md:bottom-auto
+              w-[calc(100vw-2rem)] max-w-[500px]
+              md:w-[500px]
+              h-auto
+              md:h-[700px] md:max-h-[700px]
               flex flex-col bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >

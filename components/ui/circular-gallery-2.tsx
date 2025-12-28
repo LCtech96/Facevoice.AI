@@ -373,23 +373,51 @@ class Media {
       // Create initial texture immediately for placeholders
       createInitialTexture();
     } else {
-      // Try to load image
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = this.image;
-      
-      img.onload = () => {
-        texture.image = img;
-        this.program.uniforms.uImageSizes.value = [
-          img.naturalWidth,
-          img.naturalHeight,
-        ];
-      };
-      
-      img.onerror = () => {
-        // If image fails to load, create initial texture
+      // Try to load image with better error handling
+      try {
+        const img = new Image();
+        
+        // Only set crossOrigin for same-origin images to avoid CORS errors
+        // External images don't need crossOrigin and it causes CORS errors
+        const isSameOrigin = typeof window !== 'undefined' && 
+          (this.image.startsWith('/') || 
+           this.image.startsWith(window.location.origin));
+        
+        if (isSameOrigin) {
+          img.crossOrigin = "anonymous";
+        }
+        // For external images, don't set crossOrigin to avoid CORS errors
+        
+        // Use a timeout to prevent hanging on failed requests
+        const timeoutId = setTimeout(() => {
+          if (!img.complete) {
+            // Image didn't load in time, use fallback
+            createInitialTexture();
+          }
+        }, 5000); // 5 second timeout
+        
+        img.onload = () => {
+          clearTimeout(timeoutId);
+          texture.image = img;
+          this.program.uniforms.uImageSizes.value = [
+            img.naturalWidth,
+            img.naturalHeight,
+          ];
+        };
+        
+        // Handle errors silently - don't log to console
+        img.onerror = () => {
+          clearTimeout(timeoutId);
+          // Silently fall back to initial texture without logging errors
+          createInitialTexture();
+        };
+        
+        // Start loading the image
+        img.src = this.image;
+      } catch (error) {
+        // If anything fails, create initial texture silently
         createInitialTexture();
-      };
+      }
     }
   }
 
@@ -807,6 +835,57 @@ const CircularGallery = ({
   ...props
 }: CircularGalleryProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Suppress CORS and 404 errors for external images
+  useEffect(() => {
+    // Store original error handler
+    const originalError = window.onerror;
+    const originalUnhandledRejection = window.onunhandledrejection;
+    
+    // Filter out image-related CORS and 404 errors
+    window.onerror = (message, source, lineno, colno, error) => {
+      const messageStr = String(message || '');
+      const sourceStr = String(source || '');
+      
+      // Suppress CORS errors related to images
+      if (messageStr.includes('CORS') || 
+          messageStr.includes('Access-Control-Allow-Origin') ||
+          messageStr.includes('Failed to load resource') ||
+          sourceStr.includes('og-image') ||
+          sourceStr.includes('.png') ||
+          sourceStr.includes('.jpg') ||
+          sourceStr.includes('.jpeg')) {
+        return true; // Suppress the error
+      }
+      
+      // Call original handler for other errors
+      if (originalError) {
+        return originalError(message, source, lineno, colno, error);
+      }
+      return false;
+    };
+    
+    // Also handle unhandled promise rejections
+    window.onunhandledrejection = (event) => {
+      const reason = String(event.reason || '');
+      if (reason.includes('CORS') || 
+          reason.includes('Access-Control-Allow-Origin') ||
+          reason.includes('Failed to load')) {
+        event.preventDefault(); // Suppress the error
+        return;
+      }
+      
+      if (originalUnhandledRejection) {
+        originalUnhandledRejection(event);
+      }
+    };
+    
+    return () => {
+      // Restore original handlers
+      window.onerror = originalError;
+      window.onunhandledrejection = originalUnhandledRejection;
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
