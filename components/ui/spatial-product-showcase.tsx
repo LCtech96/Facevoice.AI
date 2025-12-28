@@ -348,3 +348,6 @@ export default function EarbudShowcase() {
   );
 }
 
+
+
+

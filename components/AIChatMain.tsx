@@ -19,6 +19,8 @@ import {
   Users,
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
+import MessagingConversation from '@/components/ui/messaging-conversation'
+import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 
 interface AIChatMainProps {
   chat: Chat | null
@@ -76,27 +78,47 @@ export default function AIChatMain({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+  const handleSendFromClaudeInput = async (data: {
+    message: string;
+    files: any[];
+    pastedContent: { id: string; content: string; timestamp: Date }[];
+    model: string;
+    isThinkingEnabled: boolean;
+  }) => {
+    const messageContent = data.message.trim() || 
+      (data.files.length > 0 ? `[${data.files.length} file(s) attached]` : '') ||
+      (data.pastedContent.length > 0 ? `[${data.pastedContent.length} pasted content(s)]` : '')
+    
+    if (!messageContent || isLoading) return
 
-    // Per le chat condivise, usa sempre un ID temporaneo
-    // La pagina shared gestirà il salvataggio nel database
     const userMessage: Message = {
       id: isSharedChat ? `temp-${Date.now()}` : Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: messageContent,
       timestamp: new Date(),
     }
 
+    // Aggiorna il modello se cambiato
+    if (data.model && data.model !== selectedModel && onModelSelect) {
+      onModelSelect(data.model)
+    }
+    
+    // Usa il modello dalla data se fornito, altrimenti usa selectedModel
+    const modelToUse = data.model || selectedModel
+
+    handleSendMessage(userMessage, modelToUse)
+  }
+
+  const handleSendMessage = async (userMessage: Message, modelToUse: string) => {
     let updatedChat: Chat
     if (!chat) {
       updatedChat = {
         id: Date.now().toString(),
-        title: input.trim().slice(0, 50),
+        title: userMessage.content.slice(0, 50),
         messages: [userMessage],
         createdAt: new Date(),
         updatedAt: new Date(),
-        model: selectedModel,
+        model: modelToUse,
       }
       onChatUpdate(updatedChat)
     } else {
@@ -104,13 +126,12 @@ export default function AIChatMain({
       updatedChat = {
         ...chat,
         messages: updatedMessages,
-        title: chat.title === 'New Chat' ? input.trim().slice(0, 50) : chat.title,
+        title: chat.title === 'New Chat' ? userMessage.content.slice(0, 50) : chat.title,
         updatedAt: new Date(),
+        model: modelToUse,
       }
       onChatUpdate(updatedChat)
     }
-
-    setInput('')
     
     // Per le chat condivise, non gestire l'AI qui - la pagina shared lo farà
     if (isSharedChat) {
@@ -128,7 +149,7 @@ export default function AIChatMain({
             role: msg.role,
             content: msg.content,
           })),
-          model: selectedModel,
+          model: modelToUse,
         }),
       })
 
@@ -176,12 +197,7 @@ export default function AIChatMain({
     }
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
+  // handleKeyPress removed - ClaudeChatInput handles keyboard events internally
 
   const getModelName = () => {
     if (selectedModel === 'llama-3.1-8b-instant') return 'Llama 3.1 8B'
@@ -382,7 +398,17 @@ export default function AIChatMain({
             ].map((suggestion, idx) => (
               <button
                 key={idx}
-                onClick={() => setInput(suggestion)}
+                onClick={() => {
+                  // Per ora, quando si clicca una suggestion, la gestiamo manualmente
+                  // Il componente ClaudeChatInput gestirà il proprio stato
+                  handleSendFromClaudeInput({
+                    message: suggestion,
+                    files: [],
+                    pastedContent: [],
+                    model: selectedModel,
+                    isThinkingEnabled: false,
+                  })
+                }}
                 className="p-4 text-left bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl hover:bg-[var(--background-secondary)] transition-colors text-sm text-[var(--text-primary)]"
               >
                 {suggestion}
@@ -390,29 +416,18 @@ export default function AIChatMain({
             ))}
           </div>
 
-          {/* Input Area */}
-          <div className="w-full relative">
-            <div className="relative bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl shadow-sm focus-within:border-[var(--accent-blue)] focus-within:shadow-md transition-all">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Message FacevoiceAI..."
-                className="w-full px-4 py-3 pr-12 bg-transparent rounded-2xl text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none resize-none max-h-40 overflow-y-auto text-base"
-                rows={1}
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isLoading}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 bg-[var(--accent-blue)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-[var(--text-secondary)] mt-2 text-center">
-              FacevoiceAI can make mistakes. Check important info.
-            </p>
+          {/* Input Area - Claude Style */}
+          <div className="w-full relative pb-4">
+            <ClaudeChatInput
+              onSendMessage={handleSendFromClaudeInput}
+              selectedModel={selectedModel}
+              models={[
+                { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', description: 'Fast and efficient' },
+                { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', description: 'Most intelligent model' },
+                { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'High-quality with extended context' },
+              ]}
+              onModelSelect={(modelId) => onModelSelect(modelId)}
+            />
           </div>
         </div>
       </div>
@@ -504,110 +519,86 @@ export default function AIChatMain({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-          <AnimatePresence>
-            {chat.messages.map((message) => (
-              <motion.div
-                key={message.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex gap-4 ${
-                  message.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                {message.role === 'assistant' && (
-                  <div className="w-8 h-8 rounded-full bg-[var(--accent-blue)] flex items-center justify-center flex-shrink-0">
-                    <Sparkles className="w-4 h-4 text-white" />
-                  </div>
-                )}
+      <div className="flex-1 overflow-hidden">
+        <MessagingConversation
+          messages={[
+            ...chat.messages.map((msg) => ({
+              id: msg.id,
+              text: msg.content,
+              sender: {
+                id: msg.role === 'user' ? 'user-123' : 'assistant-456',
+                name: msg.role === 'user' ? 'You' : 'FacevoiceAI',
+                avatar: msg.role === 'user' 
+                  ? 'https://api.dicebear.com/9.x/glass/svg?seed=you'
+                  : 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
+              },
+              time: msg.timestamp.toLocaleTimeString('it-IT', {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+            })),
+            ...(isLoading ? [{
+              id: 'loading',
+              text: '...',
+              sender: {
+                id: 'assistant-456',
+                name: 'FacevoiceAI',
+                avatar: 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
+              },
+              time: new Date().toLocaleTimeString('it-IT', {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+            }] : []),
+          ]}
+          otherUser={{
+            id: 'assistant-456',
+            name: 'FacevoiceAI',
+            avatar: 'https://api.dicebear.com/9.x/glass/svg?seed=facevoice',
+            status: 'online',
+          }}
+          className="h-full"
+        />
+        {isLoading && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="absolute bottom-20 left-4 flex gap-2 justify-start z-10"
+          >
+            <div className="w-8 h-8 rounded-full bg-[var(--accent-blue)] flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+            <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-3">
+              <div className="flex gap-1.5">
+                <div className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce" />
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                    message.role === 'user'
-                      ? 'bg-[var(--accent-blue)] text-white'
-                      : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
-                  }`}
-                >
-                  <p className="leading-relaxed whitespace-pre-wrap text-sm">
-                    {message.content}
-                  </p>
-                </div>
-                {message.role === 'user' && (
-                  <div className="w-8 h-8 rounded-full bg-[var(--background-secondary)] border border-[var(--border-color)] flex items-center justify-center flex-shrink-0">
-                    <User className="w-4 h-4 text-[var(--text-primary)]" />
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-          {isLoading && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex gap-4"
-            >
-              <div className="w-8 h-8 rounded-full bg-[var(--accent-blue)] flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-white" />
+                  className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
+                  style={{ animationDelay: '0.2s' }}
+                />
+                <div
+                  className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
+                  style={{ animationDelay: '0.4s' }}
+                />
               </div>
-              <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-3">
-                <div className="flex gap-1.5">
-                  <div className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce" />
-                  <div
-                    className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
-                    style={{ animationDelay: '0.2s' }}
-                  />
-                  <div
-                    className="w-2 h-2 bg-[var(--text-secondary)] rounded-full animate-bounce"
-                    style={{ animationDelay: '0.4s' }}
-                  />
-                </div>
-              </div>
-            </motion.div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+            </div>
+          </motion.div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input - Claude Style */}
       <div className="px-4 py-4 border-t border-[var(--border-color)] bg-[var(--background)]">
         <div className="max-w-3xl mx-auto">
-          <div className="flex gap-2 mb-2">
-            <button
-              onClick={() => setShowDocumentDialog(true)}
-              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-              title="Upload document"
-            >
-              <FileText className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setShowImageDialog(true)}
-              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-              title="Upload or generate image"
-            >
-              <ImageIcon className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="relative bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl shadow-sm focus-within:border-[var(--accent-blue)] focus-within:shadow-md transition-all">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Message FacevoiceAI..."
-              className="w-full px-4 py-3 pr-12 bg-transparent rounded-2xl text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none resize-none max-h-40 overflow-y-auto text-base"
-              rows={1}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || isLoading}
-              className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 bg-[var(--accent-blue)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-xs text-[var(--text-secondary)] mt-2 text-center">
-            FacevoiceAI can make mistakes. Check important info.
-          </p>
+          <ClaudeChatInput
+            onSendMessage={handleSendFromClaudeInput}
+            selectedModel={selectedModel}
+            models={[
+              { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', description: 'Fast and efficient' },
+              { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', description: 'Most intelligent model' },
+              { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'High-quality with extended context' },
+            ]}
+            onModelSelect={(modelId) => onModelSelect(modelId)}
+          />
         </div>
       </div>
 

@@ -82,3 +82,7 @@ La sincronizzazione funziona tramite **Supabase Realtime**:
 
 
 
+
+
+
+

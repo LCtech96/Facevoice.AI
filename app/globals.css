@@ -75,6 +75,84 @@
   box-sizing: border-box;
 }
 
+/* Claude-style chat input CSS variables */
+:root {
+  --bg-0: #FAF9F5;
+  --bg-000: #FAF9F5;
+  --bg-100: #FFFFFF;
+  --bg-200: #F0EEE6;
+  --bg-300: #DDDDDD;
+  --text-100: #1F1E1D;
+  --text-200: #3D3D3A;
+  --text-300: #73726C;
+  --text-400: #888888;
+  --text-500: #999999;
+  --accent: #D97757;
+  --accent-hover: #C6613F;
+}
+
+.dark {
+  --bg-0: #212121;
+  --bg-000: #212121;
+  --bg-100: #262624;
+  --bg-200: #30302E;
+  --bg-300: #454540;
+  --text-100: #ECECEC;
+  --text-200: #E1E1E0;
+  --text-300: #B4B4B4;
+  --text-400: #8A8A88;
+  --text-500: #6B6B65;
+  --accent: #D2996E;
+  --accent-hover: #E5AA7F;
+}
+
+/* Tailwind utility classes for Claude chat input */
+@layer utilities {
+  .bg-bg-0 { background-color: var(--bg-0) !important; }
+  .bg-bg-000 { background-color: var(--bg-000) !important; }
+  .bg-bg-100 { background-color: var(--bg-100) !important; }
+  .bg-bg-200 { background-color: var(--bg-200) !important; }
+  .bg-bg-300 { background-color: var(--bg-300) !important; }
+  .text-text-100 { color: var(--text-100) !important; }
+  .text-text-200 { color: var(--text-200) !important; }
+  .text-text-300 { color: var(--text-300) !important; }
+  .text-text-400 { color: var(--text-400) !important; }
+  .text-text-500 { color: var(--text-500) !important; }
+  .border-bg-300 { border-color: var(--bg-300) !important; }
+  .text-accent { color: var(--accent) !important; }
+  .text-bg-0 { color: var(--bg-0) !important; }
+  .bg-accent { background-color: var(--accent) !important; }
+  .hover\:bg-accent-hover:hover { background-color: var(--accent-hover) !important; }
+  .hover\:text-text-200:hover { color: var(--text-200) !important; }
+  .hover\:text-text-400:hover { color: var(--text-400) !important; }
+  .hover\:bg-bg-200:hover { background-color: var(--bg-200) !important; }
+}
+
+/* Opacity variants for Claude chat input */
+.bg-accent\/10 { background-color: rgba(217, 119, 87, 0.1); }
+.dark .bg-accent\/10 { background-color: rgba(210, 153, 110, 0.1); }
+.bg-accent\/30 { background-color: rgba(217, 119, 87, 0.3); }
+.dark .bg-accent\/30 { background-color: rgba(210, 153, 110, 0.3); }
+.text-bg-0\/60 { color: rgba(250, 249, 245, 0.6); }
+.dark .text-bg-0\/60 { color: rgba(33, 33, 33, 0.6); }
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
 body {
   color: var(--text-primary);
   background: var(--background);
@@ -154,4 +232,23 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+/* Custom scrollbar for Claude chat input */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--bg-300);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-400);
 }
