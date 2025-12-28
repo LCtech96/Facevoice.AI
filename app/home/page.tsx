@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { motion } from 'framer-motion'
+import { ChevronDown } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
@@ -73,6 +75,49 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero">
         <Hero />
+      </div>
+      
+      {/* Call to Action Section */}
+      <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="flex flex-col items-center text-center"
+        >
+          <p className="text-base sm:text-lg md:text-xl text-[var(--text-primary)] mb-6 md:mb-8 max-w-3xl leading-relaxed">
+            Se stai cercando più visibilità, e vuoi essere trovato facilmente dai tuoi clienti o attrarne di nuovi, o possiedi un codice sconto, compila i tre step in basso con nome, numero e inviaci un messaggio
+          </p>
+          
+          {/* Freccia animata che punta al form */}
+          <motion.button
+            onClick={() => {
+              const contactSection = document.getElementById('contact')
+              if (contactSection) {
+                contactSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+            }}
+            className="flex flex-col items-center gap-2 text-[var(--accent-blue)] hover:text-[var(--accent-blue-light)] transition-colors cursor-pointer group"
+            aria-label="Scorri al form di contatto"
+          >
+            <motion.div
+              animate={{
+                y: [0, 10, 0],
+              }}
+              transition={{
+                duration: 1.5,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+              className="flex items-center justify-center"
+            >
+              <ChevronDown className="w-8 h-8 md:w-10 md:h-10" />
+            </motion.div>
+            <span className="text-sm text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
+              Compila il form
+            </span>
+          </motion.button>
+        </motion.div>
       </div>
       
       {/* Contact Form Section */}
