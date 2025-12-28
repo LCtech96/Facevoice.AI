@@ -221,7 +221,7 @@ export default function AIChatWidget() {
             exit={{ opacity: 0, y: 20, scale: 0.9 }}
             transition={{ duration: 0.2 }}
             ref={chatWindowRef}
-            className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-2xl relative bottom-20 left-1/2 -translate-x-1/2 w-[calc(100vw-1rem)] max-w-[85vw] h-[calc(100vh-8rem)] max-h-[70vh] sm:bottom-24 sm:w-[calc(100vw-2rem)] sm:max-w-sm sm:h-[calc(100vh-10rem)] sm:max-h-[75vh] md:bottom-24 md:left-auto md:right-6 md:translate-x-0 md:w-80 md:max-w-sm md:h-[600px] md:max-h-[600px] lg:w-[340px] lg:h-[650px]"
+            className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-2xl relative bottom-20 left-[55%] -translate-x-1/2 w-[calc(100vw-1rem)] max-w-[85vw] h-[calc(100vh-8rem)] max-h-[70vh] sm:bottom-24 sm:left-[58%] sm:w-[calc(100vw-2rem)] sm:max-w-sm sm:h-[calc(100vh-10rem)] sm:max-h-[75vh] md:bottom-24 md:left-auto md:right-4 md:translate-x-0 md:w-80 md:max-w-sm md:h-[600px] md:max-h-[600px] lg:right-4 lg:w-[340px] lg:h-[650px]"
           >
             {/* Messages with MessagingConversation */}
             <div className="flex-1 overflow-hidden bg-[var(--background)] relative">
