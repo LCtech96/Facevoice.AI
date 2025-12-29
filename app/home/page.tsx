@@ -69,10 +69,10 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       />
       
       {/* Spacing per desktop navigation */}
-      <div className="hidden md:block h-16" />
+      <div className="hidden md:block h-12" />
       
       {/* Spacing per mobile navigation */}
-      <div className="md:hidden h-4" />
+      <div className="md:hidden h-2" />
       
       {/* Hero Section */}
       <div id="hero">
@@ -80,14 +80,14 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       </div>
       
       {/* Call to Action Section */}
-      <div className="container mx-auto px-4 py-4 md:py-6 max-w-4xl">
+      <div className="container mx-auto px-4 py-2 md:py-4 max-w-4xl">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
           className="flex flex-col items-center text-center"
         >
-          <p className="text-base sm:text-lg md:text-xl text-[var(--text-primary)] mb-6 md:mb-8 max-w-3xl leading-relaxed">
+          <p className="text-sm sm:text-base md:text-lg text-[var(--text-primary)] mb-3 md:mb-4 max-w-3xl leading-relaxed">
             Se stai cercando più visibilità, e vuoi essere trovato facilmente dai tuoi clienti o attrarne di nuovi, o possiedi un codice sconto, compila i tre step in basso con nome, numero e inviaci un messaggio
           </p>
           
@@ -99,12 +99,12 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
                 contactSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
               }
             }}
-            className="flex flex-col items-center gap-2 text-[var(--accent-blue)] hover:text-[var(--accent-blue-light)] transition-colors cursor-pointer group"
+            className="flex flex-col items-center gap-1 text-[var(--accent-blue)] hover:text-[var(--accent-blue-light)] transition-colors cursor-pointer group"
             aria-label="Scorri al form di contatto"
           >
             <motion.div
               animate={{
-                y: [0, 10, 0],
+                y: [0, 8, 0],
               }}
               transition={{
                 duration: 1.5,
@@ -113,9 +113,9 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
               }}
               className="flex items-center justify-center"
             >
-              <ChevronDown className="w-8 h-8 md:w-10 md:h-10" />
+              <ChevronDown className="w-6 h-6 md:w-8 md:h-8" />
             </motion.div>
-            <span className="text-sm text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
+            <span className="text-xs sm:text-sm text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
               Compila il form
             </span>
           </motion.button>
@@ -123,12 +123,12 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       </div>
       
       {/* Contact Form Section */}
-      <div id="contact" className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
-        <div className="flex flex-col items-center justify-center min-h-[60vh]">
-          <h2 className="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-4 text-center">
+      <div id="contact" className="container mx-auto px-4 py-4 md:py-6 max-w-4xl">
+        <div className="flex flex-col items-center justify-center">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-2 md:mb-3 text-center">
             Contattaci
           </h2>
-          <p className="text-[var(--text-secondary)] mb-8 text-center max-w-2xl">
+          <p className="text-sm sm:text-base text-[var(--text-secondary)] mb-4 md:mb-6 text-center max-w-2xl">
             Compila il form per inviarci una richiesta direttamente su WhatsApp. Ti risponderemo il prima possibile!
           </p>
           <WhatsAppContactForm />
@@ -148,23 +148,23 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       )}
       
       {/* AI Tools Circular Gallery alla fine della pagina */}
-      <div id="ai-tools" className="container mx-auto px-4 py-8 md:py-12 max-w-6xl">
-        <div className="text-center mb-6 md:mb-8">
-          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-2 md:mb-4">
+      <div id="ai-tools" className="container mx-auto px-4 py-4 md:py-6 max-w-6xl">
+        <div className="text-center mb-3 md:mb-4">
+          <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-[var(--text-primary)] mb-1 md:mb-2">
             AI Tools
           </h2>
-          <p className="text-sm sm:text-base md:text-lg text-[var(--text-secondary)] max-w-2xl mx-auto">
+          <p className="text-xs sm:text-sm md:text-base text-[var(--text-secondary)] max-w-2xl mx-auto">
             Esplora la nostra collezione di strumenti AI per potenziare il tuo business
           </p>
         </div>
-        <div className="relative w-full min-h-[350px] sm:min-h-[450px] md:min-h-[550px] lg:min-h-[600px]">
+        <div className="relative w-full min-h-[300px] sm:min-h-[400px] md:min-h-[500px] lg:min-h-[550px]">
           <AIToolsCircularGallery />
         </div>
       </div>
       
       {/* Marketing Badges alla fine della pagina */}
-      <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
-        <div className="relative min-h-[300px] sm:min-h-[400px] flex items-center justify-center">
+      <div className="container mx-auto px-4 py-4 md:py-6 max-w-4xl">
+        <div className="relative min-h-[250px] sm:min-h-[300px] md:min-h-[350px] flex items-center justify-center">
           <MarketingBadgesHero />
         </div>
       </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send, X, Bot, Phone, Mail, Trash2, Bug } from 'lucide-react'
 
@@ -16,6 +17,7 @@ const EMAIL_RECIPIENT = 'lucacorrao1996@gmail.com'
 const INITIAL_MESSAGE = 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?'
 
 export default function AIChatWidget() {
+  const pathname = usePathname()
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -31,6 +33,9 @@ export default function AIChatWidget() {
   const [showMenu, setShowMenu] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Nascondi il widget nella pagina chat
+  const isChatPage = pathname?.startsWith('/ai-chat')
 
   useEffect(() => {
     if (isOpen && messagesEndRef.current) {
@@ -196,6 +201,11 @@ export default function AIChatWidget() {
     const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER.replace(/[^0-9]/g, '')}?text=${encodedMessage}`
     window.open(whatsappUrl, '_blank')
     setShowMenu(false)
+  }
+
+  // Non mostrare il widget nella pagina chat
+  if (isChatPage) {
+    return null
   }
 
   return (
