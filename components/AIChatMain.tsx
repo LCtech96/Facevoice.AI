@@ -323,11 +323,11 @@ export default function AIChatMain({
   }
 
   const handleGenerateImage = async () => {
-    // Usa il prompt dalla conversazione o dall'input
-    const prompt = input.trim() || chat?.messages[chat.messages.length - 1]?.content || 'a beautiful landscape'
+    // Usa il prompt dall'ultimo messaggio della conversazione
+    const prompt = chat?.messages[chat.messages.length - 1]?.content || 'a beautiful landscape'
     
     if (!prompt || prompt.length < 3) {
-      alert('Inserisci una descrizione per generare l\'immagine (almeno 3 caratteri)')
+      alert('Scrivi un messaggio nella chat prima di generare un\'immagine, oppure usa almeno 3 caratteri come descrizione')
       return
     }
 
@@ -368,8 +368,6 @@ export default function AIChatMain({
         }
         onChatUpdate(updatedChat)
       }
-
-      setInput('')
     } catch (error: any) {
       console.error('Error generating image:', error)
       alert(`Errore nella generazione: ${error.message}`)
