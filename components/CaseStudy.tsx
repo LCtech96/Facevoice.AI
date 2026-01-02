@@ -9,6 +9,7 @@ interface CaseStudyData {
   location?: string
   description: string
   url: string
+  backgroundImage?: string
   content: {
     mainDescription: string
     features?: Array<{ icon: any, text: string }>
@@ -56,6 +57,7 @@ const caseStudies: CaseStudyData[] = [
     title: 'Luca Corrao',
     description: 'Sito personale professionale con assistente AI integrato per supporto clienti e altre funzionalità avanzate',
     url: 'https://lucacorrao.com',
+    backgroundImage: '/lucacorrao.png',
     content: {
       mainDescription: 'Un sito web professionale completo dotato di assistente AI integrato per assistere i clienti in tempo reale. Il sito offre una piattaforma moderna e interattiva che migliora l\'esperienza utente attraverso tecnologie all\'avanguardia.',
       specialSections: [
@@ -86,6 +88,7 @@ const caseStudies: CaseStudyData[] = [
     title: 'Nomadiqe',
     description: 'Piattaforma innovativa per nomadi digitali e viaggiatori',
     url: 'https://www.nomadiqe.com',
+    backgroundImage: '/nomadiqe.png',
     content: {
       mainDescription: 'Nomadiqe è una piattaforma dedicata ai nomadi digitali e ai viaggiatori che cercano connessioni, opportunità e community. Unisciti alla nostra community e crea il tuo profilo per iniziare a esplorare un mondo di possibilità.',
       specialSections: [
@@ -152,7 +155,7 @@ export default function CaseStudy() {
               <div 
                 className="relative p-8 md:p-12 text-white overflow-hidden"
                 style={{
-                  backgroundImage: 'url(/sfondo.png)',
+                  backgroundImage: `url(${study.backgroundImage || '/sfondo.png'})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                   backgroundRepeat: 'no-repeat',
