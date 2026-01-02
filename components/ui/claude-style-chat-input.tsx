@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Plus, ChevronDown, ArrowUp, X, FileText, Loader2, Check, Archive } from "lucide-react";
+import { Plus, ChevronDown, ArrowUp, X, FileText, Loader2, Check, Archive, Image as ImageIcon } from "lucide-react";
 
 /* --- ICONS --- */
 export const Icons = {
@@ -246,7 +246,8 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
     onSendMessage, 
     selectedModel: externalSelectedModel,
     models: externalModels,
-    onModelSelect: externalOnModelSelect
+    onModelSelect: externalOnModelSelect,
+    onOpenImageDialog
 }) => {
     const [message, setMessage] = useState("");
     const [files, setFiles] = useState<AttachedFile[]>([]);

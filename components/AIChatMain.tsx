@@ -681,6 +681,7 @@ export default function AIChatMain({
               { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'High-quality with extended context' },
             ]}
             onModelSelect={(modelId) => onModelSelect(modelId)}
+            onOpenImageDialog={() => setShowImageDialog(true)}
           />
         </div>
       </div>
