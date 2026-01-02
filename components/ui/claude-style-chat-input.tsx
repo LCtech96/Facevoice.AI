@@ -240,6 +240,7 @@ interface ClaudeChatInputProps {
     selectedModel?: string;
     models?: Model[];
     onModelSelect?: (modelId: string) => void;
+    onOpenImageDialog?: () => void;
 }
 
 export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({ 
