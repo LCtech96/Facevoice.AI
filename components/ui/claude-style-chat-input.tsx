@@ -435,10 +435,21 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                 onClick={() => fileInputRef.current?.click()}
                                 className="inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200"
                                 type="button"
-                                aria-label="Toggle menu"
+                                aria-label="Upload files"
                             >
                                 <Icons.Plus className="w-5 h-5" />
                             </button>
+
+                            {onOpenImageDialog && (
+                                <button
+                                    onClick={onOpenImageDialog}
+                                    className="inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200"
+                                    type="button"
+                                    aria-label="Generate or edit image"
+                                >
+                                    <ImageIcon className="w-5 h-5" />
+                                </button>
+                            )}
 
                             <div className="flex shrink min-w-8 !shrink-0">
                                 <button
