@@ -56,6 +56,10 @@ export default function AIChatMain({
   const [copied, setCopied] = useState(false)
   const [showImageDialog, setShowImageDialog] = useState(false)
   const [showDocumentDialog, setShowDocumentDialog] = useState(false)
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null)
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false)
+  const [isEditingImage, setIsEditingImage] = useState(false)
+  const [editPrompt, setEditPrompt] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -65,12 +69,6 @@ export default function AIChatMain({
     scrollToBottom()
   }, [chat?.messages])
 
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-    }
-  }, [input])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -317,19 +315,127 @@ export default function AIChatMain({
       const reader = new FileReader()
       reader.onloadend = () => {
         const imageData = reader.result as string
-        // Add image reference to input
-        setInput(prev => prev + `\n[Image: ${file.name}]\n`)
-        // Store image in chat or handle separately
+        setUploadedImage(imageData)
+        // Non chiudere il dialog, mostra opzioni di editing
       }
       reader.readAsDataURL(file)
-      setShowImageDialog(false)
     }
   }
 
-  const handleGenerateImage = () => {
-    // This would trigger image generation via API
-    setInput(prev => prev + '\n[Generate image based on conversation]')
+  const handleGenerateImage = async () => {
+    // Usa il prompt dalla conversazione o dall'input
+    const prompt = input.trim() || chat?.messages[chat.messages.length - 1]?.content || 'a beautiful landscape'
+    
+    if (!prompt || prompt.length < 3) {
+      alert('Inserisci una descrizione per generare l\'immagine (almeno 3 caratteri)')
+      return
+    }
+
+    setIsGeneratingImage(true)
     setShowImageDialog(false)
+
+    try {
+      const response = await fetch('/api/image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          width: 1024,
+          height: 1024,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to generate image')
+      }
+
+      const data = await response.json()
+      
+      // Aggiungi l'immagine generata come messaggio
+      if (chat && data.imageUrl) {
+        const imageMessage: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `![Generated Image](${data.imageUrl})\n\n**Prompt:** ${prompt}`,
+          timestamp: new Date(),
+        }
+
+        const updatedChat = {
+          ...chat,
+          messages: [...chat.messages, imageMessage],
+          updatedAt: new Date(),
+        }
+        onChatUpdate(updatedChat)
+      }
+
+      setInput('')
+    } catch (error: any) {
+      console.error('Error generating image:', error)
+      alert(`Errore nella generazione: ${error.message}`)
+      setShowImageDialog(true) // Riapri il dialog in caso di errore
+    } finally {
+      setIsGeneratingImage(false)
+    }
+  }
+
+  const handleEditImage = async () => {
+    if (!uploadedImage || !editPrompt.trim()) {
+      alert('Carica un\'immagine e inserisci un prompt per generare una nuova immagine basata sulla descrizione')
+      return
+    }
+
+    setIsEditingImage(true)
+
+    try {
+      const formData = new FormData()
+      
+      // Converti base64 in File
+      const response = await fetch(uploadedImage)
+      const blob = await response.blob()
+      const file = new File([blob], 'image.png', { type: 'image/png' })
+      
+      formData.append('image', file)
+      formData.append('prompt', editPrompt)
+
+      const editResponse = await fetch('/api/image/edit', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!editResponse.ok) {
+        const error = await editResponse.json()
+        throw new Error(error.error || 'Failed to edit image')
+      }
+
+      const data = await editResponse.json()
+      
+      // Aggiungi l'immagine modificata come messaggio
+      if (chat && data.imageUrl) {
+        const imageMessage: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `![Edited Image](${data.imageUrl})\n\n**Prompt:** ${editPrompt}`,
+          timestamp: new Date(),
+        }
+
+        const updatedChat = {
+          ...chat,
+          messages: [...chat.messages, imageMessage],
+          updatedAt: new Date(),
+        }
+        onChatUpdate(updatedChat)
+      }
+
+      setUploadedImage(null)
+      setEditPrompt('')
+      setShowImageDialog(false)
+    } catch (error: any) {
+      console.error('Error editing image:', error)
+      alert(`Errore nella modifica: ${error.message}`)
+    } finally {
+      setIsEditingImage(false)
+    }
   }
 
   if (!chat) {
@@ -518,7 +624,24 @@ export default function AIChatMain({
                 ? 'bg-[var(--accent-blue)] text-white'
                 : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
             }`}>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              {/* Render images if present in markdown format */}
+              {msg.content.includes('![') && msg.content.match(/!\[.*?\]\((.*?)\)/g)?.map((imgMatch, idx) => {
+                const urlMatch = imgMatch.match(/!\[.*?\]\((.*?)\)/)
+                if (!urlMatch) return null
+                const imageUrl = urlMatch[1]
+                return (
+                  <img 
+                    key={idx}
+                    src={imageUrl} 
+                    alt="Generated" 
+                    className="max-w-full rounded-lg my-2 max-h-96 object-contain"
+                  />
+                )
+              })}
+              {/* Render text content (remove image markdown for clean display) */}
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {msg.content.replace(/!\[.*?\]\(.*?\)/g, '').trim() || msg.content}
+              </p>
               <p className="text-xs opacity-70 mt-1">
                 {msg.timestamp.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
               </p>
@@ -620,47 +743,104 @@ export default function AIChatMain({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowImageDialog(false)}
+            onClick={() => {
+              setShowImageDialog(false)
+              setUploadedImage(null)
+              setEditPrompt('')
+            }}
           >
             <motion.div
               initial={{ scale: 0.95, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl"
+              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto"
             >
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-[var(--text-primary)]">Image Options</h3>
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">
+                  {uploadedImage ? 'Modifica Immagine' : 'Genera o Carica Immagine'}
+                </h3>
                 <button
-                  onClick={() => setShowImageDialog(false)}
+                  onClick={() => {
+                    setShowImageDialog(false)
+                    setUploadedImage(null)
+                    setEditPrompt('')
+                  }}
                   className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
                 >
                   <X className="w-5 h-5 text-[var(--text-secondary)]" />
                 </button>
               </div>
-              <div className="space-y-3">
-                <button
-                  onClick={() => imageInputRef.current?.click()}
-                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
-                >
-                  <ImageIcon className="w-5 h-5" />
-                  <span>Upload Image</span>
-                </button>
-                <button
-                  onClick={handleGenerateImage}
-                  className="w-full px-4 py-3 bg-[var(--background-secondary)] hover:bg-[var(--accent-blue)]/10 rounded-lg text-[var(--text-primary)] transition-colors flex items-center gap-2"
-                >
-                  <Sparkles className="w-5 h-5" />
-                  <span>Generate Image</span>
-                </button>
-              </div>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
+
+              {uploadedImage ? (
+                // Modalità editing
+                <div className="space-y-4">
+                  <img 
+                    src={uploadedImage} 
+                    alt="Uploaded" 
+                    className="w-full rounded-lg max-h-64 object-contain bg-[var(--background-secondary)]"
+                  />
+                  <textarea
+                    value={editPrompt}
+                    onChange={(e) => setEditPrompt(e.target.value)}
+                    placeholder="Descrivi come vuoi modificare l'immagine o crea una nuova immagine basata su questa..."
+                    className="w-full p-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] resize-none"
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleEditImage}
+                      disabled={isEditingImage || !editPrompt.trim()}
+                      className="flex-1 bg-[var(--accent-blue)] text-white px-4 py-2 rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors"
+                    >
+                      {isEditingImage ? 'Generazione in corso...' : 'Genera Nuova Immagine'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setUploadedImage(null)
+                        imageInputRef.current?.click()
+                      }}
+                      className="px-4 py-2 border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
+                    >
+                      Cambia
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                // Modalità generazione/caricamento
+                <div className="space-y-3">
+                  <button
+                    onClick={handleGenerateImage}
+                    disabled={isGeneratingImage}
+                    className="w-full px-4 py-3 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-5 h-5" />
+                    <span>{isGeneratingImage ? 'Generazione in corso...' : 'Genera Immagine da Prompt'}</span>
+                  </button>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-[var(--border-color)]"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-2 bg-[var(--card-background)] text-[var(--text-secondary)]">OPPURE</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => imageInputRef.current?.click()}
+                    className="w-full px-4 py-3 border border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:bg-[var(--background-secondary)] transition-colors flex items-center justify-center gap-2"
+                  >
+                    <ImageIcon className="w-5 h-5" />
+                    <span>Carica Immagine per Modificare</span>
+                  </button>
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

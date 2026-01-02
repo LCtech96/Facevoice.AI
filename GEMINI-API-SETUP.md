@@ -151,3 +151,5 @@ Una volta configurata la chiave API, i modelli Gemini appariranno automaticament
 
 
 
+
+
