@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import Services from '@/components/Services'
-import CaseStudy from '@/components/CaseStudy'
 import EarbudShowcase from '@/components/ui/spatial-product-showcase'
 import { MarketingBadges } from '@/components/ui/marketing-badges'
 import { MultiStepForm } from '@/components/ui/multistep-form'
@@ -206,9 +205,6 @@ export default function ServicesPage() {
           </div>
         </div>
       </section>
-      
-      {/* Case Study Section */}
-      <CaseStudy />
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

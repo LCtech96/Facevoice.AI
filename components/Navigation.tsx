@@ -40,6 +40,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' },
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/services' },
+    { id: 'case-studies', label: 'Case Studies', icon: Star, href: '/case-studies' },
     { id: 'team', label: 'Team', icon: Users, href: '/team' },
   ]
 
@@ -66,6 +67,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/team')
     } else if (item.href === '/services') {
       router.push('/services')
+    } else if (item.href === '/case-studies') {
+      router.push('/case-studies')
     }
   }
 
@@ -81,6 +84,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'services') {
       return pathname === '/services'
+    }
+    if (item.id === 'case-studies') {
+      return pathname === '/case-studies'
     }
     return pathname === '/home' && activeSection === item.id
   }
