@@ -86,11 +86,11 @@ const caseStudies: CaseStudyData[] = [
   {
     id: 'nomadiqe',
     title: 'Nomadiqe',
-    description: 'Piattaforma innovativa per nomadi digitali e viaggiatori',
+    description: 'Il punto di incontro tra chi lavora viaggiando e le realtà locali',
     url: 'https://www.nomadiqe.com',
     backgroundImage: '/nomadiqe.png',
     content: {
-      mainDescription: 'Nomadiqe è una piattaforma dedicata ai nomadi digitali e ai viaggiatori che cercano connessioni, opportunità e community. Unisciti alla nostra community e crea il tuo profilo per iniziare a esplorare un mondo di possibilità.',
+      mainDescription: 'Nomadiqe è il punto di incontro tra chi lavora viaggiando e le realtà locali. Mettiamo in contatto creatori digitali, host, piccoli imprenditori e attività commerciali per creare nuove opportunità e collaborazioni, in modo semplice e umano.',
       specialSections: [
         {
           icon: UserPlus,
