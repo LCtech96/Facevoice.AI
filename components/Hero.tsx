@@ -32,7 +32,7 @@ export default function Hero({}: HeroProps = {}) {
           >
             <div className="relative w-full max-w-[280px] sm:max-w-[380px] md:max-w-[480px] lg:max-w-[600px] xl:max-w-[700px] aspect-auto">
               <Image
-                src="/Facevoice.png"
+                src="/Trinacria.jpg"
                 alt="FacevoiceAI"
                 width={700}
                 height={200}
