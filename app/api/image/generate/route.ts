@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     const model = 'stabilityai/stable-diffusion-xl-base-1.0'
     
     const response = await fetch(
-      `https://api-inference.huggingface.co/models/${model}`,
+      `https://router.huggingface.co/models/${model}`,
       {
         method: 'POST',
         headers: {

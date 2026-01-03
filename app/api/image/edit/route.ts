@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     // Per l'editing base, generiamo una nuova immagine con il prompt
     // L'utente può descrivere come vuole modificare l'immagine
     const response = await fetch(
-      `https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0`,
+      `https://router.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0`,
       {
         method: 'POST',
         headers: {
