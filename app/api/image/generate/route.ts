@@ -18,11 +18,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Usa Stable Diffusion XL per migliori risultati
-    // Prova prima con l'endpoint inference tradizionale
     const model = 'stabilityai/stable-diffusion-xl-base-1.0'
     
-    // Prova con l'endpoint inference tradizionale (potrebbe ancora funzionare)
-    let response = await fetch(
+    // Prova con l'endpoint inference tradizionale con formato semplificato
+    const response = await fetch(
       `https://api-inference.huggingface.co/models/${model}`,
       {
         method: 'POST',
@@ -32,37 +31,9 @@ export async function POST(req: NextRequest) {
         },
         body: JSON.stringify({
           inputs: prompt,
-          parameters: {
-            negative_prompt: negativePrompt || 'blurry, low quality, distorted, bad anatomy',
-            width: Math.min(width, 1024),
-            height: Math.min(height, 1024),
-            num_inference_steps: 30,
-            guidance_scale: 7.5,
-          },
         }),
       }
     )
-
-    // Se l'endpoint tradizionale non funziona, prova con un formato semplificato
-    if (!response.ok) {
-      const errorText = await response.text()
-      // Se l'errore indica che l'endpoint non è supportato, prova formato semplificato
-      if (errorText.includes('no longer supported') || response.status === 404) {
-        response = await fetch(
-          `https://api-inference.huggingface.co/models/${model}`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              inputs: prompt,
-            }),
-          }
-        )
-      }
-    }
 
     if (!response.ok) {
       const errorText = await response.text()
@@ -84,6 +55,17 @@ export async function POST(req: NextRequest) {
             { status: 503 }
           )
         }
+      }
+      
+      // Se l'endpoint non è più supportato, suggerisci alternative
+      if (errorText.includes('no longer supported') || response.status === 404 || response.status === 410) {
+        return NextResponse.json(
+          { 
+            error: 'L\'endpoint Hugging Face per la generazione immagini non è più disponibile. Per favore, configura REPLICATE_API_TOKEN come alternativa, oppure usa un servizio di generazione immagini diverso.',
+            suggestion: 'Configura REPLICATE_API_TOKEN nel file .env.local per usare Replicate API come alternativa'
+          },
+          { status: 503 }
+        )
       }
       
       throw new Error(`Hugging Face API error: ${errorText}`)
@@ -115,4 +97,3 @@ export async function POST(req: NextRequest) {
     )
   }
 }
-
