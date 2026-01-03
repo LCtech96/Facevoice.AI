@@ -18,10 +18,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Usa Stable Diffusion XL per migliori risultati
+    // Prova prima con l'endpoint inference tradizionale
     const model = 'stabilityai/stable-diffusion-xl-base-1.0'
     
-    const response = await fetch(
-      `https://router.huggingface.co/models/${model}`,
+    // Prova con l'endpoint inference tradizionale (potrebbe ancora funzionare)
+    let response = await fetch(
+      `https://api-inference.huggingface.co/models/${model}`,
       {
         method: 'POST',
         headers: {
@@ -40,6 +42,27 @@ export async function POST(req: NextRequest) {
         }),
       }
     )
+
+    // Se l'endpoint tradizionale non funziona, prova con un formato semplificato
+    if (!response.ok) {
+      const errorText = await response.text()
+      // Se l'errore indica che l'endpoint non è supportato, prova formato semplificato
+      if (errorText.includes('no longer supported') || response.status === 404) {
+        response = await fetch(
+          `https://api-inference.huggingface.co/models/${model}`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              inputs: prompt,
+            }),
+          }
+        )
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text()
