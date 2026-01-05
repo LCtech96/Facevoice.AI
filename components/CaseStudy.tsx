@@ -136,6 +136,7 @@ const caseStudies: CaseStudyData[] = [
       ],
       features: [
         { icon: Settings, text: 'Pannello admin completo (barinello.com/admin)' },
+        { icon: Bot, text: 'Assistente AI h24' },
         { icon: Image, text: 'Gestione immagini e media' },
         { icon: FileText, text: 'Modifica contenuti e testi' },
         { icon: Globe, text: 'Personalizzazione design e layout' },
