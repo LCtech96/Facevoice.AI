@@ -65,6 +65,11 @@ const caseStudies: CaseStudyData[] = [
           icon: Bot,
           title: 'Assistente AI Integrato',
           description: 'Il sito include un assistente AI avanzato che fornisce supporto ai clienti 24/7, rispondendo alle domande e guidando i visitatori attraverso i servizi offerti.'
+        },
+        {
+          icon: Globe,
+          title: 'Pubblica la tua struttura in vetrina',
+          description: 'Pubblica la tua struttura in vetrina e aspetta per essere approvato. Un sistema semplice e intuitivo per mostrare il tuo business al pubblico.'
         }
       ],
       features: [
@@ -381,7 +386,7 @@ export default function CaseStudy() {
                           Personalizzabile e scalabile in base alle tue esigenze
                         </p>
                         <p className="text-[10px] text-[var(--text-secondary)] mt-3 opacity-60 leading-relaxed">
-                          Manutenzione gratuita per i primi 5 mesi. Successivamente, il costo è di €25/mese minimo con possibilità di bloccare un tetto massimo mensile.
+                          Manutenzione gratuita per i primi 5 mesi. Successivamente, il costo parte da €10/mese fino al 12° mese, dopo i quali parte da €15/mese in su.
                         </p>
                         
                         {/* Bottone WhatsApp */}
