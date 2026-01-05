@@ -118,6 +118,37 @@ const caseStudies: CaseStudyData[] = [
         }
       }
     }
+  },
+  {
+    id: 'barinello',
+    title: 'Barinello',
+    description: 'Sito web completo con pannello di controllo admin per la gestione completa di ogni aspetto',
+    url: 'https://barinello.com',
+    backgroundImage: '/Barinello.png',
+    content: {
+      mainDescription: 'Barinello.com è un sito web completo dotato di un pannello di controllo admin avanzato che permette di modificare e gestire ogni aspetto del proprio sito web in modo semplice e intuitivo. Il sistema offre controllo totale sui contenuti, design e funzionalità.',
+      specialSections: [
+        {
+          icon: Settings,
+          title: 'Pannello di Controllo Admin Completo',
+          description: 'Accesso al pannello admin su barinello.com/admin per modificare ogni aspetto del sito: contenuti, immagini, layout, configurazioni e molto altro. Gestione completa in autonomia senza bisogno di competenze tecniche.'
+        }
+      ],
+      features: [
+        { icon: Settings, text: 'Pannello admin completo (barinello.com/admin)' },
+        { icon: Image, text: 'Gestione immagini e media' },
+        { icon: FileText, text: 'Modifica contenuti e testi' },
+        { icon: Globe, text: 'Personalizzazione design e layout' },
+        { icon: Menu, text: 'Gestione menu e navigazione' },
+        { icon: MessageSquare, text: 'Configurazione contatti e form' },
+      ],
+      integrations: [
+        { icon: Settings, label: 'Pannello Admin' },
+        { icon: Mail, label: 'Email' },
+        { icon: Phone, label: 'Contatti' },
+        { icon: ExternalLink, label: 'Social Media' },
+      ]
+    }
   }
 ]
 

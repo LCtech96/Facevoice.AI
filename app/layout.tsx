@@ -13,9 +13,9 @@ export const metadata: Metadata = {
   title: 'Facevoice AI - Advanced AI Solutions',
   description: 'AI Integration, Blockchain Development, and Technical Consulting',
   icons: {
-    icon: '/Trinacria.jpg',
-    shortcut: '/Trinacria.jpg',
-    apple: '/Trinacria.jpg',
+    icon: '/Trinacria.jpg?v=2',
+    shortcut: '/Trinacria.jpg?v=2',
+    apple: '/Trinacria.jpg?v=2',
   },
 }
 
@@ -27,9 +27,9 @@ export default function RootLayout({
   return (
     <html lang="it" className="dark">
       <head>
-        <link rel="icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="shortcut icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="apple-touch-icon" href="/Trinacria.jpg" />
+        <link rel="icon" href="/Trinacria.jpg?v=2" type="image/jpeg" />
+        <link rel="shortcut icon" href="/Trinacria.jpg?v=2" type="image/jpeg" />
+        <link rel="apple-touch-icon" href="/Trinacria.jpg?v=2" />
       </head>
       <body className={montserrat.className}>
         {children}
