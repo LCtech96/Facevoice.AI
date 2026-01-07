@@ -35,8 +35,12 @@ export async function POST(req: NextRequest) {
     
     if (RESEND_API_KEY) {
       try {
+        // Usa il dominio di test di Resend (funziona senza verifica dominio)
+        // Se vuoi usare il tuo dominio, verificalo prima su Resend Dashboard
+        const fromEmail = 'onboarding@resend.dev'
+        
         const emailData = {
-          from: 'FacevoiceAI <noreply@facevoice.ai>',
+          from: `FacevoiceAI <${fromEmail}>`,
           to: email,
           subject: 'Codice di verifica Facevoice AI',
           html: `
@@ -56,6 +60,8 @@ export async function POST(req: NextRequest) {
           text: `Il tuo codice di verifica Facevoice AI è: ${code}\n\nQuesto codice scade tra 10 minuti.\n\nSe non hai richiesto questo codice, puoi ignorare questa email.`,
         }
         
+        console.log('Sending OTP email via Resend...', { to: email, from: fromEmail })
+        
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -65,20 +71,43 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify(emailData),
         })
         
+        const responseData = await response.json().catch(() => ({}))
+        
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          console.error('Resend API error:', errorData)
+          console.error('Resend API error response:', {
+            status: response.status,
+            statusText: response.statusText,
+            data: responseData,
+          })
           // Logga il codice anche in caso di errore per debug
-          console.log(`OTP per ${email}: ${code} (email non inviata a causa di errore Resend)`)
-          // Non bloccare la risposta, ma avvisa che l'email potrebbe non essere arrivata
+          console.log(`OTP per ${email}: ${code} (email non inviata - errore Resend)`)
+          
+          // Restituisci un messaggio più dettagliato
+          return NextResponse.json({
+            success: true,
+            message: `Codice generato. Email non inviata: ${responseData.message || 'Errore sconosciuto'}. Codice: ${code}`,
+            code,
+            emailError: responseData.message || 'Errore nell\'invio dell\'email',
+          })
         } else {
-          console.log('OTP email sent successfully to', email)
+          console.log('OTP email sent successfully:', {
+            to: email,
+            id: responseData.id,
+            code: code,
+          })
         }
       } catch (emailError: any) {
         console.error('Error sending OTP email:', emailError)
         // Logga il codice anche in caso di errore per debug
-        console.log(`OTP per ${email}: ${code} (email non inviata a causa di errore)`)
-        // Non bloccare la risposta
+        console.log(`OTP per ${email}: ${code} (email non inviata - eccezione)`)
+        
+        // Restituisci il codice comunque
+        return NextResponse.json({
+          success: true,
+          message: `Codice generato ma email non inviata: ${emailError.message}. Codice: ${code}`,
+          code,
+          emailError: emailError.message,
+        })
       }
     } else {
       // Resend non configurato - logga il codice per debug
