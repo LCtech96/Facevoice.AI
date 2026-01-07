@@ -44,38 +44,54 @@ export async function POST(req: NextRequest) {
 
     // Codice valido! Crea o aggiorna l'utente in Supabase
     try {
-      // Verifica se l'utente esiste già
-      const { data: existingUserData, error: getUserError } = await supabaseAdmin.auth.admin.getUserByEmail(email)
-
       let user
       
-      if (existingUserData?.user) {
-        // Utente esiste già
-        user = existingUserData.user
-        
-        // Aggiorna i metadati
-        await supabaseAdmin.auth.admin.updateUserById(user.id, {
-          user_metadata: {
-            ...user.user_metadata,
-            verified_via: 'otp',
-            last_verified_at: new Date().toISOString(),
-          },
-        })
-      } else {
-        // Nuovo utente, crealo
-        const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
-          email,
-          email_confirm: true, // Conferma automaticamente l'email
-          user_metadata: {
-            verified_via: 'otp',
-            verified_at: new Date().toISOString(),
-          },
-        })
+      // Prova prima a creare un nuovo utente
+      const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        email_confirm: true, // Conferma automaticamente l'email
+        user_metadata: {
+          verified_via: 'otp',
+          verified_at: new Date().toISOString(),
+        },
+      })
 
-        if (createError) {
+      if (createError) {
+        // Se l'errore indica che l'utente esiste già, cerca l'utente con listUsers
+        if (createError.message?.includes('already registered') || createError.message?.includes('already exists')) {
+          // Cerca l'utente esistente usando listUsers
+          const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers()
+          
+          if (listError) {
+            throw listError
+          }
+
+          // Trova l'utente per email
+          const existingUser = usersList?.users?.find(u => u.email === email.toLowerCase())
+          
+          if (existingUser) {
+            user = existingUser
+            
+            // Aggiorna i metadati
+            const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+              user_metadata: {
+                ...user.user_metadata,
+                verified_via: 'otp',
+                last_verified_at: new Date().toISOString(),
+              },
+            })
+
+            if (updateError) {
+              console.warn('Error updating user metadata:', updateError)
+            }
+          } else {
+            throw new Error('Utente non trovato dopo errore di creazione')
+          }
+        } else {
           throw createError
         }
-
+      } else {
+        // Utente creato con successo
         user = newUserData.user
       }
 
@@ -85,10 +101,12 @@ export async function POST(req: NextRequest) {
         ? `temp_${Math.random().toString(36).slice(2)}_${Date.now()}`
         : undefined
       
-      // Se in sviluppo e l'utente esiste già, aggiorna la password temporanea
-      if (tempPassword && existingUserData?.user) {
+      // Se in sviluppo, aggiorna la password temporanea per permettere il login
+      if (tempPassword && user) {
         await supabaseAdmin.auth.admin.updateUserById(user.id, {
           password: tempPassword,
+        }).catch((err) => {
+          console.warn('Error setting temp password:', err)
         })
       }
 
