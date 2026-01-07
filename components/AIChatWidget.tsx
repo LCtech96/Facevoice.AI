@@ -248,7 +248,7 @@ export default function AIChatWidget() {
               right-4 left-auto
               md:left-1/2 md:-translate-x-1/2 md:right-auto
               top-[2.5vh] bottom-[100px]
-              md:top-1/2 md:-translate-y-1/2 md:bottom-auto
+              md:top-[30%] md:bottom-auto
               w-[calc(100vw-2rem)] max-w-[500px]
               md:w-[500px]
               h-auto
