@@ -787,13 +787,13 @@ export default function AIChatMain({
                     rows={3}
                   />
                   <div className="flex gap-2">
-                    <button
+                <button
                       onClick={handleEditImage}
                       disabled={isEditingImage || !editPrompt.trim()}
                       className="flex-1 bg-[var(--accent-blue)] text-white px-4 py-2 rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors"
-                    >
+                >
                       {isEditingImage ? 'Generazione in corso...' : 'Genera Nuova Immagine'}
-                    </button>
+                </button>
                     <button
                       onClick={() => {
                         setUploadedImage(null)
@@ -808,14 +808,14 @@ export default function AIChatMain({
               ) : (
                 // Modalità generazione/caricamento
                 <div className="space-y-3">
-                  <button
-                    onClick={handleGenerateImage}
+                <button
+                  onClick={handleGenerateImage}
                     disabled={isGeneratingImage}
                     className="w-full px-4 py-3 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-5 h-5" />
+                >
+                  <Sparkles className="w-5 h-5" />
                     <span>{isGeneratingImage ? 'Generazione in corso...' : 'Genera Immagine da Prompt'}</span>
-                  </button>
+                </button>
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <div className="w-full border-t border-[var(--border-color)]"></div>
@@ -823,7 +823,7 @@ export default function AIChatMain({
                     <div className="relative flex justify-center text-sm">
                       <span className="px-2 bg-[var(--card-background)] text-[var(--text-secondary)]">OPPURE</span>
                     </div>
-                  </div>
+              </div>
                   <button
                     onClick={() => imageInputRef.current?.click()}
                     className="w-full px-4 py-3 border border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:bg-[var(--background-secondary)] transition-colors flex items-center justify-center gap-2"
@@ -831,13 +831,13 @@ export default function AIChatMain({
                     <ImageIcon className="w-5 h-5" />
                     <span>Carica Immagine per Modificare</span>
                   </button>
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
                 </div>
               )}
             </motion.div>

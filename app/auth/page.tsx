@@ -3,17 +3,20 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Mail, Lock, ArrowRight, CheckCircle, XCircle } from 'lucide-react'
+import { Mail, Lock, ArrowRight, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
-type AuthMode = 'email' | 'verify' | 'success'
+type AuthMode = 'signin' | 'signup'
 
 export default function AuthPage() {
   const router = useRouter()
-  const [mode, setMode] = useState<AuthMode>('email')
+  const [mode, setMode] = useState<AuthMode>('signin')
   const [email, setEmail] = useState('')
-  const [verificationCode, setVerificationCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -43,7 +46,7 @@ export default function AuthPage() {
     }
   }, [router])
 
-  const handleSendCode = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
@@ -55,113 +58,89 @@ export default function AuthPage() {
       return
     }
 
-    try {
-      const response = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Errore nell\'invio del codice')
-      }
-
-      setMessage('Codice di verifica inviato! Controlla la tua email.')
-      setMode('verify')
-      setTimeout(() => setMessage(null), 5000)
-    } catch (err: any) {
-      setError(err.message || 'Errore nell\'invio del codice')
-    } finally {
+    if (!password || password.length < 6) {
+      setError('La password deve contenere almeno 6 caratteri')
       setLoading(false)
+      return
     }
-  }
 
-  const handleVerifyCode = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    setMessage(null)
-
-    if (!verificationCode || verificationCode.length !== 6) {
-      setError('Inserisci un codice di 6 cifre')
+    if (password !== confirmPassword) {
+      setError('Le password non corrispondono')
       setLoading(false)
       return
     }
 
     try {
-      const response = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code: verificationCode }),
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
       })
 
-      const data = await response.json()
+      if (signUpError) throw signUpError
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Codice non valido')
-      }
-
-      // Se la verifica ha successo, autentica l'utente con Supabase
-      if (data.magicLink) {
-        // Usa il magic link per creare la sessione
-        // Estrai il token dal link
-        const url = new URL(data.magicLink)
-        const token = url.searchParams.get('token')
-        const type = url.searchParams.get('type')
-
-        if (token && type === 'magiclink') {
-          // Usa il token per autenticare
-          const { data: sessionData, error: sessionError } = await supabase.auth.verifyOtp({
-            token_hash: token,
-            type: 'magiclink',
-          })
-
-          if (sessionError) {
-            console.warn('Session error:', sessionError)
-            // Fallback: prova con password temporanea se disponibile (solo dev)
-            if (data.tempPassword) {
-              const { error: pwdError } = await supabase.auth.signInWithPassword({
-                email,
-                password: data.tempPassword,
-              })
-              if (pwdError) {
-                throw new Error('Errore nell\'autenticazione. Riprova.')
-              }
-            }
-          }
-        }
-      } else if (data.tempPassword && process.env.NODE_ENV === 'development') {
-        // Fallback per sviluppo: usa password temporanea
-        const { error: pwdError } = await supabase.auth.signInWithPassword({
-          email,
-          password: data.tempPassword,
-        })
-        if (pwdError) {
-          throw new Error('Errore nell\'autenticazione. Riprova.')
+      if (data.user) {
+        setMessage('Registrazione completata! Controlla la tua email per confermare l\'account, oppure accedi direttamente se la conferma non è richiesta.')
+        
+        // Se l'email è già confermata, accedi automaticamente
+        if (data.session) {
+          setTimeout(() => {
+            router.push('/ai-chat')
+          }, 1500)
+        } else {
+          // Altrimenti, passa alla modalità sign in
+          setTimeout(() => {
+            setMode('signin')
+            setMessage(null)
+          }, 3000)
         }
       }
-
-      setMessage('Verifica completata! Accesso in corso...')
-      setMode('success')
-
-      // Attendi un momento e reindirizza
-      setTimeout(() => {
-        router.push('/ai-chat')
-      }, 1500)
     } catch (err: any) {
-      setError(err.message || 'Codice non valido. Riprova.')
-      setVerificationCode('')
+      setError(err.message || 'Errore durante la registrazione')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleResendCode = async () => {
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
     setError(null)
     setMessage(null)
-    await handleSendCode(new Event('submit') as any)
+
+    if (!email || !email.includes('@')) {
+      setError('Inserisci un indirizzo email valido')
+      setLoading(false)
+      return
+    }
+
+    if (!password) {
+      setError('Inserisci la password')
+      setLoading(false)
+      return
+    }
+
+    try {
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (signInError) throw signInError
+
+      if (data.user) {
+        setMessage('Accesso completato! Reindirizzamento in corso...')
+        setTimeout(() => {
+          router.push('/ai-chat')
+        }, 1000)
+      }
+    } catch (err: any) {
+      setError(err.message || 'Email o password non corretti')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -175,28 +154,64 @@ export default function AuthPage() {
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">
-              {mode === 'email' && 'Accedi o Registrati'}
-              {mode === 'verify' && 'Verifica Email'}
-              {mode === 'success' && 'Accesso Completato!'}
+              {mode === 'signin' ? 'Accedi' : 'Registrati'}
             </h1>
             <p className="text-[var(--text-secondary)]">
-              {mode === 'email' && 'Inserisci la tua email per ricevere il codice di verifica'}
-              {mode === 'verify' && `Inserisci il codice inviato a ${email}`}
-              {mode === 'success' && 'Stai per essere reindirizzato alla chat...'}
+              {mode === 'signin' 
+                ? 'Inserisci le tue credenziali per accedere'
+                : 'Crea un nuovo account per iniziare'}
             </p>
           </div>
 
-          {/* Email Input Form */}
-          {mode === 'email' && (
-            <form onSubmit={handleSendCode} className="space-y-4">
+          {/* Toggle Sign In / Sign Up */}
+          <div className="flex gap-2 mb-6 bg-[var(--background-secondary)] p-1 rounded-lg">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin')
+                setError(null)
+                setMessage(null)
+                setPassword('')
+                setConfirmPassword('')
+              }}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                mode === 'signin'
+                  ? 'bg-[var(--accent-blue)] text-white'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Accedi
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signup')
+                setError(null)
+                setMessage(null)
+                setPassword('')
+                setConfirmPassword('')
+              }}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                mode === 'signup'
+                  ? 'bg-[var(--accent-blue)] text-white'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Registrati
+            </button>
+          </div>
+
+          {/* Sign In Form */}
+          {mode === 'signin' && (
+            <form onSubmit={handleSignIn} className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                <label htmlFor="email-signin" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
                   Indirizzo Email
                 </label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
                   <input
-                    id="email"
+                    id="email-signin"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -205,6 +220,32 @@ export default function AuthPage() {
                     required
                     disabled={loading}
                   />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="password-signin" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+                  <input
+                    id="password-signin"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-10 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all"
+                    required
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
 
@@ -240,11 +281,11 @@ export default function AuthPage() {
                 {loading ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Invio in corso...</span>
+                    <span>Accesso in corso...</span>
                   </>
                 ) : (
                   <>
-                    <span>Invia Codice</span>
+                    <span>Accedi</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -252,30 +293,79 @@ export default function AuthPage() {
             </form>
           )}
 
-          {/* Verification Code Form */}
-          {mode === 'verify' && (
-            <form onSubmit={handleVerifyCode} className="space-y-4">
+          {/* Sign Up Form */}
+          {mode === 'signup' && (
+            <form onSubmit={handleSignUp} className="space-y-4">
               <div>
-                <label htmlFor="code" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-                  Codice di Verifica (6 cifre)
+                <label htmlFor="email-signup" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Indirizzo Email
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+                  <input
+                    id="email-signup"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nome@esempio.com"
+                    className="w-full pl-10 pr-4 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all"
+                    required
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="password-signup" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Password
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
                   <input
-                    id="code"
-                    type="text"
-                    value={verificationCode}
-                    onChange={(e) => {
-                      const value = e.target.value.replace(/\D/g, '').slice(0, 6)
-                      setVerificationCode(value)
-                    }}
-                    placeholder="000000"
-                    className="w-full pl-10 pr-4 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all text-center text-2xl tracking-widest font-mono"
-                    maxLength={6}
+                    id="password-signup"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Almeno 6 caratteri"
+                    className="w-full pl-10 pr-10 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all"
                     required
+                    minLength={6}
                     disabled={loading}
-                    autoFocus
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="confirm-password" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Conferma Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+                  <input
+                    id="confirm-password"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Ripeti la password"
+                    className="w-full pl-10 pr-10 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all"
+                    required
+                    minLength={6}
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
 
@@ -301,74 +391,29 @@ export default function AuthPage() {
                 </motion.div>
               )}
 
-              <div className="flex gap-3">
-                <motion.button
-                  type="button"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    setMode('email')
-                    setVerificationCode('')
-                    setError(null)
-                    setMessage(null)
-                  }}
-                  className="flex-1 py-3 px-4 bg-[var(--background-secondary)] hover:bg-[var(--background)] text-[var(--text-primary)] rounded-lg font-medium transition-all border border-[var(--border-color)]"
-                >
-                  Indietro
-                </motion.button>
-                <motion.button
-                  type="submit"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  disabled={loading || verificationCode.length !== 6}
-                  className="flex-1 flex items-center justify-center gap-2 bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>Verifica...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Verifica</span>
-                      <CheckCircle className="w-4 h-4" />
-                    </>
-                  )}
-                </motion.button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleResendCode}
+              <motion.button
+                type="submit"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 disabled={loading}
-                className="w-full text-center text-sm text-[var(--accent-blue)] hover:underline disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Non hai ricevuto il codice? Invia di nuovo
-              </button>
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Registrazione in corso...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Registrati</span>
+                    <CheckCircle className="w-4 h-4" />
+                  </>
+                )}
+              </motion.button>
             </form>
-          )}
-
-          {/* Success State */}
-          {mode === 'success' && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center py-8"
-            >
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.2, type: 'spring' }}
-                className="w-16 h-16 mx-auto mb-4 bg-green-500/20 rounded-full flex items-center justify-center"
-              >
-                <CheckCircle className="w-8 h-8 text-green-500" />
-              </motion.div>
-              <p className="text-[var(--text-secondary)]">Accesso completato con successo!</p>
-            </motion.div>
           )}
         </div>
       </motion.div>
     </div>
   )
 }
-
