@@ -37,11 +37,12 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }, [])
   
   const navItems = [
-    // { id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' }, // Temporaneamente nascosto
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/services' },
     { id: 'case-studies', label: 'Case Studies', icon: Star, href: '/case-studies' },
     { id: 'team', label: 'Team', icon: Users, href: '/team' },
+    // Mostra Chat solo agli utenti autenticati
+    ...(user ? [{ id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {

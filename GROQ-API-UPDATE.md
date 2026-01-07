@@ -50,3 +50,5 @@ Dopo il deploy, testa la chat AI per verificare che i modelli Groq funzionino co
 
 
 
+
+

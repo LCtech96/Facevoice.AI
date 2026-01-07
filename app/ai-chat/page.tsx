@@ -6,6 +6,8 @@ import Navigation from '@/components/Navigation'
 import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
+import { createClient } from '@/lib/supabase-client'
+import type { User } from '@supabase/supabase-js'
 
 export interface Message {
   id: string
@@ -32,6 +34,8 @@ export interface Project {
 
 export default function AIChatPage() {
   const router = useRouter()
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
   const [chats, setChats] = useState<Chat[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [currentChat, setCurrentChat] = useState<Chat | null>(null)
@@ -39,9 +43,41 @@ export default function AIChatPage() {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const supabase = createClient()
 
-  // Load chats from localStorage on mount
+  // Check authentication
   useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser()
+      
+      if (error || !user) {
+        router.push('/auth')
+        return
+      }
+      
+      setUser(user)
+      setLoading(false)
+    }
+
+    checkAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        router.push('/auth')
+      } else {
+        setUser(session.user)
+        setLoading(false)
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [router])
+
+  // Load chats from localStorage on mount (only if authenticated)
+  useEffect(() => {
+    if (!user || loading) return
     
     const savedChats = localStorage.getItem('ai-chats')
     const savedProjects = localStorage.getItem('ai-projects')
@@ -245,6 +281,23 @@ export default function AIChatPage() {
       msg.content.toLowerCase().includes(searchQuery.toLowerCase())
     )
   )
+
+  // Show loading state while checking authentication
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[var(--accent-blue)]/30 border-t-[var(--accent-blue)] rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-[var(--text-secondary)]">Caricamento...</p>
+        </div>
+      </main>
+    )
+  }
+
+  // If not authenticated, don't render (redirect will happen)
+  if (!user) {
+    return null
+  }
 
   return (
     <main className="min-h-screen bg-[var(--background)] flex flex-col">
