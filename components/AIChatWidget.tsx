@@ -248,11 +248,10 @@ export default function AIChatWidget() {
               right-4 left-auto
               md:left-1/2 md:-translate-x-1/2 md:right-auto
               top-[2.5vh] bottom-[100px]
-              md:top-[30%] md:bottom-auto
+              md:top-24 md:bottom-24
               w-[calc(100vw-2rem)] max-w-[500px]
               md:w-[500px]
               h-auto
-              md:h-[700px] md:max-h-[700px]
               flex flex-col bg-[var(--card-background)] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >
