@@ -175,6 +175,9 @@ export default function Team() {
   const supabase = createClient()
   const insertingRef = useRef(false)
 
+  const isAIgen = (name: string) =>
+    name === 'Sara Siddique' || name === 'Jonh Mcnova' || name === 'Abraham Caur'
+
   useEffect(() => {
     fetchTeamMembers()
   }, [])
@@ -326,6 +329,11 @@ export default function Team() {
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <h3 className="text-xl font-semibold text-[var(--text-primary)]">
                       {member.name}
+                      {isAIgen(member.name) && (
+                        <span className="ml-2 text-xs font-medium text-[var(--text-secondary)]">
+                          (AIgen)
+                        </span>
+                      )}
                     </h3>
                     {member.is_contractor && (
                       <div className="flex items-center gap-1 px-2 py-1 bg-[var(--background-secondary)] rounded-full" title="Contractor">
