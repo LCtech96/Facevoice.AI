@@ -44,8 +44,8 @@ export default function TeamPage() {
       {/* Spacing per desktop navigation */}
       <div className="hidden md:block h-16" />
       
-      {/* Spacing per mobile navigation */}
-      <div className="md:hidden h-4" />
+      {/* Spacing per mobile navigation top */}
+      <div className="md:hidden h-14" />
       
       {/* Team Section */}
       <Team />

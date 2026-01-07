@@ -1,9 +1,9 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -16,6 +16,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const pathname = usePathname()
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
   
   // Check authentication status
@@ -35,6 +37,29 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       subscription.unsubscribe()
     }
   }, [])
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showUserMenu])
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setShowUserMenu(false)
+    router.push('/home')
+  }
   
   const navItems = [
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
@@ -134,8 +159,128 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                   </motion.button>
                 )
               })}
+              
+              {/* Auth Buttons */}
+              {!user ? (
+                <div className="flex items-center gap-2 ml-2">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => router.push('/auth')}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent-blue)] text-white text-sm font-medium hover:bg-[var(--accent-blue-light)] transition-all"
+                  >
+                    <LogIn size={18} />
+                    <span>Sign In</span>
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => router.push('/auth')}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-sm font-medium hover:bg-[var(--background)] border border-[var(--border-color)] transition-all"
+                  >
+                    <UserPlus size={18} />
+                    <span>Sign Up</span>
+                  </motion.button>
+                </div>
+              ) : (
+                <div className="relative ml-2" ref={menuRef}>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-sm font-medium hover:bg-[var(--background)] border border-[var(--border-color)] transition-all"
+                  >
+                    <UserIcon size={18} />
+                    <span className="max-w-[150px] truncate">{user.email}</span>
+                  </motion.button>
+                  
+                  <AnimatePresence>
+                    {showUserMenu && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute right-0 top-full mt-2 w-48 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
+                      >
+                        <button
+                          onClick={handleLogout}
+                          className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span className="text-sm">Logout</span>
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
           </div>
+        </div>
+      </nav>
+
+      {/* Mobile Navigation - Top (for auth buttons) */}
+      <nav className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[var(--background)]/80 backdrop-blur-xl border-b border-[var(--border-color)]">
+        <div className="flex items-center justify-between px-4 py-3">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            onClick={() => router.push('/home')}
+            className="text-lg font-semibold text-[var(--text-primary)] cursor-pointer"
+          >
+            FacevoiceAI
+          </motion.div>
+          
+          {!user ? (
+            <div className="flex items-center gap-2">
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => router.push('/auth')}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium"
+              >
+                <LogIn size={16} />
+                <span>Sign In</span>
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => router.push('/auth')}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
+              >
+                <UserPlus size={16} />
+                <span>Sign Up</span>
+              </motion.button>
+            </div>
+          ) : (
+            <div className="relative" ref={menuRef}>
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
+              >
+                <UserIcon size={16} />
+                <span className="max-w-[100px] truncate">{user.email}</span>
+              </motion.button>
+              
+              <AnimatePresence>
+                {showUserMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute right-0 top-full mt-2 w-40 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
+                  >
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors text-xs"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Logout</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
         </div>
       </nav>
 

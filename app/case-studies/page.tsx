@@ -44,8 +44,8 @@ export default function CaseStudiesPage() {
       {/* Spacing per desktop navigation */}
       <div className="hidden md:block h-16" />
       
-      {/* Spacing per mobile navigation */}
-      <div className="md:hidden h-4" />
+      {/* Spacing per mobile navigation top */}
+      <div className="md:hidden h-14" />
       
       {/* Case Studies Section */}
       <CaseStudy />
