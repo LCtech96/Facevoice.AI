@@ -42,12 +42,29 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Costruisci contesto temporale server-side per risposte impeccabili su data/ora
+    const romeNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }))
+    const weekdayIt = romeNow.toLocaleDateString('it-IT', { weekday: 'long' })
+    const dateIt = romeNow.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })
+    const timeIt = romeNow.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    const isoNow = romeNow.toISOString()
+
+    const TIME_GUARDRAIL: ChatCompletionMessageParam = {
+      role: 'system',
+      content:
+        `Oggi (fuso orario Europe/Rome) è ${weekdayIt} ${dateIt} e sono le ${timeIt}. ` +
+        `Timestamp ISO: ${isoNow}. ` +
+        `Quando l'utente chiede data, ora o giorno della settimana, usa esclusivamente questi valori server-side. ` +
+        `Non indovinare mai: se la domanda richiede un calcolo sul tempo, calcola partendo da questa data/ora.`,
+    }
+
     // Prepara i messaggi per Groq
     const messagesForGroq: ChatCompletionMessageParam[] = [
       {
         role: 'system',
         content: SYSTEM_PROMPT,
       },
+      TIME_GUARDRAIL,
       ...(messages || []).map((msg: any) => ({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content,
@@ -70,7 +87,8 @@ export async function POST(req: NextRequest) {
     const completion = await groq.chat.completions.create({
       messages: messagesForGroq,
       model: 'llama-3.1-8b-instant',
-      temperature: 0.7,
+      // Bassa creatività per massimizzare l'accuratezza fattuale
+      temperature: 0.1,
       max_tokens: 2048,
       stream: false,
     })
