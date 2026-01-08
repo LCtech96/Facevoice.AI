@@ -9,6 +9,7 @@ import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
 import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
 import AIToolsFeed from '@/components/AIToolsFeed'
+import BlogSection from '@/components/BlogSection'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -158,6 +159,9 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
         </div>
         <AIToolsFeed user={user} />
       </div>
+
+      {/* Blog Section */}
+      <BlogSection user={user} />
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

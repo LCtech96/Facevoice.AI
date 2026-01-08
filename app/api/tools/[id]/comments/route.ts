@@ -17,9 +17,9 @@ export async function GET(
     
     const { data, error } = await supabase
       .from('tool_comments')
-      .select('id, user_id, user_name, comment, created_at')
+      .select('id, user_id, user_name, user_email, comment, created_at, is_approved, is_verified')
       .eq('tool_id', id)
-      .eq('is_verified', true) // Mostra solo commenti verificati
+      .or('is_verified.eq.true,is_approved.eq.true') // Mostra commenti verificati o approvati
       .order('created_at', { ascending: false })
       .limit(50)
 

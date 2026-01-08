@@ -2,6 +2,10 @@
 
 import { motion } from 'framer-motion'
 import { MapPin, Star, ExternalLink, CheckCircle2, Menu, Calendar, ShoppingCart, Image, FileText, Settings, MessageSquare, Mail, Phone, Bot, UserPlus, Globe } from 'lucide-react'
+import CaseStudyComments from './CaseStudyComments'
+import { createClient } from '@/lib/supabase-client'
+import { useEffect, useState } from 'react'
+import type { User } from '@supabase/supabase-js'
 
 interface CaseStudyData {
   id: string
@@ -159,6 +163,24 @@ const caseStudies: CaseStudyData[] = [
 ]
 
 export default function CaseStudy() {
+  const [user, setUser] = useState<User | null>(null)
+  const supabase = createClient()
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+    }
+    checkUser()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
   return (
     <section className="py-24 px-6 bg-[var(--background)]">
       <motion.div
@@ -408,6 +430,9 @@ export default function CaseStudy() {
                     </div>
                   </>
                 )}
+
+                {/* Sezione Commenti */}
+                <CaseStudyComments caseStudyId={study.id} user={user} />
               </div>
             </motion.div>
           ))}
