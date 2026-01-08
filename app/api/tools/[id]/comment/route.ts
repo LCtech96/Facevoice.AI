@@ -115,7 +115,10 @@ export async function POST(
     const finalUserId = userId || `anon_${Date.now()}_${Math.random().toString(36).substring(7)}`
     const finalUserName = userName || userEmail.split('@')[0] || 'Guest'
 
-    // Aggiungi commento (non verificato)
+    // Verifica se è admin (luca@facevoice.ai) - auto-approva
+    const isAdmin = userEmail.trim().toLowerCase() === 'luca@facevoice.ai'
+
+    // Aggiungi commento (auto-approvato se admin, altrimenti non verificato)
     const { data, error } = await supabase
       .from('tool_comments')
       .insert({
@@ -124,9 +127,10 @@ export async function POST(
         user_name: finalUserName,
         user_email: userEmail.trim().toLowerCase(),
         comment: comment.trim(),
-        is_verified: false,
-        verification_token: verificationToken,
-        verification_expires_at: verificationExpiresAt.toISOString(),
+        is_verified: isAdmin, // Admin: auto-verificato
+        is_approved: isAdmin, // Admin: auto-approvato
+        verification_token: isAdmin ? null : verificationToken,
+        verification_expires_at: isAdmin ? null : verificationExpiresAt.toISOString(),
         created_at: new Date().toISOString(),
       })
       .select()
@@ -139,6 +143,16 @@ export async function POST(
         error: 'Errore nel salvare il commento',
         details: error.message 
       }, { status: 500 })
+    }
+
+    // Se è admin, non inviare email di verifica
+    if (isAdmin) {
+      return NextResponse.json({
+        success: true,
+        comment: data,
+        requiresVerification: false,
+        message: 'Commento pubblicato con successo!',
+      })
     }
 
     // Genera link di verifica - FORZA sempre www.facevoice.ai in produzione

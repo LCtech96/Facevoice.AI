@@ -22,6 +22,9 @@ export async function POST(
       return NextResponse.json({ error: 'Email obbligatoria' }, { status: 400 })
     }
 
+    // Verifica se è admin (luca@facevoice.ai) - auto-approva
+    const isAdmin = userEmail.trim().toLowerCase() === 'luca@facevoice.ai'
+
     const { data, error } = await supabase
       .from('case_study_comments')
       .insert({
@@ -29,7 +32,7 @@ export async function POST(
         user_name: userName || userEmail.split('@')[0] || 'Guest',
         user_email: userEmail.trim().toLowerCase(),
         comment: comment.trim(),
-        is_approved: false,
+        is_approved: isAdmin, // Admin: auto-approvato
       })
       .select()
       .single()

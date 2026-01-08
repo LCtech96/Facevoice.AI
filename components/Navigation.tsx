@@ -61,6 +61,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     router.push('/home')
   }
   
+  const isAdmin = user?.email === 'luca@facevoice.ai'
+  
   const navItems = [
     { id: 'home', label: 'Home', icon: Home, href: '/home' },
     { id: 'services', label: 'Services', icon: Briefcase, href: '/services' },
@@ -68,6 +70,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'team', label: 'Team', icon: Users, href: '/team' },
     // Mostra Chat solo agli utenti autenticati
     ...(user ? [{ id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' }] : []),
+    // Mostra Admin solo per luca@facevoice.ai
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: Shield, href: '/admin' }] : []),
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
@@ -95,6 +99,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/services')
     } else if (item.href === '/case-studies') {
       router.push('/case-studies')
+    } else if (item.href === '/admin') {
+      router.push('/admin')
     }
   }
 
