@@ -63,7 +63,11 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
         const data = await response.json()
         console.log('Comments loaded:', data.comments?.length || 0, 'comments')
         console.log('Comments data:', data.comments)
-        setComments(data.comments || [])
+        // Mostra solo commenti approvati, limitati a 3 (già limitati dall'API)
+        const approvedComments = isAdmin 
+          ? (data.comments || []).slice(0, 3)
+          : (data.comments || []).filter((c: any) => c.is_approved || c.is_verified).slice(0, 3)
+        setComments(approvedComments)
       } else {
         const errorText = await response.text()
         console.error('Failed to load comments:', response.status, response.statusText, errorText)
@@ -146,25 +150,19 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
       if (response.ok) {
         const data = await response.json()
         
-        // Mostra messaggio di verifica
+        // Mostra messaggio di attesa approvazione
         if (data.requiresVerification) {
-          let message = data.message || 'Commento salvato! Controlla la tua email per verificarlo.'
-          
-          // Se c'è un link di verifica (email non configurata), mostralo
-          if (data.verificationLink) {
-            message += `\n\nLink di verifica: ${data.verificationLink}`
-          }
-          
+          const message = data.message || 'Aspetta che l\'amministratore accetti il tuo commento. Sarà pubblicato dopo l\'approvazione.'
           setVerificationMessage(message)
           setCommentText('')
           setUserEmail('')
           setShowEmailInput(false)
-          // Ricarica commenti dopo un po' (il commento non sarà visibile finché non verificato)
+          // Ricarica commenti dopo un po' (il commento non sarà visibile finché non approvato)
           setTimeout(() => {
             loadComments()
           }, 2000)
         } else {
-          // Se non richiede verifica (utente autenticato), aggiorna subito
+          // Se non richiede verifica (admin), aggiorna subito
           onComment(commentToSubmit)
           loadComments()
         }
@@ -312,9 +310,11 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
                   </div>
                 ) : (
                   <>
-                    <div className="text-xs text-coral-red/50 mb-2">
-                      {comments.length} {comments.length === 1 ? 'recensione' : 'recensioni'} verificata{comments.length === 1 ? '' : 'e'}
-                    </div>
+                    {comments.length === 3 && (
+                      <div className="text-xs text-center text-coral-red/50 mb-2">
+                        Visibili solo gli ultimi 3 commenti
+                      </div>
+                    )}
                     {comments.map((comment) => (
                       <div key={comment.id} className="glass p-4 rounded-xl border border-coral-red/10 hover:border-coral-red/30 transition-all">
                         <div className="flex items-center gap-2 mb-2">
