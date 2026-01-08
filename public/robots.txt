@@ -1,0 +1,38 @@
+# robots.txt per facevoice.ai
+# Permette il crawling delle pagine pubbliche e blocca quelle private
+
+# User-agent per tutti i crawler
+User-agent: *
+
+# Consenti crawling delle pagine pubbliche
+Allow: /
+Allow: /home
+Allow: /services
+Allow: /case-studies
+Allow: /team
+
+# Blocca crawling delle pagine private/protette
+Disallow: /auth
+Disallow: /ai-chat
+Disallow: /admin
+Disallow: /api/
+
+# Consenti crawling delle risorse statiche
+Allow: /_next/static/
+Allow: /static/
+Allow: /*.css$
+Allow: /*.js$
+Allow: /*.png$
+Allow: /*.jpg$
+Allow: /*.jpeg$
+Allow: /*.gif$
+Allow: /*.svg$
+Allow: /*.webp$
+Allow: /*.ico$
+
+# Sitemap
+Sitemap: https://www.facevoice.ai/sitemap.xml
+
+# Crawl-delay (opzionale, in secondi)
+# Crawl-delay: 1
+
