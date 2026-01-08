@@ -156,7 +156,7 @@ export async function POST(
     }
 
     // Per utenti non admin: non inviare email, solo messaggio di attesa approvazione
-    // Conta solo i commenti approvati
+    // Conta solo i commenti approvati o verificati
     const { count } = await supabase
       .from('tool_comments')
       .select('*', { count: 'exact', head: true })
