@@ -36,5 +36,65 @@
     <priority>0.7</priority>
   </url>
   
+  <!-- Pagine Verticali - Ristorazione -->
+  <url>
+    <loc>https://www.facevoice.ai/settori/ristorazione/palermo</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/ristorazione/catania</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/ristorazione/trapani</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  
+  <!-- Pagine Verticali - Ottica -->
+  <url>
+    <loc>https://www.facevoice.ai/settori/ottica/palermo</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/ottica/catania</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/ottica/trapani</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  
+  <!-- Pagine Verticali - Abbigliamento -->
+  <url>
+    <loc>https://www.facevoice.ai/settori/abbigliamento/palermo</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/abbigliamento/catania</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.facevoice.ai/settori/abbigliamento/trapani</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  
 </urlset>
 
