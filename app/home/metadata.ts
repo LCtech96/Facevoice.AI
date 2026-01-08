@@ -1,14 +1,4 @@
 import type { Metadata } from 'next'
-import { Montserrat } from 'next/font/google'
-import './globals.css'
-import AIChatWidget from '@/components/AIChatWidget'
-import ContactsFooter from '@/components/ContactsFooter'
-
-const montserrat = Montserrat({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700', '800', '900'],
-  variable: '--font-montserrat',
-})
 
 export const metadata: Metadata = {
   title: 'Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale',
@@ -33,11 +23,6 @@ export const metadata: Metadata = {
     'cybersecurity Palermo',
     'software gestionale PMI'
   ],
-  icons: {
-    icon: '/Trinacria.jpg',
-    shortcut: '/Trinacria.jpg',
-    apple: '/Trinacria.jpg',
-  },
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica per imprese siciliane',
@@ -60,6 +45,9 @@ export const metadata: Metadata = {
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica',
     images: ['https://www.facevoice.ai/Facevoice.png'],
   },
+  alternates: {
+    canonical: 'https://www.facevoice.ai/home',
+  },
   robots: {
     index: true,
     follow: true,
@@ -71,26 +59,5 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
-}
-
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return (
-    <html lang="it" className="dark">
-      <head>
-        <link rel="icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="shortcut icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="apple-touch-icon" href="/Trinacria.jpg" />
-      </head>
-      <body className={montserrat.className}>
-        {children}
-        <ContactsFooter />
-        <AIChatWidget />
-      </body>
-    </html>
-  )
 }
 

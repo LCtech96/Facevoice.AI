@@ -191,11 +191,11 @@ export default function CaseStudy() {
         className="container mx-auto max-w-6xl"
       >
         <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold mb-4 text-[var(--text-primary)]">
-            Case Study
-          </h2>
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 text-[var(--text-primary)]">
+            Case Studies - Progetti Software e E-commerce Realizzati a Palermo
+          </h1>
           <p className="text-lg text-[var(--text-secondary)] max-w-2xl mx-auto">
-            Scopri come abbiamo trasformato la presenza digitale dei nostri clienti
+            Scopri come abbiamo trasformato la presenza digitale dei nostri clienti con sviluppo software personalizzato, restyling e-commerce, integrazione AI e soluzioni cloud per imprese siciliane
           </p>
         </div>
 

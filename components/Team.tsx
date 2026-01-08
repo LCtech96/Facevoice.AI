@@ -153,11 +153,11 @@ function TeamMemberImage({ member }: { member: TeamMember }) {
     <div className="relative w-full h-full">
       <Image
         src={imageUrl}
-        alt={member.name}
+        alt={`${member.name} - Team Facevoice AI - ${member.role || 'Sviluppatore Software e Consulente AI'}`}
         fill
         className="object-cover"
-        loading="eager"
-        priority
+        loading="lazy"
+        sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
         onError={() => {
           setImageError(true)
           setImageUrl(null)

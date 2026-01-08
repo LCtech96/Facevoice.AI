@@ -601,11 +601,11 @@ export default function Services() {
         transition={{ duration: 0.8 }}
         className="container mx-auto max-w-6xl"
       >
-        <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
-          Our Services
-        </h2>
+        <h1 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
+          Servizi di Sviluppo Software e Integrazione AI a Palermo
+        </h1>
         <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
-          Comprehensive solutions to drive your business forward
+          Soluzioni complete di sviluppo software su misura, automazione aziendale, integrazione intelligenza artificiale per e-commerce, consulenza SEO e chatbot personalizzati per imprese siciliane
         </p>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

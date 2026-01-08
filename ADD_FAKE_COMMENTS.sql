@@ -21,9 +21,9 @@ VALUES
 -- Commenti per DALL·E 3
 INSERT INTO tool_comments (tool_id, user_id, user_name, user_email, comment, is_verified, is_approved, created_at)
 VALUES 
-  ('dalle-3', 'fake_user_7', 'Roberto F.', 'roberto@example.com', 'Strumento potente e intuitivo. Genera immagini di altissima qualità.', true, true, NOW() - INTERVAL '2 days'),
-  ('dalle-3', 'fake_user_8', 'Chiara D.', 'chiara@example.com', 'Perfetto per il mio lavoro di grafico. Risparmio tantissimo tempo!', true, true, NOW() - INTERVAL '8 hours'),
-  ('dalle-3', 'fake_user_9', 'Paolo M.', 'paolo@example.com', 'Integrato facilmente nel mio workflow. Ottimo tool!', true, true, NOW() - INTERVAL '3 hours');
+  ('dalle3', 'fake_user_7', 'Roberto F.', 'roberto@example.com', 'Strumento potente e intuitivo. Genera immagini di altissima qualità.', true, true, NOW() - INTERVAL '2 days'),
+  ('dalle3', 'fake_user_8', 'Chiara D.', 'chiara@example.com', 'Perfetto per il mio lavoro di grafico. Risparmio tantissimo tempo!', true, true, NOW() - INTERVAL '8 hours'),
+  ('dalle3', 'fake_user_9', 'Paolo M.', 'paolo@example.com', 'Integrato facilmente nel mio workflow. Ottimo tool!', true, true, NOW() - INTERVAL '3 hours');
 
 -- Commenti per ChatGPT
 INSERT INTO tool_comments (tool_id, user_id, user_name, user_email, comment, is_verified, is_approved, created_at)

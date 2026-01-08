@@ -33,12 +33,13 @@ export default function Hero({}: HeroProps = {}) {
             <div className="relative w-full max-w-[280px] sm:max-w-[380px] md:max-w-[480px] lg:max-w-[600px] xl:max-w-[700px] aspect-auto">
               <Image
                 src="/Facevoice.png"
-                alt="FacevoiceAI"
+                alt="Facevoice AI - Sviluppo software su misura, automazione aziendale e integrazione intelligenza artificiale a Palermo"
                 width={700}
                 height={200}
                 className="w-full h-auto object-contain"
                 priority
                 quality={90}
+                sizes="(max-width: 640px) 280px, (max-width: 768px) 380px, (max-width: 1024px) 480px, 700px"
               />
             </div>
           </motion.div>

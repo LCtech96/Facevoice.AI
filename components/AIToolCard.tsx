@@ -199,9 +199,11 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
           <>
             <Image
               src={tool.coverImage}
-              alt={tool.name}
+              alt={`${tool.name} - ${tool.category} - AI Tool per automazione e produttività aziendale`}
               fill
               className="object-cover"
+              loading="lazy"
+              sizes="(max-width: 768px) 100vw, 800px"
               unoptimized
               onError={(e) => {
                 // Fallback a placeholder se l'immagine non carica

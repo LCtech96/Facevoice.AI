@@ -10,6 +10,9 @@ import Feed from '@/components/Feed'
 import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
 import AIToolsFeed from '@/components/AIToolsFeed'
 import BlogSection from '@/components/BlogSection'
+import SemanticContent from '@/components/SEO/SemanticContent'
+import SEOHead from '@/components/SEO/SEOHead'
+import InternalLinks from '@/components/SEO/InternalLinks'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -63,6 +66,26 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
+      <SEOHead
+        title="Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale"
+        description="Sviluppo software su misura per automazione aziendale a Palermo. Integrazione intelligenza artificiale per gestione magazzino e-commerce, consulenza SEO per Shopify e WooCommerce, chatbot AI personalizzati per assistenza clienti h24. Ottimizzazione velocità siti e-commerce professionali."
+        keywords={[
+          'sviluppo software su misura Palermo',
+          'automazione aziendale Palermo',
+          'intelligenza artificiale e-commerce',
+          'gestione magazzino AI',
+          'consulenza SEO Shopify',
+          'consulenza SEO WooCommerce',
+          'chatbot AI personalizzati',
+          'assistenza clienti h24',
+          'ottimizzazione velocità e-commerce',
+          'machine learning analisi dati',
+          'soluzioni cloud Sicilia',
+          'digitalizzazione imprese'
+        ]}
+        canonical="https://www.facevoice.ai/home"
+        page="home"
+      />
       <Navigation 
         activeSection={activeSection} 
         setActiveSection={setActiveSection} 
@@ -162,6 +185,12 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
 
       {/* Blog Section */}
       <BlogSection user={user} />
+
+      {/* Internal Links Section - SEO */}
+      <InternalLinks />
+
+      {/* Semantic Content - SEO */}
+      <SemanticContent page="home" />
       
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />

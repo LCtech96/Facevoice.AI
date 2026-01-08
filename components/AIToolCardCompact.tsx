@@ -151,9 +151,11 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
           <>
             <Image
               src={tool.coverImage}
-              alt={tool.name}
+              alt={`${tool.name} - ${tool.category} - AI Tool per ${tool.description.slice(0, 60)}`}
               fill
               className="object-cover"
+              loading="lazy"
+              sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
               unoptimized
               onError={(e) => {
                 const target = e.target as HTMLImageElement
