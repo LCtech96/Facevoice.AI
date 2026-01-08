@@ -48,10 +48,10 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
       })
       if (response.ok) {
         const data = await response.json()
-        // Mostra solo commenti approvati, o tutti se admin
+        // Mostra solo commenti approvati (limitati a 3 dall'API), o tutti se admin
         const approvedComments = isAdmin 
-          ? data.comments || []
-          : (data.comments || []).filter((c: any) => c.is_approved)
+          ? (data.comments || []).slice(0, 3) // Admin vede solo ultimi 3
+          : (data.comments || []).filter((c: any) => c.is_approved || c.is_verified).slice(0, 3)
         setComments(approvedComments)
       }
     } catch (error) {
@@ -101,7 +101,7 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
         setUserEmail('')
         setShowEmailInput(false)
         if (data.requiresVerification) {
-          setVerificationMessage('Commento salvato! Controlla la tua email per verificarlo.')
+          setVerificationMessage(data.message || 'Aspetta che l\'amministratore accetti il tuo commento.')
         } else {
           loadComments()
         }
@@ -227,7 +227,13 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
                 ) : comments.length === 0 ? (
                   <div className="text-xs text-center text-[var(--text-secondary)] py-2">Nessun commento</div>
                 ) : (
-                  comments.map((comment) => (
+                  <>
+                    {comments.length === 3 && (
+                      <div className="text-xs text-center text-[var(--text-secondary)] mb-2 opacity-70">
+                        Visibili solo gli ultimi 3 commenti
+                      </div>
+                    )}
+                    {comments.map((comment) => (
                     <div key={comment.id} className="bg-[var(--background-secondary)] p-2 rounded text-xs">
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-1">
@@ -262,7 +268,8 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
                         <p className="text-[10px] text-[var(--text-secondary)] mt-1">{comment.user_email}</p>
                       )}
                     </div>
-                  ))
+                  ))}
+                  </>
                 )}
               </div>
 

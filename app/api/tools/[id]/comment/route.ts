@@ -155,64 +155,13 @@ export async function POST(
       })
     }
 
-    // Genera link di verifica - FORZA sempre www.facevoice.ai in produzione
-    const getBaseUrl = () => {
-      // In produzione, usa SEMPRE facevoice.ai, indipendentemente da dove arriva la richiesta
-      // Questo evita problemi con domini Vercel temporanei
-      if (process.env.NEXT_PUBLIC_BASE_URL) {
-        // Se è configurato, usalo solo se non contiene vercel.app
-        if (!process.env.NEXT_PUBLIC_BASE_URL.includes('vercel.app')) {
-          return process.env.NEXT_PUBLIC_BASE_URL
-        }
-      }
-      
-      // In produzione, usa SEMPRE www.facevoice.ai
-      // Controlla se siamo in produzione (Vercel imposta automaticamente VERCEL=1)
-      if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-        return 'https://www.facevoice.ai'
-      }
-      
-      // In sviluppo locale
-      return 'http://localhost:3000'
-    }
-    
-    const baseUrl = getBaseUrl()
-    const verificationLink = `${baseUrl}/api/tools/comments/verify?token=${verificationToken}`
-    
-    console.log('Generated verification link:', verificationLink)
-    console.log('Base URL source:', {
-      NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL,
-      VERCEL: process.env.VERCEL,
-      NODE_ENV: process.env.NODE_ENV,
-      host: request.headers.get('host'),
-      origin: request.headers.get('origin'),
-      finalBaseUrl: baseUrl
-    })
-
-    // Invia email di verifica
-    let emailSent = false
-    let emailError: any = null
-    try {
-      await sendVerificationEmail(userEmail.trim(), verificationLink, finalUserName)
-      emailSent = true
-      console.log('✅ Verification email sent successfully to:', userEmail.trim())
-    } catch (err) {
-      emailError = err
-      console.error('❌ Error sending verification email:', err)
-      // Logga il link di verifica nella console per sviluppo
-      console.log('=== LINK DI VERIFICA (fallback) ===')
-      console.log('Email:', userEmail.trim())
-      console.log('Link:', verificationLink)
-      console.log('=====================================')
-      // Non fallire se l'email non viene inviata, ma logga l'errore
-    }
-
-    // Conta solo i commenti verificati
+    // Per utenti non admin: non inviare email, solo messaggio di attesa approvazione
+    // Conta solo i commenti approvati
     const { count } = await supabase
       .from('tool_comments')
       .select('*', { count: 'exact', head: true })
       .eq('tool_id', id)
-      .eq('is_verified', true)
+      .or('is_approved.eq.true,is_verified.eq.true')
 
     // Prova ad aggiornare ai_tools, ma non fallire se la tabella non esiste
     try {
@@ -224,21 +173,12 @@ export async function POST(
       console.warn('Could not update comment count in ai_tools:', updateError)
     }
 
-    // Determina se l'email è stata inviata o solo loggata
-    const hasResendKey = !!process.env.RESEND_API_KEY
-    
     return NextResponse.json({ 
       success: true, 
       comment: data,
       comments: count || 0,
-      message: emailSent 
-        ? 'Commento salvato! Controlla la tua email per verificarlo e pubblicarlo.'
-        : hasResendKey
-        ? `Commento salvato! Errore nell'invio email: ${emailError?.message || 'Sconosciuto'}. Link di verifica: ${verificationLink}`
-        : 'Commento salvato! Controlla i log del server per il link di verifica.',
+      message: 'Aspetta che l\'amministratore accetti il tuo commento. Sarà pubblicato dopo l\'approvazione.',
       requiresVerification: true,
-      verificationLink: emailSent ? undefined : verificationLink, // Invia il link se email non inviata
-      emailError: emailError ? emailError.message : undefined
     })
   } catch (error) {
     console.error('Error in POST /api/tools/[id]/comment:', error)

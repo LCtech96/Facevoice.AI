@@ -21,7 +21,7 @@ export async function GET(
       .eq('tool_id', id)
       .or('is_verified.eq.true,is_approved.eq.true') // Mostra commenti verificati o approvati
       .order('created_at', { ascending: false })
-      .limit(50)
+      .limit(3) // Mostra solo gli ultimi 3 commenti
 
     if (error) {
       console.error('Error fetching comments:', error)

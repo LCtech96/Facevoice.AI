@@ -86,7 +86,7 @@ export default function CaseStudyComments({ caseStudyId, user }: CaseStudyCommen
         setCommentText('')
         setUserEmail('')
         setShowEmailInput(false)
-        setMessage('Commento inviato! Verrà pubblicato dopo l\'approvazione dell\'admin.')
+        setMessage('Aspetta che l\'amministratore accetti il tuo commento. Sarà pubblicato dopo l\'approvazione.')
         setTimeout(() => setMessage(null), 5000)
         // Se admin, ricarica subito i commenti
         if (isAdmin) {
