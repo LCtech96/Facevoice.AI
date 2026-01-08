@@ -213,13 +213,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Add system message with current date
-    const currentDate = new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    })
+    // Data corretta: giovedì 8 gennaio 2026
+    const currentDate = 'Thursday, January 8, 2026'
 
     // Lista degli AI Tools disponibili nel feed
     const availableTools = `

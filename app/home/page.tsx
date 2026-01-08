@@ -8,7 +8,7 @@ import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
 import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
-import AIToolsCircularGallery from '@/components/AIToolsCircularGallery'
+import AIToolsFeed from '@/components/AIToolsFeed'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -146,19 +146,17 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
         </div>
       )}
       
-      {/* AI Tools Circular Gallery alla fine della pagina */}
-      <div id="ai-tools" className="container mx-auto px-4 py-2 md:py-3 max-w-6xl">
-        <div className="text-center mb-2 md:mb-2.5">
-          <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-[var(--text-primary)] mb-0.5 md:mb-1">
+      {/* AI Tools Feed - Stile Instagram */}
+      <div id="ai-tools" className="container mx-auto px-4 py-8 max-w-7xl">
+        <div className="text-center mb-6">
+          <h2 className="text-2xl md:text-3xl font-bold text-[var(--text-primary)] mb-2">
             AI Tools
           </h2>
-          <p className="text-xs sm:text-sm text-[var(--text-secondary)] max-w-2xl mx-auto">
+          <p className="text-sm md:text-base text-[var(--text-secondary)] max-w-2xl mx-auto">
             Esplora la nostra collezione di strumenti AI per potenziare il tuo business
           </p>
         </div>
-        <div className="relative w-full min-h-[250px] sm:min-h-[350px] md:min-h-[450px] lg:min-h-[500px]">
-          <AIToolsCircularGallery />
-        </div>
+        <AIToolsFeed user={user} />
       </div>
       
       {/* Spacing per mobile navigation bottom */}

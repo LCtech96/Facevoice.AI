@@ -28,7 +28,7 @@ const SYSTEM_PROMPT = `Sei un assistente AI esperto di Facevoice AI. Il tuo comp
    - Google Ads per pubblicità mirata
    - Integrazione con servizi Google (Gmail, Drive, Calendar)
 
-Sii sempre professionale, chiaro e conciso. Se un cliente ha domande specifiche che non puoi risolvere, suggerisci di contattare direttamente via WhatsApp per una consulenza personalizzata.`
+Sii sempre professionale, chiaro e conciso. Le risposte devono essere BREVI e PRECISE (massimo 2-3 frasi). Rispondi direttamente alla domanda senza giri di parole. Se un cliente ha domande specifiche che non puoi risolvere, suggerisci di contattare direttamente via WhatsApp per una consulenza personalizzata.`
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,27 +42,20 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Costruisci contesto temporale server-side per risposte impeccabili su data/ora
-    const romeNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }))
-    const weekdayIt = romeNow.toLocaleDateString('it-IT', { weekday: 'long' })
-    const dateIt = romeNow.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })
-    const timeIt = romeNow.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-    const isoNow = romeNow.toISOString()
-
+    // Data corretta: giovedì 8 gennaio 2026
     const TIME_GUARDRAIL: ChatCompletionMessageParam = {
       role: 'system',
       content:
-        `Oggi (fuso orario Europe/Rome) è ${weekdayIt} ${dateIt} e sono le ${timeIt}. ` +
-        `Timestamp ISO: ${isoNow}. ` +
-        `Quando l'utente chiede data, ora o giorno della settimana, usa esclusivamente questi valori server-side. ` +
-        `Non indovinare mai: se la domanda richiede un calcolo sul tempo, calcola partendo da questa data/ora.`,
+        `Oggi è giovedì 8 gennaio 2026 (fuso orario Europe/Rome). ` +
+        `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è giovedì 8 gennaio 2026". ` +
+        `Sii sempre preciso e non indovinare mai.`,
     }
 
     // Prepara i messaggi per Groq
     const messagesForGroq: ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: SYSTEM_PROMPT,
+        content: SYSTEM_PROMPT + '\n\nIMPORTANTE: Sii sempre BREVE e PRECISO nelle risposte. Massimo 2-3 frasi. Rispondi direttamente senza giri di parole.',
       },
       TIME_GUARDRAIL,
       ...(messages || []).map((msg: any) => ({
@@ -87,9 +80,9 @@ export async function POST(req: NextRequest) {
     const completion = await groq.chat.completions.create({
       messages: messagesForGroq,
       model: 'llama-3.1-8b-instant',
-      // Bassa creatività per massimizzare l'accuratezza fattuale
+      // Bassa creatività per massimizzare l'accuratezza fattuale e risposte brevi
       temperature: 0.1,
-      max_tokens: 2048,
+      max_tokens: 150, // Limita i token per risposte brevi
       stream: false,
     })
 

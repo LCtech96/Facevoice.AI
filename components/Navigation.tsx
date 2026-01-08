@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
@@ -257,8 +257,15 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
               >
-                <UserIcon size={16} />
+                {user.email === 'luca@facevoice.ai' ? (
+                  <Shield size={16} className="text-yellow-500" />
+                ) : (
+                  <UserIcon size={16} />
+                )}
                 <span className="max-w-[100px] truncate">{user.email}</span>
+                {user.email === 'luca@facevoice.ai' && (
+                  <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-600 rounded text-[10px] font-bold">ADMIN</span>
+                )}
               </motion.button>
               
               <AnimatePresence>

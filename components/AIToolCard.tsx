@@ -24,8 +24,9 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   const [userEmail, setUserEmail] = useState('')
   const [showEmailInput, setShowEmailInput] = useState(false)
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
-  const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; comment: string; created_at: string }>>([])
+  const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; user_email: string; comment: string; created_at: string; is_approved: boolean }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
+  const isAdmin = user?.email === 'luca@facevoice.ai'
 
   // Controlla se siamo tornati dalla verifica e apri/ricarica i commenti
   useEffect(() => {
