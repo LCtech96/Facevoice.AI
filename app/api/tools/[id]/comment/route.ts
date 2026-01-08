@@ -147,11 +147,29 @@ export async function POST(
 
     // Se è admin, non inviare email di verifica
     if (isAdmin) {
+      // Conta i commenti approvati (incluso quello appena aggiunto)
+      const { count } = await supabase
+        .from('tool_comments')
+        .select('*', { count: 'exact', head: true })
+        .eq('tool_id', id)
+        .or('is_approved.eq.true,is_verified.eq.true')
+
+      // Prova ad aggiornare ai_tools
+      try {
+        await supabase
+          .from('ai_tools')
+          .update({ comments: count || 0 })
+          .eq('id', id)
+      } catch (updateError) {
+        console.warn('Could not update comment count in ai_tools:', updateError)
+      }
+
       return NextResponse.json({
         success: true,
         comment: data,
         requiresVerification: false,
         message: 'Commento pubblicato con successo!',
+        comments: count || 0,
       })
     }
 
