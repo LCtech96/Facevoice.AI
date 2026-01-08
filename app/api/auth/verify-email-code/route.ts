@@ -2,10 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getOTP, deleteOTP } from '../send-otp/route'
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+// Crea il client admin solo se la chiave è disponibile
+const getSupabaseAdmin = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY non configurata')
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey)
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,6 +51,8 @@ export async function POST(req: NextRequest) {
 
     // Codice valido! Trova l'utente e conferma l'email
     try {
+      const supabaseAdmin = getSupabaseAdmin()
+      
       // Cerca l'utente per email
       const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers()
       
