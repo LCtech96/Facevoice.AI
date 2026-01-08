@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
@@ -68,6 +68,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'services', label: 'Services', icon: Briefcase, href: '/services' },
     { id: 'case-studies', label: 'Case Studies', icon: Star, href: '/case-studies' },
     { id: 'team', label: 'Team', icon: Users, href: '/team' },
+    { id: 'bookings', label: 'Bookings', icon: Calendar, href: '/bookings' },
     // Mostra Chat solo agli utenti autenticati
     ...(user ? [{ id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' }] : []),
     // Mostra Admin solo per luca@facevoice.ai
@@ -99,6 +100,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/services')
     } else if (item.href === '/case-studies') {
       router.push('/case-studies')
+    } else if (item.href === '/bookings') {
+      router.push('/bookings')
     } else if (item.href === '/admin') {
       router.push('/admin')
     }
@@ -119,6 +122,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'case-studies') {
       return pathname === '/case-studies'
+    }
+    if (item.id === 'bookings') {
+      return pathname === '/bookings'
     }
     return pathname === '/home' && activeSection === item.id
   }

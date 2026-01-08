@@ -36,6 +36,14 @@
     <priority>0.7</priority>
   </url>
   
+  <!-- Bookings Page -->
+  <url>
+    <loc>https://www.facevoice.ai/bookings</loc>
+    <lastmod>2026-01-08</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  
   <!-- Pagine Verticali - Ristorazione -->
   <url>
     <loc>https://www.facevoice.ai/settori/ristorazione/palermo</loc>

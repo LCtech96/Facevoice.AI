@@ -3,11 +3,9 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ChevronDown } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import Feed from '@/components/Feed'
-import { WhatsAppContactForm } from '@/components/ui/whatsapp-contact-form'
 import AIToolsFeed from '@/components/AIToolsFeed'
 import BlogSection from '@/components/BlogSection'
 import SemanticContent from '@/components/SEO/SemanticContent'
@@ -100,62 +98,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero">
         <Hero />
-      </div>
-      
-      {/* Call to Action Section */}
-      <div className="container mx-auto px-4 py-1 md:py-2 max-w-4xl">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="flex flex-col items-center text-center"
-        >
-          <p className="text-base sm:text-lg md:text-xl text-[var(--text-primary)] mb-1.5 md:mb-2 max-w-3xl leading-relaxed">
-            Se stai cercando più visibilità, e vuoi essere trovato facilmente dai tuoi clienti o attrarne di nuovi, o possiedi un codice sconto, compila i tre step in basso con nome, numero e inviaci un messaggio
-          </p>
-          
-          {/* Freccia animata che punta al form */}
-          <motion.button
-            onClick={() => {
-              const contactSection = document.getElementById('contact')
-              if (contactSection) {
-                contactSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }
-            }}
-            className="flex flex-col items-center gap-0.5 text-[var(--accent-blue)] hover:text-[var(--accent-blue-light)] transition-colors cursor-pointer group"
-            aria-label="Scorri al form di contatto"
-          >
-            <motion.div
-              animate={{
-                y: [0, 6, 0],
-              }}
-              transition={{
-                duration: 1.5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              className="flex items-center justify-center"
-            >
-              <ChevronDown className="w-5 h-5 md:w-6 md:h-6" />
-            </motion.div>
-            <span className="text-xs text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
-              Compila il form
-            </span>
-          </motion.button>
-        </motion.div>
-      </div>
-      
-      {/* Contact Form Section */}
-      <div id="contact" className="container mx-auto px-4 py-2 md:py-3 max-w-4xl">
-        <div className="flex flex-col items-center justify-center">
-          <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-[var(--text-primary)] mb-1 md:mb-2 text-center">
-            Contattaci
-          </h2>
-          <p className="text-xs sm:text-sm text-[var(--text-secondary)] mb-2 md:mb-3 text-center max-w-2xl">
-            Compila il form per inviarci una richiesta direttamente su WhatsApp. Ti risponderemo il prima possibile!
-          </p>
-          <WhatsAppContactForm />
-        </div>
       </div>
       
       {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}
