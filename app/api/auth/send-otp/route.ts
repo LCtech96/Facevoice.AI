@@ -42,22 +42,23 @@ export async function POST(req: NextRequest) {
         const emailData = {
           from: `FacevoiceAI <${fromEmail}>`,
           to: email,
-          subject: 'Codice di verifica Facevoice AI',
+          subject: 'Codice di verifica - Conferma il tuo account Facevoice AI',
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-              <h2 style="color: #333;">Il tuo codice di verifica</h2>
+              <h2 style="color: #333;">Conferma il tuo account</h2>
               <p>Ciao!</p>
-              <p>Il tuo codice di verifica per accedere a Facevoice AI è:</p>
+              <p>Grazie per esserti registrato su Facevoice AI. Per completare la registrazione e verificare la tua email, inserisci questo codice di verifica:</p>
               <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0; text-align: center;">
                 <h1 style="color: #007bff; font-size: 32px; letter-spacing: 5px; margin: 0;">${code}</h1>
               </div>
+              <p>Inserisci questo codice nella pagina di verifica per attivare il tuo account.</p>
               <p>Questo codice scade tra <strong>10 minuti</strong>.</p>
               <p style="color: #666; font-size: 12px; margin-top: 20px;">
                 Se non hai richiesto questo codice, puoi ignorare questa email.
               </p>
             </div>
           `,
-          text: `Il tuo codice di verifica Facevoice AI è: ${code}\n\nQuesto codice scade tra 10 minuti.\n\nSe non hai richiesto questo codice, puoi ignorare questa email.`,
+          text: `Conferma il tuo account Facevoice AI\n\nIl tuo codice di verifica è: ${code}\n\nInserisci questo codice nella pagina di verifica per attivare il tuo account.\n\nQuesto codice scade tra 10 minuti.\n\nSe non hai richiesto questo codice, puoi ignorare questa email.`,
         }
         
         console.log('Sending OTP email via Resend...', { to: email, from: fromEmail })

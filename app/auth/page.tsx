@@ -7,7 +7,7 @@ import { Mail, Lock, ArrowRight, CheckCircle, XCircle, Eye, EyeOff } from 'lucid
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
-type AuthMode = 'signin' | 'signup'
+type AuthMode = 'signin' | 'signup' | 'verify'
 
 export default function AuthPage() {
   const router = useRouter()
@@ -15,6 +15,7 @@ export default function AuthPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [verificationCode, setVerificationCode] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -71,34 +72,112 @@ export default function AuthPage() {
     }
 
     try {
+      // Prima registra l'utente in Supabase
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          // Non usare emailRedirectTo, gestiremo la verifica manualmente
         },
       })
 
       if (signUpError) throw signUpError
 
       if (data.user) {
-        setMessage('Registrazione completata! Controlla la tua email per confermare l\'account, oppure accedi direttamente se la conferma non è richiesta.')
-        
-        // Se l'email è già confermata, accedi automaticamente
-        if (data.session) {
-          setTimeout(() => {
-            router.push('/ai-chat')
-          }, 1500)
-        } else {
-          // Altrimenti, passa alla modalità sign in
-          setTimeout(() => {
-            setMode('signin')
-            setMessage(null)
-          }, 3000)
+        // Ora invia il codice OTP via email
+        const response = await fetch('/api/auth/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        })
+
+        const otpData = await response.json()
+
+        if (!response.ok) {
+          throw new Error(otpData.error || 'Errore nell\'invio del codice di verifica')
         }
+
+        setMessage('Registrazione completata! Controlla la tua email per il codice di verifica.')
+        setMode('verify')
+        setTimeout(() => setMessage(null), 5000)
       }
     } catch (err: any) {
       setError(err.message || 'Errore durante la registrazione')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    setMessage(null)
+
+    if (!verificationCode || verificationCode.length !== 6) {
+      setError('Inserisci un codice di 6 cifre')
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch('/api/auth/verify-email-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code: verificationCode }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Codice non valido')
+      }
+
+      // Dopo la verifica, accedi con la password
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (signInError) {
+        throw new Error('Errore nell\'accesso. Riprova a fare login manualmente.')
+      }
+
+      setMessage('Email verificata e accesso completato! Reindirizzamento in corso...')
+      
+      setTimeout(() => {
+        router.push('/ai-chat')
+      }, 1500)
+    } catch (err: any) {
+      setError(err.message || 'Codice non valido. Riprova.')
+      setVerificationCode('')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResendCode = async () => {
+    setError(null)
+    setMessage(null)
+    setLoading(true)
+
+    try {
+      const response = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nell\'invio del codice')
+      }
+
+      setMessage('Codice di verifica inviato! Controlla la tua email.')
+      setTimeout(() => setMessage(null), 5000)
+    } catch (err: any) {
+      setError(err.message || 'Errore nell\'invio del codice')
     } finally {
       setLoading(false)
     }
@@ -154,52 +233,56 @@ export default function AuthPage() {
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">
-              {mode === 'signin' ? 'Accedi' : 'Registrati'}
+              {mode === 'signin' && 'Accedi'}
+              {mode === 'signup' && 'Registrati'}
+              {mode === 'verify' && 'Verifica Email'}
             </h1>
             <p className="text-[var(--text-secondary)]">
-              {mode === 'signin' 
-                ? 'Inserisci le tue credenziali per accedere'
-                : 'Crea un nuovo account per iniziare'}
+              {mode === 'signin' && 'Inserisci le tue credenziali per accedere'}
+              {mode === 'signup' && 'Crea un nuovo account per iniziare'}
+              {mode === 'verify' && `Inserisci il codice inviato a ${email}`}
             </p>
           </div>
 
-          {/* Toggle Sign In / Sign Up */}
-          <div className="flex gap-2 mb-6 bg-[var(--background-secondary)] p-1 rounded-lg">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('signin')
-                setError(null)
-                setMessage(null)
-                setPassword('')
-                setConfirmPassword('')
-              }}
-              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
-                mode === 'signin'
-                  ? 'bg-[var(--accent-blue)] text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Accedi
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('signup')
-                setError(null)
-                setMessage(null)
-                setPassword('')
-                setConfirmPassword('')
-              }}
-              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
-                mode === 'signup'
-                  ? 'bg-[var(--accent-blue)] text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Registrati
-            </button>
-          </div>
+          {/* Toggle Sign In / Sign Up - Solo quando non si sta verificando */}
+          {mode !== 'verify' && (
+            <div className="flex gap-2 mb-6 bg-[var(--background-secondary)] p-1 rounded-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('signin')
+                  setError(null)
+                  setMessage(null)
+                  setPassword('')
+                  setConfirmPassword('')
+                }}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                  mode === 'signin'
+                    ? 'bg-[var(--accent-blue)] text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                Accedi
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('signup')
+                  setError(null)
+                  setMessage(null)
+                  setPassword('')
+                  setConfirmPassword('')
+                }}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                  mode === 'signup'
+                    ? 'bg-[var(--accent-blue)] text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                Registrati
+              </button>
+            </div>
+          )}
 
           {/* Sign In Form */}
           {mode === 'signin' && (
@@ -410,6 +493,102 @@ export default function AuthPage() {
                   </>
                 )}
               </motion.button>
+            </form>
+          )}
+
+          {/* Verification Code Form */}
+          {mode === 'verify' && (
+            <form onSubmit={handleVerifyCode} className="space-y-4">
+              <div>
+                <label htmlFor="code" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Codice di Verifica (6 cifre)
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+                  <input
+                    id="code"
+                    type="text"
+                    value={verificationCode}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 6)
+                      setVerificationCode(value)
+                    }}
+                    placeholder="000000"
+                    className="w-full pl-10 pr-4 py-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)] transition-all text-center text-2xl tracking-widest font-mono"
+                    maxLength={6}
+                    required
+                    disabled={loading}
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>{error}</span>
+                </motion.div>
+              )}
+
+              {message && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-500 text-sm"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>{message}</span>
+                </motion.div>
+              )}
+
+              <div className="flex gap-3">
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setMode('signup')
+                    setVerificationCode('')
+                    setError(null)
+                    setMessage(null)
+                  }}
+                  className="flex-1 py-3 px-4 bg-[var(--background-secondary)] hover:bg-[var(--background)] text-[var(--text-primary)] rounded-lg font-medium transition-all border border-[var(--border-color)]"
+                >
+                  Indietro
+                </motion.button>
+                <motion.button
+                  type="submit"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={loading || verificationCode.length !== 6}
+                  className="flex-1 flex items-center justify-center gap-2 bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Verifica...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Verifica</span>
+                      <CheckCircle className="w-4 h-4" />
+                    </>
+                  )}
+                </motion.button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResendCode}
+                disabled={loading}
+                className="w-full text-center text-sm text-[var(--accent-blue)] hover:underline disabled:opacity-50"
+              >
+                Non hai ricevuto il codice? Invia di nuovo
+              </button>
             </form>
           )}
         </div>
