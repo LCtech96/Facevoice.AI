@@ -249,6 +249,10 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             FacevoiceAI
           </motion.div>
           
+          <div className="flex items-center gap-2">
+            <LanguageSelector />
+          </div>
+          
           {!user ? (
             <div className="flex items-center gap-2">
               <motion.button
