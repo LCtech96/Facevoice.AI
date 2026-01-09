@@ -30,8 +30,13 @@ export async function POST(req: NextRequest) {
 
     // Formatta datetime se presente
     let formattedDateTime = null
-    if (datetime && datetime.date && datetime.time) {
-      formattedDateTime = new Date(`${datetime.date}T${datetime.time}`).toISOString()
+    if (datetime && typeof datetime === 'object' && datetime.date && datetime.time) {
+      try {
+        formattedDateTime = new Date(`${datetime.date}T${datetime.time}`).toISOString()
+      } catch (error) {
+        console.error('Error formatting datetime:', error)
+        formattedDateTime = null
+      }
     }
 
     // Salva la prenotazione nel database
