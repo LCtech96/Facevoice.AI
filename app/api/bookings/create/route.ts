@@ -55,12 +55,27 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Error creating booking:', error)
+      console.error('❌ Error creating booking in database:', {
+        error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      })
       return NextResponse.json(
-        { error: 'Errore nel salvare la prenotazione' },
+        { 
+          error: 'Errore nel salvare la prenotazione',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        },
         { status: 500 }
       )
     }
+
+    console.log('✅ Booking saved successfully:', {
+      bookingId: data.id,
+      name: data.name,
+      email: data.email,
+      datetime: data.datetime
+    })
 
     // Invia email con Resend
     if (!RESEND_API_KEY) {
