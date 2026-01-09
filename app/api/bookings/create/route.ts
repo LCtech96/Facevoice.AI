@@ -94,9 +94,14 @@ export async function POST(req: NextRequest) {
             })
           : 'Non specificata'
 
+        // Usa l'email dell'account Resend se il dominio non è verificato
+        // Per inviare a luca@facevoice.ai, verifica il dominio facevoice.ai su Resend
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
+        const toEmail = process.env.RESEND_TO_EMAIL || 'facevoiceai@gmail.com'
+        
         const emailData = {
-          from: 'FacevoiceAI <onboarding@resend.dev>',
-          to: 'luca@facevoice.ai',
+          from: `FacevoiceAI <${fromEmail}>`,
+          to: toEmail,
           subject: `Nuova Prenotazione da ${name.trim()}`,
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
