@@ -126,6 +126,20 @@ export async function POST(req: NextRequest) {
                       <td style="padding: 8px 0; font-weight: bold; color: #666;">WhatsApp:</td>
                       <td style="padding: 8px 0; color: #333;">${whatsapp.trim()}</td>
                     </tr>
+                    ${address ? `
+                    <tr>
+                      <td style="padding: 8px 0; font-weight: bold; color: #666;">Indirizzo:</td>
+                      <td style="padding: 8px 0; color: #333;">${address.fullAddress || 'Non specificato'}</td>
+                    </tr>
+                    ${address.city ? `<tr>
+                      <td style="padding: 8px 0; font-weight: bold; color: #666;">Città:</td>
+                      <td style="padding: 8px 0; color: #333;">${address.city}${address.state ? ` (${address.state})` : ''}</td>
+                    </tr>` : ''}
+                    ${address.postalCode ? `<tr>
+                      <td style="padding: 8px 0; font-weight: bold; color: #666;">CAP:</td>
+                      <td style="padding: 8px 0; color: #333;">${address.postalCode}</td>
+                    </tr>` : ''}
+                    ` : ''}
                     <tr>
                       <td style="padding: 8px 0; font-weight: bold; color: #666;">Data e Ora:</td>
                       <td style="padding: 8px 0; color: #333;">${formattedDate}</td>
