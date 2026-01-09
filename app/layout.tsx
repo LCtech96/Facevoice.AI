@@ -36,9 +36,12 @@ export const metadata: Metadata = {
     'software gestionale PMI'
   ],
   icons: {
-    icon: '/Trinacria.jpg',
-    shortcut: '/Trinacria.jpg',
-    apple: '/Trinacria.jpg',
+    icon: [
+      { url: '/favicon.png', type: 'image/png' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/favicon.png',
+    apple: '/favicon.png',
   },
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
@@ -83,9 +86,11 @@ export default function RootLayout({
   return (
     <html lang="it" className="dark">
       <head>
-        <link rel="icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="shortcut icon" href="/Trinacria.jpg" type="image/jpeg" />
-        <link rel="apple-touch-icon" href="/Trinacria.jpg" />
+        <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="shortcut icon" href="/favicon.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/favicon.png" sizes="180x180" />
+        <link rel="manifest" href="/site.webmanifest" />
       </head>
       <body className={montserrat.className}>
         {children}
