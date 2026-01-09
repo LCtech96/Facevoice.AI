@@ -47,7 +47,7 @@ export default function BookingsPage() {
               Prenotazioni
             </h1>
             <p className="text-lg text-[var(--text-secondary)] max-w-3xl mx-auto mb-4">
-              Se stai cercando più visibilità, e vuoi essere trovato facilmente dai tuoi clienti o attrarne di nuovi, o possiedi un codice sconto, compila i quattro step in basso con nome, email, numero e inviaci un messaggio
+              Se stai cercando più visibilità, e vuoi essere trovato facilmente dai tuoi clienti o attrarne di nuovi, o possiedi un codice sconto, compila i cinque step in basso con nome, email, numero, motivo e data/ora preferita
             </p>
             <p className="text-sm text-[var(--text-secondary)] max-w-2xl mx-auto">
               Compila il form per inviarci una richiesta direttamente su WhatsApp. Ti risponderemo il prima possibile!
