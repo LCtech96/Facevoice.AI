@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   email TEXT NOT NULL,
   whatsapp TEXT NOT NULL,
   service TEXT NOT NULL,
+  datetime TIMESTAMP WITH TIME ZONE,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'contacted', 'completed', 'cancelled')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

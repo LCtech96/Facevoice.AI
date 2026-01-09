@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Shield, Check, X, MessageCircle, FileText, RefreshCw, Calendar, Mail, Phone } from 'lucide-react'
+import { Shield, Check, X, MessageCircle, FileText, RefreshCw, Calendar, Mail, Phone, Clock } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
@@ -26,6 +26,7 @@ interface Booking {
   email: string
   whatsapp: string
   service: string
+  datetime?: string
   status: 'pending' | 'contacted' | 'completed' | 'cancelled'
   created_at: string
   updated_at?: string

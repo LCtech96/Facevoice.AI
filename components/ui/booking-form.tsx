@@ -5,20 +5,22 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import { CheckIcon, ArrowRightIcon, Phone, MessageSquare, Calendar } from "lucide-react"
+import { CheckIcon, ArrowRightIcon, Calendar, Clock } from "lucide-react"
 
 type Step = {
   id: number
   label: string
   field: string
   placeholder: string
+  type?: 'text' | 'email' | 'tel' | 'textarea' | 'datetime'
 }
 
 const steps: Step[] = [
-  { id: 1, label: "Nome e Cognome", field: "name", placeholder: "Il tuo nome completo" },
-  { id: 2, label: "Email", field: "email", placeholder: "la.tua.email@esempio.com" },
-  { id: 3, label: "Numero WhatsApp", field: "whatsapp", placeholder: "+39 123 456 7890" },
-  { id: 4, label: "Motivo del Booking", field: "service", placeholder: "Descrivi il tipo di servizio interessato o il motivo della prenotazione" },
+  { id: 1, label: "Nome e Cognome", field: "name", placeholder: "Il tuo nome completo", type: "text" },
+  { id: 2, label: "Email", field: "email", placeholder: "la.tua.email@esempio.com", type: "email" },
+  { id: 3, label: "Numero WhatsApp", field: "whatsapp", placeholder: "+39 123 456 7890", type: "tel" },
+  { id: 4, label: "Motivo del Booking", field: "service", placeholder: "Descrivi il tipo di servizio interessato o il motivo della prenotazione", type: "textarea" },
+  { id: 5, label: "Data e Ora", field: "datetime", placeholder: "Seleziona data e ora preferita", type: "datetime" },
 ]
 
 export function BookingForm() {
@@ -32,7 +34,9 @@ export function BookingForm() {
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1)
     } else {
+      // All'ultimo step, salva e invia
       setIsComplete(true)
+      handleSubmitBooking()
     }
   }
 
@@ -45,6 +49,14 @@ export function BookingForm() {
     setSubmitError(null)
 
     try {
+      // Prepara i dati datetime
+      const datetimeData = formData['datetime-date'] && formData['datetime-time'] 
+        ? {
+            date: formData['datetime-date'],
+            time: formData['datetime-time'],
+          }
+        : null
+
       const response = await fetch('/api/bookings/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -53,28 +65,20 @@ export function BookingForm() {
           email: formData.email,
           whatsapp: formData.whatsapp,
           service: formData.service,
+          datetime: datetimeData,
         }),
       })
 
       if (!response.ok) {
-        throw new Error('Errore nel salvare la prenotazione')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Errore nel salvare la prenotazione')
       }
 
-      // Apri WhatsApp con il messaggio
-      const phoneNumber = '+393514206353'
-      const message = `*Nuova Prenotazione da Facevoice AI*\n\n` +
-        `*Nome:* ${formData.name}\n` +
-        `*Email:* ${formData.email}\n` +
-        `*Numero WhatsApp:* ${formData.whatsapp}\n` +
-        `*Servizio Richiesto:*\n${formData.service}\n\n` +
-        `_Prenotazione inviata il ${new Date().toLocaleString('it-IT')}_`
-      
-      const encodedMessage = encodeURIComponent(message)
-      const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${encodedMessage}`
-      window.open(whatsappUrl, '_blank')
+      // La prenotazione è stata salvata e l'email è stata inviata
+      // Mostra solo il messaggio di conferma
+      setIsSubmitting(false)
     } catch (error: any) {
       setSubmitError(error.message || 'Errore nel salvare la prenotazione')
-    } finally {
       setIsSubmitting(false)
     }
   }
@@ -95,44 +99,31 @@ export function BookingForm() {
               />
             </div>
             <div className="space-y-1 text-center">
-              <h2 className="text-xl font-medium tracking-tight text-balance">Prenotazione completata!</h2>
-              <p className="text-sm text-muted-foreground/80">La tua prenotazione è stata salvata. Clicca il pulsante per inviare via WhatsApp</p>
+              <h2 className="text-xl font-medium tracking-tight text-balance">
+                {isSubmitting ? 'Invio in corso...' : 'Prenotazione completata!'}
+              </h2>
+              <p className="text-sm text-muted-foreground/80">
+                {isSubmitting ? 'Stiamo inviando la tua prenotazione...' : 'La tua prenotazione è stata effettuata'}
+              </p>
             </div>
             {submitError && (
               <div className="w-full p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-500">
                 {submitError}
               </div>
             )}
-            <Button
-              onClick={handleSubmitBooking}
-              disabled={isSubmitting}
-              className="w-full h-12 group relative transition-all duration-300 hover:shadow-lg hover:shadow-foreground/5 mt-4 bg-green-500 hover:bg-green-600 disabled:opacity-50"
-            >
-              <span className="flex items-center justify-center gap-2 font-medium">
-                {isSubmitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Invio in corso...
-                  </>
-                ) : (
-                  <>
-                    <Phone className="h-5 w-5" />
-                    Invia via WhatsApp
-                  </>
-                )}
-              </span>
-            </Button>
-            <button
-              onClick={() => {
-                setIsComplete(false)
-                setCurrentStep(0)
-                setFormData({})
-                setSubmitError(null)
-              }}
-              className="w-full text-center text-sm text-muted-foreground/60 hover:text-foreground/80 transition-all duration-300 mt-2"
-            >
-              Modifica dati
-            </button>
+            {!isSubmitting && !submitError && (
+              <button
+                onClick={() => {
+                  setIsComplete(false)
+                  setCurrentStep(0)
+                  setFormData({})
+                  setSubmitError(null)
+                }}
+                className="w-full text-center text-sm text-muted-foreground/60 hover:text-foreground/80 transition-all duration-300 mt-4"
+              >
+                Nuova prenotazione
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -197,7 +188,7 @@ export function BookingForm() {
             </span>
           </div>
           <div className="relative group">
-            {currentStepData.field === "service" ? (
+            {currentStepData.type === "textarea" ? (
               <textarea
                 id={currentStepData.field}
                 placeholder={currentStepData.placeholder}
@@ -207,10 +198,55 @@ export function BookingForm() {
                 rows={5}
                 className="flex h-auto w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm shadow-black/5 transition-shadow placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
               />
+            ) : currentStepData.type === "datetime" ? (
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="booking-date" className="text-sm text-muted-foreground/70 mb-2 block">
+                    Data
+                  </label>
+                  <Input
+                    id="booking-date"
+                    type="date"
+                    value={formData['datetime-date'] || ""}
+                    onChange={(e) => handleInputChange('datetime-date', e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    autoFocus
+                    className="h-14 text-base transition-all duration-500 border-border/50 focus:border-foreground/20 bg-background/50 backdrop-blur"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="booking-time" className="text-sm text-muted-foreground/70 mb-2 block">
+                    Ora
+                  </label>
+                  <Input
+                    id="booking-time"
+                    type="time"
+                    value={formData['datetime-time'] || ""}
+                    onChange={(e) => handleInputChange('datetime-time', e.target.value)}
+                    autoFocus={!!formData['datetime-date']}
+                    className="h-14 text-base transition-all duration-500 border-border/50 focus:border-foreground/20 bg-background/50 backdrop-blur"
+                  />
+                </div>
+                {(formData['datetime-date'] && formData['datetime-time']) && (
+                  <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <p className="text-sm text-foreground">
+                      <Calendar className="w-4 h-4 inline mr-2" />
+                      {new Date(`${formData['datetime-date']}T${formData['datetime-time']}`).toLocaleString('it-IT', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
             ) : (
               <Input
                 id={currentStepData.field}
-                type={currentStepData.field === "email" ? "email" : currentStepData.field === "whatsapp" ? "tel" : "text"}
+                type={currentStepData.type || "text"}
                 placeholder={currentStepData.placeholder}
                 value={formData[currentStepData.field] || ""}
                 onChange={(e) => handleInputChange(currentStepData.field, e.target.value)}
@@ -223,11 +259,15 @@ export function BookingForm() {
 
         <Button
           onClick={handleNext}
-          disabled={!formData[currentStepData.field]?.trim()}
+          disabled={
+            currentStepData.type === 'datetime' 
+              ? !formData['datetime-date'] || !formData['datetime-time']
+              : !formData[currentStepData.field]?.trim()
+          }
           className="w-full h-12 group relative transition-all duration-300 hover:shadow-lg hover:shadow-foreground/5"
         >
           <span className="flex items-center justify-center gap-2 font-medium">
-            {currentStep === steps.length - 1 ? "Completa" : "Continua"}
+            {currentStep === steps.length - 1 ? "Invia prenotazione" : "Continua"}
             <ArrowRightIcon
               className="h-4 w-4 transition-transform group-hover:translate-x-0.5 duration-300"
               strokeWidth={2}
