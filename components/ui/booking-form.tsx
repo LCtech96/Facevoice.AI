@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { CheckIcon, ArrowRightIcon, Calendar, Clock } from "lucide-react"
+import GoogleAddressAutocomplete from "@/components/ui/google-address-autocomplete"
 
 type Step = {
   id: number
@@ -19,13 +20,24 @@ const steps: Step[] = [
   { id: 1, label: "Nome e Cognome", field: "name", placeholder: "Il tuo nome completo", type: "text" },
   { id: 2, label: "Email", field: "email", placeholder: "la.tua.email@esempio.com", type: "email" },
   { id: 3, label: "Numero WhatsApp", field: "whatsapp", placeholder: "+39 123 456 7890", type: "tel" },
-  { id: 4, label: "Motivo del Booking", field: "service", placeholder: "Descrivi il tipo di servizio interessato o il motivo della prenotazione", type: "textarea" },
-  { id: 5, label: "Data e Ora", field: "datetime", placeholder: "Seleziona data e ora preferita", type: "datetime" },
+  { id: 4, label: "Indirizzo (Opzionale)", field: "address", placeholder: "Inserisci il tuo indirizzo", type: "address" },
+  { id: 5, label: "Motivo del Booking", field: "service", placeholder: "Descrivi il tipo di servizio interessato o il motivo della prenotazione", type: "textarea" },
+  { id: 6, label: "Data e Ora", field: "datetime", placeholder: "Seleziona data e ora preferita", type: "datetime" },
 ]
+
+interface AddressData {
+  street: string
+  city: string
+  state: string
+  postalCode: string
+  country: string
+  fullAddress: string
+}
 
 export function BookingForm() {
   const [currentStep, setCurrentStep] = useState(0)
   const [formData, setFormData] = useState<Record<string, string>>({})
+  const [addressData, setAddressData] = useState<AddressData | null>(null)
   const [isComplete, setIsComplete] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -66,6 +78,14 @@ export function BookingForm() {
           whatsapp: formData.whatsapp,
           service: formData.service,
           datetime: datetimeData,
+          address: addressData ? {
+            street: addressData.street,
+            city: addressData.city,
+            state: addressData.state,
+            postalCode: addressData.postalCode,
+            country: addressData.country,
+            fullAddress: addressData.fullAddress,
+          } : null,
         }),
       })
 
@@ -198,6 +218,22 @@ export function BookingForm() {
                 rows={5}
                 className="flex h-auto w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm shadow-black/5 transition-shadow placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
               />
+            ) : currentStepData.type === "address" ? (
+              <div>
+                <p className="text-xs text-muted-foreground/70 mb-3">
+                  Inserisci il tuo indirizzo per migliorare il servizio. Questo campo è opzionale.
+                </p>
+                <GoogleAddressAutocomplete
+                  onAddressChange={(address) => {
+                    setAddressData(address)
+                    if (address) {
+                      handleInputChange(currentStepData.field, address.fullAddress)
+                    }
+                  }}
+                  value={addressData}
+                  placeholder={currentStepData.placeholder}
+                />
+              </div>
             ) : currentStepData.type === "datetime" ? (
               <div className="space-y-4">
                 <div>
@@ -262,6 +298,8 @@ export function BookingForm() {
           disabled={
             currentStepData.type === 'datetime' 
               ? !formData['datetime-date'] || !formData['datetime-time']
+              : currentStepData.type === 'address'
+              ? false // Il campo indirizzo è opzionale
               : !formData[currentStepData.field]?.trim()
           }
           className="w-full h-12 group relative transition-all duration-300 hover:shadow-lg hover:shadow-foreground/5"

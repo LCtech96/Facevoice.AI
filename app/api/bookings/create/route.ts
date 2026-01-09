@@ -10,7 +10,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, whatsapp, service, datetime } = await req.json()
+    const { name, email, whatsapp, service, datetime, address } = await req.json()
 
     if (!name || !email || !whatsapp || !service) {
       return NextResponse.json(
@@ -153,6 +153,9 @@ Informazioni Cliente:
 - Nome: ${name.trim()}
 - Email: ${email.trim()}
 - WhatsApp: ${whatsapp.trim()}
+${address ? `- Indirizzo: ${address.fullAddress || 'Non specificato'}
+${address.city ? `- Città: ${address.city}${address.state ? ` (${address.state})` : ''}` : ''}
+${address.postalCode ? `- CAP: ${address.postalCode}` : ''}` : ''}
 - Data e Ora: ${formattedDate}
 
 Motivo del Booking:
