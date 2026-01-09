@@ -5,6 +5,7 @@ import Navigation from '@/components/Navigation'
 import SEOHead from '@/components/SEO/SEOHead'
 import RegionalStructuredData from '@/components/SEO/RegionalStructuredData'
 import RegionalNavigation from '@/components/SEO/RegionalNavigation'
+import GoogleBusinessLink from '@/components/SEO/GoogleBusinessLink'
 import { motion } from 'framer-motion'
 import { Eye, ShoppingBag, Users, BarChart3, Calendar, CreditCard } from 'lucide-react'
 
@@ -164,6 +165,10 @@ Il CRM integrato per le ottiche di ${data.displayName} gestisce tutte le interaz
         </div>
       </section>
 
+      {/* Google Business Link */}
+      <GoogleBusinessLink citta={data.displayName} />
+
+      {/* Regional Navigation */}
       <RegionalNavigation settore="ottica" currentCitta={citta} />
 
       <div className="md:hidden h-20" />

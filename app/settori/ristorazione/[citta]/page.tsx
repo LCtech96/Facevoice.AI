@@ -5,6 +5,7 @@ import Navigation from '@/components/Navigation'
 import SEOHead from '@/components/SEO/SEOHead'
 import RegionalStructuredData from '@/components/SEO/RegionalStructuredData'
 import RegionalNavigation from '@/components/SEO/RegionalNavigation'
+import GoogleBusinessLink from '@/components/SEO/GoogleBusinessLink'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import { Utensils, Clock, Smartphone, TrendingUp, Shield, Zap } from 'lucide-react'
@@ -166,6 +167,9 @@ Infine, le strategie di marketing digitale che implementiamo per i ristoranti di
           </div>
         </div>
       </section>
+
+      {/* Google Business Link */}
+      <GoogleBusinessLink citta={data.displayName} />
 
       {/* Regional Navigation */}
       <RegionalNavigation settore="ristorazione" currentCitta={citta} />

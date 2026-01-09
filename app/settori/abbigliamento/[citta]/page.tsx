@@ -5,6 +5,7 @@ import Navigation from '@/components/Navigation'
 import SEOHead from '@/components/SEO/SEOHead'
 import RegionalStructuredData from '@/components/SEO/RegionalStructuredData'
 import RegionalNavigation from '@/components/SEO/RegionalNavigation'
+import GoogleBusinessLink from '@/components/SEO/GoogleBusinessLink'
 import { motion } from 'framer-motion'
 import { Shirt, ShoppingCart, Package, TrendingUp, Users, Smartphone } from 'lucide-react'
 
@@ -164,6 +165,10 @@ Il CRM integrato per i negozi di abbigliamento di ${data.displayName} gestisce t
         </div>
       </section>
 
+      {/* Google Business Link */}
+      <GoogleBusinessLink citta={data.displayName} />
+
+      {/* Regional Navigation */}
       <RegionalNavigation settore="abbigliamento" currentCitta={citta} />
 
       <div className="md:hidden h-20" />
