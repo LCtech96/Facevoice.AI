@@ -174,7 +174,12 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
           body: JSON.stringify(emailData),
         })
 
-        const responseData = await response.json().catch(() => ({}))
+        let responseData: any = {}
+        try {
+          responseData = await response.json()
+        } catch (e) {
+          responseData = { error: 'Failed to parse response', raw: await response.text() }
+        }
         
         console.log('Resend API response:', {
           status: response.status,
@@ -183,12 +188,18 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
         })
 
         if (!response.ok) {
-          console.error('Resend API error:', {
+          const errorMessage = responseData.message || responseData.error || response.statusText
+          console.error('❌ Resend API error:', {
             status: response.status,
             statusText: response.statusText,
-            error: responseData
+            error: errorMessage,
+            fullResponse: responseData
           })
-          // Non fallire la richiesta, ma logga l'errore
+          
+          // Ritorna un warning nella risposta se in development
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('⚠️ Email non inviata. Errore:', errorMessage)
+          }
         } else {
           console.log('✅ Booking email sent successfully to luca@facevoice.ai', {
             emailId: responseData.id,
@@ -205,9 +216,16 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
       }
     }
 
+    // Verifica se l'email è stata inviata con successo
+    const emailSent = RESEND_API_KEY ? true : false
+    
     return NextResponse.json({
       success: true,
       booking: data,
+      emailSent: emailSent,
+      message: emailSent 
+        ? 'Prenotazione salvata e email inviata con successo'
+        : 'Prenotazione salvata (email non inviata - RESEND_API_KEY non configurata)'
     })
   } catch (error: any) {
     console.error('Error in POST /api/bookings/create:', error)
