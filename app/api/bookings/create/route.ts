@@ -63,7 +63,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Invia email con Resend
-    if (RESEND_API_KEY) {
+    if (!RESEND_API_KEY) {
+      console.warn('⚠️ RESEND_API_KEY non configurato. Email di prenotazione non verrà inviata.')
+      console.log('Prenotazione salvata nel database ma email non inviata.')
+    } else {
       try {
         const formattedDate = formattedDateTime 
           ? new Date(formattedDateTime).toLocaleString('it-IT', {
@@ -139,6 +142,14 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
           `.trim(),
         }
 
+        console.log('Attempting to send booking email via Resend...', {
+          from: emailData.from,
+          to: emailData.to,
+          subject: emailData.subject,
+          hasApiKey: !!RESEND_API_KEY,
+          apiKeyLength: RESEND_API_KEY?.length || 0
+        })
+
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -148,18 +159,35 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
           body: JSON.stringify(emailData),
         })
 
+        const responseData = await response.json().catch(() => ({}))
+        
+        console.log('Resend API response:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData
+        })
+
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          console.error('Resend API error:', errorData)
+          console.error('Resend API error:', {
+            status: response.status,
+            statusText: response.statusText,
+            error: responseData
+          })
+          // Non fallire la richiesta, ma logga l'errore
         } else {
-          console.log('Booking email sent successfully to luca@facevoice.ai')
+          console.log('✅ Booking email sent successfully to luca@facevoice.ai', {
+            emailId: responseData.id,
+            message: 'Email inviata con successo'
+          })
         }
       } catch (emailError: any) {
-        console.error('Error sending booking email:', emailError)
+        console.error('❌ Error sending booking email:', {
+          error: emailError.message,
+          stack: emailError.stack,
+          name: emailError.name
+        })
         // Non fallire la richiesta se l'email non viene inviata, ma logga l'errore
       }
-    } else {
-      console.warn('RESEND_API_KEY non configurato. Email di prenotazione non inviata.')
     }
 
     return NextResponse.json({
