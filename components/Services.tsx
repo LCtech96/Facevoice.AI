@@ -602,7 +602,7 @@ export default function Services() {
         className="container mx-auto max-w-6xl"
       >
         <h1 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
-          Servizi di Sviluppo Software e Integrazione AI a Palermo
+          Servizi di Sviluppo Software e Integrazione AI <span className="hidden">a Palermo</span>
         </h1>
         <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
           Soluzioni complete di sviluppo software su misura, automazione aziendale, integrazione intelligenza artificiale per e-commerce, consulenza SEO e chatbot personalizzati per imprese siciliane

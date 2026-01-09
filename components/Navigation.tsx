@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion'
 import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar } from 'lucide-react'
+import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
@@ -171,6 +172,11 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                   </motion.button>
                 )
               })}
+              
+              {/* Language Selector */}
+              <div className="ml-2">
+                <LanguageSelector />
+              </div>
               
               {/* Auth Buttons */}
               {!user ? (

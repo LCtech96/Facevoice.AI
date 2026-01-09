@@ -23,6 +23,8 @@ export default function BlogSection({ user }: { user: User | null }) {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [imageUrl, setImageUrl] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const isAdmin = user?.email === 'luca@facevoice.ai'
   const supabase = createClient()
@@ -46,19 +48,55 @@ export default function BlogSection({ user }: { user: User | null }) {
     }
   }
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Valida tipo file
+      if (!file.type.startsWith('image/')) {
+        alert('Seleziona un file immagine')
+        return
+      }
+      // Valida dimensione (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('L\'immagine deve essere inferiore a 5MB')
+        return
+      }
+      setImageFile(file)
+      setImageUrl('') // Reset URL se si carica un file
+      // Crea preview
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim() || !content.trim()) return
 
     setSubmitting(true)
     try {
+      // Se c'è un file, convertilo in base64
+      let finalImageUrl = imageUrl.trim() || null
+      if (imageFile) {
+        const reader = new FileReader()
+        const base64Promise = new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.onerror = reject
+        })
+        reader.readAsDataURL(imageFile)
+        finalImageUrl = await base64Promise
+      }
+
       const response = await fetch('/api/blog/post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim(),
           content: content.trim(),
-          image_url: imageUrl.trim() || null,
+          image_url: finalImageUrl,
         }),
       })
 
@@ -66,6 +104,8 @@ export default function BlogSection({ user }: { user: User | null }) {
         setTitle('')
         setContent('')
         setImageUrl('')
+        setImageFile(null)
+        setImagePreview(null)
         setShowForm(false)
         loadPosts()
       }
@@ -115,13 +155,56 @@ export default function BlogSection({ user }: { user: User | null }) {
               className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
               required
             />
-            <input
-              type="url"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              placeholder="URL immagine (opzionale)"
-              className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
-            />
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-[var(--text-primary)]">
+                Immagine (Opzionale)
+              </label>
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)] text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[var(--accent-blue)] file:text-white hover:file:bg-[var(--accent-blue)]/90 cursor-pointer"
+                />
+                <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+                  <span className="flex-1 border-t border-[var(--border-color)]"></span>
+                  <span>oppure</span>
+                  <span className="flex-1 border-t border-[var(--border-color)]"></span>
+                </div>
+                <input
+                  type="url"
+                  value={imageUrl}
+                  onChange={(e) => {
+                    setImageUrl(e.target.value)
+                    if (e.target.value) {
+                      setImageFile(null)
+                      setImagePreview(null)
+                    }
+                  }}
+                  placeholder="URL immagine (opzionale)"
+                  className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
+                />
+              </div>
+              {imagePreview && (
+                <div className="mt-2 relative">
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="w-full h-48 object-cover rounded-lg border border-[var(--border-color)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageFile(null)
+                      setImagePreview(null)
+                    }}
+                    className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
