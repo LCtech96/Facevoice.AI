@@ -44,8 +44,10 @@ export default function AdminPage() {
   const supabase = createClient()
 
   useEffect(() => {
-    loadBookings()
-  }, [bookingStatusFilter])
+    if (user?.email === 'luca@facevoice.ai') {
+      loadBookings()
+    }
+  }, [bookingStatusFilter, user])
 
   useEffect(() => {
     const checkUser = async () => {
@@ -208,11 +210,14 @@ export default function AdminPage() {
               </div>
             </div>
             <button
-              onClick={loadPendingComments}
-              disabled={loadingComments}
+              onClick={() => {
+                loadPendingComments()
+                loadBookings()
+              }}
+              disabled={loadingComments || loadingBookings}
               className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2 disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${loadingComments ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${(loadingComments || loadingBookings) ? 'animate-spin' : ''}`} />
               Aggiorna
             </button>
           </div>
