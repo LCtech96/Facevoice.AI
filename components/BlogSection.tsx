@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, Image as ImageIcon, X } from 'lucide-react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -248,38 +249,44 @@ export default function BlogSection({ user }: { user: User | null }) {
           </div>
         ) : (
           posts.map((post) => (
-            <motion.article
-              key={post.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden"
-            >
-              {post.image_url && (
-                <div className="relative w-full h-64 bg-[var(--background-secondary)]">
-                  <Image
-                    src={post.image_url}
-                    alt={post.title}
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
+            <Link key={post.id} href={`/blog/${post.id}`}>
+              <motion.article
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent-blue)]/50 transition-colors"
+              >
+                {post.image_url && (
+                  <div className="relative w-full h-64 bg-[var(--background-secondary)]">
+                    <Image
+                      src={post.image_url}
+                      alt={post.title}
+                      fill
+                      className="object-cover"
+                      unoptimized
+                    />
+                  </div>
+                )}
+                <div className="p-6">
+                  <h3 className="text-2xl font-bold text-[var(--text-primary)] mb-2 hover:text-[var(--accent-blue)] transition-colors">
+                    {post.title}
+                  </h3>
+                  <p className="text-sm text-[var(--text-secondary)] mb-4">
+                    <span className="font-semibold">{post.author}</span> •{' '}
+                    {new Date(post.created_at).toLocaleDateString('it-IT', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </p>
+                  <div className="text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed line-clamp-3">
+                    {post.content}
+                  </div>
+                  <div className="mt-4 text-sm text-[var(--accent-blue)] font-medium">
+                    Leggi di più →
+                  </div>
                 </div>
-              )}
-              <div className="p-6">
-                <h3 className="text-2xl font-bold text-[var(--text-primary)] mb-2">{post.title}</h3>
-                <p className="text-sm text-[var(--text-secondary)] mb-4">
-                  <span className="font-semibold">{post.author}</span> •{' '}
-                  {new Date(post.created_at).toLocaleDateString('it-IT', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric',
-                  })}
-                </p>
-                <div className="text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">
-                  {post.content}
-                </div>
-              </div>
-            </motion.article>
+              </motion.article>
+            </Link>
           ))
         )}
       </div>
