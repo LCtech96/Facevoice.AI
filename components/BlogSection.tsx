@@ -78,18 +78,28 @@ export default function BlogSection({ user }: { user: User | null }) {
 
     setSubmitting(true)
     try {
-      // Se c'è un file, convertilo in base64
       let finalImageUrl = imageUrl.trim() || null
+
+      // Se c'è un file, caricalo su Supabase Storage
       if (imageFile) {
-        const reader = new FileReader()
-        const base64Promise = new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => resolve(reader.result as string)
-          reader.onerror = reject
+        const uploadFormData = new FormData()
+        uploadFormData.append('file', imageFile)
+
+        const uploadResponse = await fetch('/api/blog/upload-image', {
+          method: 'POST',
+          body: uploadFormData,
         })
-        reader.readAsDataURL(imageFile)
-        finalImageUrl = await base64Promise
+
+        if (!uploadResponse.ok) {
+          const errorData = await uploadResponse.json().catch(() => ({}))
+          throw new Error(errorData.error || 'Errore nel caricare l\'immagine')
+        }
+
+        const uploadData = await uploadResponse.json()
+        finalImageUrl = uploadData.imageUrl
       }
 
+      // Crea il post con l'URL dell'immagine
       const response = await fetch('/api/blog/post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -108,9 +118,13 @@ export default function BlogSection({ user }: { user: User | null }) {
         setImagePreview(null)
         setShowForm(false)
         loadPosts()
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        alert(errorData.error || 'Errore nel pubblicare il post')
       }
-    } catch (error) {
-      alert('Errore nel pubblicare il post')
+    } catch (error: any) {
+      console.error('Error submitting post:', error)
+      alert(error.message || 'Errore nel pubblicare il post')
     } finally {
       setSubmitting(false)
     }

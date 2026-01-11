@@ -13,7 +13,7 @@ type Step = {
   label: string
   field: string
   placeholder: string
-  type?: 'text' | 'email' | 'tel' | 'textarea' | 'datetime'
+  type?: 'text' | 'email' | 'tel' | 'textarea' | 'datetime' | 'address'
 }
 
 const steps: Step[] = [
