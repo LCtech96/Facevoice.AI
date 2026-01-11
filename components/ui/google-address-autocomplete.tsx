@@ -3,6 +3,45 @@
 import { useEffect, useRef, useState } from 'react'
 import { MapPin, Loader2 } from 'lucide-react'
 
+// Dichiarazioni di tipo per Google Maps
+declare global {
+  interface Window {
+    google?: {
+      maps: {
+        places: {
+          Autocomplete: new (
+            inputField: HTMLInputElement,
+            opts?: {
+              types?: string[]
+              componentRestrictions?: { country: string }
+              fields?: string[]
+            }
+          ) => {
+            addListener: (event: string, callback: () => void) => void
+            getPlace: () => {
+              address_components?: Array<{
+                types: string[]
+                long_name: string
+                short_name: string
+              }>
+              formatted_address?: string
+              geometry?: {
+                location?: {
+                  lat: () => number
+                  lng: () => number
+                }
+              }
+            }
+          }
+        }
+        event: {
+          clearInstanceListeners: (instance: any) => void
+        }
+      }
+    }
+  }
+}
+
 interface AddressData {
   street: string
   city: string
@@ -28,7 +67,7 @@ export default function GoogleAddressAutocomplete({
   placeholder = 'Inserisci il tuo indirizzo'
 }: GoogleAddressAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
+  const autocompleteRef = useRef<InstanceType<typeof window.google.maps.places.Autocomplete> | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [addressComponents, setAddressComponents] = useState<AddressData | null>(value || null)
 
@@ -54,8 +93,8 @@ export default function GoogleAddressAutocomplete({
     }
 
     return () => {
-      if (autocompleteRef.current) {
-        google.maps.event.clearInstanceListeners(autocompleteRef.current)
+      if (autocompleteRef.current && window.google?.maps?.event) {
+        window.google.maps.event.clearInstanceListeners(autocompleteRef.current)
       }
     }
   }, [])
@@ -63,7 +102,7 @@ export default function GoogleAddressAutocomplete({
   const initializeAutocomplete = () => {
     if (!inputRef.current || !window.google?.maps?.places) return
 
-    const autocomplete = new google.maps.places.Autocomplete(inputRef.current, {
+    const autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
       types: ['address'],
       componentRestrictions: { country: 'it' }, // Limita all'Italia
       fields: ['address_components', 'formatted_address', 'geometry']
@@ -167,10 +206,4 @@ export default function GoogleAddressAutocomplete({
   )
 }
 
-// Estende Window per TypeScript
-declare global {
-  interface Window {
-    google?: typeof google
-  }
-}
 
