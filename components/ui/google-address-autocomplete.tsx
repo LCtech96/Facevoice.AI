@@ -67,7 +67,7 @@ export default function GoogleAddressAutocomplete({
   placeholder = 'Inserisci il tuo indirizzo'
 }: GoogleAddressAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const autocompleteRef = useRef<InstanceType<typeof window.google.maps.places.Autocomplete> | null>(null)
+  const autocompleteRef = useRef<any>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [addressComponents, setAddressComponents] = useState<AddressData | null>(value || null)
 
