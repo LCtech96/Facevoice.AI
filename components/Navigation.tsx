@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface NavigationProps {
   activeSection?: string | null
@@ -63,17 +64,18 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }
   
   const isAdmin = user?.email === 'luca@facevoice.ai'
+  const { t } = useTranslation()
   
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home, href: '/home' },
-    { id: 'services', label: 'Services', icon: Briefcase, href: '/services' },
-    { id: 'case-studies', label: 'Case Studies', icon: Star, href: '/case-studies' },
-    { id: 'team', label: 'Team', icon: Users, href: '/team' },
-    { id: 'bookings', label: 'Bookings', icon: Calendar, href: '/bookings' },
+    { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
+    { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
+    { id: 'case-studies', label: t('nav.caseStudies'), icon: Star, href: '/case-studies' },
+    { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
+    { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
     // Mostra Chat solo agli utenti autenticati
-    ...(user ? [{ id: 'chat', label: 'Chat', icon: MessageSquare, href: '/ai-chat' }] : []),
+    ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
     // Mostra Admin solo per luca@facevoice.ai
-    ...(isAdmin ? [{ id: 'admin', label: 'Admin', icon: Shield, href: '/admin' }] : []),
+    ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
@@ -188,7 +190,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent-blue)] text-white text-sm font-medium hover:bg-[var(--accent-blue-light)] transition-all"
                   >
                     <LogIn size={18} />
-                    <span>Sign In</span>
+                    <span>{t('auth.signIn')}</span>
                   </motion.button>
                   <motion.button
                     whileHover={{ scale: 1.02 }}
@@ -197,7 +199,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-sm font-medium hover:bg-[var(--background)] border border-[var(--border-color)] transition-all"
                   >
                     <UserPlus size={18} />
-                    <span>Sign Up</span>
+                    <span>{t('auth.signUp')}</span>
                   </motion.button>
                 </div>
               ) : (
@@ -225,7 +227,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                           className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors"
                         >
                           <LogOut className="w-4 h-4" />
-                          <span className="text-sm">Logout</span>
+                          <span className="text-sm">{t('auth.signOut')}</span>
                         </button>
                       </motion.div>
                     )}
@@ -261,7 +263,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium"
               >
                 <LogIn size={16} />
-                <span>Sign In</span>
+                <span>{t('auth.signIn')}</span>
               </motion.button>
               <motion.button
                 whileTap={{ scale: 0.9 }}
@@ -269,7 +271,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
               >
                 <UserPlus size={16} />
-                <span>Sign Up</span>
+                <span>{t('auth.signUp')}</span>
               </motion.button>
             </div>
           ) : (
@@ -303,7 +305,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                       className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors text-xs"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Logout</span>
+                      <span>{t('auth.signOut')}</span>
                     </button>
                   </motion.div>
                 )}

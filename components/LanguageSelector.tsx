@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Globe, ChevronDown } from 'lucide-react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
+import type { Language } from '@/lib/i18n/translations'
 
-const languages = [
+const languages: Array<{ code: Language; name: string; flag: string }> = [
   { code: 'it', name: 'Italiano', flag: '🇮🇹' },
   { code: 'en', name: 'English', flag: '🇬🇧' },
   { code: 'fr', name: 'Français', flag: '🇫🇷' },
@@ -17,21 +18,10 @@ const languages = [
 
 export default function LanguageSelector() {
   const [isOpen, setIsOpen] = useState(false)
-  const [selectedLang, setSelectedLang] = useState(languages[0])
+  const { language, setLanguage } = useTranslation()
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const router = useRouter()
-  const pathname = usePathname()
 
-  useEffect(() => {
-    // Carica la lingua salvata dal localStorage
-    const savedLang = localStorage.getItem('language')
-    if (savedLang) {
-      const lang = languages.find(l => l.code === savedLang)
-      if (lang) {
-        setSelectedLang(lang)
-      }
-    }
-  }, [])
+  const selectedLang = languages.find(l => l.code === language) || languages[0]
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -49,12 +39,19 @@ export default function LanguageSelector() {
     }
   }, [isOpen])
 
+  useEffect(() => {
+    const handleLanguageChange = () => {
+      // Force re-render quando la lingua cambia
+      setIsOpen(false)
+    }
+    
+    window.addEventListener('languagechange', handleLanguageChange)
+    return () => window.removeEventListener('languagechange', handleLanguageChange)
+  }, [])
+
   const handleLanguageSelect = (lang: typeof languages[0]) => {
-    setSelectedLang(lang)
-    localStorage.setItem('language', lang.code)
+    setLanguage(lang.code)
     setIsOpen(false)
-    // Qui puoi aggiungere la logica di traduzione quando implementi i18n
-    // Per ora salva solo la preferenza
   }
 
   return (

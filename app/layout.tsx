@@ -5,6 +5,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
 import ContactsFooter from '@/components/ContactsFooter'
+import { LanguageProvider } from '@/lib/i18n/LanguageContext'
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -93,11 +94,13 @@ export default function RootLayout({
         <link rel="manifest" href="/site.webmanifest" />
       </head>
       <body className={montserrat.className}>
-        {children}
-        <ContactsFooter />
-        <AIChatWidget />
-        <Analytics />
-        <SpeedInsights />
+        <LanguageProvider>
+          {children}
+          <ContactsFooter />
+          <AIChatWidget />
+          <Analytics />
+          <SpeedInsights />
+        </LanguageProvider>
       </body>
     </html>
   )

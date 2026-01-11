@@ -7,6 +7,7 @@ import Image from 'next/image'
 import { ArrowLeft, Calendar, User } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import Link from 'next/link'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface BlogPost {
   id: string
@@ -46,6 +47,7 @@ function renderContentWithLinks(content: string) {
 export default function BlogPostPage() {
   const params = useParams()
   const router = useRouter()
+  const { t } = useTranslation()
   const [post, setPost] = useState<BlogPost | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -91,7 +93,7 @@ export default function BlogPostPage() {
         <div className="container mx-auto px-4 py-12 max-w-4xl">
           <div className="text-center text-[var(--text-secondary)] py-20">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-blue)]"></div>
-            <p className="mt-4">Caricamento...</p>
+            <p className="mt-4">{t('common.loading')}</p>
           </div>
         </div>
       </main>
@@ -105,14 +107,14 @@ export default function BlogPostPage() {
         <div className="container mx-auto px-4 py-12 max-w-4xl">
           <div className="text-center py-20">
             <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-4">
-              {error || 'Post non trovato'}
+              {error || t('blog.postNotFound')}
             </h1>
             <Link
               href="/home#blog"
               className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              Torna al Blog
+              {t('blog.backToBlog')}
             </Link>
           </div>
         </div>
@@ -142,7 +144,7 @@ export default function BlogPostPage() {
             className="inline-flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors group"
           >
             <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-            <span>Torna al Blog</span>
+            <span>{t('blog.backToBlog')}</span>
           </Link>
         </motion.div>
 
@@ -206,7 +208,7 @@ export default function BlogPostPage() {
             className="inline-flex items-center gap-2 px-6 py-3 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Torna al Blog
+            {t('blog.backToBlog')}
           </Link>
         </motion.div>
       </div>

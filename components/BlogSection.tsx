@@ -7,6 +7,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface BlogPost {
   id: string
@@ -29,6 +30,7 @@ export default function BlogSection({ user }: { user: User | null }) {
   const [submitting, setSubmitting] = useState(false)
   const isAdmin = user?.email === 'luca@facevoice.ai'
   const supabase = createClient()
+  const { t } = useTranslation()
 
   useEffect(() => {
     loadPosts()
@@ -135,8 +137,8 @@ export default function BlogSection({ user }: { user: User | null }) {
     <div id="blog" className="container mx-auto px-4 py-12 max-w-4xl">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Blog</h2>
-          <p className="text-[var(--text-secondary)]">Notizie e aggiornamenti dal team Facevoice AI</p>
+          <h2 className="text-3xl font-bold text-[var(--text-primary)] mb-2">{t('blog.title')}</h2>
+          <p className="text-[var(--text-secondary)]">{t('blog.subtitle')}</p>
         </div>
         {isAdmin && (
           <button
@@ -144,7 +146,7 @@ export default function BlogSection({ user }: { user: User | null }) {
             className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
-            Nuovo Post
+            {t('blog.newPost')}
           </button>
         )}
       </div>
@@ -244,8 +246,8 @@ export default function BlogSection({ user }: { user: User | null }) {
           <div className="text-center text-[var(--text-secondary)] py-8">Caricamento...</div>
         ) : posts.length === 0 ? (
           <div className="text-center text-[var(--text-secondary)] py-8">
-            <p>Nessun post ancora</p>
-            {isAdmin && <p className="text-sm mt-2">Crea il primo post!</p>}
+            <p>{t('blog.noPosts')}</p>
+            {isAdmin && <p className="text-sm mt-2">{t('blog.createFirst')}</p>}
           </div>
         ) : (
           posts.map((post) => (
@@ -282,7 +284,7 @@ export default function BlogSection({ user }: { user: User | null }) {
                     {post.content}
                   </div>
                   <div className="mt-4 text-sm text-[var(--accent-blue)] font-medium">
-                    Leggi di più →
+                    {t('blog.readMore')} →
                   </div>
                 </div>
               </motion.article>
