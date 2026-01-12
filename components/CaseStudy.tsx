@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { MapPin, Star, ExternalLink, CheckCircle2, Menu, Calendar, ShoppingCart, Image, FileText, Settings, MessageSquare, Mail, Phone, Bot, UserPlus, Globe } from 'lucide-react'
+import { MapPin, Star, ExternalLink, CheckCircle2, Menu, Calendar, ShoppingCart, Image, FileText, Settings, MessageSquare, Mail, Phone, Bot, UserPlus, Globe, CreditCard, Package, History, Users, TrendingUp, AlertCircle } from 'lucide-react'
 import CaseStudyComments from './CaseStudyComments'
 import { createClient } from '@/lib/supabase-client'
 import { useEffect, useState } from 'react'
@@ -337,6 +337,55 @@ export default function CaseStudy() {
                       >
                         <UserPlus className="w-5 h-5" />
                         <span>{study.content.cta.text}</span>
+                      </motion.button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Badge In Sviluppo (solo per Otticafocus) */}
+                {study.id === 'otticafocus' && (
+                  <div className="mb-8">
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 flex items-center gap-3">
+                      <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
+                      <div>
+                        <h4 className="text-sm font-semibold text-yellow-500 mb-1">Progetto in Corso di Sviluppo</h4>
+                        <p className="text-sm text-[var(--text-secondary)]">
+                          Stiamo lavorando per completare tutte le funzionalità del sito e-commerce.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Prezzo (solo per Otticafocus) */}
+                {study.id === 'otticafocus' && (
+                  <div className="border-t border-[var(--border-color)] pt-8">
+                    <div className="bg-[var(--accent-blue)]/10 rounded-xl p-6 text-center">
+                      <p className="text-sm text-[var(--text-secondary)] mb-2">Prezzo base</p>
+                      <p className="text-4xl font-bold text-[var(--text-primary)] mb-2">
+                        da €1.800
+                      </p>
+                      <p className="text-lg text-[var(--text-secondary)]">
+                        Prezzo variabile in base alle integrazioni richieste
+                      </p>
+                      <p className="text-sm text-[var(--text-secondary)] mt-2 opacity-80">
+                        Soluzione completa e-commerce con tutte le funzionalità
+                      </p>
+                      
+                      {/* Bottone WhatsApp */}
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => {
+                          const phoneNumber = '+393514206353'
+                          const message = encodeURIComponent('Ciao! Sono interessato al progetto Otticafocus.com. Vorrei maggiori informazioni.')
+                          const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}?text=${message}`
+                          window.open(whatsappUrl, '_blank')
+                        }}
+                        className="mt-6 w-full flex items-center justify-center gap-2 bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition-colors font-medium"
+                      >
+                        <MessageSquare className="w-5 h-5" />
+                        <span>Contattaci su WhatsApp</span>
                       </motion.button>
                     </div>
                   </div>
