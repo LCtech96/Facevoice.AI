@@ -86,13 +86,6 @@ export default function RootLayout({
 }) {
   return (
     <html lang="it" className="dark">
-      <head>
-        <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-        <link rel="shortcut icon" href="/favicon.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/favicon.png" sizes="180x180" />
-        <link rel="manifest" href="/site.webmanifest" />
-      </head>
       <body className={montserrat.className}>
         <LanguageProvider>
           {children}
