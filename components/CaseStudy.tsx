@@ -159,6 +159,49 @@ const caseStudies: CaseStudyData[] = [
         { icon: ExternalLink, label: 'Social Media' },
       ]
     }
+  },
+  {
+    id: 'otticafocus',
+    title: 'Otticafocus.com',
+    description: 'Sito e-commerce professionale per ottica con vetrina occhiali, carrello, pagamenti e pannello admin completo - In corso di sviluppo',
+    url: 'https://otticafocus.com',
+    backgroundImage: '/Otticafocus.png',
+    content: {
+      mainDescription: 'Otticafocus.com è un sito e-commerce professionale sviluppato con TypeScript e Next.js per garantire un\'esperienza utente estremamente veloce e professionale. Il progetto è attualmente in corso di sviluppo e rappresenta una soluzione completa per ottiche che desiderano avere una presenza online moderna e funzionale.',
+      specialSections: [
+        {
+          icon: AlertCircle,
+          title: 'Progetto in Corso di Sviluppo',
+          description: 'Otticafocus.com è attualmente in fase di sviluppo. Stiamo lavorando per creare una piattaforma e-commerce completa e professionale che risponda a tutte le esigenze dell\'ottica moderna.'
+        },
+        {
+          icon: ShoppingCart,
+          title: 'E-commerce Completo',
+          description: 'Vetrina occhiali, accessori, descrizioni dettagliate, storia dell\'ottica, contatti, carrello intelligente e sistema di pagamento integrato con multiple opzioni per agevolare l\'esperienza di acquisto.'
+        }
+      ],
+      features: [
+        { icon: Package, text: 'Vetrina occhiali e accessori completa' },
+        { icon: FileText, text: 'Descrizioni dettagliate prodotti' },
+        { icon: History, text: 'Sezione storia e informazioni' },
+        { icon: ShoppingCart, text: 'Carrello e checkout ottimizzato' },
+        { icon: CreditCard, text: 'Pagamenti Satispay/Klarna (dilazione)' },
+        { icon: CreditCard, text: 'Pagamenti PayPal/Revolut' },
+        { icon: Settings, text: 'Pannello admin per gestione articoli' },
+        { icon: FileText, text: 'Sezione blog per SEO e indicizzazione' },
+        { icon: Globe, text: 'Ottimizzazione velocità e performance' },
+        { icon: TrendingUp, text: 'SEO avanzata per Google' },
+      ],
+      integrations: [
+        { icon: CreditCard, label: 'Satispay' },
+        { icon: CreditCard, label: 'Klarna' },
+        { icon: CreditCard, label: 'PayPal' },
+        { icon: CreditCard, label: 'Revolut' },
+        { icon: Settings, label: 'Pannello Admin' },
+        { icon: ShoppingCart, label: 'E-commerce' },
+        { icon: FileText, label: 'Blog SEO' },
+      ]
+    }
   }
 ]
 
