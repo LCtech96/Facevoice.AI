@@ -213,8 +213,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Data corretta: giovedì 8 gennaio 2026
-    const currentDate = 'Thursday, January 8, 2026'
+    // Data corretta: sabato 17 gennaio 2026
+    const currentDate = 'Saturday, January 17, 2026'
 
     // Lista degli AI Tools disponibili nel feed
     const availableTools = `

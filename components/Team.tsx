@@ -20,7 +20,7 @@ interface TeamMember {
   is_contractor: boolean | null
 }
 
-// Fallback data quando Supabase non è disponibile
+// Fallback data quando Supabase non è disponibile (solo membri richiesti)
 const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   {
     id: 1,
@@ -50,8 +50,34 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   },
   {
     id: 3,
+    name: 'Umberto (alias Fischietto)',
+    role: 'Director of Digital Strategy',
+    description: 'Director of Digital Strategy social media, content creator.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Umberto-Facevoice.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 4,
+    name: 'Leonardo Alotta',
+    role: 'Chief Financial Officer (CFO)',
+    description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
+    email: 'leonardo@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/leonardo-alotta',
+    image_url: '/team/Leonardo professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 5,
     name: 'Giuseppe Delli Paoli',
-    role: 'Co-founder, AI & Automation Specialist',
+    role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
     email: null,
     linkedin: null,
@@ -62,39 +88,13 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 4,
-    name: 'Sara Siddique',
-    role: 'Data Engineer, Data Scientist',
-    description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
-    email: 'sara@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/sara-siddique',
-    image_url: '/team/Sara professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 5,
-    name: 'Jonh Mcnova',
+    id: 6,
+    name: 'John Mcnova',
     role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
     description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
     email: 'jonh@facevoice.ai',
     linkedin: 'https://linkedin.com/in/jonh-mcnova',
     image_url: '/team/Jonh professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 6,
-    name: 'Leonardo Alotta',
-    role: 'Chief Financial Officer (CFO)',
-    description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
-    email: 'leonardo@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/leonardo-alotta',
-    image_url: '/team/Leonardo professionale fv.png',
     instagram: null,
     x: null,
     google: null,
@@ -115,18 +115,90 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   },
   {
     id: 8,
-    name: 'Umberto (alias Fischietto)',
-    role: 'Director of Digital Strategy',
-    description: 'Director of Digital Strategy social media, content creator.',
+    name: 'Michael',
+    role: 'Team Member',
+    description: 'Member of the Facevoice AI team.',
     email: null,
     linkedin: null,
-    image_url: '/team/Umberto-Facevoice.png',
+    image_url: '/team/Michael professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 9,
+    name: 'Sara Siddique',
+    role: 'Data Engineer, Data Scientist',
+    description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
+    email: 'sara@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/sara-siddique',
+    image_url: '/team/Sara professionale fv.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 10,
+    name: 'Katreen',
+    role: 'Team Member',
+    description: 'Member of the Facevoice AI team.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Katreen professionale fv.png',
     instagram: null,
     x: null,
     google: null,
     is_contractor: false,
   },
 ]
+
+const TEAM_ORDER = [
+  { key: 'luca corrao', displayName: 'Luca Corrao' },
+  { key: 'sevara urmaeva', displayName: 'Sevara Urmanaeva' },
+  { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)' },
+  { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
+  { key: 'giuseppe delli paoli', displayName: 'Giuseppe Delli Paoli', role: 'AI & Automation Specialist' },
+  { key: 'john mcnova', displayName: 'John Mcnova', aliases: ['jonh mcnova'] },
+  { key: 'abraham caur', displayName: 'Abraham Caur' },
+  { key: 'michael', displayName: 'Michael' },
+  { key: 'sara siddique', displayName: 'Sara Siddique' },
+  { key: 'katreen', displayName: 'Katreen' },
+]
+
+const normalizeTeamName = (name: string) =>
+  name.toLowerCase().replace(/\s+/g, ' ').trim()
+
+const applyTeamOrdering = (members: TeamMember[]) => {
+  const byName = new Map<string, TeamMember>()
+
+  members.forEach((member) => {
+    const key = normalizeTeamName(member.name)
+    if (!byName.has(key)) {
+      byName.set(key, member)
+    }
+  })
+
+  const ordered: TeamMember[] = []
+
+  TEAM_ORDER.forEach((entry, index) => {
+    const candidate =
+      byName.get(entry.key) ||
+      entry.aliases?.map((alias) => byName.get(alias)).find(Boolean)
+
+    if (candidate) {
+      ordered.push({
+        ...candidate,
+        id: index + 1,
+        name: entry.displayName || candidate.name,
+        role: entry.role || candidate.role,
+      })
+    }
+  })
+
+  return ordered
+}
 
 // Componente per l'immagine del team member con fallback
 function TeamMemberImage({ member }: { member: TeamMember }) {
@@ -189,7 +261,7 @@ export default function Team() {
   const insertingRef = useRef(false)
 
   const isAIgen = (name: string) =>
-    name === 'Sara Siddique' || name === 'Jonh Mcnova' || name === 'Abraham Caur'
+    name === 'Sara Siddique' || name === 'John Mcnova' || name === 'Abraham Caur'
 
   useEffect(() => {
     fetchTeamMembers()
@@ -200,7 +272,7 @@ export default function Team() {
       // Verifica che Supabase sia configurato
       if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
         console.warn('Supabase URL not configured. Using fallback data.')
-        setTeamMembers(FALLBACK_TEAM_MEMBERS)
+        setTeamMembers(applyTeamOrdering(FALLBACK_TEAM_MEMBERS))
         setLoading(false)
         return
       }
@@ -220,13 +292,10 @@ export default function Team() {
             })
           }
           // Usa fallback in caso di errore
-          setTeamMembers(FALLBACK_TEAM_MEMBERS)
+          setTeamMembers(applyTeamOrdering(FALLBACK_TEAM_MEMBERS))
         } else if (data && data.length > 0) {
-          // Deduplica i membri del team per ID (evita duplicati)
-          const uniqueMembers = Array.from(
-            new Map(data.map((member: TeamMember) => [member.id, member])).values()
-          )
-          setTeamMembers(uniqueMembers)
+          const mergedMembers = [...data, ...FALLBACK_TEAM_MEMBERS]
+          setTeamMembers(applyTeamOrdering(mergedMembers))
         } else {
           // Se non ci sono membri, prova a inserirli automaticamente
           if (!insertingRef.current) {
@@ -236,7 +305,7 @@ export default function Team() {
             insertingRef.current = false
           } else {
             // Se l'inserimento è in corso, usa fallback temporaneamente
-            setTeamMembers(FALLBACK_TEAM_MEMBERS)
+            setTeamMembers(applyTeamOrdering(FALLBACK_TEAM_MEMBERS))
           }
         }
       } catch (fetchError: any) {
@@ -248,7 +317,7 @@ export default function Team() {
             name: fetchError?.name,
           })
         }
-        setTeamMembers(FALLBACK_TEAM_MEMBERS)
+        setTeamMembers(applyTeamOrdering(FALLBACK_TEAM_MEMBERS))
       }
     } catch (error: any) {
       // Log solo in sviluppo
@@ -258,7 +327,7 @@ export default function Team() {
         })
       }
       // Usa fallback anche in caso di errore inatteso
-      setTeamMembers(FALLBACK_TEAM_MEMBERS)
+      setTeamMembers(applyTeamOrdering(FALLBACK_TEAM_MEMBERS))
     } finally {
       setLoading(false)
     }
@@ -283,11 +352,8 @@ export default function Team() {
           .order('id', { ascending: true })
         
         if (!error && data) {
-          // Deduplica i membri del team per ID (evita duplicati)
-          const uniqueMembers = Array.from(
-            new Map(data.map((member: TeamMember) => [member.id, member])).values()
-          )
-          setTeamMembers(uniqueMembers)
+          const mergedMembers = [...data, ...FALLBACK_TEAM_MEMBERS]
+          setTeamMembers(applyTeamOrdering(mergedMembers))
         }
       } else {
         const error = await response.json()

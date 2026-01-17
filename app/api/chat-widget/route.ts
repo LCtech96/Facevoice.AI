@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Groq from 'groq-sdk'
+import { createClient } from '@supabase/supabase-js'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 
 // Usa la variabile d'ambiente GROQ_API_KEY
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY || '',
 })
+
+const getSupabaseAdmin = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return null
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey)
+}
 
 // System prompt per l'assistente
 const SYSTEM_PROMPT = `Sei un assistente AI esperto di Facevoice AI. Il tuo compito è aiutare i clienti a comprendere:
@@ -42,20 +54,46 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Data corretta: giovedì 8 gennaio 2026
+    // Data corretta: sabato 17 gennaio 2026
     const TIME_GUARDRAIL: ChatCompletionMessageParam = {
       role: 'system',
       content:
-        `Oggi è giovedì 8 gennaio 2026 (fuso orario Europe/Rome). ` +
-        `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è giovedì 8 gennaio 2026". ` +
+        `Oggi è sabato 17 gennaio 2026 (fuso orario Europe/Rome). ` +
+        `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è sabato 17 gennaio 2026". ` +
         `Sii sempre preciso e non indovinare mai.`,
     }
+
+    // Carica conoscenza AI aggiuntiva dal database (se disponibile)
+    let knowledgeText = ''
+    try {
+      const supabaseAdmin = getSupabaseAdmin()
+      if (supabaseAdmin) {
+        const { data: knowledgeData } = await supabaseAdmin
+          .from('ai_knowledge')
+          .select('title, content')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(50)
+
+        if (knowledgeData && knowledgeData.length > 0) {
+          knowledgeText = knowledgeData
+            .map((item: any) => `- ${item.title}: ${item.content}`)
+            .join('\n')
+        }
+      }
+    } catch (error) {
+      console.warn('AI knowledge load failed:', error)
+    }
+
+    const knowledgeGuardrail = knowledgeText
+      ? `\n\nINFORMAZIONI UFFICIALI DEL SITO:\n${knowledgeText}\n\nRispondi SOLO con informazioni presenti qui sopra o già note nel prompt. Se l'informazione non è presente, di\' chiaramente che non è disponibile sul sito e invita a contattarci su WhatsApp.`
+      : `\n\nNon inventare dettagli. Se l'informazione non è presente nel sito, dì che non è disponibile e invita a contattarci su WhatsApp.`
 
     // Prepara i messaggi per Groq
     const messagesForGroq: ChatCompletionMessageParam[] = [
       {
         role: 'system',
-        content: SYSTEM_PROMPT + '\n\nIMPORTANTE: Sii sempre BREVE e PRECISO nelle risposte. Massimo 2-3 frasi. Rispondi direttamente senza giri di parole.',
+        content: SYSTEM_PROMPT + knowledgeGuardrail + '\n\nIMPORTANTE: Sii sempre BREVE e PRECISO nelle risposte. Massimo 2-3 frasi. Rispondi direttamente senza giri di parole.',
       },
       TIME_GUARDRAIL,
       ...(messages || []).map((msg: any) => ({

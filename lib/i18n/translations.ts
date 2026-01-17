@@ -7,6 +7,7 @@ export const translations = {
       team: 'Team',
       bookings: 'Prenotazioni',
       chat: 'Chat',
+      payments: 'Pagamenti',
       admin: 'Admin',
     },
     auth: {
@@ -51,6 +52,7 @@ export const translations = {
       team: 'Team',
       bookings: 'Bookings',
       chat: 'Chat',
+      payments: 'Payments',
       admin: 'Admin',
     },
     auth: {
@@ -95,6 +97,7 @@ export const translations = {
       team: 'Équipe',
       bookings: 'Réservations',
       chat: 'Chat',
+      payments: 'Paiements',
       admin: 'Admin',
     },
     auth: {
@@ -139,6 +142,7 @@ export const translations = {
       team: 'Команда',
       bookings: 'Бронирование',
       chat: 'Чат',
+      payments: 'Платежи',
       admin: 'Админ',
     },
     auth: {
@@ -183,6 +187,7 @@ export const translations = {
       team: 'Team',
       bookings: 'Buchungen',
       chat: 'Chat',
+      payments: 'Zahlungen',
       admin: 'Admin',
     },
     auth: {
@@ -227,6 +232,7 @@ export const translations = {
       team: 'Equipe',
       bookings: 'Reservas',
       chat: 'Chat',
+      payments: 'Pagamentos',
       admin: 'Admin',
     },
     auth: {
@@ -271,6 +277,7 @@ export const translations = {
       team: 'الفريق',
       bookings: 'الحجوزات',
       chat: 'الدردشة',
+      payments: 'المدفوعات',
       admin: 'المدير',
     },
     auth: {
@@ -315,6 +322,7 @@ export const translations = {
       team: '团队',
       bookings: '预订',
       chat: '聊天',
+      payments: '付款',
       admin: '管理',
     },
     auth: {

@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -72,8 +72,11 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     { id: 'case-studies', label: t('nav.caseStudies'), icon: Star, href: '/case-studies' },
     { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
     { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
-    // Mostra Chat solo agli utenti autenticati
-    ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
+    // Mostra Chat e Pagamenti solo agli utenti autenticati
+    ...(user ? [
+      { id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' },
+      { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
+    ] : []),
     // Mostra Admin solo per luca@facevoice.ai
     ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
   ]
@@ -105,6 +108,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/case-studies')
     } else if (item.href === '/bookings') {
       router.push('/bookings')
+    } else if (item.href === '/payments') {
+      router.push('/payments')
     } else if (item.href === '/admin') {
       router.push('/admin')
     }
@@ -128,6 +133,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'bookings') {
       return pathname === '/bookings'
+    }
+    if (item.id === 'payments') {
+      return pathname === '/payments'
     }
     return pathname === '/home' && activeSection === item.id
   }

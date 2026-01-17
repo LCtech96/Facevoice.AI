@@ -32,12 +32,12 @@ export async function POST(req: NextRequest) {
 
     // Invia email con codice OTP usando Resend (se configurato)
     const RESEND_API_KEY = process.env.RESEND_API_KEY
+    const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL
     
     if (RESEND_API_KEY) {
       try {
-        // Usa il dominio di test di Resend (funziona senza verifica dominio)
-        // Se vuoi usare il tuo dominio, verificalo prima su Resend Dashboard
-        const fromEmail = 'onboarding@resend.dev'
+        // Usa email mittente configurata (consigliato: dominio verificato su Resend)
+        const fromEmail = RESEND_FROM_EMAIL || 'onboarding@resend.dev'
         
         const emailData = {
           from: `FacevoiceAI <${fromEmail}>`,
@@ -80,16 +80,10 @@ export async function POST(req: NextRequest) {
             statusText: response.statusText,
             data: responseData,
           })
-          // Logga il codice anche in caso di errore per debug
-          console.log(`OTP per ${email}: ${code} (email non inviata - errore Resend)`)
-          
-          // Restituisci un messaggio più dettagliato
-          return NextResponse.json({
-            success: true,
-            message: `Codice generato. Email non inviata: ${responseData.message || 'Errore sconosciuto'}. Codice: ${code}`,
-            code,
-            emailError: responseData.message || 'Errore nell\'invio dell\'email',
-          })
+          return NextResponse.json(
+            { error: responseData.message || 'Errore nell\'invio dell\'email' },
+            { status: response.status }
+          )
         } else {
           console.log('OTP email sent successfully:', {
             to: email,
@@ -99,30 +93,22 @@ export async function POST(req: NextRequest) {
         }
       } catch (emailError: any) {
         console.error('Error sending OTP email:', emailError)
-        // Logga il codice anche in caso di errore per debug
-        console.log(`OTP per ${email}: ${code} (email non inviata - eccezione)`)
-        
-        // Restituisci il codice comunque
-        return NextResponse.json({
-          success: true,
-          message: `Codice generato ma email non inviata: ${emailError.message}. Codice: ${code}`,
-          code,
-          emailError: emailError.message,
-        })
+        return NextResponse.json(
+          { error: emailError.message || 'Errore nell\'invio dell\'email' },
+          { status: 500 }
+        )
       }
     } else {
-      // Resend non configurato - logga il codice per debug
-      console.log(`OTP per ${email}: ${code}`)
-      console.warn('RESEND_API_KEY non configurato. Configura Resend per inviare email.')
+      return NextResponse.json(
+        { error: 'RESEND_API_KEY non configurato. Configura Resend per inviare email.' },
+        { status: 500 }
+      )
     }
 
     return NextResponse.json({
       success: true,
-      message: RESEND_API_KEY 
-        ? 'Codice di verifica inviato. Controlla la tua email.' 
-        : 'Codice di verifica generato. Controlla i log del server per il codice.',
-      // Restituiamo sempre il codice per ora (da rimuovere in produzione quando l'email funziona)
-      code,
+      message: 'Codice di verifica inviato. Controlla la tua email.',
+      code: process.env.NODE_ENV === 'development' ? code : undefined,
     })
   } catch (error: any) {
     console.error('Error in send-otp:', error)

@@ -26,7 +26,7 @@ const teamMembers = [
   },
   {
     name: 'Giuseppe Delli Paoli',
-    role: 'Co-founder, AI & Automation Specialist',
+    role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
     email: null,
     linkedin: null,
@@ -41,7 +41,7 @@ const teamMembers = [
     image_url: '/team/Sara professionale fv.png',
   },
   {
-    name: 'Jonh Mcnova',
+    name: 'John Mcnova',
     role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
     description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
     email: 'jonh@facevoice.ai',
@@ -63,6 +63,30 @@ const teamMembers = [
     email: 'abraham@facevoice.ai',
     linkedin: 'https://linkedin.com/in/abraham-caur',
     image_url: '/team/Abraham professionale fv.png',
+  },
+  {
+    name: 'Umberto (alias Fischietto)',
+    role: 'Director of Digital Strategy',
+    description: 'Director of Digital Strategy social media, content creator.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Umberto-Facevoice.png',
+  },
+  {
+    name: 'Michael',
+    role: 'Team Member',
+    description: 'Member of the Facevoice AI team.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Michael professionale fv.png',
+  },
+  {
+    name: 'Katreen',
+    role: 'Team Member',
+    description: 'Member of the Facevoice AI team.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Katreen professionale fv.png',
   },
 ]
 

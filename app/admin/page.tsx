@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Shield, Check, X, MessageCircle, FileText, RefreshCw, Calendar, Mail, Phone, Clock } from 'lucide-react'
+import { Shield, Check, X, MessageCircle, FileText, RefreshCw, Calendar, Mail, Phone, Clock, Plus, Trash2, Wallet, Users } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
@@ -32,6 +32,34 @@ interface Booking {
   updated_at?: string
 }
 
+interface AIKnowledge {
+  id: string
+  title: string
+  content: string
+  is_active: boolean
+  created_at: string
+}
+
+interface Payment {
+  id: string
+  collaborator_name?: string | null
+  collaborator_email: string
+  amount: number
+  currency: string
+  note?: string | null
+  entry_date: string
+  entry_time: string
+  due_date: string
+  created_at: string
+}
+
+interface UserSummary {
+  id: string
+  email: string
+  created_at: string
+  last_sign_in_at: string | null
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
@@ -42,6 +70,25 @@ export default function AdminPage() {
   const [loadingComments, setLoadingComments] = useState(false)
   const [loadingBookings, setLoadingBookings] = useState(false)
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'contacted' | 'completed' | 'cancelled'>('pending')
+  const [knowledgeItems, setKnowledgeItems] = useState<AIKnowledge[]>([])
+  const [loadingKnowledge, setLoadingKnowledge] = useState(false)
+  const [showKnowledgeForm, setShowKnowledgeForm] = useState(false)
+  const [knowledgeTitle, setKnowledgeTitle] = useState('')
+  const [knowledgeContent, setKnowledgeContent] = useState('')
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [loadingPayments, setLoadingPayments] = useState(false)
+  const [paymentForm, setPaymentForm] = useState({
+    collaborator_name: '',
+    collaborator_email: '',
+    amount: '',
+    note: '',
+    entry_date: '',
+    entry_time: '',
+    due_date: '',
+  })
+  const [shareEmailByPayment, setShareEmailByPayment] = useState<Record<string, string>>({})
+  const [users, setUsers] = useState<UserSummary[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
@@ -61,6 +108,9 @@ export default function AdminPage() {
       setLoading(false)
       loadPendingComments()
       loadBookings()
+      loadKnowledge()
+      loadPayments()
+      loadUsers()
     }
     checkUser()
 
@@ -72,6 +122,9 @@ export default function AdminPage() {
         setLoading(false)
         loadPendingComments()
         loadBookings()
+        loadKnowledge()
+        loadPayments()
+        loadUsers()
       }
     })
 
@@ -79,6 +132,11 @@ export default function AdminPage() {
       subscription.unsubscribe()
     }
   }, [router])
+
+  const getAccessToken = async () => {
+    const { data } = await supabase.auth.getSession()
+    return data.session?.access_token || null
+  }
 
   const loadPendingComments = async () => {
     setLoadingComments(true)
@@ -186,6 +244,243 @@ export default function AdminPage() {
     }
   }
 
+  const loadKnowledge = async () => {
+    setLoadingKnowledge(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/ai-knowledge', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nel caricare la conoscenza AI')
+      }
+
+      setKnowledgeItems(data.items || [])
+    } catch (error: any) {
+      console.error('Knowledge load error:', error)
+    } finally {
+      setLoadingKnowledge(false)
+    }
+  }
+
+  const handleCreateKnowledge = async () => {
+    if (!knowledgeTitle.trim() || !knowledgeContent.trim()) return
+    setLoadingKnowledge(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/ai-knowledge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: knowledgeTitle,
+          content: knowledgeContent,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nel salvare la conoscenza AI')
+      }
+      setKnowledgeTitle('')
+      setKnowledgeContent('')
+      setShowKnowledgeForm(false)
+      loadKnowledge()
+    } catch (error: any) {
+      alert(error.message || 'Errore nel salvare la conoscenza AI')
+    } finally {
+      setLoadingKnowledge(false)
+    }
+  }
+
+  const handleDeleteKnowledge = async (id: string) => {
+    setLoadingKnowledge(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch(`/api/admin/ai-knowledge/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nell\'eliminazione')
+      }
+      loadKnowledge()
+    } catch (error: any) {
+      alert(error.message || 'Errore nell\'eliminazione')
+    } finally {
+      setLoadingKnowledge(false)
+    }
+  }
+
+  const loadPayments = async () => {
+    setLoadingPayments(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/payments', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nel caricare i pagamenti')
+      }
+
+      setPayments(data.payments || [])
+    } catch (error: any) {
+      console.error('Payments load error:', error)
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
+
+  const handleCreatePayment = async () => {
+    if (
+      !paymentForm.collaborator_email ||
+      !paymentForm.amount ||
+      !paymentForm.entry_date ||
+      !paymentForm.entry_time ||
+      !paymentForm.due_date
+    ) {
+      alert('Compila tutti i campi obbligatori')
+      return
+    }
+
+    setLoadingPayments(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/payments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          collaborator_name: paymentForm.collaborator_name,
+          collaborator_email: paymentForm.collaborator_email,
+          amount: Number(paymentForm.amount),
+          note: paymentForm.note,
+          entry_date: paymentForm.entry_date,
+          entry_time: paymentForm.entry_time,
+          due_date: paymentForm.due_date,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nel creare il pagamento')
+      }
+      setPaymentForm({
+        collaborator_name: '',
+        collaborator_email: '',
+        amount: '',
+        note: '',
+        entry_date: '',
+        entry_time: '',
+        due_date: '',
+      })
+      loadPayments()
+    } catch (error: any) {
+      alert(error.message || 'Errore nel creare il pagamento')
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
+
+  const handleDeletePayment = async (id: string) => {
+    setLoadingPayments(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch(`/api/admin/payments/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nell\'eliminazione')
+      }
+      loadPayments()
+    } catch (error: any) {
+      alert(error.message || 'Errore nell\'eliminazione')
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
+
+  const handleSharePayment = async (paymentId: string) => {
+    const sharedEmail = shareEmailByPayment[paymentId]?.trim()
+    if (!sharedEmail) return
+
+    setLoadingPayments(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/payments/share', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          payment_id: paymentId,
+          shared_with_email: sharedEmail,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nella condivisione')
+      }
+      setShareEmailByPayment((prev) => ({ ...prev, [paymentId]: '' }))
+      alert('Condivisione salvata')
+    } catch (error: any) {
+      alert(error.message || 'Errore nella condivisione')
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
+
+  const loadUsers = async () => {
+    setLoadingUsers(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+
+      const response = await fetch('/api/admin/users', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nel caricare gli utenti')
+      }
+
+      setUsers(data.users || [])
+    } catch (error: any) {
+      console.error('Users load error:', error)
+    } finally {
+      setLoadingUsers(false)
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
@@ -214,6 +509,9 @@ export default function AdminPage() {
               onClick={() => {
                 loadPendingComments()
                 loadBookings()
+                loadKnowledge()
+                loadPayments()
+                loadUsers()
               }}
               disabled={loadingComments || loadingBookings}
               className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2 disabled:opacity-50"
@@ -499,6 +797,263 @@ export default function AdminPage() {
                    `Non ci sono prenotazioni ${bookingStatusFilter === 'contacted' ? 'contattate' : bookingStatusFilter === 'completed' ? 'completate' : 'cancellate'}`}
                 </p>
               </div>
+            )}
+          </motion.div>
+
+          {/* AI Knowledge Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-12"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+                <MessageCircle className="w-6 h-6" />
+                Conoscenza AI
+              </h2>
+              <button
+                onClick={() => setShowKnowledgeForm((prev) => !prev)}
+                className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Conoscenza AI
+              </button>
+            </div>
+
+            {showKnowledgeForm && (
+              <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+                <div className="grid grid-cols-1 gap-4">
+                  <input
+                    type="text"
+                    value={knowledgeTitle}
+                    onChange={(e) => setKnowledgeTitle(e.target.value)}
+                    placeholder="Titolo"
+                    className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  />
+                  <textarea
+                    value={knowledgeContent}
+                    onChange={(e) => setKnowledgeContent(e.target.value)}
+                    placeholder="Inserisci informazioni ufficiali"
+                    rows={4}
+                    className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  />
+                  <button
+                    onClick={handleCreateKnowledge}
+                    disabled={loadingKnowledge}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    Salva
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {loadingKnowledge ? (
+              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+            ) : knowledgeItems.length > 0 ? (
+              <div className="space-y-4">
+                {knowledgeItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
+                          {item.title}
+                        </h3>
+                        <p className="text-[var(--text-secondary)] mb-2">{item.content}</p>
+                        <p className="text-xs text-[var(--text-secondary)]">
+                          {new Date(item.created_at).toLocaleString('it-IT')}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteKnowledge(item.id)}
+                        className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
+                        title="Elimina"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[var(--text-secondary)]">Nessuna conoscenza inserita.</div>
+            )}
+          </motion.div>
+
+          {/* Payments Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-12"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+                <Wallet className="w-6 h-6" />
+                Pagamenti Collaboratori
+              </h2>
+            </div>
+
+            <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input
+                  type="text"
+                  value={paymentForm.collaborator_name}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, collaborator_name: e.target.value }))}
+                  placeholder="Nome collaboratore"
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                />
+                <input
+                  type="email"
+                  value={paymentForm.collaborator_email}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, collaborator_email: e.target.value }))}
+                  placeholder="Email collaboratore"
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  required
+                />
+                <input
+                  type="number"
+                  value={paymentForm.amount}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))}
+                  placeholder="Importo"
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  required
+                />
+                <input
+                  type="date"
+                  value={paymentForm.entry_date}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, entry_date: e.target.value }))}
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  required
+                />
+                <input
+                  type="time"
+                  value={paymentForm.entry_time}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, entry_time: e.target.value }))}
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  required
+                />
+                <input
+                  type="date"
+                  value={paymentForm.due_date}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                  required
+                />
+                <textarea
+                  value={paymentForm.note}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, note: e.target.value }))}
+                  placeholder="Nota descrizione"
+                  rows={2}
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] md:col-span-2"
+                />
+              </div>
+              <button
+                onClick={handleCreatePayment}
+                disabled={loadingPayments}
+                className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                Salva pagamento
+              </button>
+            </div>
+
+            {loadingPayments ? (
+              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+            ) : payments.length > 0 ? (
+              <div className="space-y-4">
+                {payments.map((payment) => (
+                  <div
+                    key={payment.id}
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
+                          {payment.collaborator_name || payment.collaborator_email}
+                        </h3>
+                        <p className="text-sm text-[var(--text-secondary)] mb-2">
+                          {payment.collaborator_email}
+                        </p>
+                        <p className="text-[var(--accent-blue)] font-bold mb-2">
+                          {Number(payment.amount).toFixed(2)} {payment.currency}
+                        </p>
+                        <p className="text-sm text-[var(--text-secondary)]">
+                          Inserito: {payment.entry_date} {payment.entry_time} · Scadenza: {payment.due_date}
+                        </p>
+                        {payment.note && (
+                          <p className="text-[var(--text-secondary)] mt-2">{payment.note}</p>
+                        )}
+                        <div className="mt-4 flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            value={shareEmailByPayment[payment.id] || ''}
+                            onChange={(e) =>
+                              setShareEmailByPayment((prev) => ({
+                                ...prev,
+                                [payment.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Condividi con (email)"
+                            className="w-full sm:max-w-xs px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                          />
+                          <button
+                            onClick={() => handleSharePayment(payment.id)}
+                            className="px-3 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90"
+                          >
+                            Condividi
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeletePayment(payment.id)}
+                        className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
+                        title="Elimina"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[var(--text-secondary)]">Nessun pagamento inserito.</div>
+            )}
+          </motion.div>
+
+          {/* Users Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-12"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+                <Users className="w-6 h-6" />
+                Utenti Registrati ({users.length})
+              </h2>
+            </div>
+
+            {loadingUsers ? (
+              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+            ) : users.length > 0 ? (
+              <div className="space-y-3">
+                {users.map((item) => (
+                  <div
+                    key={item.id}
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4"
+                  >
+                    <p className="text-[var(--text-primary)] font-medium">{item.email}</p>
+                    <p className="text-xs text-[var(--text-secondary)]">
+                      Creato: {new Date(item.created_at).toLocaleString('it-IT')} · Ultimo accesso:{' '}
+                      {item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('it-IT') : 'mai'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[var(--text-secondary)]">Nessun utente trovato.</div>
             )}
           </motion.div>
         </div>
