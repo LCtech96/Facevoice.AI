@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS team_members (
 -- Abilita Row Level Security
 ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
 
+-- Rimuovi le policy esistenti se esistono (per evitare errori)
+DROP POLICY IF EXISTS "Team members are viewable by everyone" ON team_members;
+DROP POLICY IF EXISTS "Only authenticated users can insert team members" ON team_members;
+DROP POLICY IF EXISTS "Only authenticated users can update team members" ON team_members;
+
 -- Policy per permettere lettura pubblica
 CREATE POLICY "Team members are viewable by everyone"
   ON team_members
@@ -36,6 +41,10 @@ CREATE POLICY "Only authenticated users can update team members"
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('team-photos', 'team-photos', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- Rimuovi le policy esistenti se esistono (per evitare errori)
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+DROP POLICY IF EXISTS "Public can upload team photos" ON storage.objects;
 
 -- Policy per permettere lettura pubblica delle immagini
 CREATE POLICY "Public Access"
