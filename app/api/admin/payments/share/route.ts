@@ -78,7 +78,13 @@ export async function POST(req: NextRequest) {
           <li><strong>Scadenza:</strong> ${payment?.due_date || '-'}</li>
         </ul>
         <p>Accedi alla tua area pagamenti qui:</p>
-        <p><a href="https://www.facevoice.ai/payments">https://www.facevoice.ai/payments</a></p>
+        <p style="text-align: center; margin: 30px 0;">
+          <a href="https://www.facevoice.ai/payments?payment=${payment_id}" 
+             style="background-color: #007bff; color: white; padding: 12px 24px; 
+                    text-decoration: none; border-radius: 5px; display: inline-block;">
+            Vedi Pagamento
+          </a>
+        </p>
       </div>
     `
 

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 interface Payment {
   id: string
@@ -22,10 +22,12 @@ interface Payment {
 
 export default function PaymentsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const paymentRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   useEffect(() => {
     const loadPayments = async () => {
@@ -61,6 +63,23 @@ export default function PaymentsPage() {
     loadPayments()
   }, [router, supabase])
 
+  // Scroll al pagamento specifico se presente nell'URL
+  useEffect(() => {
+    const paymentId = searchParams?.get('payment')
+    if (paymentId && payments.length > 0) {
+      setTimeout(() => {
+        const element = paymentRefs.current[paymentId]
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          element.style.backgroundColor = 'var(--accent-blue)/10'
+          setTimeout(() => {
+            element.style.backgroundColor = ''
+          }, 2000)
+        }
+      }, 500)
+    }
+  }, [searchParams, payments])
+
   return (
     <main className="min-h-screen bg-[var(--background)]">
       <Navigation />
@@ -91,7 +110,8 @@ export default function PaymentsPage() {
               {payments.map((payment) => (
                 <div
                   key={payment.id}
-                  className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                  ref={(el) => (paymentRefs.current[payment.id] = el)}
+                  className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 transition-all"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <h2 className="text-lg font-semibold text-[var(--text-primary)]">
