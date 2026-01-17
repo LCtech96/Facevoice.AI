@@ -19,6 +19,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [verificationCode, setVerificationCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -30,6 +31,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
       setEmail('')
       setPassword('')
       setConfirmPassword('')
+      setVerificationCode('')
       setError(null)
       setMessage(null)
     }
@@ -66,6 +68,12 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
     setError(null)
     setMessage(null)
 
+    if (!email || !email.includes('@')) {
+      setError('Inserisci un indirizzo email valido')
+      setLoading(false)
+      return
+    }
+
     if (password !== confirmPassword) {
       setError('Le password non corrispondono')
       setLoading(false)
@@ -79,23 +87,113 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
     }
 
     try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/ai-chat`,
-        },
+      // Salva temporaneamente email e password (non crea l'utente ancora)
+      const storeResponse = await fetch('/api/auth/store-registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       })
 
-      if (signUpError) throw signUpError
+      if (!storeResponse.ok) {
+        const storeData = await storeResponse.json()
+        throw new Error(storeData.error || 'Errore nel salvare la registrazione')
+      }
 
-      setMessage('Registrazione completata! Controlla la tua email per confermare l\'account.')
-      setTimeout(() => {
-        setMode('signin')
-        setMessage(null)
-      }, 3000)
+      // Invia il codice OTP via email (senza creare l'utente in Supabase)
+      const response = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      const otpData = await response.json()
+
+      if (!response.ok) {
+        throw new Error(otpData.error || 'Errore nell\'invio del codice di verifica')
+      }
+
+      setMessage('Registrazione completata! Controlla la tua email per il codice di verifica.')
+      setMode('verify')
+      setTimeout(() => setMessage(null), 5000)
     } catch (err: any) {
       setError(err.message || 'Errore durante la registrazione')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    setMessage(null)
+
+    if (!verificationCode || verificationCode.length !== 6) {
+      setError('Inserisci un codice di 6 cifre')
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch('/api/auth/verify-email-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code: verificationCode }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Codice non valido')
+      }
+
+      // Dopo la verifica, accedi con la password (recuperata dalla risposta se presente, altrimenti usa quella salvata)
+      const passwordToUse = data.password || password
+      
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: passwordToUse,
+      })
+
+      if (signInError) {
+        throw new Error('Errore nell\'accesso. Riprova a fare login manualmente.')
+      }
+
+      setMessage('Email verificata e accesso completato!')
+      setTimeout(() => {
+        onSuccess()
+        onClose()
+      }, 1500)
+    } catch (err: any) {
+      setError(err.message || 'Codice non valido. Riprova.')
+      setVerificationCode('')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResendCode = async () => {
+    setError(null)
+    setMessage(null)
+    setLoading(true)
+
+    try {
+      const response = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore nell\'invio del codice')
+      }
+
+      setMessage('Codice di verifica inviato! Controlla la tua email.')
+      setTimeout(() => setMessage(null), 5000)
+    } catch (err: any) {
+      setError(err.message || 'Errore nell\'invio del codice')
     } finally {
       setLoading(false)
     }
@@ -147,6 +245,8 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
       handleSignIn(e)
     } else if (mode === 'signup') {
       handleSignUp(e)
+    } else if (mode === 'verify') {
+      handleVerifyCode(e)
     } else {
       handlePasswordReset(e)
     }
@@ -271,7 +371,34 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                 </div>
               </div>
 
-              {mode !== 'reset' && (
+              {mode === 'verify' && (
+                <div>
+                  <label className="block text-sm font-medium text-coral-red/70 mb-2">
+                    Codice di Verifica
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={verificationCode}
+                      onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      required
+                      maxLength={6}
+                      className="w-full pl-4 pr-4 py-3 glass rounded-2xl text-coral-red placeholder-coral-red/50 focus:outline-none focus:border-coral-red border-2 border-coral-red/30 transition-all text-center text-2xl tracking-widest font-mono"
+                      placeholder="000000"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResendCode}
+                    disabled={loading}
+                    className="mt-2 text-sm text-coral-red/70 hover:text-coral-red transition-colors"
+                  >
+                    Non hai ricevuto il codice? Invia nuovamente
+                  </button>
+                </div>
+              )}
+
+              {mode !== 'reset' && mode !== 'verify' && (
                 <div>
                   <label className="block text-sm font-medium text-coral-red/70 mb-2">
                     Password
@@ -326,6 +453,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                     <span>
                       {mode === 'signin' && 'Accedi'}
                       {mode === 'signup' && 'Registrati'}
+                      {mode === 'verify' && 'Verifica'}
                       {mode === 'reset' && 'Invia Email'}
                     </span>
                     <ArrowRight className="w-4 h-4" />
@@ -367,6 +495,14 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                     Accedi
                   </button>
                 </p>
+              )}
+              {mode === 'verify' && (
+                <button
+                  onClick={() => setMode('signin')}
+                  className="text-sm text-coral-red/70 hover:text-coral-red transition-colors"
+                >
+                  Torna al login
+                </button>
               )}
               {mode === 'reset' && (
                 <button
