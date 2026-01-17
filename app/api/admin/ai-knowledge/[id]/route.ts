@@ -19,16 +19,17 @@ const isAdminRequest = async (req: NextRequest) => {
   return data.user?.email === 'luca@facevoice.ai'
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     if (!(await isAdminRequest(req))) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
+    const { id } = await params
     const { error } = await supabaseAdmin
       .from('ai_knowledge')
       .delete()
-      .eq('id', params.id)
+      .eq('id', id)
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
