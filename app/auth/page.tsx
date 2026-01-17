@@ -72,35 +72,34 @@ export default function AuthPage() {
     }
 
     try {
-      // Prima registra l'utente in Supabase
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          // Non usare emailRedirectTo, gestiremo la verifica manualmente
-        },
+      // Salva temporaneamente email e password (non crea l'utente ancora)
+      const storeResponse = await fetch('/api/auth/store-registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       })
 
-      if (signUpError) throw signUpError
-
-      if (data.user) {
-        // Ora invia il codice OTP via email
-        const response = await fetch('/api/auth/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        })
-
-        const otpData = await response.json()
-
-        if (!response.ok) {
-          throw new Error(otpData.error || 'Errore nell\'invio del codice di verifica')
-        }
-
-        setMessage('Registrazione completata! Controlla la tua email per il codice di verifica.')
-        setMode('verify')
-        setTimeout(() => setMessage(null), 5000)
+      if (!storeResponse.ok) {
+        const storeData = await storeResponse.json()
+        throw new Error(storeData.error || 'Errore nel salvare la registrazione')
       }
+
+      // Invia il codice OTP via email (senza creare l'utente in Supabase)
+      const response = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      const otpData = await response.json()
+
+      if (!response.ok) {
+        throw new Error(otpData.error || 'Errore nell\'invio del codice di verifica')
+      }
+
+      setMessage('Registrazione completata! Controlla la tua email per il codice di verifica.')
+      setMode('verify')
+      setTimeout(() => setMessage(null), 5000)
     } catch (err: any) {
       setError(err.message || 'Errore durante la registrazione')
     } finally {
