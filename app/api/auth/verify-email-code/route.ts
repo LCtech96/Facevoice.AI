@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
           id: user.id,
           email: user.email,
         },
+        password: registration.password, // Restituisci la password per il signIn
       })
     } catch (authError: any) {
       console.error('Auth error:', authError)

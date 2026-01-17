@@ -132,10 +132,12 @@ export default function AuthPage() {
         throw new Error(data.error || 'Codice non valido')
       }
 
-      // Dopo la verifica, accedi con la password
+      // Dopo la verifica, accedi con la password (recuperata dalla risposta se presente, altrimenti usa quella salvata)
+      const passwordToUse = data.password || password
+      
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
-        password,
+        password: passwordToUse,
       })
 
       if (signInError) {
