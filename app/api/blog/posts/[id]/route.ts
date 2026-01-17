@@ -76,45 +76,34 @@ export async function GET(
       )
     }
 
-    // Cerca il post che corrisponde allo slug (per titolo convertito o campo slug se esiste)
-    const post = allPosts.find((p: any) => {
-      // Se esiste un campo slug, usalo
+    // Cerca il post che corrisponde allo slug
+    // Prima cerca per campo slug (più veloce e preciso)
+    const postBySlug = allPosts.find((p: any) => {
       if (p.slug) {
-        return p.slug === id
+        return p.slug.toLowerCase().trim() === id.toLowerCase().trim()
       }
-      // Altrimenti genera slug dal titolo
-      const postSlug = generateSlug(p.title || '')
-      const normalizedId = id.toLowerCase().trim()
-      const normalizedSlug = postSlug.toLowerCase().trim()
-      
-      // Match esatto o match parziale (per gestire variazioni)
-      return normalizedSlug === normalizedId || 
-             normalizedSlug.includes(normalizedId) || 
-             normalizedId.includes(normalizedSlug)
+      return false
     })
 
-    // Se non trova con match parziale, prova match esatto
-    if (!post) {
-      const exactMatch = allPosts.find((p: any) => {
-        const postSlug = p.slug || generateSlug(p.title || '')
-        return postSlug.toLowerCase().trim() === id.toLowerCase().trim()
-      })
-      
-      if (exactMatch) {
-        return NextResponse.json({ post: exactMatch })
-      }
+    if (postBySlug) {
+      return NextResponse.json({ post: postBySlug })
     }
 
+    // Se non trova per slug, cerca per slug generato dal titolo (fallback)
+    const post = allPosts.find((p: any) => {
+      const postSlug = generateSlug(p.title || '')
+      return postSlug.toLowerCase().trim() === id.toLowerCase().trim()
+    })
+
     if (!post) {
-      // Log per debug (solo in sviluppo)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Slug cercato:', id)
-        console.log('Slug disponibili:', allPosts.map((p: any) => ({
-          id: p.id,
-          title: p.title,
-          slug: p.slug || generateSlug(p.title || '')
-        })))
-      }
+      // Log per debug
+      console.log('Slug cercato:', id)
+      console.log('Post disponibili:', allPosts.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        slug: p.slug || generateSlug(p.title || '')
+      })))
+      
       return NextResponse.json(
         { error: 'Post non trovato' },
         { status: 404 }
