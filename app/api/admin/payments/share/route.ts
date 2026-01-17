@@ -35,14 +35,23 @@ export async function POST(req: NextRequest) {
     }
 
     // Verifica se la condivisione esiste già
-    const { data: existing } = await supabaseAdmin
+    const normalizedEmail = shared_with_email.trim().toLowerCase()
+    const { data: existing, error: checkError } = await supabaseAdmin
       .from('payment_shares')
       .select('id')
       .eq('payment_id', payment_id)
-      .eq('shared_with_email', shared_with_email.trim().toLowerCase())
-      .single()
+      .eq('shared_with_email', normalizedEmail)
+      .maybeSingle()
+
+    // Se c'è un errore diverso da "nessun risultato", restituiscilo
+    if (checkError && checkError.code !== 'PGRST116') {
+      console.error('Error checking existing share:', checkError)
+      return NextResponse.json({ error: checkError.message }, { status: 500 })
+    }
 
     let shareData
+    let isNewShare = false
+
     if (existing) {
       // Se esiste già, restituisci quella esistente
       shareData = existing
@@ -52,19 +61,17 @@ export async function POST(req: NextRequest) {
         .from('payment_shares')
         .insert({
           payment_id,
-          shared_with_email: shared_with_email.trim().toLowerCase(),
+          shared_with_email: normalizedEmail,
         })
         .select()
         .single()
 
       if (error) {
+        console.error('Error creating share:', error)
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
       shareData = data
-    }
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      isNewShare = true
     }
 
     // Invia email di notifica (se configurato)
@@ -109,9 +116,9 @@ export async function POST(req: NextRequest) {
     `
 
     // Invia email solo se non esisteva già (nuova condivisione)
-    if (!existing && RESEND_API_KEY && RESEND_FROM_EMAIL) {
+    if (isNewShare && RESEND_API_KEY && RESEND_FROM_EMAIL) {
       try {
-        await fetch('https://api.resend.com/emails', {
+        const emailResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${RESEND_API_KEY}`,
@@ -119,17 +126,30 @@ export async function POST(req: NextRequest) {
           },
           body: JSON.stringify({
             from: `FacevoiceAI <${RESEND_FROM_EMAIL}>`,
-            to: shared_with_email.trim().toLowerCase(),
+            to: normalizedEmail,
             subject,
             html,
           }),
         })
-      } catch (emailError) {
+
+        if (!emailResponse.ok) {
+          const emailErrorData = await emailResponse.json().catch(() => ({}))
+          console.error('Resend API error:', emailErrorData)
+          // Non bloccare la risposta anche se l'email fallisce
+        } else {
+          console.log('Share email sent successfully to:', normalizedEmail)
+        }
+      } catch (emailError: any) {
         console.error('Error sending share email:', emailError)
+        // Non bloccare la risposta anche se l'email fallisce
       }
     }
 
-    return NextResponse.json({ share: shareData, alreadyShared: !!existing })
+    return NextResponse.json({ 
+      share: shareData, 
+      alreadyShared: !isNewShare,
+      emailSent: isNewShare && !!RESEND_API_KEY && !!RESEND_FROM_EMAIL
+    })
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || 'Errore nella condivisione' },
