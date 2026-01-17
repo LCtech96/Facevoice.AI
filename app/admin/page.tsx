@@ -44,6 +44,8 @@ interface Payment {
   id: string
   collaborator_name?: string | null
   collaborator_email: string
+  client_name?: string | null
+  sale_reference?: string | null
   amount: number
   currency: string
   note?: string | null
@@ -80,6 +82,8 @@ export default function AdminPage() {
   const [paymentForm, setPaymentForm] = useState({
     collaborator_name: '',
     collaborator_email: '',
+    client_name: '',
+    sale_reference: '',
     amount: '',
     note: '',
     entry_date: '',
@@ -373,6 +377,8 @@ export default function AdminPage() {
         body: JSON.stringify({
           collaborator_name: paymentForm.collaborator_name,
           collaborator_email: paymentForm.collaborator_email,
+          client_name: paymentForm.client_name,
+          sale_reference: paymentForm.sale_reference,
           amount: Number(paymentForm.amount),
           note: paymentForm.note,
           entry_date: paymentForm.entry_date,
@@ -387,6 +393,8 @@ export default function AdminPage() {
       setPaymentForm({
         collaborator_name: '',
         collaborator_email: '',
+        client_name: '',
+        sale_reference: '',
         amount: '',
         note: '',
         entry_date: '',
@@ -902,7 +910,7 @@ export default function AdminPage() {
                   type="text"
                   value={paymentForm.collaborator_name}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, collaborator_name: e.target.value }))}
-                  placeholder="Nome collaboratore"
+                  placeholder="Collaboratore"
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                 />
                 <input
@@ -914,10 +922,24 @@ export default function AdminPage() {
                   required
                 />
                 <input
+                  type="text"
+                  value={paymentForm.client_name}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, client_name: e.target.value }))}
+                  placeholder="Cliente"
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                />
+                <input
+                  type="text"
+                  value={paymentForm.sale_reference}
+                  onChange={(e) => setPaymentForm((prev) => ({ ...prev, sale_reference: e.target.value }))}
+                  placeholder="Vendita"
+                  className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
+                />
+                <input
                   type="number"
                   value={paymentForm.amount}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  placeholder="Importo"
+                  placeholder="Cifra"
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                   required
                 />
@@ -945,7 +967,7 @@ export default function AdminPage() {
                 <textarea
                   value={paymentForm.note}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, note: e.target.value }))}
-                  placeholder="Nota descrizione"
+                  placeholder="Descrizione"
                   rows={2}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] md:col-span-2"
                 />
@@ -976,6 +998,13 @@ export default function AdminPage() {
                         <p className="text-sm text-[var(--text-secondary)] mb-2">
                           {payment.collaborator_email}
                         </p>
+                        {(payment.client_name || payment.sale_reference) && (
+                          <p className="text-sm text-[var(--text-secondary)] mb-2">
+                            {payment.client_name && `Cliente: ${payment.client_name}`}
+                            {payment.client_name && payment.sale_reference ? ' · ' : ''}
+                            {payment.sale_reference && `Vendita: ${payment.sale_reference}`}
+                          </p>
+                        )}
                         <p className="text-[var(--accent-blue)] font-bold mb-2">
                           {Number(payment.amount).toFixed(2)} {payment.currency}
                         </p>

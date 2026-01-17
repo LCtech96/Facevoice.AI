@@ -81,6 +81,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
   ]
 
+  const mobileNavItems = navItems.filter((item) => item.id !== 'admin')
+
   const handleNavClick = (item: typeof navItems[0]) => {
     if (item.href.startsWith('/home#')) {
       // Navigate to home page and scroll to section
@@ -320,13 +322,24 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
               </AnimatePresence>
             </div>
           )}
+
+          {isAdmin && (
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => router.push('/admin')}
+              className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-yellow-500/20 text-yellow-600 text-xs font-medium border border-yellow-500/30"
+            >
+              <Shield size={16} />
+              <span>{t('nav.admin')}</span>
+            </motion.button>
+          )}
         </div>
       </nav>
 
       {/* Mobile Navigation - Bottom */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom">
         <div className="flex items-center justify-around px-2 py-2">
-          {navItems.map((item) => {
+          {mobileNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
             

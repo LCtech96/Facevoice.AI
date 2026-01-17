@@ -9,6 +9,8 @@ interface Payment {
   id: string
   collaborator_name?: string | null
   collaborator_email: string
+  client_name?: string | null
+  sale_reference?: string | null
   amount: number
   currency: string
   note?: string | null
@@ -99,6 +101,13 @@ export default function PaymentsPage() {
                       {Number(payment.amount).toFixed(2)} {payment.currency}
                     </span>
                   </div>
+                  {(payment.client_name || payment.sale_reference) && (
+                    <p className="text-sm text-[var(--text-secondary)] mb-2">
+                      {payment.client_name && `Cliente: ${payment.client_name}`}
+                      {payment.client_name && payment.sale_reference ? ' · ' : ''}
+                      {payment.sale_reference && `Vendita: ${payment.sale_reference}`}
+                    </p>
+                  )}
                   <p className="text-sm text-[var(--text-secondary)] mb-2">
                     Scadenza: {payment.due_date}
                   </p>

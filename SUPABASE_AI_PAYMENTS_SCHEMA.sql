@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   collaborator_name TEXT,
   collaborator_email TEXT NOT NULL,
+  client_name TEXT,
+  sale_reference TEXT,
   amount NUMERIC(10,2) NOT NULL,
   currency TEXT DEFAULT 'EUR' NOT NULL,
   note TEXT,
@@ -29,6 +31,11 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+
+-- Colonne aggiuntive (se la tabella esiste già)
+ALTER TABLE payments
+  ADD COLUMN IF NOT EXISTS client_name TEXT,
+  ADD COLUMN IF NOT EXISTS sale_reference TEXT;
 
 -- Tabella per Condivisione Pagamenti
 CREATE TABLE IF NOT EXISTS payment_shares (

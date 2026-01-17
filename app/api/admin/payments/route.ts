@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
     const {
       collaborator_name,
       collaborator_email,
+      client_name,
+      sale_reference,
       amount,
       note,
       entry_date,
@@ -73,6 +75,8 @@ export async function POST(req: NextRequest) {
       .insert({
         collaborator_name: collaborator_name?.trim() || null,
         collaborator_email: collaborator_email.trim().toLowerCase(),
+        client_name: client_name?.trim() || null,
+        sale_reference: sale_reference?.trim() || null,
         amount,
         currency,
         note: note?.trim() || null,
