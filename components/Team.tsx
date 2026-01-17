@@ -113,6 +113,19 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     google: null,
     is_contractor: false,
   },
+  {
+    id: 8,
+    name: 'Umberto (alias Fischietto)',
+    role: 'Director of Digital Strategy',
+    description: 'Director of Digital Strategy social media, content creator.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Umberto-Facevoice.png',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
 ]
 
 // Componente per l'immagine del team member con fallback
