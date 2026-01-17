@@ -111,6 +111,9 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
           />
         </div>
       )}
+
+      {/* Blog Section */}
+      <BlogSection user={user} />
       
       {/* AI Tools Feed - Stile Instagram */}
       <div id="ai-tools" className="container mx-auto px-4 py-8 max-w-7xl">
@@ -124,9 +127,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
         </div>
         <AIToolsFeed user={user} />
       </div>
-
-      {/* Blog Section */}
-      <BlogSection user={user} />
 
       {/* Internal Links Section - SEO */}
       <InternalLinks />
