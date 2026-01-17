@@ -79,6 +79,8 @@ export default function AdminPage() {
   const [knowledgeContent, setKnowledgeContent] = useState('')
   const [payments, setPayments] = useState<Payment[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [paymentShareError, setPaymentShareError] = useState<string | null>(null)
   const [paymentForm, setPaymentForm] = useState({
     collaborator_name: '',
     collaborator_email: '',
@@ -364,9 +366,16 @@ export default function AdminPage() {
     }
 
     setLoadingPayments(true)
+    setPaymentError(null)
     try {
       const token = await getAccessToken()
       if (!token) return
+
+      const parsedAmount = Number(String(paymentForm.amount).replace(',', '.'))
+      if (Number.isNaN(parsedAmount)) {
+        setPaymentError('Inserisci una cifra valida')
+        return
+      }
 
       const response = await fetch('/api/admin/payments', {
         method: 'POST',
@@ -379,7 +388,7 @@ export default function AdminPage() {
           collaborator_email: paymentForm.collaborator_email,
           client_name: paymentForm.client_name,
           sale_reference: paymentForm.sale_reference,
-          amount: Number(paymentForm.amount),
+          amount: parsedAmount,
           note: paymentForm.note,
           entry_date: paymentForm.entry_date,
           entry_time: paymentForm.entry_time,
@@ -403,7 +412,7 @@ export default function AdminPage() {
       })
       loadPayments()
     } catch (error: any) {
-      alert(error.message || 'Errore nel creare il pagamento')
+      setPaymentError(error.message || 'Errore nel creare il pagamento')
     } finally {
       setLoadingPayments(false)
     }
@@ -438,6 +447,7 @@ export default function AdminPage() {
     if (!sharedEmail) return
 
     setLoadingPayments(true)
+    setPaymentShareError(null)
     try {
       const token = await getAccessToken()
       if (!token) return
@@ -460,7 +470,7 @@ export default function AdminPage() {
       setShareEmailByPayment((prev) => ({ ...prev, [paymentId]: '' }))
       alert('Condivisione salvata')
     } catch (error: any) {
-      alert(error.message || 'Errore nella condivisione')
+      setPaymentShareError(error.message || 'Errore nella condivisione')
     } finally {
       setLoadingPayments(false)
     }
@@ -972,6 +982,9 @@ export default function AdminPage() {
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] md:col-span-2"
                 />
               </div>
+              {paymentError && (
+                <p className="mt-3 text-sm text-red-500">{paymentError}</p>
+              )}
               <button
                 onClick={handleCreatePayment}
                 disabled={loadingPayments}
@@ -985,6 +998,9 @@ export default function AdminPage() {
               <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
             ) : payments.length > 0 ? (
               <div className="space-y-4">
+                {paymentShareError && (
+                  <p className="text-sm text-red-500">{paymentShareError}</p>
+                )}
                 {payments.map((payment) => (
                   <div
                     key={payment.id}
