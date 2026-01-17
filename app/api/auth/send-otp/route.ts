@@ -37,7 +37,15 @@ export async function POST(req: NextRequest) {
     if (RESEND_API_KEY) {
       try {
         // Usa email mittente configurata (consigliato: dominio verificato su Resend)
-        const fromEmail = RESEND_FROM_EMAIL || 'onboarding@resend.dev'
+        const fromEmail =
+          RESEND_FROM_EMAIL || (process.env.NODE_ENV === 'development' ? 'onboarding@resend.dev' : null)
+
+        if (!fromEmail) {
+          return NextResponse.json(
+            { error: 'RESEND_FROM_EMAIL non configurato. Imposta un mittente con dominio verificato su Resend.' },
+            { status: 500 }
+          )
+        }
         
         const emailData = {
           from: `FacevoiceAI <${fromEmail}>`,
@@ -80,10 +88,11 @@ export async function POST(req: NextRequest) {
             statusText: response.statusText,
             data: responseData,
           })
-          return NextResponse.json(
-            { error: responseData.message || 'Errore nell\'invio dell\'email' },
-            { status: response.status }
-          )
+          const errorMessage =
+            response.status === 403
+              ? 'Resend: dominio mittente non verificato oppure il piano consente solo email di test. Verifica il dominio e imposta RESEND_FROM_EMAIL.'
+              : responseData.message || 'Errore nell\'invio dell\'email'
+          return NextResponse.json({ error: errorMessage }, { status: response.status })
         } else {
           console.log('OTP email sent successfully:', {
             to: email,
