@@ -69,13 +69,52 @@ export async function GET(
       )
     }
 
+    if (!allPosts || allPosts.length === 0) {
+      return NextResponse.json(
+        { error: 'Nessun post trovato' },
+        { status: 404 }
+      )
+    }
+
     // Cerca il post che corrisponde allo slug (per titolo convertito o campo slug se esiste)
-    const post = allPosts?.find((p: any) => {
-      const postSlug = p.slug || generateSlug(p.title)
-      return postSlug === id
+    const post = allPosts.find((p: any) => {
+      // Se esiste un campo slug, usalo
+      if (p.slug) {
+        return p.slug === id
+      }
+      // Altrimenti genera slug dal titolo
+      const postSlug = generateSlug(p.title || '')
+      const normalizedId = id.toLowerCase().trim()
+      const normalizedSlug = postSlug.toLowerCase().trim()
+      
+      // Match esatto o match parziale (per gestire variazioni)
+      return normalizedSlug === normalizedId || 
+             normalizedSlug.includes(normalizedId) || 
+             normalizedId.includes(normalizedSlug)
     })
 
+    // Se non trova con match parziale, prova match esatto
     if (!post) {
+      const exactMatch = allPosts.find((p: any) => {
+        const postSlug = p.slug || generateSlug(p.title || '')
+        return postSlug.toLowerCase().trim() === id.toLowerCase().trim()
+      })
+      
+      if (exactMatch) {
+        return NextResponse.json({ post: exactMatch })
+      }
+    }
+
+    if (!post) {
+      // Log per debug (solo in sviluppo)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Slug cercato:', id)
+        console.log('Slug disponibili:', allPosts.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          slug: p.slug || generateSlug(p.title || '')
+        })))
+      }
       return NextResponse.json(
         { error: 'Post non trovato' },
         { status: 404 }
