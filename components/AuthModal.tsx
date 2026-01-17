@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import { X, Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 
-type AuthMode = 'signin' | 'signup' | 'reset'
+type AuthMode = 'signin' | 'signup' | 'reset' | 'verify'
 
 interface AuthModalProps {
   isOpen: boolean
