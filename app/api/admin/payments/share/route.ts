@@ -34,14 +34,34 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { data, error } = await supabaseAdmin
+    // Verifica se la condivisione esiste già
+    const { data: existing } = await supabaseAdmin
       .from('payment_shares')
-      .insert({
-        payment_id,
-        shared_with_email: shared_with_email.trim().toLowerCase(),
-      })
-      .select()
+      .select('id')
+      .eq('payment_id', payment_id)
+      .eq('shared_with_email', shared_with_email.trim().toLowerCase())
       .single()
+
+    let shareData
+    if (existing) {
+      // Se esiste già, restituisci quella esistente
+      shareData = existing
+    } else {
+      // Se non esiste, crea nuova condivisione
+      const { data, error } = await supabaseAdmin
+        .from('payment_shares')
+        .insert({
+          payment_id,
+          shared_with_email: shared_with_email.trim().toLowerCase(),
+        })
+        .select()
+        .single()
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+      shareData = data
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -88,21 +108,28 @@ export async function POST(req: NextRequest) {
       </div>
     `
 
-    await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: `FacevoiceAI <${RESEND_FROM_EMAIL}>`,
-        to: shared_with_email.trim().toLowerCase(),
-        subject,
-        html,
-      }),
-    })
+    // Invia email solo se non esisteva già (nuova condivisione)
+    if (!existing && RESEND_API_KEY && RESEND_FROM_EMAIL) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: `FacevoiceAI <${RESEND_FROM_EMAIL}>`,
+            to: shared_with_email.trim().toLowerCase(),
+            subject,
+            html,
+          }),
+        })
+      } catch (emailError) {
+        console.error('Error sending share email:', emailError)
+      }
+    }
 
-    return NextResponse.json({ share: data })
+    return NextResponse.json({ share: shareData, alreadyShared: !!existing })
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || 'Errore nella condivisione' },
