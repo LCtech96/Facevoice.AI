@@ -78,9 +78,11 @@ export async function GET(
 
     // Cerca il post che corrisponde allo slug
     // Prima cerca per campo slug (più veloce e preciso)
+    const normalizedId = id.toLowerCase().trim()
+    
     const postBySlug = allPosts.find((p: any) => {
       if (p.slug) {
-        return p.slug.toLowerCase().trim() === id.toLowerCase().trim()
+        return p.slug.toLowerCase().trim() === normalizedId
       }
       return false
     })
@@ -92,23 +94,39 @@ export async function GET(
     // Se non trova per slug, cerca per slug generato dal titolo (fallback)
     const post = allPosts.find((p: any) => {
       const postSlug = generateSlug(p.title || '')
-      return postSlug.toLowerCase().trim() === id.toLowerCase().trim()
+      return postSlug.toLowerCase().trim() === normalizedId
     })
 
-    if (!post) {
-      // Log per debug
-      console.log('Slug cercato:', id)
-      console.log('Post disponibili:', allPosts.map((p: any) => ({
-        id: p.id,
-        title: p.title,
-        slug: p.slug || generateSlug(p.title || '')
-      })))
-      
-      return NextResponse.json(
-        { error: 'Post non trovato' },
-        { status: 404 }
-      )
+    if (post) {
+      return NextResponse.json({ post })
     }
+
+    // Log dettagliato per debug
+    console.error('❌ Post non trovato per slug:', normalizedId)
+    console.log('📋 Post disponibili nel database:')
+    allPosts.forEach((p: any) => {
+      const postSlug = p.slug || generateSlug(p.title || '')
+      console.log(`  - ID: ${p.id}`)
+      console.log(`    Titolo: ${p.title}`)
+      console.log(`    Slug DB: ${p.slug || '(non presente)'}`)
+      console.log(`    Slug generato: ${postSlug}`)
+      console.log(`    Match: ${postSlug.toLowerCase().trim() === normalizedId ? '✅' : '❌'}`)
+    })
+    
+    return NextResponse.json(
+      { 
+        error: 'Post non trovato',
+        debug: {
+          searchedSlug: normalizedId,
+          availablePosts: allPosts.map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            slug: p.slug || generateSlug(p.title || '')
+          }))
+        }
+      },
+      { status: 404 }
+    )
 
     return NextResponse.json({ post })
   } catch (error: any) {
