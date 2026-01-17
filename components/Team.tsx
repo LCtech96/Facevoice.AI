@@ -222,7 +222,11 @@ export default function Team() {
           // Usa fallback in caso di errore
           setTeamMembers(FALLBACK_TEAM_MEMBERS)
         } else if (data && data.length > 0) {
-          setTeamMembers(data)
+          // Deduplica i membri del team per ID (evita duplicati)
+          const uniqueMembers = Array.from(
+            new Map(data.map((member: TeamMember) => [member.id, member])).values()
+          )
+          setTeamMembers(uniqueMembers)
         } else {
           // Se non ci sono membri, prova a inserirli automaticamente
           if (!insertingRef.current) {
@@ -279,7 +283,11 @@ export default function Team() {
           .order('id', { ascending: true })
         
         if (!error && data) {
-          setTeamMembers(data)
+          // Deduplica i membri del team per ID (evita duplicati)
+          const uniqueMembers = Array.from(
+            new Map(data.map((member: TeamMember) => [member.id, member])).values()
+          )
+          setTeamMembers(uniqueMembers)
         }
       } else {
         const error = await response.json()
