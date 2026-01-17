@@ -67,6 +67,9 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+-- Rimuovi il trigger se esiste (per evitare errori)
+DROP TRIGGER IF EXISTS update_team_members_updated_at ON team_members;
+
 CREATE TRIGGER update_team_members_updated_at BEFORE UPDATE ON team_members
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
