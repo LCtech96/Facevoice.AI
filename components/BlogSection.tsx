@@ -16,6 +16,7 @@ interface BlogPost {
   image_url?: string
   author: string
   created_at: string
+  slug?: string
 }
 
 export default function BlogSection({ user }: { user: User | null }) {
@@ -250,8 +251,11 @@ export default function BlogSection({ user }: { user: User | null }) {
             {isAdmin && <p className="text-sm mt-2">{t('blog.createFirst')}</p>}
           </div>
         ) : (
-          posts.map((post) => (
-            <Link key={post.id} href={`/blog/${post.id}`}>
+          posts.map((post) => {
+            // Usa lo slug se disponibile, altrimenti usa l'ID
+            const postUrl = post.slug ? `/blog/${post.slug}` : `/blog/${post.id}`
+            return (
+            <Link key={post.id} href={postUrl}>
               <motion.article
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -289,7 +293,8 @@ export default function BlogSection({ user }: { user: User | null }) {
                 </div>
               </motion.article>
             </Link>
-          ))
+            )
+          })
         )}
       </div>
     </div>
