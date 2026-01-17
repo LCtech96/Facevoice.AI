@@ -6,6 +6,22 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
+// Funzione per verificare se una stringa è un UUID
+function isUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str)
+}
+
+// Funzione helper per generare slug da titolo
+function generateSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // rimuove accenti
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -13,28 +29,60 @@ export async function GET(
   try {
     const { id } = await params
     
-    const { data, error } = await supabase
+    // Se è un UUID, cerca per ID
+    if (isUUID(id)) {
+      const { data, error } = await supabase
+        .from('blog_posts')
+        .select('*')
+        .eq('id', id)
+        .single()
+
+      if (error) {
+        console.error('Error fetching post:', error)
+        return NextResponse.json(
+          { error: 'Post non trovato' },
+          { status: 404 }
+        )
+      }
+
+      if (!data) {
+        return NextResponse.json(
+          { error: 'Post non trovato' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json({ post: data })
+    }
+    
+    // Altrimenti è uno slug, cerca per slug
+    const { data: allPosts, error } = await supabase
       .from('blog_posts')
       .select('*')
-      .eq('id', id)
-      .single()
+      .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('Error fetching post:', error)
+      console.error('Error fetching posts:', error)
+      return NextResponse.json(
+        { error: 'Errore nel recuperare i post' },
+        { status: 500 }
+      )
+    }
+
+    // Cerca il post che corrisponde allo slug (per titolo convertito o campo slug se esiste)
+    const post = allPosts?.find((p: any) => {
+      const postSlug = p.slug || generateSlug(p.title)
+      return postSlug === id
+    })
+
+    if (!post) {
       return NextResponse.json(
         { error: 'Post non trovato' },
         { status: 404 }
       )
     }
 
-    if (!data) {
-      return NextResponse.json(
-        { error: 'Post non trovato' },
-        { status: 404 }
-      )
-    }
-
-    return NextResponse.json({ post: data })
+    return NextResponse.json({ post })
   } catch (error: any) {
     console.error('Error in GET /api/blog/posts/[id]:', error)
     return NextResponse.json(

@@ -61,6 +61,7 @@ export default function BlogPostPage() {
       }
 
       try {
+        // L'API ora supporta sia ID (UUID) che slug
         const response = await fetch(`/api/blog/posts/${params.id}`)
         
         if (!response.ok) {
