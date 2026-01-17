@@ -280,11 +280,13 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
             <h2 className="text-2xl font-bold text-coral-red mb-2">
               {googleOnly ? 'Accedi con Google' : mode === 'signin' && 'Accedi'}
               {!googleOnly && mode === 'signup' && 'Registrati'}
+              {!googleOnly && mode === 'verify' && 'Verifica Email'}
               {!googleOnly && mode === 'reset' && 'Recupera Password'}
             </h2>
             <p className="text-sm text-coral-red/70">
               {googleOnly ? 'Accedi con Google per utilizzare la Chat AI' : mode === 'signin' && 'Accedi per utilizzare la Chat AI'}
               {!googleOnly && mode === 'signup' && 'Crea un account per iniziare'}
+              {!googleOnly && mode === 'verify' && `Inserisci il codice inviato a ${email}`}
               {!googleOnly && mode === 'reset' && 'Inserisci la tua email per ricevere il link di recupero'}
             </p>
           </div>
