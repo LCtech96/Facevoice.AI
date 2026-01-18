@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface Payment {
   id: string
@@ -23,6 +24,7 @@ interface Payment {
 export default function PaymentsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { t } = useTranslation()
   const supabase = createClient()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
@@ -86,11 +88,11 @@ export default function PaymentsPage() {
       <div className="pt-20 md:pt-24">
         <div className="container mx-auto px-4 py-8 max-w-5xl">
           <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-6">
-            Pagamenti
+            {t('payments.title')}
           </h1>
 
           {loading && (
-            <div className="text-[var(--text-secondary)]">Caricamento...</div>
+            <div className="text-[var(--text-secondary)]">{t('payments.loading')}</div>
           )}
 
           {error && (
@@ -101,7 +103,7 @@ export default function PaymentsPage() {
 
           {!loading && !error && payments.length === 0 && (
             <div className="text-[var(--text-secondary)]">
-              Nessun pagamento disponibile.
+              {t('payments.noPayments')}
             </div>
           )}
 
@@ -123,16 +125,16 @@ export default function PaymentsPage() {
                   </div>
                   {(payment.client_name || payment.sale_reference) && (
                     <p className="text-sm text-[var(--text-secondary)] mb-2">
-                      {payment.client_name && `Cliente: ${payment.client_name}`}
-                      {payment.client_name && payment.sale_reference ? ' · ' : ''}
-                      {payment.sale_reference && `Vendita: ${payment.sale_reference}`}
+                        {payment.client_name && `${t('payments.client')}: ${payment.client_name}`}
+                        {payment.client_name && payment.sale_reference ? ' · ' : ''}
+                        {payment.sale_reference && `${t('payments.sale')}: ${payment.sale_reference}`}
                     </p>
                   )}
                   <p className="text-sm text-[var(--text-secondary)] mb-2">
-                    Scadenza: {payment.due_date}
+                    {t('payments.dueDate')}: {payment.due_date}
                   </p>
                   <p className="text-sm text-[var(--text-secondary)] mb-2">
-                    Inserito: {payment.entry_date} {payment.entry_time}
+                    {t('payments.entryDate')}: {payment.entry_date} {payment.entry_time}
                   </p>
                   {payment.note && (
                     <p className="text-[var(--text-primary)]">{payment.note}</p>

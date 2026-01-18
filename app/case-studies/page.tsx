@@ -7,8 +7,10 @@ import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import SEOHead from '@/components/SEO/SEOHead'
 import SemanticContent from '@/components/SEO/SemanticContent'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 export default function CaseStudiesPage() {
+  const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
@@ -34,7 +36,7 @@ export default function CaseStudiesPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <div className="text-[var(--text-secondary)]">Caricamento...</div>
+        <div className="text-[var(--text-secondary)]">{t('common.loading')}</div>
       </main>
     )
   }

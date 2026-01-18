@@ -12,7 +12,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-      <div className="text-[var(--text-secondary)]">Loading...</div>
+      <div className="text-[var(--text-secondary)]">{'Loading...'}</div>
     </main>
   )
 }

@@ -7,6 +7,7 @@ import { Shield, Check, X, MessageCircle, FileText, RefreshCw, Calendar, Mail, P
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface PendingComment {
   id: string
@@ -64,6 +65,7 @@ interface UserSummary {
 
 export default function AdminPage() {
   const router = useRouter()
+  const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [toolComments, setToolComments] = useState<PendingComment[]>([])
@@ -578,7 +580,7 @@ export default function AdminPage() {
               className="mb-8"
             >
               <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-4">
-                Commenti AI Tools ({toolComments.length})
+                {t('admin.pendingComments')} ({toolComments.length})
               </h2>
               <div className="space-y-4">
                 {toolComments.map((comment) => (
@@ -604,14 +606,14 @@ export default function AdminPage() {
                         <button
                           onClick={() => handleApproveToolComment(comment.id)}
                           className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-600 rounded-lg transition-colors"
-                          title="Approva"
+                          title={t('admin.approve')}
                         >
                           <Check className="w-5 h-5" />
                         </button>
                         <button
                           onClick={() => handleRejectToolComment(comment.id)}
                           className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
-                          title="Rifiuta"
+                          title={t('admin.reject')}
                         >
                           <X className="w-5 h-5" />
                         </button>
@@ -656,14 +658,14 @@ export default function AdminPage() {
                         <button
                           onClick={() => handleApproveCaseComment(comment.id)}
                           className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-600 rounded-lg transition-colors"
-                          title="Approva"
+                          title={t('admin.approve')}
                         >
                           <Check className="w-5 h-5" />
                         </button>
                         <button
                           onClick={() => handleRejectCaseComment(comment.id)}
                           className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
-                          title="Rifiuta"
+                          title={t('admin.reject')}
                         >
                           <X className="w-5 h-5" />
                         </button>
@@ -678,7 +680,7 @@ export default function AdminPage() {
           {totalPending === 0 && toolComments.length === 0 && caseComments.length === 0 && (
             <div className="text-center py-12">
               <Shield className="w-16 h-16 text-[var(--text-secondary)] mx-auto mb-4 opacity-50" />
-              <p className="text-xl text-[var(--text-primary)] mb-2">Nessun commento in sospeso</p>
+              <p className="text-xl text-[var(--text-primary)] mb-2">{t('admin.noPendingComments')}</p>
               <p className="text-[var(--text-secondary)]">Tutti i commenti sono stati gestiti!</p>
             </div>
           )}
@@ -692,7 +694,7 @@ export default function AdminPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Calendar className="w-6 h-6" />
-                Prenotazioni ({bookings.length})
+                {t('admin.bookings')} ({bookings.length})
               </h2>
               <div className="flex gap-2">
                 {['all', 'pending', 'contacted', 'completed', 'cancelled'].map((status) => (
@@ -705,7 +707,7 @@ export default function AdminPage() {
                         : 'bg-[var(--card-background)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]'
                     }`}
                   >
-                    {status === 'all' ? 'Tutte' : status === 'pending' ? 'In attesa' : status === 'contacted' ? 'Contattate' : status === 'completed' ? 'Completate' : 'Cancellate'}
+                    {status === 'all' ? t('admin.allBookings') : status === 'pending' ? t('admin.pendingBookings') : status === 'contacted' ? t('admin.contactedBookings') : status === 'completed' ? t('admin.completedBookings') : t('admin.cancelledBookings')}
                   </button>
                 ))}
               </div>
@@ -713,7 +715,7 @@ export default function AdminPage() {
             {loadingBookings ? (
               <div className="text-center py-12">
                 <RefreshCw className="w-8 h-8 text-[var(--accent-blue)] mx-auto mb-4 animate-spin" />
-                <p className="text-[var(--text-secondary)]">Caricamento prenotazioni...</p>
+                <p className="text-[var(--text-secondary)]">{t('common.loading')}</p>
               </div>
             ) : bookings.length > 0 ? (
               <div className="space-y-4">
@@ -732,9 +734,9 @@ export default function AdminPage() {
                             booking.status === 'completed' ? 'bg-green-500/20 text-green-600' :
                             'bg-red-500/20 text-red-600'
                           }`}>
-                            {booking.status === 'pending' ? 'In attesa' : 
-                             booking.status === 'contacted' ? 'Contattata' : 
-                             booking.status === 'completed' ? 'Completata' : 'Cancellata'}
+                            {booking.status === 'pending' ? t('admin.pendingBookings') : 
+                             booking.status === 'contacted' ? t('admin.contactedBookings') : 
+                             booking.status === 'completed' ? t('admin.completedBookings') : t('admin.cancelledBookings')}
                           </span>
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-sm text-[var(--text-secondary)] mb-3">
@@ -752,7 +754,7 @@ export default function AdminPage() {
                           </div>
                         </div>
                         <div className="bg-[var(--background-secondary)] rounded-lg p-4">
-                          <p className="text-sm font-semibold text-[var(--text-primary)] mb-2">Motivo del booking:</p>
+                          <p className="text-sm font-semibold text-[var(--text-primary)] mb-2">{t('admin.serviceLabel')}:</p>
                           <p className="text-[var(--text-secondary)] leading-relaxed">{booking.service}</p>
                         </div>
                       </div>
@@ -827,14 +829,14 @@ export default function AdminPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <MessageCircle className="w-6 h-6" />
-                Conoscenza AI
+                {t('admin.aiKnowledge')}
               </h2>
               <button
                 onClick={() => setShowKnowledgeForm((prev) => !prev)}
                 className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                Conoscenza AI
+                {t('admin.aiKnowledge')}
               </button>
             </div>
 
@@ -845,13 +847,13 @@ export default function AdminPage() {
                     type="text"
                     value={knowledgeTitle}
                     onChange={(e) => setKnowledgeTitle(e.target.value)}
-                    placeholder="Titolo"
+                    placeholder={t('admin.knowledgeTitle')}
                     className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                   />
                   <textarea
                     value={knowledgeContent}
                     onChange={(e) => setKnowledgeContent(e.target.value)}
-                    placeholder="Inserisci informazioni ufficiali"
+                    placeholder={t('admin.knowledgeContent')}
                     rows={4}
                     className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                   />
@@ -860,14 +862,14 @@ export default function AdminPage() {
                     disabled={loadingKnowledge}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
                   >
-                    Salva
+                    {t('common.save')}
                   </button>
                 </div>
               </div>
             )}
 
             {loadingKnowledge ? (
-              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+              <div className="text-center py-8 text-[var(--text-secondary)]">{t('common.loading')}</div>
             ) : knowledgeItems.length > 0 ? (
               <div className="space-y-4">
                 {knowledgeItems.map((item) => (
@@ -888,7 +890,7 @@ export default function AdminPage() {
                       <button
                         onClick={() => handleDeleteKnowledge(item.id)}
                         className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
-                        title="Elimina"
+                        title={t('common.delete')}
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
@@ -897,7 +899,7 @@ export default function AdminPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-[var(--text-secondary)]">Nessuna conoscenza inserita.</div>
+              <div className="text-[var(--text-secondary)]">{t('admin.noKnowledge')}</div>
             )}
           </motion.div>
 
@@ -910,7 +912,7 @@ export default function AdminPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Wallet className="w-6 h-6" />
-                Pagamenti Collaboratori
+                {t('admin.payments')}
               </h2>
             </div>
 
@@ -920,14 +922,14 @@ export default function AdminPage() {
                   type="text"
                   value={paymentForm.collaborator_name}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, collaborator_name: e.target.value }))}
-                  placeholder="Collaboratore"
+                  placeholder={t('common.collaborator')}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                 />
                 <input
                   type="email"
                   value={paymentForm.collaborator_email}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, collaborator_email: e.target.value }))}
-                  placeholder="Email collaboratore"
+                  placeholder={t('common.collaboratorEmail')}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                   required
                 />
@@ -935,21 +937,21 @@ export default function AdminPage() {
                   type="text"
                   value={paymentForm.client_name}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, client_name: e.target.value }))}
-                  placeholder="Cliente"
+                  placeholder={t('common.client')}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                 />
                 <input
                   type="text"
                   value={paymentForm.sale_reference}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, sale_reference: e.target.value }))}
-                  placeholder="Vendita"
+                  placeholder={t('common.sale')}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                 />
                 <input
                   type="number"
                   value={paymentForm.amount}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  placeholder="Cifra"
+                  placeholder={t('common.amount')}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                   required
                 />
@@ -977,7 +979,7 @@ export default function AdminPage() {
                 <textarea
                   value={paymentForm.note}
                   onChange={(e) => setPaymentForm((prev) => ({ ...prev, note: e.target.value }))}
-                  placeholder="Descrizione"
+                  placeholder={t('common.description')}
                   rows={2}
                   className="w-full px-4 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] md:col-span-2"
                 />
@@ -990,12 +992,12 @@ export default function AdminPage() {
                 disabled={loadingPayments}
                 className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
-                Salva pagamento
+                {t('admin.savePayment')}
               </button>
             </div>
 
             {loadingPayments ? (
-              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+              <div className="text-center py-8 text-[var(--text-secondary)]">{t('common.loading')}</div>
             ) : payments.length > 0 ? (
               <div className="space-y-4">
                 {paymentShareError && (
@@ -1016,16 +1018,16 @@ export default function AdminPage() {
                         </p>
                         {(payment.client_name || payment.sale_reference) && (
                           <p className="text-sm text-[var(--text-secondary)] mb-2">
-                            {payment.client_name && `Cliente: ${payment.client_name}`}
+                            {payment.client_name && `${t('common.client')}: ${payment.client_name}`}
                             {payment.client_name && payment.sale_reference ? ' · ' : ''}
-                            {payment.sale_reference && `Vendita: ${payment.sale_reference}`}
+                            {payment.sale_reference && `${t('common.sale')}: ${payment.sale_reference}`}
                           </p>
                         )}
                         <p className="text-[var(--accent-blue)] font-bold mb-2">
                           {Number(payment.amount).toFixed(2)} {payment.currency}
                         </p>
                         <p className="text-sm text-[var(--text-secondary)]">
-                          Inserito: {payment.entry_date} {payment.entry_time} · Scadenza: {payment.due_date}
+                          {t('common.date')}: {payment.entry_date} {payment.entry_time} · {t('common.dueDate')}: {payment.due_date}
                         </p>
                         {payment.note && (
                           <p className="text-[var(--text-secondary)] mt-2">{payment.note}</p>
@@ -1040,21 +1042,21 @@ export default function AdminPage() {
                                 [payment.id]: e.target.value,
                               }))
                             }
-                            placeholder="Condividi con (email)"
+                            placeholder={t('admin.shareWith')}
                             className="w-full sm:max-w-xs px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)]"
                           />
                           <button
                             onClick={() => handleSharePayment(payment.id)}
                             className="px-3 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90"
                           >
-                            Condividi
+                            {t('common.share')}
                           </button>
                         </div>
                       </div>
                       <button
                         onClick={() => handleDeletePayment(payment.id)}
                         className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-600 rounded-lg transition-colors"
-                        title="Elimina"
+                        title={t('common.delete')}
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
@@ -1063,7 +1065,7 @@ export default function AdminPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-[var(--text-secondary)]">Nessun pagamento inserito.</div>
+              <div className="text-[var(--text-secondary)]">{t('admin.noPayments')}</div>
             )}
           </motion.div>
 
@@ -1076,12 +1078,12 @@ export default function AdminPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Users className="w-6 h-6" />
-                Utenti Registrati ({users.length})
+                {t('admin.users')} ({users.length})
               </h2>
             </div>
 
             {loadingUsers ? (
-              <div className="text-center py-8 text-[var(--text-secondary)]">Caricamento...</div>
+              <div className="text-center py-8 text-[var(--text-secondary)]">{t('common.loading')}</div>
             ) : users.length > 0 ? (
               <div className="space-y-3">
                 {users.map((item) => (
@@ -1091,14 +1093,14 @@ export default function AdminPage() {
                   >
                     <p className="text-[var(--text-primary)] font-medium">{item.email}</p>
                     <p className="text-xs text-[var(--text-secondary)]">
-                      Creato: {new Date(item.created_at).toLocaleString('it-IT')} · Ultimo accesso:{' '}
-                      {item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('it-IT') : 'mai'}
+                      {t('admin.created')}: {new Date(item.created_at).toLocaleString('it-IT')} · {t('admin.lastAccess')}:{' '}
+                      {item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('it-IT') : t('admin.never')}
                     </p>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-[var(--text-secondary)]">Nessun utente trovato.</div>
+              <div className="text-[var(--text-secondary)]">{t('admin.noUsers')}</div>
             )}
           </motion.div>
         </div>

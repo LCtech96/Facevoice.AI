@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { X, Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 type AuthMode = 'signin' | 'signup' | 'reset' | 'verify'
 
@@ -15,6 +16,7 @@ interface AuthModalProps {
 }
 
 export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = false }: AuthModalProps) {
+  const { t } = useTranslation()
   const [mode, setMode] = useState<AuthMode>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
