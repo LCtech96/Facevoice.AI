@@ -58,7 +58,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
         onClose()
       }
     } catch (err: any) {
-      setError(err.message || 'Errore durante il login')
+      setError(err.message || t('auth.loginError'))
     } finally {
       setLoading(false)
     }
@@ -71,19 +71,19 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
     setMessage(null)
 
     if (!email || !email.includes('@')) {
-      setError('Inserisci un indirizzo email valido')
+      setError(t('auth.invalidEmail'))
       setLoading(false)
       return
     }
 
     if (password !== confirmPassword) {
-      setError('Le password non corrispondono')
+      setError(t('auth.passwordMismatch'))
       setLoading(false)
       return
     }
 
     if (password.length < 6) {
-      setError('La password deve essere di almeno 6 caratteri')
+      setError(t('auth.passwordTooShort'))
       setLoading(false)
       return
     }
@@ -111,14 +111,14 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
       const otpData = await response.json()
 
       if (!response.ok) {
-        throw new Error(otpData.error || 'Errore nell\'invio del codice di verifica')
+        throw new Error(otpData.error || t('auth.signupError'))
       }
 
-      setMessage('Registrazione completata! Controlla la tua email per il codice di verifica.')
+      setMessage(t('auth.registrationComplete'))
       setMode('verify')
       setTimeout(() => setMessage(null), 5000)
     } catch (err: any) {
-      setError(err.message || 'Errore durante la registrazione')
+      setError(err.message || t('auth.signupError'))
     } finally {
       setLoading(false)
     }
@@ -131,7 +131,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
     setMessage(null)
 
     if (!verificationCode || verificationCode.length !== 6) {
-      setError('Inserisci un codice di 6 cifre')
+      setError(t('auth.codeLength'))
       setLoading(false)
       return
     }
@@ -146,7 +146,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Codice non valido')
+        throw new Error(data.error || t('auth.invalidCode'))
       }
 
       // Dopo la verifica, accedi con la password (recuperata dalla risposta se presente, altrimenti usa quella salvata)
@@ -158,16 +158,16 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
       })
 
       if (signInError) {
-        throw new Error('Errore nell\'accesso. Riprova a fare login manualmente.')
+        throw new Error(t('auth.loginError'))
       }
 
-      setMessage('Email verificata e accesso completato!')
+      setMessage(t('auth.registrationComplete'))
       setTimeout(() => {
         onSuccess()
         onClose()
       }, 1500)
     } catch (err: any) {
-      setError(err.message || 'Codice non valido. Riprova.')
+      setError(err.message || t('auth.invalidCode'))
       setVerificationCode('')
     } finally {
       setLoading(false)
@@ -192,7 +192,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
         throw new Error(data.error || 'Errore nell\'invio del codice')
       }
 
-      setMessage('Codice di verifica inviato! Controlla la tua email.')
+      setMessage(t('auth.codeSent'))
       setTimeout(() => setMessage(null), 5000)
     } catch (err: any) {
       setError(err.message || 'Errore nell\'invio del codice')
@@ -280,16 +280,16 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
 
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-coral-red mb-2">
-              {googleOnly ? 'Accedi con Google' : mode === 'signin' && 'Accedi'}
-              {!googleOnly && mode === 'signup' && 'Registrati'}
-              {!googleOnly && mode === 'verify' && 'Verifica Email'}
-              {!googleOnly && mode === 'reset' && 'Recupera Password'}
+              {googleOnly ? t('auth.signIn') : mode === 'signin' && t('auth.signIn')}
+              {!googleOnly && mode === 'signup' && t('auth.signUp')}
+              {!googleOnly && mode === 'verify' && t('auth.verifyEmail')}
+              {!googleOnly && mode === 'reset' && t('auth.resetPassword')}
             </h2>
             <p className="text-sm text-coral-red/70">
-              {googleOnly ? 'Accedi con Google per utilizzare la Chat AI' : mode === 'signin' && 'Accedi per utilizzare la Chat AI'}
-              {!googleOnly && mode === 'signup' && 'Crea un account per iniziare'}
-              {!googleOnly && mode === 'verify' && `Inserisci il codice inviato a ${email}`}
-              {!googleOnly && mode === 'reset' && 'Inserisci la tua email per ricevere il link di recupero'}
+              {googleOnly ? t('auth.signIn') : mode === 'signin' && t('auth.signIn')}
+              {!googleOnly && mode === 'signup' && t('auth.signUp')}
+              {!googleOnly && mode === 'verify' && t('auth.enterCode')}
+              {!googleOnly && mode === 'reset' && t('auth.resetPassword')}
             </p>
           </div>
 
@@ -360,7 +360,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                 <form onSubmit={handleFormSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-coral-red/70 mb-2">
-                  Email
+                  {t('auth.email')}
                 </label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-coral-red/50" />
@@ -378,7 +378,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
               {mode === 'verify' && (
                 <div>
                   <label className="block text-sm font-medium text-coral-red/70 mb-2">
-                    Codice di Verifica
+                    {t('auth.verificationCode')}
                   </label>
                   <div className="relative">
                     <input
@@ -397,7 +397,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                     disabled={loading}
                     className="mt-2 text-sm text-coral-red/70 hover:text-coral-red transition-colors"
                   >
-                    Non hai ricevuto il codice? Invia nuovamente
+                    {t('auth.resendCode')}
                   </button>
                 </div>
               )}
@@ -405,7 +405,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
               {mode !== 'reset' && mode !== 'verify' && (
                 <div>
                   <label className="block text-sm font-medium text-coral-red/70 mb-2">
-                    Password
+                    {t('auth.password')}
                   </label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-coral-red/50" />
@@ -425,7 +425,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
               {mode === 'signup' && (
                 <div>
                   <label className="block text-sm font-medium text-coral-red/70 mb-2">
-                    Conferma Password
+                    {t('auth.confirmPassword')}
                   </label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-coral-red/50" />
@@ -476,7 +476,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, googleOnly = fal
                     onClick={() => setMode('reset')}
                     className="text-sm text-coral-red/70 hover:text-coral-red transition-colors"
                   >
-                    Password dimenticata?
+                    {t('auth.password')} dimenticata?
                   </button>
                   <p className="text-sm text-coral-red/50">
                     Non hai un account?{' '}
