@@ -6,6 +6,13 @@
 -- ============================================================================
 ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Users can view their own payments" ON public.payments;
+DROP POLICY IF EXISTS "Users can view shared payments" ON public.payments;
+DROP POLICY IF EXISTS "Authenticated users can insert payments" ON public.payments;
+DROP POLICY IF EXISTS "Authenticated users can update payments" ON public.payments;
+DROP POLICY IF EXISTS "Authenticated users can delete payments" ON public.payments;
+
 -- Policy: Users can SELECT payments where they are the collaborator
 CREATE POLICY "Users can view their own payments"
 ON public.payments
@@ -59,6 +66,12 @@ USING (
 -- 2. ENABLE RLS ON PAYMENT_SHARES TABLE
 -- ============================================================================
 ALTER TABLE public.payment_shares ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Users can view shares for their email" ON public.payment_shares;
+DROP POLICY IF EXISTS "Authenticated users can insert payment shares" ON public.payment_shares;
+DROP POLICY IF EXISTS "Authenticated users can update payment shares" ON public.payment_shares;
+DROP POLICY IF EXISTS "Authenticated users can delete payment shares" ON public.payment_shares;
 
 -- Policy: Users can SELECT payment_shares where they are the recipient
 CREATE POLICY "Users can view shares for their email"
