@@ -88,6 +88,7 @@ DROP POLICY IF EXISTS "Allow authenticated users to insert messages into shared_
 DROP POLICY IF EXISTS "Anyone can insert shared chat messages" ON public.shared_chat_messages;
 
 -- Create restrictive policy for authenticated users only
+-- Note: shared_chats are public, but we require authentication to insert messages
 CREATE POLICY "Authenticated users can insert messages into shared chats"
 ON public.shared_chat_messages
 FOR INSERT
@@ -97,10 +98,6 @@ WITH CHECK (
     SELECT 1
     FROM public.shared_chats
     WHERE shared_chats.id = shared_chat_messages.chat_id
-      AND (
-        shared_chats.created_by = auth.uid()::text
-        OR shared_chats.shared_with_email = LOWER(auth.jwt() ->> 'email')
-      )
   )
 );
 
@@ -122,16 +119,23 @@ WITH CHECK (
 );
 
 -- Create restrictive UPDATE policy
+-- Note: created_by is TEXT, so we compare with email or user_id
 CREATE POLICY "Users can update their own shared chats"
 ON public.shared_chats
 FOR UPDATE
 USING (
   auth.role() = 'authenticated'
-  AND created_by = auth.uid()::text
+  AND (
+    created_by = auth.uid()::text
+    OR created_by = LOWER(auth.jwt() ->> 'email')
+  )
 )
 WITH CHECK (
   auth.role() = 'authenticated'
-  AND created_by = auth.uid()::text
+  AND (
+    created_by = auth.uid()::text
+    OR created_by = LOWER(auth.jwt() ->> 'email')
+  )
 );
 
 -- ============================================================================
