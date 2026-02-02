@@ -25,10 +25,16 @@ export async function GET(
       .select('id')
       .eq('tool_id', id)
       .eq('user_id', userId)
-      .single()
+      .maybeSingle()
 
+    // Se c'è un errore (es. tabella non esiste), restituisci false
     if (error && error.code !== 'PGRST116') {
+      // Ignora errori 404 (tabella non trovata)
+      if (error.message?.includes('404') || error.code === '42P01') {
+        return NextResponse.json({ isLiked: false })
+      }
       console.error('Error checking like:', error)
+      return NextResponse.json({ isLiked: false })
     }
 
     return NextResponse.json({ isLiked: !!data })

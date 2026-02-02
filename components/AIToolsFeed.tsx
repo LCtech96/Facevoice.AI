@@ -42,14 +42,26 @@ export default function AIToolsFeed({ user }: AIToolsFeedProps) {
 
   const checkUserLike = async (toolId: string, userId: string): Promise<boolean> => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tool_likes')
         .select('id')
         .eq('tool_id', toolId)
         .eq('user_id', userId)
-        .single()
+        .maybeSingle()
+      
+      // Se c'è un errore o la tabella non esiste, restituisci false
+      if (error) {
+        // Ignora errori 404 (tabella non trovata) o PGRST116 (nessun risultato)
+        if (error.code === 'PGRST116' || error.message?.includes('404')) {
+          return false
+        }
+        console.error('Error checking like:', error)
+        return false
+      }
+      
       return !!data
-    } catch {
+    } catch (error) {
+      console.error('Error in checkUserLike:', error)
       return false
     }
   }
@@ -64,12 +76,18 @@ export default function AIToolsFeed({ user }: AIToolsFeedProps) {
     if (!tool) return
 
     try {
-      const { data: existing } = await supabase
+      const { data: existing, error: checkError } = await supabase
         .from('tool_likes')
         .select('id')
         .eq('tool_id', toolId)
         .eq('user_id', user.id)
-        .single()
+        .maybeSingle()
+      
+      // Se c'è un errore (es. tabella non esiste), ignora silenziosamente
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error checking existing like:', checkError)
+        return
+      }
 
       if (existing) {
         // Rimuovi like
