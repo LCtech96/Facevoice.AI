@@ -37,6 +37,8 @@ export default function EntertainmentPage() {
   const [submitting, setSubmitting] = useState(false)
   const supabase = createClient()
   const isFischietto = user?.email === 'umberto.fischietto@gmail.com'
+  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const canPublish = isFischietto || isAdmin
 
   useEffect(() => {
     checkUser()
@@ -128,9 +130,21 @@ export default function EntertainmentPage() {
         finalImageUrl = uploadData.imageUrl
       }
 
+      // Ottieni il token di autenticazione
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+
+      if (!accessToken) {
+        alert('Devi essere autenticato per pubblicare')
+        return
+      }
+
       const response = await fetch('/api/entertainment/posts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`
+        },
         body: JSON.stringify({
           title: title.trim(),
           content: content.trim(),
@@ -203,7 +217,7 @@ export default function EntertainmentPage() {
               </p>
             </div>
             <div className="flex-1 flex justify-end">
-              {isFischietto && (
+              {canPublish && (
                 <button
                   onClick={() => setShowForm(!showForm)}
                   className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2"
@@ -217,7 +231,7 @@ export default function EntertainmentPage() {
         </motion.div>
 
         {/* Form di pubblicazione */}
-        {isFischietto && showForm && (
+        {canPublish && showForm && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}

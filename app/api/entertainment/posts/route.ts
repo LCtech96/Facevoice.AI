@@ -6,6 +6,19 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const supabaseAuth = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
+const getAuthorizedUser = async (req: NextRequest) => {
+  const authHeader = req.headers.get('authorization')
+  if (!authHeader) return null
+  const token = authHeader.replace('Bearer ', '')
+  const { data } = await supabaseAuth.auth.getUser(token)
+  return data.user
+}
+
 // Funzione per generare slug da titolo
 function generateSlug(title: string): string {
   return title
@@ -55,11 +68,29 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    // Verifica autenticazione
+    const user = await getAuthorizedUser(req)
+    if (!user) {
+      return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+    }
+
+    // Verifica che l'utente sia autorizzato (Fischietto o Admin)
+    const userEmail = user.email?.toLowerCase()
+    const isFischietto = userEmail === 'umberto.fischietto@gmail.com'
+    const isAdmin = userEmail === 'luca@facevoice.ai'
+    
+    if (!isFischietto && !isAdmin) {
+      return NextResponse.json({ error: 'Non autorizzato a pubblicare' }, { status: 403 })
+    }
+
     const { title, content, image_url } = await req.json()
 
     if (!title || !content) {
       return NextResponse.json({ error: 'Titolo e contenuto obbligatori' }, { status: 400 })
     }
+
+    // Determina l'autore in base all'utente
+    const author = isFischietto ? 'Fischietto' : 'Facevoice.ai'
 
     // Genera slug dal titolo
     const baseSlug = generateSlug(title.trim())
@@ -71,7 +102,7 @@ export async function POST(req: NextRequest) {
         title: title.trim(),
         content: content.trim(),
         image_url: image_url?.trim() || null,
-        author: 'Fischietto',
+        author: author,
         slug: slug,
       })
       .select()
