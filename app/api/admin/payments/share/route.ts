@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
       return NextResponse.json({
-        share: data,
+        share: shareData,
         warning: 'RESEND_FROM_EMAIL o RESEND_API_KEY non configurato. Email non inviata.',
       })
     }
