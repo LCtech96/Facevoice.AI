@@ -112,7 +112,9 @@ export default function PaymentsPage() {
               {payments.map((payment) => (
                 <div
                   key={payment.id}
-                  ref={(el) => (paymentRefs.current[payment.id] = el)}
+                  ref={(el) => {
+                    paymentRefs.current[payment.id] = el
+                  }}
                   className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 transition-all"
                 >
                   <div className="flex items-center justify-between mb-2">
