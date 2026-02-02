@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Sparkles } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Sparkles, Menu, X } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -19,7 +19,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [showDropdownMenu, setShowDropdownMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const dropdownMenuRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
   
   // Check authentication status
@@ -40,22 +42,25 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
   }, [])
 
-  // Close menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setShowUserMenu(false)
       }
+      if (dropdownMenuRef.current && !dropdownMenuRef.current.contains(event.target as Node)) {
+        setShowDropdownMenu(false)
+      }
     }
 
-    if (showUserMenu) {
+    if (showUserMenu || showDropdownMenu) {
       document.addEventListener('mousedown', handleClickOutside)
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showUserMenu])
+  }, [showUserMenu, showDropdownMenu])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -66,24 +71,26 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const isAdmin = user?.email === 'luca@facevoice.ai'
   const { t } = useTranslation()
   
-  const navItems = [
+  // Nav bar principale (sempre visibile)
+  const mainNavItems = [
     { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
     { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
     { id: 'case-studies', label: t('nav.caseStudies'), icon: Star, href: '/case-studies' },
     { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
-    { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
-    // Mostra Chat e Pagamenti solo agli utenti autenticati
+    ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
+  ]
+
+  // Menu a tendina (bookings, payments, admin, entertainment)
+  const dropdownMenuItems = [
     ...(user ? [
-      { id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' },
+      { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
       { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
     ] : []),
-    // Mostra Admin solo per luca@facevoice.ai
+    { id: 'entertainment', label: t('nav.entertainment'), icon: Sparkles, href: '/intrattenimento' },
     ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
   ]
 
-  const mobileNavItems = navItems.filter((item) => item.id !== 'admin')
-
-  const handleNavClick = (item: typeof navItems[0]) => {
+  const handleNavClick = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0]) => {
     if (item.href.startsWith('/home#')) {
       // Navigate to home page and scroll to section
       if (pathname !== '/home') {
@@ -119,7 +126,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
   }
 
-  const isActive = (item: typeof navItems[0]) => {
+  const isActive = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0]) => {
     if (item.id === 'chat') {
       return pathname === '/ai-chat'
     }
@@ -147,9 +154,10 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     return pathname === '/home' && activeSection === item.id
   }
 
-  const handleItemClick = (item: typeof navItems[0], e: React.MouseEvent) => {
+  const handleItemClick = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0], e: React.MouseEvent) => {
     e.preventDefault()
     handleNavClick(item)
+    setShowDropdownMenu(false)
   }
 
   return (
@@ -168,7 +176,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             </motion.div>
             
             <div className="flex items-center gap-2">
-              {navItems.map((item) => {
+              {/* Main Navigation Items */}
+              {mainNavItems.map((item) => {
                 const Icon = item.icon
                 const active = isActive(item)
                 
@@ -190,20 +199,55 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 )
               })}
               
-              {/* Entertainment Button */}
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => router.push('/intrattenimento')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-sm font-medium ${
-                  pathname === '/intrattenimento' || pathname?.startsWith('/intrattenimento/')
-                    ? 'bg-[var(--accent-blue)] text-white'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
-                }`}
-              >
-                <Sparkles size={18} />
-                <span>{t('nav.entertainment')}</span>
-              </motion.button>
+              {/* Dropdown Menu */}
+              {dropdownMenuItems.length > 0 && (
+                <div className="relative ml-2" ref={dropdownMenuRef}>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setShowDropdownMenu(!showDropdownMenu)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-sm font-medium ${
+                      dropdownMenuItems.some(item => isActive(item))
+                        ? 'bg-[var(--accent-blue)] text-white'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
+                    }`}
+                  >
+                    <Menu size={18} />
+                    <span>{t('common.more') || 'Altro'}</span>
+                  </motion.button>
+                  
+                  <AnimatePresence>
+                    {showDropdownMenu && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute right-0 top-full mt-2 w-56 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
+                      >
+                        {dropdownMenuItems.map((item) => {
+                          const Icon = item.icon
+                          const active = isActive(item)
+                          
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={(e) => handleItemClick(item, e)}
+                              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+                                active
+                                  ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                                  : 'text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
+                              }`}
+                            >
+                              <Icon size={18} />
+                              <span className="text-sm font-medium">{item.label}</span>
+                            </button>
+                          )
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
               
               {/* Language Selector */}
               <div className="ml-2">
@@ -283,6 +327,54 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
           
           <div className="flex items-center gap-2">
             <LanguageSelector />
+            
+            {/* Dropdown Menu Mobile */}
+            {dropdownMenuItems.length > 0 && (
+              <div className="relative" ref={dropdownMenuRef}>
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => setShowDropdownMenu(!showDropdownMenu)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                    dropdownMenuItems.some(item => isActive(item))
+                      ? 'bg-[var(--accent-blue)] text-white border-[var(--accent-blue)]'
+                      : 'bg-[var(--background-secondary)] text-[var(--text-primary)] border-[var(--border-color)]'
+                  }`}
+                >
+                  <Menu size={16} />
+                </motion.button>
+                
+                <AnimatePresence>
+                  {showDropdownMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 top-full mt-2 w-48 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
+                    >
+                      {dropdownMenuItems.map((item) => {
+                        const Icon = item.icon
+                        const active = isActive(item)
+                        
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={(e) => handleItemClick(item, e)}
+                            className={`w-full flex items-center gap-2 px-4 py-2.5 text-left transition-colors text-xs ${
+                              active
+                                ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                                : 'text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
+                            }`}
+                          >
+                            <Icon size={16} />
+                            <span>{item.label}</span>
+                          </button>
+                        )
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </div>
           
           {!user ? (
@@ -343,23 +435,13 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             </div>
           )}
 
-          {isAdmin && (
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => router.push('/admin')}
-              className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-yellow-500/20 text-yellow-600 text-xs font-medium border border-yellow-500/30"
-            >
-              <Shield size={16} />
-              <span>{t('nav.admin')}</span>
-            </motion.button>
-          )}
         </div>
       </nav>
 
       {/* Mobile Navigation - Bottom */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom">
         <div className="flex items-center justify-around px-2 py-2">
-          {mobileNavItems.map((item) => {
+          {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
             

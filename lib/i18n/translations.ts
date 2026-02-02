@@ -67,6 +67,7 @@ export const translations = {
       none: 'Nessuno',
       available: 'Disponibile',
       unavailable: 'Non disponibile',
+      more: 'Altro',
     },
     home: {
       hero: 'Soluzioni AI Avanzate per il tuo Business',
