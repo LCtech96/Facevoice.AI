@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Sparkles } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -114,6 +114,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/payments')
     } else if (item.href === '/admin') {
       router.push('/admin')
+    } else if (item.href === '/intrattenimento') {
+      router.push('/intrattenimento')
     }
   }
 
@@ -138,6 +140,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'payments') {
       return pathname === '/payments'
+    }
+    if (item.id === 'entertainment') {
+      return pathname === '/intrattenimento' || pathname?.startsWith('/intrattenimento/')
     }
     return pathname === '/home' && activeSection === item.id
   }
@@ -184,6 +189,21 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                   </motion.button>
                 )
               })}
+              
+              {/* Entertainment Button */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => router.push('/intrattenimento')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all text-sm font-medium ${
+                  pathname === '/intrattenimento' || pathname?.startsWith('/intrattenimento/')
+                    ? 'bg-[var(--accent-blue)] text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
+                }`}
+              >
+                <Sparkles size={18} />
+                <span>{t('nav.entertainment')}</span>
+              </motion.button>
               
               {/* Language Selector */}
               <div className="ml-2">

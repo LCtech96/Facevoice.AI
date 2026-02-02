@@ -30,6 +30,8 @@ export default function BlogSection({ user }: { user: User | null }) {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isFischietto = user?.email === 'umberto.fischietto@gmail.com'
+  const canPublish = isAdmin || isFischietto
   const supabase = createClient()
   const { t } = useTranslation()
 
@@ -141,7 +143,7 @@ export default function BlogSection({ user }: { user: User | null }) {
           <h2 className="text-3xl font-bold text-[var(--text-primary)] mb-2">{t('blog.title')}</h2>
           <p className="text-[var(--text-secondary)]">{t('blog.subtitle')}</p>
         </div>
-        {isAdmin && (
+        {canPublish && (
           <button
             onClick={() => setShowForm(!showForm)}
             className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2"
@@ -152,7 +154,7 @@ export default function BlogSection({ user }: { user: User | null }) {
         )}
       </div>
 
-      {isAdmin && showForm && (
+      {canPublish && showForm && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}

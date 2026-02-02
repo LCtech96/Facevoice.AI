@@ -10,6 +10,7 @@ export const translations = {
       chat: 'Chat',
       payments: 'Pagamenti',
       admin: 'Admin',
+      entertainment: 'Intrattenimento',
     },
     auth: {
       signIn: 'Accedi',
@@ -79,6 +80,14 @@ export const translations = {
       createFirst: 'Crea il primo post!',
       readMore: 'Leggi di più',
       backToBlog: 'Torna al Blog',
+      postNotFound: 'Post non trovato',
+    },
+    entertainment: {
+      title: 'Intrattenimento',
+      subtitle: 'Contenuti di Fischietto in collaborazione con Facevoice.ai',
+      noPosts: 'Nessun post ancora',
+      readMore: 'Leggi di più',
+      backToEntertainment: 'Torna all\'Intrattenimento',
       postNotFound: 'Post non trovato',
     },
     admin: {
@@ -152,6 +161,7 @@ export const translations = {
       chat: 'Chat',
       payments: 'Payments',
       admin: 'Admin',
+      entertainment: 'Entertainment',
     },
     auth: {
       signIn: 'Sign In',
@@ -221,6 +231,14 @@ export const translations = {
       createFirst: 'Create the first post!',
       readMore: 'Read more',
       backToBlog: 'Back to Blog',
+      postNotFound: 'Post not found',
+    },
+    entertainment: {
+      title: 'Entertainment',
+      subtitle: 'Content by Fischietto in collaboration with Facevoice.ai',
+      noPosts: 'No posts yet',
+      readMore: 'Read more',
+      backToEntertainment: 'Back to Entertainment',
       postNotFound: 'Post not found',
     },
     admin: {
@@ -294,6 +312,7 @@ export const translations = {
       chat: 'Chat',
       payments: 'Paiements',
       admin: 'Admin',
+      entertainment: 'Divertissement',
     },
     auth: {
       signIn: 'Connexion',
@@ -363,6 +382,14 @@ export const translations = {
       createFirst: 'Créez le premier article !',
       readMore: 'Lire la suite',
       backToBlog: 'Retour au Blog',
+      postNotFound: 'Article non trouvé',
+    },
+    entertainment: {
+      title: 'Divertissement',
+      subtitle: 'Contenu de Fischietto en collaboration avec Facevoice.ai',
+      noPosts: 'Aucun article pour le moment',
+      readMore: 'Lire la suite',
+      backToEntertainment: 'Retour au Divertissement',
       postNotFound: 'Article non trouvé',
     },
     admin: {
@@ -436,6 +463,7 @@ export const translations = {
       chat: 'Чат',
       payments: 'Платежи',
       admin: 'Админ',
+      entertainment: 'Развлечения',
     },
     auth: {
       signIn: 'Войти',
@@ -505,6 +533,14 @@ export const translations = {
       createFirst: 'Создайте первый пост!',
       readMore: 'Читать далее',
       backToBlog: 'Назад к Блогу',
+      postNotFound: 'Пост не найден',
+    },
+    entertainment: {
+      title: 'Развлечения',
+      subtitle: 'Контент от Fischietto в сотрудничестве с Facevoice.ai',
+      noPosts: 'Пока нет постов',
+      readMore: 'Читать далее',
+      backToEntertainment: 'Назад к Развлечениям',
       postNotFound: 'Пост не найден',
     },
     admin: {
@@ -578,6 +614,7 @@ export const translations = {
       chat: 'Chat',
       payments: 'Zahlungen',
       admin: 'Admin',
+      entertainment: 'Unterhaltung',
     },
     auth: {
       signIn: 'Anmelden',
@@ -647,6 +684,14 @@ export const translations = {
       createFirst: 'Erstellen Sie den ersten Beitrag!',
       readMore: 'Mehr lesen',
       backToBlog: 'Zurück zum Blog',
+      postNotFound: 'Beitrag nicht gefunden',
+    },
+    entertainment: {
+      title: 'Unterhaltung',
+      subtitle: 'Inhalte von Fischietto in Zusammenarbeit mit Facevoice.ai',
+      noPosts: 'Noch keine Beiträge',
+      readMore: 'Mehr lesen',
+      backToEntertainment: 'Zurück zur Unterhaltung',
       postNotFound: 'Beitrag nicht gefunden',
     },
     admin: {
@@ -720,6 +765,7 @@ export const translations = {
       chat: 'Chat',
       payments: 'Pagamentos',
       admin: 'Admin',
+      entertainment: 'Entretenimento',
     },
     auth: {
       signIn: 'Entrar',
@@ -789,6 +835,14 @@ export const translations = {
       createFirst: 'Crie o primeiro post!',
       readMore: 'Ler mais',
       backToBlog: 'Voltar ao Blog',
+      postNotFound: 'Post não encontrado',
+    },
+    entertainment: {
+      title: 'Entretenimento',
+      subtitle: 'Conteúdo de Fischietto em colaboração com Facevoice.ai',
+      noPosts: 'Ainda não há posts',
+      readMore: 'Ler mais',
+      backToEntertainment: 'Voltar ao Entretenimento',
       postNotFound: 'Post não encontrado',
     },
     admin: {
@@ -862,6 +916,7 @@ export const translations = {
       chat: 'الدردشة',
       payments: 'المدفوعات',
       admin: 'المدير',
+      entertainment: 'الترفيه',
     },
     auth: {
       signIn: 'تسجيل الدخول',
@@ -931,6 +986,14 @@ export const translations = {
       createFirst: 'أنشئ أول منشور!',
       readMore: 'اقرأ المزيد',
       backToBlog: 'العودة إلى المدونة',
+      postNotFound: 'المنشور غير موجود',
+    },
+    entertainment: {
+      title: 'الترفيه',
+      subtitle: 'محتوى من Fischietto بالتعاون مع Facevoice.ai',
+      noPosts: 'لا توجد منشورات بعد',
+      readMore: 'اقرأ المزيد',
+      backToEntertainment: 'العودة إلى الترفيه',
       postNotFound: 'المنشور غير موجود',
     },
     admin: {
@@ -1004,6 +1067,7 @@ export const translations = {
       chat: '聊天',
       payments: '付款',
       admin: '管理',
+      entertainment: '娱乐',
     },
     auth: {
       signIn: '登录',
@@ -1073,6 +1137,14 @@ export const translations = {
       createFirst: '创建第一篇文章！',
       readMore: '阅读更多',
       backToBlog: '返回博客',
+      postNotFound: '文章未找到',
+    },
+    entertainment: {
+      title: '娱乐',
+      subtitle: 'Fischietto与Facevoice.ai合作的内容',
+      noPosts: '还没有文章',
+      readMore: '阅读更多',
+      backToEntertainment: '返回娱乐',
       postNotFound: '文章未找到',
     },
     admin: {
