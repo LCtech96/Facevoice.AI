@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Image from 'next/image'
-import { Calendar, User, Plus, X } from 'lucide-react'
+import { Calendar, User, Plus, X, Trash2 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import Link from 'next/link'
@@ -172,6 +172,47 @@ export default function EntertainmentPage() {
     }
   }
 
+  const handleDelete = async (postId: string, postSlug?: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    
+    if (!confirm('Sei sicuro di voler eliminare questo post?')) {
+      return
+    }
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+
+      if (!accessToken) {
+        alert('Devi essere autenticato per eliminare post')
+        return
+      }
+
+      // Usa slug se disponibile, altrimenti ID
+      const identifier = postSlug || postId
+
+      const response = await fetch(`/api/entertainment/posts/${identifier}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        },
+      })
+
+      if (response.ok) {
+        loadPosts()
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        alert(errorData.error || 'Errore nell\'eliminazione del post')
+      }
+    } catch (error: any) {
+      console.error('Error deleting post:', error)
+      alert(error.message || 'Errore nell\'eliminazione del post')
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[var(--background)]">
@@ -326,14 +367,23 @@ export default function EntertainmentPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {posts.map((post, index) => (
-              <motion.article
-                key={post.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
-                onClick={() => router.push(getPostUrl(post))}
-              >
+              <div key={post.id} className="relative">
+                {isAdmin && (
+                  <button
+                    onClick={(e) => handleDelete(post.id, post.slug, e)}
+                    className="absolute top-4 right-4 z-10 bg-red-500 text-white rounded-full p-2 hover:bg-red-600 transition-colors shadow-lg"
+                    title={t('common.delete')}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+                <motion.article
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
+                  onClick={() => router.push(getPostUrl(post))}
+                >
                 {post.image_url && (
                   <div className="relative w-full h-48 bg-[var(--background-secondary)]">
                     <Image
@@ -381,6 +431,7 @@ export default function EntertainmentPage() {
                   </Link>
                 </div>
               </motion.article>
+              </div>
             ))}
           </div>
         )}

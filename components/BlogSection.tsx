@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Image as ImageIcon, X } from 'lucide-react'
+import { Plus, Image as ImageIcon, X, Trash2 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-client'
@@ -257,12 +257,22 @@ export default function BlogSection({ user }: { user: User | null }) {
             // Usa lo slug se disponibile, altrimenti usa l'ID
             const postUrl = post.slug ? `/blog/${post.slug}` : `/blog/${post.id}`
             return (
-            <Link key={post.id} href={postUrl}>
-              <motion.article
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent-blue)]/50 transition-colors"
-              >
+            <div key={post.id} className="relative">
+              {isAdmin && (
+                <button
+                  onClick={(e) => handleDelete(post.id, e)}
+                  className="absolute top-4 right-4 z-10 bg-red-500 text-white rounded-full p-2 hover:bg-red-600 transition-colors shadow-lg"
+                  title={t('common.delete')}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+              <Link href={postUrl}>
+                <motion.article
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg overflow-hidden cursor-pointer hover:border-[var(--accent-blue)]/50 transition-colors"
+                >
                 {post.image_url && (
                   <div className="relative w-full h-64 bg-[var(--background-secondary)]">
                     <Image
@@ -295,6 +305,7 @@ export default function BlogSection({ user }: { user: User | null }) {
                 </div>
               </motion.article>
             </Link>
+            </div>
             )
           })
         )}
