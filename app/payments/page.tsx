@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, Suspense } from 'react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -21,7 +21,7 @@ interface Payment {
   created_at: string
 }
 
-export default function PaymentsPage() {
+function PaymentsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { t } = useTranslation()
@@ -83,8 +83,7 @@ export default function PaymentsPage() {
   }, [searchParams, payments])
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
-      <Navigation />
+    <>
       <div className="pt-20 md:pt-24">
         <div className="container mx-auto px-4 py-8 max-w-5xl">
           <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-6">
@@ -147,6 +146,28 @@ export default function PaymentsPage() {
           )}
         </div>
       </div>
+    </>
+  )
+}
+
+export default function PaymentsPage() {
+  const { t } = useTranslation()
+  
+  return (
+    <main className="min-h-screen bg-[var(--background)]">
+      <Navigation />
+      <Suspense fallback={
+        <div className="pt-20 md:pt-24">
+          <div className="container mx-auto px-4 py-8 max-w-5xl">
+            <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-6">
+              {t('payments.title')}
+            </h1>
+            <div className="text-[var(--text-secondary)]">{t('payments.loading')}</div>
+          </div>
+        </div>
+      }>
+        <PaymentsContent />
+      </Suspense>
     </main>
   )
 }
