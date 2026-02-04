@@ -1,10 +1,19 @@
+'use client'
+
 import { Mail, Phone, MessageSquare } from 'lucide-react'
+import { usePathname } from 'next/navigation'
 
 export default function ContactsFooter() {
+  const pathname = usePathname()
   const phone = '+39 3513671340'
   const whatsapp = '+39 3514206353'
   const whatsappLink = `https://wa.me/${whatsapp.replace(/[^0-9]/g, '')}`
   const email = 'luca@facevoice.ai'
+
+  // Nascondi il footer sulla pagina intrattenimento
+  if (pathname?.startsWith('/intrattenimento')) {
+    return null
+  }
 
   return (
     <footer className="mt-16 border-t border-[var(--border-color)] bg-[var(--background)]">

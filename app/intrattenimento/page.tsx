@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Image from 'next/image'
-import { Calendar, User, Plus, X, Trash2 } from 'lucide-react'
+import { Calendar, User, Plus, X, Trash2, MessageSquare } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import Link from 'next/link'
@@ -436,6 +436,29 @@ export default function EntertainmentPage() {
           </div>
         )}
       </div>
+
+      {/* Footer personalizzato per Fischietto */}
+      <footer className="mt-16 border-t border-[var(--border-color)] bg-[var(--background)]">
+        <div className="container mx-auto max-w-6xl px-6 py-10">
+          <div className="flex flex-col items-center gap-4">
+            <h2 className="text-2xl font-bold text-[var(--text-primary)]">
+              Fischietto
+            </h2>
+            <a
+              href="https://wa.me/393203169601"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-6 py-4 hover:bg-[var(--background-secondary)]/80 transition-colors"
+              aria-label="Contatta Fischietto su WhatsApp"
+            >
+              <MessageSquare className="w-5 h-5 text-[var(--accent-blue)]" />
+              <span className="text-[var(--text-primary)] font-medium">Contattami su WhatsApp</span>
+            </a>
+          </div>
+        </div>
+        {/* Spacing per mobile navbar fissa in basso */}
+        <div className="md:hidden h-20" />
+      </footer>
 
       {/* Spacing per mobile navigation bottom */}
       <div className="md:hidden h-20" />
