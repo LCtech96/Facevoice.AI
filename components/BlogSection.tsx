@@ -136,6 +136,44 @@ export default function BlogSection({ user }: { user: User | null }) {
     }
   }
 
+  const handleDelete = async (postId: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    
+    if (!confirm('Sei sicuro di voler eliminare questo post?')) {
+      return
+    }
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+
+      if (!accessToken) {
+        alert('Devi essere autenticato per eliminare post')
+        return
+      }
+
+      const response = await fetch(`/api/blog/posts/${postId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        },
+      })
+
+      if (response.ok) {
+        loadPosts()
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        alert(errorData.error || 'Errore nell\'eliminazione del post')
+      }
+    } catch (error: any) {
+      console.error('Error deleting post:', error)
+      alert(error.message || 'Errore nell\'eliminazione del post')
+    }
+  }
+
   return (
     <div id="blog" className="container mx-auto px-4 py-12 max-w-4xl">
       <div className="flex items-center justify-between mb-8">
