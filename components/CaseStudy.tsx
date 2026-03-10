@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { MapPin, Star, ExternalLink, CheckCircle2, Menu, Calendar, ShoppingCart, Image, FileText, Settings, MessageSquare, Mail, Phone, Bot, UserPlus, Globe, CreditCard, Package, History, Users, TrendingUp, AlertCircle } from 'lucide-react'
+import { MapPin, Star, ExternalLink, CheckCircle2, Menu, Calendar, ShoppingCart, Image, FileText, Settings, MessageSquare, Mail, Phone, Bot, UserPlus, Globe, CreditCard, Package, History, Users, TrendingUp, AlertCircle, Facebook, Instagram, Newspaper } from 'lucide-react'
 import CaseStudyComments from './CaseStudyComments'
 import { createClient } from '@/lib/supabase-client'
 import { useEffect, useState } from 'react'
@@ -14,6 +14,8 @@ interface CaseStudyData {
   description: string
   url: string
   backgroundImage?: string
+  socialLinks?: { facebook?: string; instagram?: string }
+  pressLinks?: Array<{ label: string; url: string }>
   content: {
     mainDescription: string
     features?: Array<{ icon: any, text: string }>
@@ -24,6 +26,53 @@ interface CaseStudyData {
 }
 
 const caseStudies: CaseStudyData[] = [
+  {
+    id: 'nomadiqe',
+    title: 'Nomadiqe',
+    description: 'Il punto di incontro tra chi lavora viaggiando e le realtà locali',
+    url: 'https://www.nomadiqe.com',
+    backgroundImage: '/nomadiqe.png',
+    socialLinks: {
+      facebook: 'https://www.facebook.com/profile.php?id=61581534167346',
+      instagram: 'https://www.instagram.com/nomadiqe_com/',
+    },
+    pressLinks: [
+      { label: 'Capitalist.it – Nomadiqe: la startup che vuole cambiare gli affitti brevi', url: 'https://capitalist.it/w6tn' },
+      { label: 'Radio Amica – Terrasini punta sull\'innovazione turistica, plauso del Sindaco a Nomadiqe', url: 'https://www.radioamica.it/terrasini-punta-sullinnovazione-turistica-il-plauso-del-sindaco-maniaci-al-progetto-nomadiqe/?fbclid=IwdGRjcAQdD31leHRuA2FlbQIxMQBzcnRjBmFwcF9pZAo2NjI4NTY4Mzc5AAEe9VAxt37asuo1U3-Bxxo8yQ6pb-0LEC8Uc0NPz4nwTrjmm0PeZcPMDDV5jDE_aem_MAsMjA5wxN0UKj19kWLEfw' },
+      { label: 'Radio Amica su Facebook', url: 'https://www.facebook.com/share/1Dh87xtDk3/?mibextid=wwXIfr' },
+      { label: 'Il Sindaco su Facebook', url: 'https://www.facebook.com/share/v/1KhinWErwS/?mibextid=wwXIfr' },
+      { label: 'Telejato – Affitti brevi, nasce la start-up Nomadiqe (progetto di un giovane imprenditore di Terrasini)', url: 'https://www.telejato.it/cronaca/affitti-brevi-nasce-la-start-up-nomadiqe-linnovativo-progetto-di-un-giovane-imprenditore-di-terrasini/?refreshed=yes' },
+    ],
+    content: {
+      mainDescription: 'Nomadiqe è il punto di incontro tra chi lavora viaggiando e le realtà locali. Mettiamo in contatto creatori digitali, host, piccoli imprenditori e attività commerciali per creare nuove opportunità e collaborazioni, in modo semplice e umano.',
+      specialSections: [
+        {
+          icon: UserPlus,
+          title: 'Community di Nomadi Digitali',
+          description: 'Crea il tuo profilo e unisciti a una community globale di professionisti che lavorano viaggiando. Connettiti, condividi esperienze e scopri nuove opportunità.'
+        }
+      ],
+      features: [
+        { icon: UserPlus, text: 'Creazione profilo personalizzato' },
+        { icon: Globe, text: 'Network globale di nomadi' },
+        { icon: MessageSquare, text: 'Sistema di messaggistica' },
+        { icon: FileText, text: 'Risorse e guide per nomadi' },
+        { icon: Calendar, text: 'Eventi e meetup' },
+        { icon: Settings, text: 'Dashboard personalizzato' },
+      ],
+      integrations: [
+        { icon: ExternalLink, label: 'Social Network' },
+        { icon: MapPin, label: 'Mappe e localizzazione' },
+        { icon: MessageSquare, label: 'Messaggistica' },
+      ],
+      cta: {
+        text: 'Crea il tuo profilo su Nomadiqe',
+        action: () => {
+          window.open('https://www.nomadiqe.com', '_blank')
+        }
+      }
+    }
+  },
   {
     id: 'trattoria-piero',
     title: 'Trattoria da Piero',
@@ -90,42 +139,6 @@ const caseStudies: CaseStudyData[] = [
         { icon: ExternalLink, label: 'Social Media' },
         { icon: Phone, label: 'Contatti' },
       ]
-    }
-  },
-  {
-    id: 'nomadiqe',
-    title: 'Nomadiqe',
-    description: 'Il punto di incontro tra chi lavora viaggiando e le realtà locali',
-    url: 'https://www.nomadiqe.com',
-    backgroundImage: '/nomadiqe.png',
-    content: {
-      mainDescription: 'Nomadiqe è il punto di incontro tra chi lavora viaggiando e le realtà locali. Mettiamo in contatto creatori digitali, host, piccoli imprenditori e attività commerciali per creare nuove opportunità e collaborazioni, in modo semplice e umano.',
-      specialSections: [
-        {
-          icon: UserPlus,
-          title: 'Community di Nomadi Digitali',
-          description: 'Crea il tuo profilo e unisciti a una community globale di professionisti che lavorano viaggiando. Connettiti, condividi esperienze e scopri nuove opportunità.'
-        }
-      ],
-      features: [
-        { icon: UserPlus, text: 'Creazione profilo personalizzato' },
-        { icon: Globe, text: 'Network globale di nomadi' },
-        { icon: MessageSquare, text: 'Sistema di messaggistica' },
-        { icon: FileText, text: 'Risorse e guide per nomadi' },
-        { icon: Calendar, text: 'Eventi e meetup' },
-        { icon: Settings, text: 'Dashboard personalizzato' },
-      ],
-      integrations: [
-        { icon: ExternalLink, label: 'Social Network' },
-        { icon: MapPin, label: 'Mappe e localizzazione' },
-        { icon: MessageSquare, label: 'Messaggistica' },
-      ],
-      cta: {
-        text: 'Crea il tuo profilo su Nomadiqe',
-        action: () => {
-          window.open('https://www.nomadiqe.com', '_blank')
-        }
-      }
     }
   },
   {
@@ -280,15 +293,39 @@ export default function CaseStudy() {
                       {study.description}
                     </p>
                   </div>
-                  <a
-                    href={study.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm px-6 py-3 rounded-lg transition-all group"
-                  >
-                    <span>Visita il sito</span>
-                    <ExternalLink className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </a>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <a
+                      href={study.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm px-6 py-3 rounded-lg transition-all group"
+                    >
+                      <span>Visita il sito</span>
+                      <ExternalLink className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </a>
+                    {study.socialLinks?.facebook && (
+                      <a
+                        href={study.socialLinks.facebook}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center w-11 h-11 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg transition-all"
+                        aria-label="Facebook"
+                      >
+                        <Facebook className="w-5 h-5" />
+                      </a>
+                    )}
+                    {study.socialLinks?.instagram && (
+                      <a
+                        href={study.socialLinks.instagram}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center w-11 h-11 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg transition-all"
+                        aria-label="Instagram"
+                      >
+                        <Instagram className="w-5 h-5" />
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -358,6 +395,31 @@ export default function CaseStudy() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Rassegna stampa */}
+                {study.pressLinks && study.pressLinks.length > 0 && (
+                  <div className="mb-8">
+                    <h4 className="text-2xl font-bold text-[var(--text-primary)] mb-6 flex items-center gap-3">
+                      <Newspaper className="w-6 h-6 text-[var(--accent-blue)]" />
+                      In stampa
+                    </h4>
+                    <ul className="space-y-3">
+                      {study.pressLinks.map((press, index) => (
+                        <li key={index}>
+                          <a
+                            href={press.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 text-[var(--accent-blue)] hover:underline"
+                          >
+                            <ExternalLink className="w-4 h-4 flex-shrink-0" />
+                            <span>{press.label}</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 
