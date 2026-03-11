@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Send, X, Shield } from 'lucide-react'
-import { createClient } from '@/lib/supabase-client'
+import { Send } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 
 interface CaseStudyCommentsProps {
@@ -18,36 +16,7 @@ interface Comment {
   comment: string
   created_at: string
   is_approved: boolean
-  isPlaceholder?: boolean
 }
-
-// Tre commenti finti di complimenti (mostrati quando non ci sono ancora commenti reali)
-const PLACEHOLDER_COMMENTS: Omit<Comment, 'id'>[] = [
-  {
-    user_name: 'Marco R.',
-    user_email: 'marco.r@email.com',
-    comment: 'Professionalità e competenza. Consigliatissimi!',
-    created_at: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-    is_approved: true,
-    isPlaceholder: true,
-  },
-  {
-    user_name: 'Laura B.',
-    user_email: 'laura.b@email.com',
-    comment: 'Ottimo lavoro, risultato oltre le aspettative. Siamo molto soddisfatti.',
-    created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    is_approved: true,
-    isPlaceholder: true,
-  },
-  {
-    user_name: 'Andrea F.',
-    user_email: 'andrea.f@email.com',
-    comment: 'Team serio e preparato. Ha fatto la differenza per il nostro progetto.',
-    created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    is_approved: true,
-    isPlaceholder: true,
-  },
-]
 
 export default function CaseStudyComments({ caseStudyId, user }: CaseStudyCommentsProps) {
   const [comments, setComments] = useState<Comment[]>([])
@@ -57,7 +26,6 @@ export default function CaseStudyComments({ caseStudyId, user }: CaseStudyCommen
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const supabase = createClient()
   const isAdmin = user?.email === 'luca@facevoice.ai'
 
   useEffect(() => {
@@ -163,66 +131,60 @@ export default function CaseStudyComments({ caseStudyId, user }: CaseStudyCommen
     <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
       <h3 className="text-2xl font-bold text-[var(--text-primary)] mb-6">Commenti</h3>
 
-      {/* Comments List: 3 commenti finti se non ci sono commenti reali, altrimenti solo i reali */}
-      <div className="space-y-4 mb-6">
-        {loading ? (
-          <div className="text-center text-[var(--text-secondary)] py-4">Caricamento commenti...</div>
-        ) : (
-          (comments.length === 0
-            ? PLACEHOLDER_COMMENTS.map((c, i) => ({ ...c, id: `placeholder-${caseStudyId}-${i}` }))
-            : comments
-          ).map((comment) => (
-            <div key={comment.id} className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-[var(--text-primary)]">{comment.user_name}</span>
-                    <span className="text-sm text-[var(--text-secondary)]">{comment.user_email}</span>
-                    {isAdmin && !comment.is_approved && !comment.isPlaceholder && (
-                      <span className="px-2 py-0.5 bg-orange-500/20 text-orange-600 rounded text-xs">Da approvare</span>
-                    )}
+      {/* Comments List: mostra solo se ci sono commenti reali */}
+      {comments.length > 0 && (
+        <div className="space-y-4 mb-6">
+          {loading ? (
+            <div className="text-center text-[var(--text-secondary)] py-4">Caricamento commenti...</div>
+          ) : (
+            comments.map((comment) => (
+              <div key={comment.id} className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-[var(--text-primary)]">{comment.user_name}</span>
+                      <span className="text-sm text-[var(--text-secondary)]">{comment.user_email}</span>
+                      {isAdmin && !comment.is_approved && (
+                        <span className="px-2 py-0.5 bg-orange-500/20 text-orange-600 rounded text-xs">Da approvare</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)] opacity-70">
+                      {new Date(comment.created_at).toLocaleDateString('it-IT', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                      })}
+                    </p>
                   </div>
-                  <p className="text-sm text-[var(--text-secondary)] opacity-70">
-                    {new Date(comment.created_at).toLocaleDateString('it-IT', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
-                  </p>
+                  {isAdmin && (
+                    <div className="flex gap-2">
+                      {!comment.is_approved && (
+                        <>
+                          <button
+                            onClick={() => handleApprove(comment.id)}
+                            className="p-1 text-green-500 hover:bg-green-500/10 rounded"
+                            title="Approva"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={() => handleReject(comment.id)}
+                            className="p-1 text-red-500 hover:bg-red-500/10 rounded"
+                            title="Rifiuta"
+                          >
+                            ✕
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {isAdmin && !comment.isPlaceholder && (
-                  <div className="flex gap-2">
-                    {!comment.is_approved && (
-                      <>
-                        <button
-                          onClick={() => handleApprove(comment.id)}
-                          className="p-1 text-green-500 hover:bg-green-500/10 rounded"
-                          title="Approva"
-                        >
-                          ✓
-                        </button>
-                        <button
-                          onClick={() => handleReject(comment.id)}
-                          className="p-1 text-red-500 hover:bg-red-500/10 rounded"
-                          title="Rifiuta"
-                        >
-                          ✕
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
+                <p className="text-[var(--text-primary)] leading-relaxed">{comment.comment}</p>
               </div>
-              <p className="text-[var(--text-primary)] leading-relaxed">{comment.comment}</p>
-            </div>
-          ))
-        )}
-        {!loading && comments.length === 0 && (
-          <p className="text-center text-sm text-[var(--text-secondary)] mt-2">
-            Lascia anche tu un commento qui sotto.
-          </p>
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Comment Form */}
       <form onSubmit={handleSubmit} className="space-y-3">
