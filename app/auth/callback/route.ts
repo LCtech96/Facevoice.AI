@@ -8,9 +8,8 @@ export async function GET(request: NextRequest) {
   const type = requestUrl.searchParams.get('type')
 
   const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+    process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key')
 
   if (code) {
     // Exchange code for session (OAuth callback)
