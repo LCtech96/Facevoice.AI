@@ -14,7 +14,7 @@ export default function SharedChatPage() {
   const router = useRouter()
   const chatId = params?.id as string
   const [chat, setChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant')
+  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const supabase = createClient()

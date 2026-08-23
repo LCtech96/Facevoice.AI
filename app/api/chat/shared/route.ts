@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       .from('shared_chats')
       .insert({
         title: title || 'Shared Chat',
-        model: model || 'llama-3.1-8b-instant',
+        model: model || 'gemini-flash-latest',
         created_by: createdBy || 'anonymous',
       })
       .select()

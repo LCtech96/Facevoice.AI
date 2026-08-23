@@ -16,13 +16,14 @@ Crea un file `.env.local` nella root del progetto con:
 NEXT_PUBLIC_SUPABASE_URL=https://tuo-progetto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=la_tua_anon_key_qui
 SUPABASE_SERVICE_ROLE_KEY=la_tua_service_role_key_qui
-GROQ_API_KEY=la_tua_groq_api_key_qui
+GEMINI_API_KEY=la_tua_gemini_api_key_qui
 ```
 
 **⚠️ IMPORTANTE:** 
 - Ottieni le tue chiavi dal [Supabase Dashboard](https://supabase.com/dashboard)
-- Per GROQ_API_KEY, ottienila da [Groq Console](https://console.groq.com)
+- Per GEMINI_API_KEY, ottienila da [Google AI Studio](https://aistudio.google.com/)
 - **NON committare mai questo file con le chiavi reali!**
+- `GROQ_API_KEY` non è più usata (sostituita da Gemini)
 
 **Nota:** Il file `.env.local` è già nel `.gitignore`, quindi le tue credenziali sono al sicuro.
 

@@ -39,7 +39,7 @@ export default function AIChatPage() {
   const [chats, setChats] = useState<Chat[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [currentChat, setCurrentChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState('llama-3.1-8b-instant')
+  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')

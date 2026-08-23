@@ -22,6 +22,7 @@ const GROQ_MODELS: Record<string, string> = {
 
 // Gemini model mapping
 const GEMINI_MODELS: Record<string, string> = {
+  'gemini-flash-latest': 'gemini-flash-latest',
   'gemini-2.5-flash': 'gemini-2.5-flash',
   'gemini-2.5-pro': 'gemini-2.5-pro',
   'gemini-1.5-pro': 'gemini-1.5-pro',
@@ -29,7 +30,7 @@ const GEMINI_MODELS: Record<string, string> = {
   'gemini-1.5-flash-lite': 'gemini-1.5-flash-lite',
   // Legacy aliases
   'gemini-pro': 'gemini-1.5-pro',
-  'gemini-flash': 'gemini-1.5-flash',
+  'gemini-flash': 'gemini-flash-latest',
 }
 
 // Claude (Anthropic) model mapping
@@ -186,7 +187,7 @@ export async function POST(req: NextRequest) {
   let requestBody: any
   try {
     requestBody = await req.json()
-    const { messages, model = 'llama-3.1-8b-instant' } = requestBody
+    const { messages, model = 'gemini-flash-latest' } = requestBody
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json(

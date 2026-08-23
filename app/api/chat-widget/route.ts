@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Groq from 'groq-sdk'
 import { createClient } from '@supabase/supabase-js'
-import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 
-// Usa la variabile d'ambiente GROQ_API_KEY
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY || '',
-})
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
+const GEMINI_MODEL = 'gemini-flash-latest'
 
 const getSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -42,12 +39,88 @@ const SYSTEM_PROMPT = `Sei un assistente AI esperto di Facevoice AI. Il tuo comp
 
 Sii sempre professionale, chiaro e conciso. Le risposte devono essere BREVI e PRECISE (massimo 2-3 frasi). Rispondi direttamente alla domanda senza giri di parole. Se un cliente ha domande specifiche che non puoi risolvere, suggerisci di contattare direttamente via WhatsApp per una consulenza personalizzata.`
 
+async function callGeminiAPI(
+  messages: { role: string; content: string }[],
+  systemMessage: string
+) {
+  const contents: { role: string; parts: { text: string }[] }[] = []
+
+  if (systemMessage) {
+    contents.push({
+      role: 'user',
+      parts: [{ text: systemMessage }],
+    })
+    contents.push({
+      role: 'model',
+      parts: [{ text: 'Understood. I will follow these guidelines.' }],
+    })
+  }
+
+  for (const msg of messages) {
+    if (msg.role === 'system') continue
+    contents.push({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: String(msg.content).trim() }],
+    })
+  }
+
+  const response = await fetch(
+    `${GEMINI_API_URL}/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': GEMINI_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 150,
+        },
+      }),
+    }
+  )
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(
+      errorData.error?.message || `Gemini API error: ${response.status}`
+    )
+  }
+
+  const data = await response.json()
+  const text =
+    data.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text || '')
+      .join('') || ''
+
+  return {
+    message: text,
+    model: data.modelVersion || GEMINI_MODEL,
+    usage: data.usageMetadata,
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
+    if (!GEMINI_API_KEY) {
+      return NextResponse.json(
+        {
+          error:
+            'Gemini API key not configured. Please set GEMINI_API_KEY environment variable.',
+        },
+        { status: 500 }
+      )
+    }
+
     const { messages, userMessage } = await req.json()
 
     // Validazione: almeno uno tra messages e userMessage deve essere presente
-    if ((!messages || !Array.isArray(messages) || messages.length === 0) && (!userMessage || typeof userMessage !== 'string')) {
+    if (
+      ((!messages || !Array.isArray(messages) || messages.length === 0) &&
+        (!userMessage || typeof userMessage !== 'string'))
+    ) {
       return NextResponse.json(
         { error: 'Messaggi o messaggio utente richiesto' },
         { status: 400 }
@@ -55,13 +128,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Data corretta: sabato 17 gennaio 2026
-    const TIME_GUARDRAIL: ChatCompletionMessageParam = {
-      role: 'system',
-      content:
-        `Oggi è sabato 17 gennaio 2026 (fuso orario Europe/Rome). ` +
-        `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è sabato 17 gennaio 2026". ` +
-        `Sii sempre preciso e non indovinare mai.`,
-    }
+    const timeGuardrail =
+      `Oggi è sabato 17 gennaio 2026 (fuso orario Europe/Rome). ` +
+      `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è sabato 17 gennaio 2026". ` +
+      `Sii sempre preciso e non indovinare mai.`
 
     // Carica conoscenza AI aggiuntiva dal database (se disponibile)
     let knowledgeText = ''
@@ -77,7 +147,7 @@ export async function POST(req: NextRequest) {
 
         if (knowledgeData && knowledgeData.length > 0) {
           knowledgeText = knowledgeData
-            .map((item: any) => `- ${item.title}: ${item.content}`)
+            .map((item: { title: string; content: string }) => `- ${item.title}: ${item.content}`)
             .join('\n')
         }
       }
@@ -86,69 +156,62 @@ export async function POST(req: NextRequest) {
     }
 
     const knowledgeGuardrail = knowledgeText
-      ? `\n\nINFORMAZIONI UFFICIALI DEL SITO:\n${knowledgeText}\n\nRispondi SOLO con informazioni presenti qui sopra o già note nel prompt. Se l'informazione non è presente, di\' chiaramente che non è disponibile sul sito e invita a contattarci su WhatsApp.`
+      ? `\n\nINFORMAZIONI UFFICIALI DEL SITO:\n${knowledgeText}\n\nRispondi SOLO con informazioni presenti qui sopra o già note nel prompt. Se l'informazione non è presente, di' chiaramente che non è disponibile sul sito e invita a contattarci su WhatsApp.`
       : `\n\nNon inventare dettagli. Se l'informazione non è presente nel sito, dì che non è disponibile e invita a contattarci su WhatsApp.`
 
-    // Prepara i messaggi per Groq
-    const messagesForGroq: ChatCompletionMessageParam[] = [
-      {
-        role: 'system',
-        content: SYSTEM_PROMPT + knowledgeGuardrail + '\n\nIMPORTANTE: Sii sempre BREVE e PRECISO nelle risposte. Massimo 2-3 frasi. Rispondi direttamente senza giri di parole.',
-      },
-      TIME_GUARDRAIL,
-      ...(messages || []).map((msg: any) => ({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: msg.content,
-      })),
-    ]
+    const systemMessage =
+      SYSTEM_PROMPT +
+      knowledgeGuardrail +
+      '\n\n' +
+      timeGuardrail +
+      '\n\nIMPORTANTE: Sii sempre BREVE e PRECISO nelle risposte. Massimo 2-3 frasi. Rispondi direttamente senza giri di parole.'
+
+    const chatMessages: { role: string; content: string }[] = (
+      messages || []
+    ).map((msg: { role: string; content: string }) => ({
+      role: msg.role === 'assistant' ? 'assistant' : 'user',
+      content: msg.content,
+    }))
 
     // Aggiungi il nuovo messaggio utente se fornito separatamente e non già presente
     if (userMessage && typeof userMessage === 'string') {
-      const lastMessage = messagesForGroq[messagesForGroq.length - 1]
-      // Aggiungi solo se l'ultimo messaggio non è già quello dell'utente
-      if (!lastMessage || lastMessage.role !== 'user' || lastMessage.content !== userMessage) {
-        messagesForGroq.push({
+      const lastMessage = chatMessages[chatMessages.length - 1]
+      if (
+        !lastMessage ||
+        lastMessage.role !== 'user' ||
+        lastMessage.content !== userMessage
+      ) {
+        chatMessages.push({
           role: 'user',
           content: userMessage,
         })
       }
     }
 
-    // Usa il modello Llama 3.1 8B Instant per risposte veloci
-    const completion = await groq.chat.completions.create({
-      messages: messagesForGroq,
-      model: 'llama-3.1-8b-instant',
-      // Bassa creatività per massimizzare l'accuratezza fattuale e risposte brevi
-      temperature: 0.1,
-      max_tokens: 150, // Limita i token per risposte brevi
-      stream: false,
-    })
+    const result = await callGeminiAPI(chatMessages, systemMessage)
 
-    const response = completion.choices[0]?.message?.content || ''
-
-    if (!response) {
+    if (!result.message) {
       return NextResponse.json(
-        { error: 'Risposta vuota dall\'AI' },
+        { error: "Risposta vuota dall'AI" },
         { status: 500 }
       )
     }
 
     return NextResponse.json({
-      message: response,
-      model: completion.model,
-      usage: completion.usage,
+      message: result.message,
+      model: result.model,
+      usage: result.usage,
     })
-  } catch (error: any) {
-    console.error('Groq API error:', error)
-    
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Errore sconosciuto'
+    console.error('Gemini API error:', error)
+
     return NextResponse.json(
-      { 
+      {
         error: 'Errore nel recupero della risposta AI',
-        details: error.message || 'Errore sconosciuto'
+        details: message,
       },
       { status: 500 }
     )
   }
 }
-
-

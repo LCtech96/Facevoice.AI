@@ -16,7 +16,7 @@ export default function GroupChatPage() {
   const router = useRouter()
   const groupId = params?.id as string
   const [chat, setChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState('llama-3.1-70b-versatile')
+  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest')
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [copied, setCopied] = useState(false)

@@ -14,38 +14,24 @@ interface ModelSelectorProps {
 // We'll show Gemini models as available and let the server handle errors gracefully
 const getApiKeyStatus = () => {
   return {
-    hasGroqKey: true, // Groq is available by default
+    hasGroqKey: false, // Groq / Llama rimosso — usa Gemini
     hasGeminiKey: true, // Assume available - server will return error if not configured
     hasOpenAIKey: false,
     hasAnthropicKey: true, // Assume available - server will return error if not configured
   }
 }
 
-// Available models (Groq models are available by default)
+// Available models (Gemini is the default provider)
 const getAvailableModels = () => {
   const apiKeys = getApiKeyStatus()
   
   const models = [
     {
-      id: 'llama-3.1-8b-instant',
-      name: 'Llama 3.1 8B',
-      provider: 'Groq',
-      description: 'Fast and efficient model - Best for quick responses',
-      available: apiKeys.hasGroqKey,
-    },
-    {
-      id: 'llama-3.3-70b-versatile',
-      name: 'Llama 3.3 70B',
-      provider: 'Groq',
-      description: 'Most intelligent model - Advanced reasoning and capabilities',
-      available: apiKeys.hasGroqKey,
-    },
-    {
-      id: 'mixtral-8x7b-32768',
-      name: 'Mixtral 8x7B',
-      provider: 'Groq',
-      description: 'High-quality model with extended context window',
-      available: apiKeys.hasGroqKey,
+      id: 'gemini-flash-latest',
+      name: 'Gemini Flash (Latest)',
+      provider: 'Google',
+      description: 'Default fast Gemini model - Best for quick responses',
+      available: apiKeys.hasGeminiKey,
     },
     {
       id: 'gemini-2.5-flash',

@@ -1,83 +1,32 @@
-# 🔑 Aggiornamento GEMINI_API_KEY
+# Aggiornamento GEMINI_API_KEY (sostituisce GROQ)
 
-## ⚠️ IMPORTANTE: Aggiorna la variabile d'ambiente su Vercel
+## Importante: aggiorna le variabili su Vercel
 
-La nuova GEMINI_API_KEY deve essere aggiornata manualmente sul dashboard Vercel.
+Groq / Llama è stato rimosso. Usa solo `GEMINI_API_KEY` (o `GOOGLE_API_KEY`).
 
-### Nuova Chiave API:
-```
-AIzaSyAL6Sstew_aOMW-jkS5DpKDlyeF67w-Mo8
-```
-
-### Passi per aggiornare GEMINI_API_KEY su Vercel:
+### Passi su Vercel
 
 1. Vai su [Vercel Dashboard](https://vercel.com/dashboard)
 2. Seleziona il progetto **Facevoice.AI**
 3. Vai su **Settings** → **Environment Variables**
-4. Cerca la variabile `GEMINI_API_KEY`
-5. Clicca su **Edit** (o **Add** se non esiste)
-6. Inserisci la nuova chiave API:
-   - **Name:** `GEMINI_API_KEY`
-   - **Value:** `AIzaSyAL6Sstew_aOMW-jkS5DpKDlyeF67w-Mo8`
-   - **Environment:** Seleziona tutti (Production, Preview, Development)
-7. Clicca **Save**
+4. Imposta o aggiorna `GEMINI_API_KEY` con la chiave da [Google AI Studio](https://aistudio.google.com/)
+5. Seleziona Production, Preview e Development
+6. **Elimina** la variabile `GROQ_API_KEY` se presente
+7. Salva e fai **Redeploy** dell’ultimo deployment Production
 
-### Dopo aver aggiornato la variabile:
+### Locale (`.env.local`)
 
-1. Vai su **Deployments**
-2. Clicca sui **3 puntini** (⋯) dell'ultimo deployment
-3. Seleziona **Redeploy**
-4. Oppure aspetta che il prossimo commit triggeri automaticamente un nuovo deploy
+```env
+GEMINI_API_KEY=la_tua_chiave_gemini
+```
 
-## 📊 Limitazioni Piano Gratuito Gemini
+Non committare mai `.env` / `.env.local` con chiavi reali.
 
-Secondo la [documentazione ufficiale Gemini API](https://ai.google.dev/gemini-api/docs), il piano gratuito include:
+### Modello default
 
-### Rate Limits:
-- **Richieste per minuto:** Limitato (varia per modello)
-- **Richieste per giorno:** Limitato
+- Chat e chat-widget usano `gemini-flash-latest`
+- I modelli Groq Llama non sono più disponibili nel selettore
 
-### Token Limits:
-- **maxOutputTokens:** Fino a 8192 token (già configurato nel codice)
-- **Input tokens:** Varia per modello
+### Verifica
 
-### Modelli Disponibili nel Piano Gratuito:
-- ✅ **Gemini 2.5 Flash** - Consigliato per uso frequente
-- ✅ **Gemini 2.5 Flash-Lite** - Più veloce e economico
-- ✅ **Gemini 1.5 Flash** - Versione precedente
-- ⚠️ **Gemini 2.5 Pro** - Potrebbe avere limiti più restrittivi
-- ⚠️ **Gemini 1.5 Pro** - Potrebbe avere limiti più restrittivi
-
-### Best Practices per Rispettare i Limiti:
-
-1. **Usa Gemini 2.5 Flash come default** - Più efficiente per il piano gratuito
-2. **Gestisci gli errori di rate limit** - Il codice gestisce già gli errori API
-3. **Monitora l'uso** - Controlla periodicamente su [Google AI Studio](https://ai.google.dev/)
-4. **Implementa retry logic** - In caso di rate limit, implementare backoff esponenziale
-
-## ✅ Verifica:
-
-Dopo il deploy, testa la chat AI per verificare che i modelli Gemini funzionino correttamente.
-
-## 🔗 Riferimenti:
-
-- [Gemini API Documentation](https://ai.google.dev/gemini-api/docs)
-- [Gemini API Pricing](https://ai.google.dev/pricing)
-- [Google AI Studio](https://ai.google.dev/)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Dopo il redeploy, testa la chat AI e il widget. Se Gemini risponde `RESOURCE_EXHAUSTED` / crediti esauriti, ricarica i crediti su [AI Studio](https://ai.studio/projects).
