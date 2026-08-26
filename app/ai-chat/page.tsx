@@ -47,6 +47,14 @@ export default function AIChatPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const supabase = createClient()
 
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    const syncSidebar = () => setSidebarOpen(mq.matches)
+    syncSidebar()
+    mq.addEventListener('change', syncSidebar)
+    return () => mq.removeEventListener('change', syncSidebar)
+  }, [])
+
   // Check authentication
   useEffect(() => {
     const checkAuth = async () => {
@@ -305,12 +313,12 @@ export default function AIChatPage() {
   }
 
   return (
-    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pt-14 pb-[4.75rem] md:pt-0 md:pb-0">
+    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-0">
       <Navigation />
       
       <div className="hidden md:block h-16 shrink-0" />
       
-      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-3.5rem-4.75rem)] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
+      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-4.25rem-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}
@@ -332,7 +340,7 @@ export default function AIChatPage() {
           selectedModel={selectedModel}
           isModelSelectorOpen={isModelSelectorOpen}
           onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           onModelSelect={(model) => {
             setSelectedModel(model)
             if (currentChat) {
@@ -384,9 +392,6 @@ export default function AIChatPage() {
           />
         )}
       </div>
-      
-      {/* Spacing for mobile navigation */}
-      <div className="md:hidden h-20" />
     </main>
   )
 }

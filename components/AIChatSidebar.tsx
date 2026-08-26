@@ -5,14 +5,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   MessageSquare,
   Search,
-  BookOpen,
   FolderPlus,
   ChevronDown,
   ChevronRight,
   Trash2,
   Plus,
   X,
-  Menu,
 } from 'lucide-react'
 import { Chat, Project } from '@/app/ai-chat/page'
 
@@ -33,11 +31,11 @@ interface AIChatSidebarProps {
 }
 
 const PROJECT_COLORS = [
-  '#007AFF', // iOS Blue
-  '#34C759', // iOS Green
-  '#FF9500', // iOS Orange
-  '#FF3B30', // iOS Red
-  '#AF52DE', // iOS Purple
+  '#007AFF',
+  '#34C759',
+  '#FF9500',
+  '#FF3B30',
+  '#AF52DE',
 ]
 
 export default function AIChatSidebar({
@@ -80,36 +78,38 @@ export default function AIChatSidebar({
     }
   }
 
-  if (!sidebarOpen) {
-    return (
-      <button
-        onClick={onToggleSidebar}
-        className="fixed left-4 top-4 z-40 p-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-sm hover:shadow-md transition-all"
-      >
-        <Menu className="w-5 h-5 text-[var(--text-primary)]" />
-      </button>
-    )
+  const handleSelectChat = (chat: Chat) => {
+    onSelectChat(chat)
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      onToggleSidebar()
+    }
   }
 
-  return (
-    <motion.div
-      initial={{ x: -300 }}
-      animate={{ x: 0 }}
-      className="w-64 bg-[var(--background-secondary)] border-r border-[var(--border-color)] flex flex-col h-full relative"
-    >
-      {/* Close Button - Top Right */}
+  const handleNewChat = () => {
+    onNewChat()
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      onToggleSidebar()
+    }
+  }
+
+  if (!sidebarOpen) {
+    return null
+  }
+
+  const sidebarContent = (
+    <>
       <button
         onClick={onToggleSidebar}
         className="absolute top-3 right-3 z-50 p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-hover)] rounded-lg transition-colors"
         title="Close sidebar"
+        aria-label="Close sidebar"
       >
         <X className="w-4 h-4" />
       </button>
 
-      {/* Header */}
       <div className="p-3 border-b border-[var(--border-color)]">
         <button
-          onClick={onNewChat}
+          onClick={handleNewChat}
           className="flex items-center gap-2 px-3 py-2 w-full bg-[var(--accent-blue)] text-white rounded-lg hover:opacity-90 transition-all font-medium text-sm"
         >
           <Plus className="w-4 h-4" />
@@ -117,7 +117,6 @@ export default function AIChatSidebar({
         </button>
       </div>
 
-      {/* Search */}
       <div className="p-3 border-b border-[var(--border-color)]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
@@ -131,7 +130,6 @@ export default function AIChatSidebar({
         </div>
       </div>
 
-      {/* Projects Section */}
       {projects.length > 0 && (
         <div className="p-3 border-b border-[var(--border-color)]">
           <div className="flex items-center justify-between mb-2">
@@ -198,15 +196,15 @@ export default function AIChatSidebar({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => toggleProject(project.id)}
-                    className="flex items-center gap-2 flex-1 px-2 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded transition-colors"
+                    className="flex items-center gap-2 flex-1 px-2 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] rounded transition-colors min-w-0"
                   >
                     {expandedProjects.has(project.id) ? (
-                      <ChevronDown className="w-4 h-4" />
+                      <ChevronDown className="w-4 h-4 shrink-0" />
                     ) : (
-                      <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-4 h-4 shrink-0" />
                     )}
                     <div
-                      className="w-3 h-3 rounded"
+                      className="w-3 h-3 rounded shrink-0"
                       style={{ backgroundColor: project.color }}
                     />
                     <span className="flex-1 text-left truncate">{project.name}</span>
@@ -218,7 +216,7 @@ export default function AIChatSidebar({
                         onDeleteProject(project.id)
                       }
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-secondary)] rounded transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-secondary)] rounded transition-all shrink-0"
                   >
                     <Trash2 className="w-3 h-3 text-[var(--text-secondary)]" />
                   </button>
@@ -234,7 +232,7 @@ export default function AIChatSidebar({
                       {project.chats.map((chat) => (
                         <button
                           key={chat.id}
-                          onClick={() => onSelectChat(chat)}
+                          onClick={() => handleSelectChat(chat)}
                           className={`w-full px-2 py-1 text-xs text-left rounded truncate transition-colors ${
                             currentChat?.id === chat.id
                               ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10'
@@ -258,7 +256,6 @@ export default function AIChatSidebar({
         </div>
       )}
 
-      {/* Create Project Button */}
       {projects.length === 0 && (
         <div className="p-3 border-b border-[var(--border-color)]">
           <button
@@ -320,8 +317,7 @@ export default function AIChatSidebar({
         </div>
       )}
 
-      {/* Chat History */}
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto p-2 min-h-0">
         <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase mb-2 px-2">Chats</h3>
         <div className="space-y-1">
           {chats.map((chat) => (
@@ -332,11 +328,11 @@ export default function AIChatSidebar({
                   ? 'bg-[var(--accent-blue)] text-white'
                   : 'hover:bg-[var(--background-secondary)] text-[var(--text-primary)]'
               }`}
-              onClick={() => onSelectChat(chat)}
+              onClick={() => handleSelectChat(chat)}
             >
               <MessageSquare className="w-4 h-4 flex-shrink-0" />
               <span className="flex-1 text-left text-sm truncate">{chat.title}</span>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                 {projects.length > 0 && (
                   <select
                     onClick={(e) => e.stopPropagation()}
@@ -346,7 +342,7 @@ export default function AIChatSidebar({
                         e.target.value = ''
                       }
                     }}
-                    className="text-xs bg-[var(--background-secondary)] border border-[var(--border-color)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none"
+                    className="text-xs bg-[var(--background-secondary)] border border-[var(--border-color)] rounded px-2 py-1 text-[var(--text-primary)] focus:outline-none max-w-[5rem]"
                     defaultValue=""
                   >
                     <option value="">Add to project</option>
@@ -376,16 +372,25 @@ export default function AIChatSidebar({
           )}
         </div>
       </div>
+    </>
+  )
 
-      {/* Close button for mobile */}
-      <div className="p-3 border-t border-[var(--border-color)] md:hidden">
-        <button
-          onClick={onToggleSidebar}
-          className="w-full px-3 py-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
-        >
-          Close
-        </button>
-      </div>
-    </motion.div>
+  return (
+    <>
+      <div
+        className="md:hidden fixed inset-0 bg-black/50 z-40"
+        onClick={onToggleSidebar}
+        aria-hidden="true"
+      />
+      <motion.aside
+        initial={{ x: -320 }}
+        animate={{ x: 0 }}
+        exit={{ x: -320 }}
+        transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+        className="fixed md:relative inset-y-0 left-0 z-50 md:z-auto w-[min(18rem,88vw)] md:w-64 bg-[var(--background-secondary)] border-r border-[var(--border-color)] flex flex-col h-full min-h-0 shadow-xl md:shadow-none"
+      >
+        {sidebarContent}
+      </motion.aside>
+    </>
   )
 }

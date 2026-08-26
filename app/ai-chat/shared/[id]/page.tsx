@@ -286,16 +286,12 @@ export default function SharedChatPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)] flex flex-col">
+    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-0">
       <Navigation />
       
-      {/* Spacing for desktop navigation */}
-      <div className="hidden md:block h-16" />
+      <div className="hidden md:block h-16 shrink-0" />
       
-      {/* Spacing for mobile navigation top */}
-      <div className="md:hidden h-4" />
-      
-      <div className="flex flex-1 w-full h-[calc(100vh-6rem)] md:h-[calc(100vh-4rem)] overflow-hidden relative">
+      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-4.25rem-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
         <AIChatMain
           chat={chat}
           selectedModel={selectedModel}
@@ -326,9 +322,6 @@ export default function SharedChatPage() {
           />
         )}
       </div>
-      
-      {/* Spacing for mobile navigation bottom */}
-      <div className="md:hidden h-20" />
     </main>
   )
 }

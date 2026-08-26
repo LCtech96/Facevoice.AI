@@ -3,13 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
-import ThemeSwitcher from '@/components/ThemeSwitcher'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
-import LiquidGlass from '@/components/LiquidGlass'
-import { Chat, Message } from '@/app/ai-chat/page'
-import { Link as LinkIcon, Copy, Check, Users } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Chat } from '@/app/ai-chat/page'
+import { Copy, Check, Users, ArrowLeft } from 'lucide-react'
 import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
 
 export default function GroupChatPage() {
@@ -21,16 +18,16 @@ export default function GroupChatPage() {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [copied, setCopied] = useState(false)
+  const [showInfo, setShowInfo] = useState(false)
 
   useEffect(() => {
     if (groupId) {
       const link = `${window.location.origin}/ai-chat/group/${groupId}`
       setShareLink(link)
-      
-      // Load or create group chat
+
       const savedGroupChats = localStorage.getItem('group-chats')
-      let groupChats = savedGroupChats ? JSON.parse(savedGroupChats) : {}
-      
+      const groupChats = savedGroupChats ? JSON.parse(savedGroupChats) : {}
+
       if (!groupChats[groupId]) {
         groupChats[groupId] = {
           id: groupId,
@@ -42,7 +39,7 @@ export default function GroupChatPage() {
         }
         localStorage.setItem('group-chats', JSON.stringify(groupChats))
       }
-      
+
       const groupChat = groupChats[groupId]
       setChat({
         ...groupChat,
@@ -54,12 +51,12 @@ export default function GroupChatPage() {
         updatedAt: new Date(groupChat.updatedAt),
       })
     }
-  }, [groupId])
+  }, [groupId, selectedModel])
 
   const updateChat = (updatedChat: Chat) => {
     setChat(updatedChat)
     const savedGroupChats = localStorage.getItem('group-chats')
-    let groupChats = savedGroupChats ? JSON.parse(savedGroupChats) : {}
+    const groupChats = savedGroupChats ? JSON.parse(savedGroupChats) : {}
     groupChats[groupId] = {
       ...updatedChat,
       messages: updatedChat.messages.map((msg) => ({
@@ -83,77 +80,100 @@ export default function GroupChatPage() {
   }
 
   return (
-    <main className="min-h-screen relative">
-      <LiquidGlass />
-      <ThemeSwitcher />
-      <Navigation activeSection="chat" />
+    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-0">
+      <Navigation />
 
-      <div className="flex h-[calc(100vh-5rem)] mt-20">
-        {/* Group Chat Info Sidebar */}
-        <div className="w-64 glass-strong border-r border-coral-red/20 p-4">
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Users className="w-5 h-5 text-coral-red" />
-              <h2 className="text-lg font-bold text-coral-red-light">Group Chat</h2>
-            </div>
-            <p className="text-sm text-coral-red/70">
-              Chat condivisa in tempo reale con i tuoi colleghi.
-            </p>
+      <div className="hidden md:block h-16 shrink-0" />
+
+      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-4.25rem-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
+        <aside className="hidden md:flex w-64 shrink-0 bg-[var(--background-secondary)] border-r border-[var(--border-color)] p-4 flex-col">
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="w-5 h-5 text-[var(--accent-blue)]" />
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Group Chat</h2>
           </div>
-
-          <div className="mb-4 p-3 glass rounded-lg">
-            <p className="text-xs text-coral-red/50 mb-2">Share this link to invite others:</p>
+          <p className="text-sm text-[var(--text-secondary)] mb-4">
+            Chat condivisa in tempo reale con i tuoi colleghi.
+          </p>
+          <div className="mb-4 p-3 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg">
+            <p className="text-xs text-[var(--text-secondary)] mb-2">Condividi questo link:</p>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={shareLink}
                 readOnly
-                className="flex-1 px-2 py-1 glass rounded text-xs text-coral-red/70 truncate"
+                className="flex-1 min-w-0 px-2 py-1 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded text-xs text-[var(--text-primary)] truncate"
               />
               <button
                 onClick={copyLink}
-                className="p-1.5 glass-strong rounded hover:glass transition-all"
+                className="p-1.5 bg-[var(--accent-blue)] text-white rounded hover:opacity-90 transition-opacity shrink-0"
                 title="Copy link"
               >
-                {copied ? (
-                  <Check className="w-4 h-4 text-coral-red" />
-                ) : (
-                  <Copy className="w-4 h-4 text-coral-red" />
-                )}
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
           </div>
-
-          <div className="p-3 glass rounded-lg">
-            <p className="text-xs text-coral-red/50 mb-1">L'AI può commettere errori.</p>
-            <p className="text-xs text-coral-red/50">
-              Verifica sempre le informazioni importanti.
-            </p>
-          </div>
-
           <button
             onClick={() => router.push('/ai-chat')}
-            className="mt-4 w-full px-3 py-2 glass rounded-lg text-sm text-coral-red hover:glass-strong transition-all"
+            className="mt-auto w-full px-3 py-2 border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors flex items-center justify-center gap-2"
           >
-            Back to Chat
+            <ArrowLeft className="w-4 h-4" />
+            Torna alla chat
           </button>
-        </div>
+        </aside>
 
-        {/* Main Chat Area */}
-        <AIChatMain
-          chat={chat}
-          selectedModel={selectedModel}
-          isModelSelectorOpen={isModelSelectorOpen}
-          onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-          onModelSelect={(model) => {
-            setSelectedModel(model)
-            if (chat) {
-              updateChat({ ...chat, model })
-            }
-          }}
-          onChatUpdate={updateChat}
-          onCreateGroupChat={async () => {}}
-        />
+        <div className="flex flex-1 flex-col min-w-0 min-h-0">
+          <div className="md:hidden px-2 py-2 border-b border-[var(--border-color)] flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => router.push('/ai-chat')}
+              className="p-2 rounded-lg hover:bg-[var(--background-secondary)] transition-colors"
+              aria-label="Torna alla chat"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <span className="text-sm font-medium truncate flex-1">Group Chat</span>
+            <button
+              onClick={() => setShowInfo(!showInfo)}
+              className="px-3 py-1.5 text-xs rounded-lg border border-[var(--border-color)] text-[var(--text-primary)]"
+            >
+              {showInfo ? 'Chiudi' : 'Info'}
+            </button>
+          </div>
+
+          {showInfo && (
+            <div className="md:hidden px-3 py-3 border-b border-[var(--border-color)] bg-[var(--background-secondary)] shrink-0">
+              <p className="text-xs text-[var(--text-secondary)] mb-2">Condividi questo link:</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={shareLink}
+                  readOnly
+                  className="flex-1 min-w-0 px-2 py-1.5 bg-[var(--card-background)] border border-[var(--border-color)] rounded text-xs truncate"
+                />
+                <button
+                  onClick={copyLink}
+                  className="p-2 bg-[var(--accent-blue)] text-white rounded-lg shrink-0"
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <AIChatMain
+            chat={chat}
+            selectedModel={selectedModel}
+            isModelSelectorOpen={isModelSelectorOpen}
+            onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
+            onModelSelect={(model) => {
+              setSelectedModel(model)
+              if (chat) {
+                updateChat({ ...chat, model })
+              }
+            }}
+            onChatUpdate={updateChat}
+            onCreateGroupChat={async () => {}}
+          />
+        </div>
 
         {isModelSelectorOpen && (
           <ModelSelector
@@ -172,4 +192,3 @@ export default function GroupChatPage() {
     </main>
   )
 }
-

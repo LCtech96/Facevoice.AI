@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Sparkles, Menu, X } from 'lucide-react'
+import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -22,6 +22,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const [showDropdownMenu, setShowDropdownMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const dropdownMenuRef = useRef<HTMLDivElement>(null)
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const mobileDropdownMenuRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
   
   // Check authentication status
@@ -48,7 +50,13 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setShowUserMenu(false)
       }
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
       if (dropdownMenuRef.current && !dropdownMenuRef.current.contains(event.target as Node)) {
+        setShowDropdownMenu(false)
+      }
+      if (mobileDropdownMenuRef.current && !mobileDropdownMenuRef.current.contains(event.target as Node)) {
         setShowDropdownMenu(false)
       }
     }
@@ -69,6 +77,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }
   
   const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isChatPage = pathname?.startsWith('/ai-chat')
   const { t } = useTranslation()
   
   // Nav bar principale (sempre visibile)
@@ -80,13 +89,12 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
 
-  // Menu a tendina (bookings, payments, admin, entertainment)
+  // Menu a tendina (bookings, payments, admin)
   const dropdownMenuItems = [
     ...(user ? [
       { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
       { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
     ] : []),
-    { id: 'entertainment', label: t('nav.entertainment'), icon: Sparkles, href: '/intrattenimento' },
     ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
   ]
 
@@ -121,8 +129,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/payments')
     } else if (item.href === '/admin') {
       router.push('/admin')
-    } else if (item.href === '/intrattenimento') {
-      router.push('/intrattenimento')
     }
   }
 
@@ -148,8 +154,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     if (item.id === 'payments') {
       return pathname === '/payments'
     }
-    if (item.id === 'entertainment') {
-      return pathname === '/intrattenimento' || pathname?.startsWith('/intrattenimento/')
+    if (item.id === 'admin') {
+      return pathname === '/admin'
     }
     return pathname === '/home' && activeSection === item.id
   }
@@ -313,36 +319,37 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
         </div>
       </nav>
 
-      {/* Mobile Navigation - Top (for auth buttons) */}
-      <nav className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[var(--background)]/80 backdrop-blur-xl border-b border-[var(--border-color)]">
-        <div className="flex items-center justify-between px-4 py-3">
+      {/* Mobile Navigation - Top (hidden on chat — uses bottom nav + chat header) */}
+      {!isChatPage && (
+      <nav className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[var(--background)]/95 backdrop-blur-xl border-b border-[var(--border-color)]">
+        <div className="flex items-center gap-2 px-3 py-2.5 min-h-14">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             onClick={() => router.push('/home')}
-            className="text-lg font-semibold text-[var(--text-primary)] cursor-pointer"
+            className="text-base font-semibold text-[var(--text-primary)] cursor-pointer truncate min-w-0 flex-1"
           >
             FacevoiceAI
           </motion.div>
-          
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-1.5 shrink-0">
             <LanguageSelector />
-            
-            {/* Dropdown Menu Mobile */}
+
             {dropdownMenuItems.length > 0 && (
-              <div className="relative" ref={dropdownMenuRef}>
+              <div className="relative" ref={mobileDropdownMenuRef}>
                 <motion.button
                   whileTap={{ scale: 0.9 }}
                   onClick={() => setShowDropdownMenu(!showDropdownMenu)}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                  className={`flex items-center justify-center h-9 w-9 rounded-lg border transition-all ${
                     dropdownMenuItems.some(item => isActive(item))
                       ? 'bg-[var(--accent-blue)] text-white border-[var(--accent-blue)]'
                       : 'bg-[var(--background-secondary)] text-[var(--text-primary)] border-[var(--border-color)]'
                   }`}
+                  aria-label="Menu"
                 >
-                  <Menu size={16} />
+                  <Menu size={18} />
                 </motion.button>
-                
+
                 <AnimatePresence>
                   {showDropdownMenu && (
                     <motion.div
@@ -354,7 +361,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                       {dropdownMenuItems.map((item) => {
                         const Icon = item.icon
                         const active = isActive(item)
-                        
+
                         return (
                           <button
                             key={item.id}
@@ -375,89 +382,79 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 </AnimatePresence>
               </div>
             )}
-          </div>
-          
-          {!user ? (
-            <div className="flex items-center gap-2">
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={() => router.push('/auth')}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium"
-              >
-                <LogIn size={16} />
-                <span>{t('auth.signIn')}</span>
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={() => router.push('/auth')}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
-              >
-                <UserPlus size={16} />
-                <span>{t('auth.signUp')}</span>
-              </motion.button>
-            </div>
-          ) : (
-            <div className="relative" ref={menuRef}>
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] text-xs font-medium border border-[var(--border-color)]"
-              >
-                {user.email === 'luca@facevoice.ai' ? (
-                  <Shield size={16} className="text-yellow-500" />
-                ) : (
-                  <UserIcon size={16} />
-                )}
-                <span className="max-w-[100px] truncate">{user.email}</span>
-                {user.email === 'luca@facevoice.ai' && (
-                  <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-600 rounded text-[10px] font-bold">ADMIN</span>
-                )}
-              </motion.button>
-              
-              <AnimatePresence>
-                {showUserMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute right-0 top-full mt-2 w-40 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
-                  >
-                    <button
-                      onClick={handleLogout}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors text-xs"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>{t('auth.signOut')}</span>
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
 
+            {!user ? (
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => router.push('/auth')}
+                className="flex items-center justify-center h-9 w-9 rounded-lg bg-[var(--accent-blue)] text-white"
+                aria-label={t('auth.signIn')}
+              >
+                <LogIn size={18} />
+              </motion.button>
+            ) : (
+              <div className="relative" ref={mobileMenuRef}>
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center justify-center h-9 w-9 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] border border-[var(--border-color)]"
+                  aria-label="Account"
+                >
+                  {user.email === 'luca@facevoice.ai' ? (
+                    <Shield size={18} className="text-yellow-500" />
+                  ) : (
+                    <UserIcon size={18} />
+                  )}
+                </motion.button>
+
+                <AnimatePresence>
+                  {showUserMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 top-full mt-2 w-52 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
+                    >
+                      <div className="px-4 py-2.5 border-b border-[var(--border-color)] text-xs text-[var(--text-secondary)] truncate">
+                        {user.email}
+                      </div>
+                      <button
+                        onClick={handleLogout}
+                        className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors text-xs"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>{t('auth.signOut')}</span>
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
         </div>
       </nav>
+      )}
 
       {/* Mobile Navigation - Bottom */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom">
-        <div className="flex items-center justify-around px-2 py-2">
+      <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom ${isChatPage ? 'z-30' : ''}`}>
+        <div className="flex items-center justify-around px-1 py-1.5">
           {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
-            
+
             return (
               <motion.button
                 key={item.id}
                 whileTap={{ scale: 0.9 }}
                 onClick={(e) => handleItemClick(item, e)}
-                className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-xl transition-all min-w-[60px] ${
+                className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0 flex-1 max-w-[4.5rem] ${
                   active
                     ? 'text-[var(--accent-blue)]'
                     : 'text-[var(--text-secondary)]'
                 }`}
               >
-                <Icon size={22} />
-                <span className="text-xs font-medium">{item.label}</span>
+                <Icon size={20} />
+                <span className="text-[10px] font-medium truncate w-full text-center">{item.label}</span>
               </motion.button>
             )
           })}

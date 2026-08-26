@@ -16,6 +16,7 @@ import {
   Check,
   FolderPlus,
   Users,
+  Menu,
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
@@ -34,7 +35,7 @@ interface AIChatMainProps {
   isSharedChat?: boolean // Indica se è una chat condivisa
   onCreateProject?: () => void // Callback per creare progetti
   onShowProjects?: () => void // Callback per mostrare progetti
-  sidebarOpen?: boolean // Stato del sidebar per gestire il layout mobile
+  onToggleSidebar?: () => void
 }
 
 export default function AIChatMain({
@@ -49,7 +50,7 @@ export default function AIChatMain({
   isSharedChat = false,
   onCreateProject,
   onShowProjects,
-  sidebarOpen = false,
+  onToggleSidebar,
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -451,6 +452,85 @@ export default function AIChatMain({
     }
   }
 
+  const renderChatHeader = (options: {
+    title?: string
+    showShare?: boolean
+    shareDisabled?: boolean
+  }) => (
+    <div className="px-2 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center gap-2 shrink-0 safe-area-top">
+      <div className="flex items-center gap-1 min-w-0 flex-1">
+        {!isSharedChat && onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors shrink-0"
+            aria-label="Apri menu chat"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
+        {options.title && (
+          <p className="text-sm font-medium text-[var(--text-primary)] truncate md:hidden flex-1 text-center px-1">
+            {options.title}
+          </p>
+        )}
+        {onDeleteChat && (
+          <button
+            onClick={onDeleteChat}
+            className="hidden md:flex p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors shrink-0"
+            title="Delete chat"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        {options.title && (
+          <p className="hidden md:block text-sm text-[var(--text-secondary)] truncate flex-1 text-center">
+            {options.title}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+        {onDeleteChat && (
+          <button
+            onClick={onDeleteChat}
+            className="md:hidden p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+            title="Delete chat"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        {!isSharedChat && (onCreateProject || onShowProjects) && (
+          <button
+            onClick={onShowProjects || onCreateProject}
+            className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+            title="Progetti"
+          >
+            <FolderPlus className="w-4 h-4" />
+          </button>
+        )}
+        {options.showShare !== false && !options.shareDisabled && !isSharedChat && (
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleShareChat}
+            disabled={options.shareDisabled || isMigrating || !chat}
+            className="p-2 sm:px-3 sm:py-1.5 bg-[var(--accent-blue)] text-white rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+            title={chat ? 'Condividi Chat' : 'Crea una chat per condividere'}
+          >
+            {isMigrating ? (
+              <Sparkles className="w-4 h-4 animate-pulse" />
+            ) : (
+              <Users className="w-4 h-4" />
+            )}
+            <span className="hidden sm:inline">
+              {isMigrating ? 'Condividendo...' : 'Condividi'}
+            </span>
+          </motion.button>
+        )}
+      </div>
+    </div>
+  )
+
   const imageDialog = (
     <AnimatePresence>
       {showImageDialog && (
@@ -571,41 +651,10 @@ export default function AIChatMain({
   if (!chat) {
     return (
       <>
-      <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0">
-        <div className="px-3 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            {/* Model selector removed */}
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
-            {!isSharedChat && (onCreateProject || onShowProjects) && (
-              <button
-                onClick={onShowProjects || onCreateProject}
-                className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-                title="Progetti e Impostazioni"
-              >
-                <FolderPlus className="w-4 h-4" />
-              </button>
-            )}
-            
-            {/* Bottone Chat Condivisa - In alto a destra (disabilitato quando non c'è chat) */}
-            {!isSharedChat && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleShareChat}
-                disabled={true}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent-blue)]/50 text-white rounded-lg text-sm cursor-not-allowed opacity-50"
-                title="Crea una chat per condividere"
-              >
-                <Users className="w-4 h-4" />
-                <span className="hidden sm:inline">Condividi</span>
-              </motion.button>
-            )}
-          </div>
-        </div>
+      <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0 min-w-0">
+        {renderChatHeader({ title: 'Nuova chat', shareDisabled: true })}
         
-        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto pb-2">
+        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-2 sm:px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto pb-2">
           <div className="mb-4 md:mb-8 pt-2 md:pt-0">
             <h1 className="text-2xl md:text-4xl font-semibold text-[var(--text-primary)] mb-1 md:mb-2 text-center">
               FacevoiceAI
@@ -660,80 +709,10 @@ export default function AIChatMain({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0">
-      <div className="px-3 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between shrink-0">
-        {/* Left side - Empty on mobile to leave space for hamburger, show delete button on desktop */}
-        <div className="flex items-center gap-2">
-          {/* Delete button - only on desktop */}
-          {onDeleteChat && (
-            <button
-              onClick={onDeleteChat}
-              className="hidden md:flex p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-              title="Delete chat"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-        
-        {/* Center - Chat title (hidden on mobile) */}
-        <div className="flex-1 text-center hidden md:block">
-          <div className="text-sm text-[var(--text-secondary)]">
-            {chat.title}
-          </div>
-        </div>
-        
-        {/* Right side - Settings and other buttons (ALWAYS on right, especially on mobile) */}
-        <div className="flex items-center gap-2">
-          {/* Delete button - only on mobile */}
-          {onDeleteChat && (
-            <button
-              onClick={onDeleteChat}
-              className="md:hidden p-1.5 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-              title="Delete chat"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-          
-          {/* Bottone Progetti/Impostazioni - Piccolo in alto a destra */}
-          {!isSharedChat && (onCreateProject || onShowProjects) && (
-            <button
-              onClick={onShowProjects || onCreateProject}
-              className="p-2 text-[var(--text-secondary)] hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-              title="Progetti e Impostazioni"
-            >
-              <FolderPlus className="w-4 h-4" />
-            </button>
-          )}
-          
-          {/* Bottone Chat Condivisa - In alto a destra */}
-          {!isSharedChat && (
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleShareChat}
-              disabled={isMigrating || !chat}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent-blue)] text-white rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-              title={chat ? "Condividi Chat" : "Crea una chat per condividere"}
-            >
-              {isMigrating ? (
-                <>
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                  <span className="hidden sm:inline">Condividendo...</span>
-                </>
-              ) : (
-                <>
-                  <Users className="w-4 h-4" />
-                  <span className="hidden sm:inline">Condividi</span>
-                </>
-              )}
-            </motion.button>
-          )}
-        </div>
-      </div>
+    <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0 min-w-0">
+      {renderChatHeader({ title: chat.title })}
 
-      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto p-2 sm:p-3 md:p-4 space-y-3 md:space-y-4 min-h-0">
         {chat.messages.map((msg) => (
           <div
             key={msg.id}
