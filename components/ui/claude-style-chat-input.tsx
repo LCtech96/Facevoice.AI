@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Plus, ChevronDown, ArrowUp, X, FileText, Loader2, Check, Archive, Image as ImageIcon } from "lucide-react";
+import { Plus, ChevronDown, ArrowUp, X, FileText, Loader2, Check, Archive, Image as ImageIcon, Mic } from "lucide-react";
 
 /* --- ICONS --- */
 export const Icons = {
@@ -260,6 +260,9 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
     const [isDragging, setIsDragging] = useState(false);
     const [selectedModel, setSelectedModel] = useState(externalSelectedModel || "sonnet-4.5");
     const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const [speechSupported, setSpeechSupported] = useState(false);
+    const recognitionRef = useRef<any>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -283,6 +286,58 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
             setSelectedModel(externalSelectedModel);
         }
     }, [externalSelectedModel]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const supported = !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+        setSpeechSupported(supported);
+    }, []);
+
+    const toggleListening = () => {
+        if (typeof window === 'undefined') return;
+
+        const SpeechRecognitionCtor =
+            (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+        if (!SpeechRecognitionCtor) {
+            alert('Il tuo browser non supporta il riconoscimento vocale.');
+            return;
+        }
+
+        if (isListening && recognitionRef.current) {
+            recognitionRef.current.stop();
+            setIsListening(false);
+            return;
+        }
+
+        const recognition = new SpeechRecognitionCtor();
+        recognition.lang = 'it-IT';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend = () => setIsListening(false);
+        recognition.onerror = () => setIsListening(false);
+        recognition.onresult = (event: any) => {
+            const transcript = Array.from(event.results)
+                .map((result: any) => result[0]?.transcript || '')
+                .join(' ')
+                .trim();
+
+            if (transcript) {
+                setMessage((prev) => (prev ? `${prev} ${transcript}` : transcript));
+            }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+    };
+
+    useEffect(() => {
+        return () => {
+            recognitionRef.current?.stop?.();
+        };
+    }, []);
 
     useEffect(() => {
         if (textareaRef.current) {
@@ -455,6 +510,22 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                 </button>
                             )}
 
+                            {speechSupported && (
+                                <button
+                                    onClick={toggleListening}
+                                    className={`inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 ${
+                                        isListening
+                                            ? 'text-red-500 bg-red-500/10 animate-pulse'
+                                            : 'text-text-400 hover:text-text-200 hover:bg-bg-200'
+                                    }`}
+                                    type="button"
+                                    aria-label="Voice input"
+                                    title={isListening ? 'Ferma registrazione' : 'Input vocale'}
+                                >
+                                    <Mic className="w-5 h-5" />
+                                </button>
+                            )}
+
                             {!compact && (
                             <div className="flex shrink min-w-8 !shrink-0">
                                 <button
@@ -514,6 +585,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                 ref={fileInputRef}
                 type="file"
                 multiple
+                accept="image/*,.txt,.pdf,.doc,.docx"
                 onChange={(e) => {
                     if (e.target.files) handleFiles(e.target.files);
                     e.target.value = '';

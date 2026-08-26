@@ -1,5 +1,16 @@
 import { getGeminiModelsToTry } from '@/lib/chat-models'
 
+export type GeminiAttachment = {
+  mimeType: string
+  data: string
+}
+
+export type GeminiChatMessage = {
+  role: string
+  content: string
+  attachments?: GeminiAttachment[]
+}
+
 const GEMINI_MODELS: Record<string, string> = {
   'gemini-3.6-flash': 'gemini-3.6-flash',
   'gemini-3.5-flash': 'gemini-3.5-flash',
@@ -13,7 +24,17 @@ const GEMINI_MODELS: Record<string, string> = {
   'gemini-flash': 'gemini-flash-latest',
 }
 
+const IMAGE_MODELS = [
+  'gemini-2.5-flash-image',
+  'gemini-3.1-flash-image',
+  'gemini-3-pro-image',
+] as const
+
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
+
+type GeminiPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
 
 export function getGeminiApiKey(): string {
   return (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim()
@@ -21,6 +42,31 @@ export function getGeminiApiKey(): string {
 
 export function isGeminiModel(model: string): boolean {
   return model.startsWith('gemini-') || model in GEMINI_MODELS
+}
+
+function buildParts(content: string, attachments?: GeminiAttachment[]): GeminiPart[] {
+  const parts: GeminiPart[] = []
+
+  if (content.trim()) {
+    parts.push({ text: content.trim() })
+  }
+
+  for (const attachment of attachments || []) {
+    if (attachment.mimeType.startsWith('image/') && attachment.data) {
+      parts.push({
+        inlineData: {
+          mimeType: attachment.mimeType,
+          data: attachment.data.replace(/^data:[^;]+;base64,/, ''),
+        },
+      })
+    }
+  }
+
+  if (parts.length === 0) {
+    parts.push({ text: 'Describe the attached content.' })
+  }
+
+  return parts
 }
 
 function extractGeminiText(data: any): string {
@@ -31,6 +77,20 @@ function extractGeminiText(data: any): string {
     .map((part: { text?: string }) => part.text || '')
     .join('')
     .trim()
+}
+
+function extractGeminiImage(data: any): string | null {
+  const parts = data?.candidates?.[0]?.content?.parts
+  if (!Array.isArray(parts)) return null
+
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      const mimeType = part.inlineData.mimeType || 'image/png'
+      return `data:${mimeType};base64,${part.inlineData.data}`
+    }
+  }
+
+  return null
 }
 
 function getGeminiFailureReason(data: any): string | null {
@@ -48,8 +108,29 @@ function getGeminiFailureReason(data: any): string | null {
   return null
 }
 
+function parseGeminiError(response: Response, data: any): Error {
+  const errorMessage = data?.error?.message || `Gemini API error: ${response.status}`
+
+  if (response.status === 429) {
+    if (errorMessage.includes('prepayment credits are depleted')) {
+      return new Error(errorMessage)
+    }
+    return new Error(
+      'Rate limit raggiunto. Il piano gratuito ha limiti di richieste per minuto. Riprova tra qualche secondo.'
+    )
+  }
+
+  if (response.status === 403 && errorMessage.toLowerCase().includes('quota')) {
+    return new Error(
+      'Quota giornaliera esaurita. Il piano gratuito ha limiti giornalieri. Riprova domani.'
+    )
+  }
+
+  return new Error(errorMessage)
+}
+
 export async function callGeminiAPI(
-  messages: Array<{ role: string; content: string }>,
+  messages: GeminiChatMessage[],
   model: string,
   systemMessage?: string,
   options?: { temperature?: number; maxOutputTokens?: number }
@@ -62,14 +143,14 @@ export async function callGeminiAPI(
   }
 
   const geminiModel = GEMINI_MODELS[model] || model
-  const contents: Array<{ role: string; parts: Array<{ text: string }> }> = []
+  const contents: Array<{ role: string; parts: GeminiPart[] }> = []
 
   for (const msg of messages) {
     if (msg.role === 'system') continue
 
     contents.push({
       role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: String(msg.content).trim() }],
+      parts: buildParts(msg.content, msg.attachments),
     })
   }
 
@@ -106,25 +187,7 @@ export async function callGeminiAPI(
   const data = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const errorMessage =
-      data?.error?.message || `Gemini API error: ${response.status}`
-
-    if (response.status === 429) {
-      if (errorMessage.includes('prepayment credits are depleted')) {
-        throw new Error(errorMessage)
-      }
-      throw new Error(
-        'Rate limit raggiunto. Il piano gratuito ha limiti di richieste per minuto. Riprova tra qualche secondo.'
-      )
-    }
-
-    if (response.status === 403 && errorMessage.toLowerCase().includes('quota')) {
-      throw new Error(
-        'Quota giornaliera esaurita. Il piano gratuito ha limiti giornalieri. Riprova domani.'
-      )
-    }
-
-    throw new Error(errorMessage)
+    throw parseGeminiError(response, data)
   }
 
   const text = extractGeminiText(data)
@@ -147,7 +210,7 @@ export async function callGeminiAPI(
 }
 
 export async function callGeminiWithFallback(
-  messages: Array<{ role: string; content: string }>,
+  messages: GeminiChatMessage[],
   model: string,
   systemMessage?: string,
   options?: { temperature?: number; maxOutputTokens?: number }
@@ -177,4 +240,70 @@ export async function callGeminiWithFallback(
   }
 
   throw lastError || new Error('Failed to get AI response from Gemini')
+}
+
+export async function generateGeminiImage(
+  prompt: string,
+  referenceImage?: GeminiAttachment
+) {
+  const apiKey = getGeminiApiKey()
+  if (!apiKey) {
+    throw new Error('Gemini API key not configured.')
+  }
+
+  let lastError: Error | null = null
+
+  for (const imageModel of IMAGE_MODELS) {
+    try {
+      const parts: GeminiPart[] = [{ text: prompt.trim() }]
+
+      if (referenceImage) {
+        parts.push({
+          inlineData: {
+            mimeType: referenceImage.mimeType,
+            data: referenceImage.data.replace(/^data:[^;]+;base64,/, ''),
+          },
+        })
+      }
+
+      const response = await fetch(
+        `${GEMINI_API_URL}/models/${imageModel}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'x-goog-api-key': apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig: {
+              responseModalities: ['TEXT', 'IMAGE'],
+            },
+          }),
+        }
+      )
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw parseGeminiError(response, data)
+      }
+
+      const imageUrl = extractGeminiImage(data)
+      if (imageUrl) {
+        return {
+          imageUrl,
+          model: (data.modelVersion as string) || imageModel,
+          text: extractGeminiText(data),
+        }
+      }
+
+      throw new Error('Gemini non ha restituito un\'immagine. Prova un prompt diverso.')
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      console.warn(`Gemini image model ${imageModel} failed:`, lastError.message)
+    }
+  }
+
+  throw lastError || new Error('Failed to generate image with Gemini')
 }

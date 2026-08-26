@@ -1,24 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
-import { callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import {
+  callGeminiWithFallback,
+  getGeminiApiKey,
+  type GeminiAttachment,
+  type GeminiChatMessage,
+} from '@/lib/gemini'
 
-type ChatMessage = {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}
-
-function normalizeMessages(messages: unknown[]): ChatMessage[] {
+function normalizeMessages(messages: unknown[]): GeminiChatMessage[] {
   return messages
-    .filter((msg: any) => msg && msg.role && msg.content)
-    .map((msg: any): ChatMessage => ({
-      role:
-        msg.role === 'user'
-          ? 'user'
-          : msg.role === 'assistant'
-            ? 'assistant'
-            : 'system',
-      content: String(msg.content).trim(),
-    }))
+    .filter((msg: any) => msg && msg.role && (msg.content || msg.attachments?.length))
+    .map((msg: any): GeminiChatMessage => {
+      const attachments: GeminiAttachment[] | undefined = Array.isArray(msg.attachments)
+        ? msg.attachments
+            .filter((item: any) => item?.mimeType && item?.data)
+            .map((item: any) => ({
+              mimeType: String(item.mimeType),
+              data: String(item.data),
+            }))
+        : undefined
+
+      return {
+        role:
+          msg.role === 'user'
+            ? 'user'
+            : msg.role === 'assistant'
+              ? 'assistant'
+              : 'system',
+        content: String(msg.content || '').trim(),
+        attachments: attachments?.length ? attachments : undefined,
+      }
+    })
 }
 
 export async function POST(req: NextRequest) {
@@ -104,7 +116,8 @@ ${availableTools}
 3. If a user asks about a specific use case, recommend 1-2 relevant tools from the list above that match their needs.
 4. Only suggest tools NOT in the list if the user specifically asks for something different or if no tool in the list fits their needs.
 5. If no tool in the list fits, ask ONE follow-up question to understand their needs better - don't ask multiple questions at once.
-6. Be conversational and friendly, but keep it brief.`
+6. Be conversational and friendly, but keep it brief.
+7. When the user sends images, analyze them carefully and answer in Italian unless they write in another language.`
 
     const userMessages = validMessages.filter((msg) => msg.role !== 'system')
     const geminiModel = resolveChatModel(model)

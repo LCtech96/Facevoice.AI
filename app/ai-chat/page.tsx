@@ -15,6 +15,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  attachments?: Array<{ mimeType: string; data: string }>
 }
 
 export interface Chat {

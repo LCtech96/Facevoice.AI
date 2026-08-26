@@ -20,6 +20,7 @@ import {
 import { Chat, Message } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
+import { filesToAttachments } from '@/lib/chat-attachments'
 
 interface AIChatMainProps {
   chat: Chat | null
@@ -61,6 +62,7 @@ export default function AIChatMain({
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   const [isEditingImage, setIsEditingImage] = useState(false)
   const [editPrompt, setEditPrompt] = useState('')
+  const [imageGenPrompt, setImageGenPrompt] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -82,10 +84,12 @@ export default function AIChatMain({
     model: string;
     isThinkingEnabled: boolean;
   }) => {
-    const messageContent = data.message.trim() || 
-      (data.files.length > 0 ? `[${data.files.length} file(s) attached]` : '') ||
-      (data.pastedContent.length > 0 ? `[${data.pastedContent.length} pasted content(s)]` : '')
-    
+    const attachments = await filesToAttachments(data.files)
+    const pastedText = data.pastedContent.map((item) => item.content).join('\n\n')
+    const messageContent =
+      [data.message.trim(), pastedText].filter(Boolean).join('\n\n') ||
+      (attachments.length > 0 ? 'Analizza questa immagine.' : '')
+
     if (!messageContent || isLoading) return
 
     const userMessage: Message = {
@@ -93,6 +97,7 @@ export default function AIChatMain({
       role: 'user',
       content: messageContent,
       timestamp: new Date(),
+      attachments: attachments.length > 0 ? attachments : undefined,
     }
 
     // Aggiorna il modello se cambiato
@@ -145,6 +150,7 @@ export default function AIChatMain({
           messages: updatedChat.messages.map((msg) => ({
             role: msg.role,
             content: msg.content,
+            attachments: msg.attachments,
           })),
           model: modelToUse,
         }),
@@ -319,11 +325,13 @@ export default function AIChatMain({
   }
 
   const handleGenerateImage = async () => {
-    // Usa il prompt dall'ultimo messaggio della conversazione
-    const prompt = chat?.messages[chat.messages.length - 1]?.content || 'a beautiful landscape'
-    
-    if (!prompt || prompt.length < 3) {
-      alert('Scrivi un messaggio nella chat prima di generare un\'immagine, oppure usa almeno 3 caratteri come descrizione')
+    const prompt =
+      imageGenPrompt.trim() ||
+      chat?.messages[chat.messages.length - 1]?.content?.trim() ||
+      ''
+
+    if (prompt.length < 3) {
+      alert('Inserisci una descrizione di almeno 3 caratteri per generare l\'immagine')
       return
     }
 
@@ -347,9 +355,20 @@ export default function AIChatMain({
       }
 
       const data = await response.json()
-      
-      // Aggiungi l'immagine generata come messaggio
-      if (chat && data.imageUrl) {
+
+      if (data.imageUrl) {
+        let activeChat = chat
+        if (!activeChat) {
+          activeChat = {
+            id: Date.now().toString(),
+            title: prompt.slice(0, 50),
+            messages: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            model: selectedModel,
+          }
+        }
+
         const imageMessage: Message = {
           id: Date.now().toString(),
           role: 'assistant',
@@ -357,17 +376,17 @@ export default function AIChatMain({
           timestamp: new Date(),
         }
 
-        const updatedChat = {
-          ...chat,
-          messages: [...chat.messages, imageMessage],
+        onChatUpdate({
+          ...activeChat,
+          messages: [...activeChat.messages, imageMessage],
           updatedAt: new Date(),
-        }
-        onChatUpdate(updatedChat)
+        })
+        setImageGenPrompt('')
       }
     } catch (error: any) {
       console.error('Error generating image:', error)
       alert(`Errore nella generazione: ${error.message}`)
-      setShowImageDialog(true) // Riapri il dialog in caso di errore
+      setShowImageDialog(true)
     } finally {
       setIsGeneratingImage(false)
     }
@@ -432,8 +451,126 @@ export default function AIChatMain({
     }
   }
 
+  const imageDialog = (
+    <AnimatePresence>
+      {showImageDialog && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setShowImageDialog(false)
+            setUploadedImage(null)
+            setEditPrompt('')
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.95, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 20 }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-[var(--text-primary)]">
+                {uploadedImage ? 'Modifica Immagine' : 'Genera o Carica Immagine'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowImageDialog(false)
+                  setUploadedImage(null)
+                  setEditPrompt('')
+                }}
+                className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-[var(--text-secondary)]" />
+              </button>
+            </div>
+
+            {uploadedImage ? (
+              <div className="space-y-4">
+                <img
+                  src={uploadedImage}
+                  alt="Uploaded"
+                  className="w-full rounded-lg max-h-64 object-contain bg-[var(--background-secondary)]"
+                />
+                <textarea
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  placeholder="Descrivi come vuoi modificare l'immagine o crea una nuova immagine basata su questa..."
+                  className="w-full p-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] resize-none"
+                  rows={3}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleEditImage}
+                    disabled={isEditingImage || !editPrompt.trim()}
+                    className="flex-1 bg-[var(--accent-blue)] text-white px-4 py-2 rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors"
+                  >
+                    {isEditingImage ? 'Generazione in corso...' : 'Genera Nuova Immagine'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUploadedImage(null)
+                      imageInputRef.current?.click()
+                    }}
+                    className="px-4 py-2 border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
+                  >
+                    Cambia
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <textarea
+                  value={imageGenPrompt}
+                  onChange={(e) => setImageGenPrompt(e.target.value)}
+                  placeholder="Descrivi l'immagine da generare..."
+                  className="w-full p-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] resize-none"
+                  rows={3}
+                />
+                <button
+                  onClick={handleGenerateImage}
+                  disabled={isGeneratingImage}
+                  className="w-full px-4 py-3 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  <span>{isGeneratingImage ? 'Generazione in corso...' : 'Genera Immagine'}</span>
+                </button>
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-[var(--border-color)]"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-[var(--card-background)] text-[var(--text-secondary)]">OPPURE</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="w-full px-4 py-3 border border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:bg-[var(--background-secondary)] transition-colors flex items-center justify-center gap-2"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                  <span>Carica Immagine per Modificare</span>
+                </button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+              </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+
   if (!chat) {
     return (
+      <>
       <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0">
         <div className="px-3 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
@@ -511,11 +648,14 @@ export default function AIChatMain({
               selectedModel={selectedModel}
               models={[...CHAT_MODELS]}
               onModelSelect={(modelId) => onModelSelect(modelId)}
+              onOpenImageDialog={() => setShowImageDialog(true)}
               compact
             />
           </div>
         </div>
       </div>
+      {imageDialog}
+      </>
     )
   }
 
@@ -609,6 +749,14 @@ export default function AIChatMain({
                 ? 'bg-[var(--accent-blue)] text-white'
                 : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
             }`}>
+              {msg.attachments?.map((attachment, idx) => (
+                <img
+                  key={idx}
+                  src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                  alt="Allegato"
+                  className="max-w-full rounded-lg my-2 max-h-64 object-contain"
+                />
+              ))}
               {/* Render images if present in markdown format */}
               {msg.content.includes('![') && msg.content.match(/!\[.*?\]\((.*?)\)/g)?.map((imgMatch, idx) => {
                 const urlMatch = imgMatch.match(/!\[.*?\]\((.*?)\)/)
@@ -717,116 +865,7 @@ export default function AIChatMain({
         )}
       </AnimatePresence>
 
-      {/* Image Dialog */}
-      <AnimatePresence>
-        {showImageDialog && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => {
-              setShowImageDialog(false)
-              setUploadedImage(null)
-              setEditPrompt('')
-            }}
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 20 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto"
-            >
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-                  {uploadedImage ? 'Modifica Immagine' : 'Genera o Carica Immagine'}
-                </h3>
-                <button
-                  onClick={() => {
-                    setShowImageDialog(false)
-                    setUploadedImage(null)
-                    setEditPrompt('')
-                  }}
-                  className="p-1 hover:bg-[var(--background-secondary)] rounded-lg transition-colors"
-                >
-                  <X className="w-5 h-5 text-[var(--text-secondary)]" />
-                </button>
-              </div>
-
-              {uploadedImage ? (
-                // Modalità editing
-                <div className="space-y-4">
-                  <img 
-                    src={uploadedImage} 
-                    alt="Uploaded" 
-                    className="w-full rounded-lg max-h-64 object-contain bg-[var(--background-secondary)]"
-                  />
-                  <textarea
-                    value={editPrompt}
-                    onChange={(e) => setEditPrompt(e.target.value)}
-                    placeholder="Descrivi come vuoi modificare l'immagine o crea una nuova immagine basata su questa..."
-                    className="w-full p-3 bg-[var(--background)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] resize-none"
-                    rows={3}
-                  />
-                  <div className="flex gap-2">
-                <button
-                      onClick={handleEditImage}
-                      disabled={isEditingImage || !editPrompt.trim()}
-                      className="flex-1 bg-[var(--accent-blue)] text-white px-4 py-2 rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors"
-                >
-                      {isEditingImage ? 'Generazione in corso...' : 'Genera Nuova Immagine'}
-                </button>
-                    <button
-                      onClick={() => {
-                        setUploadedImage(null)
-                        imageInputRef.current?.click()
-                      }}
-                      className="px-4 py-2 border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
-                    >
-                      Cambia
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                // Modalità generazione/caricamento
-                <div className="space-y-3">
-                <button
-                  onClick={handleGenerateImage}
-                    disabled={isGeneratingImage}
-                    className="w-full px-4 py-3 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                >
-                  <Sparkles className="w-5 h-5" />
-                    <span>{isGeneratingImage ? 'Generazione in corso...' : 'Genera Immagine da Prompt'}</span>
-                </button>
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-[var(--border-color)]"></div>
-                    </div>
-                    <div className="relative flex justify-center text-sm">
-                      <span className="px-2 bg-[var(--card-background)] text-[var(--text-secondary)]">OPPURE</span>
-                    </div>
-              </div>
-                  <button
-                    onClick={() => imageInputRef.current?.click()}
-                    className="w-full px-4 py-3 border border-[var(--border-color)] text-[var(--text-primary)] rounded-lg hover:bg-[var(--background-secondary)] transition-colors flex items-center justify-center gap-2"
-                  >
-                    <ImageIcon className="w-5 h-5" />
-                    <span>Carica Immagine per Modificare</span>
-                  </button>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-                </div>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {imageDialog}
 
       {/* Document Dialog */}
       <AnimatePresence>
