@@ -1,15 +1,16 @@
 import { getGeminiModelsToTry } from '@/lib/chat-models'
 
 const GEMINI_MODELS: Record<string, string> = {
-  'gemini-2.0-flash': 'gemini-2.0-flash',
-  'gemini-flash-latest': 'gemini-flash-latest',
   'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
   'gemini-2.5-pro': 'gemini-2.5-pro',
-  'gemini-1.5-pro': 'gemini-1.5-pro',
-  'gemini-1.5-flash': 'gemini-1.5-flash',
-  'gemini-1.5-flash-lite': 'gemini-1.5-flash-lite',
-  'gemini-pro': 'gemini-1.5-pro',
-  'gemini-flash': 'gemini-2.0-flash',
+  'gemini-3.5-flash': 'gemini-3.5-flash',
+  'gemini-3.5-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-3.6-flash': 'gemini-3.6-flash',
+  'gemini-flash-latest': 'gemini-flash-latest',
+  'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
+  'gemini-pro': 'gemini-2.5-pro',
+  'gemini-flash': 'gemini-flash-latest',
 }
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
@@ -109,6 +110,9 @@ export async function callGeminiAPI(
       data?.error?.message || `Gemini API error: ${response.status}`
 
     if (response.status === 429) {
+      if (errorMessage.includes('prepayment credits are depleted')) {
+        throw new Error(errorMessage)
+      }
       throw new Error(
         'Rate limit raggiunto. Il piano gratuito ha limiti di richieste per minuto. Riprova tra qualche secondo.'
       )
@@ -161,6 +165,7 @@ export async function callGeminiWithFallback(
         lastError.message.includes('not found') ||
         lastError.message.includes('NOT_FOUND') ||
         lastError.message.includes('is not supported') ||
+        lastError.message.includes('no longer available') ||
         lastError.message.includes('Invalid response')
 
       if (!retryable) {

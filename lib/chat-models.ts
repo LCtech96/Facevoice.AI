@@ -1,32 +1,33 @@
-export const DEFAULT_CHAT_MODEL = 'gemini-2.0-flash'
+export const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash'
 
 export const GEMINI_FALLBACK_MODELS = [
-  'gemini-2.0-flash',
   'gemini-2.5-flash',
   'gemini-flash-latest',
-  'gemini-1.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
 ] as const
 
 export const CHAT_MODELS = [
   {
-    id: 'gemini-2.0-flash',
-    name: 'Gemini 2.0 Flash',
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     description: 'Default fast model',
   },
   {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
-    description: 'Latest flash model',
+    id: 'gemini-flash-latest',
+    name: 'Gemini Flash (Latest)',
+    description: 'Always uses the latest flash model',
   },
   {
-    id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
-    description: 'Most advanced reasoning',
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    description: 'Lightweight and efficient',
   },
   {
-    id: 'gemini-1.5-flash',
-    name: 'Gemini 1.5 Flash',
-    description: 'Stable fallback',
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: 'Newest generation flash model',
   },
 ] as const
 
@@ -55,6 +56,14 @@ export function getChatErrorMessage(error: unknown): string {
     message.includes('API key not configured')
   ) {
     return 'Chiave API Gemini non valida o mancante. Verifica GEMINI_API_KEY su Vercel (Generative Language API abilitata, senza restrizioni referrer).'
+  }
+
+  if (
+    message.includes('prepayment credits are depleted') ||
+    message.includes('billing') ||
+    message.includes('PAYMENT')
+  ) {
+    return 'Crediti Gemini esauriti. Vai su Google AI Studio → Billing e ricarica i crediti del progetto.'
   }
 
   if (message.includes('Rate limit') || message.includes('429')) {
