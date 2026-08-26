@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
+import { CHAT_MODELS, getChatModelName } from '@/lib/chat-models'
 
 interface AIChatMainProps {
   chat: Chat | null
@@ -195,12 +196,7 @@ export default function AIChatMain({
 
   // handleKeyPress removed - ClaudeChatInput handles keyboard events internally
 
-  const getModelName = () => {
-    if (selectedModel === 'llama-3.1-8b-instant') return 'Llama 3.1 8B'
-    if (selectedModel === 'llama-3.3-70b-versatile') return 'Llama 3.3 70B'
-    if (selectedModel === 'mixtral-8x7b-32768') return 'Mixtral 8x7B'
-    return selectedModel
-  }
+  const getModelName = () => getChatModelName(selectedModel)
 
   const [isMigrating, setIsMigrating] = useState(false)
 
@@ -517,11 +513,7 @@ export default function AIChatMain({
             <ClaudeChatInput
               onSendMessage={handleSendFromClaudeInput}
               selectedModel={selectedModel}
-              models={[
-                { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', description: 'Fast and efficient' },
-                { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', description: 'Most intelligent model' },
-                { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'High-quality with extended context' },
-              ]}
+              models={[...CHAT_MODELS]}
               onModelSelect={(modelId) => onModelSelect(modelId)}
             />
           </div>
@@ -675,11 +667,7 @@ export default function AIChatMain({
           <ClaudeChatInput
             onSendMessage={handleSendFromClaudeInput}
             selectedModel={selectedModel}
-            models={[
-              { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', description: 'Fast and efficient' },
-              { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', description: 'Most intelligent model' },
-              { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'High-quality with extended context' },
-            ]}
+            models={[...CHAT_MODELS]}
             onModelSelect={(modelId) => onModelSelect(modelId)}
             onOpenImageDialog={() => setShowImageDialog(true)}
           />

@@ -163,6 +163,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+    if (models.length <= 1) {
+        return (
+            <div className="inline-flex items-center justify-center h-8 rounded-xl px-3 text-[14px] font-medium text-text-300 dark:text-[#B4B4B4] whitespace-nowrap">
+                {currentModel.name}
+            </div>
+        );
+    }
+
     return (
         <div className="relative" ref={dropdownRef}>
             <button
@@ -217,12 +225,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
                         </button>
                     ))}
 
-                    <div className="h-px bg-bg-300 dark:bg-[#30302E] my-1 mx-2" />
-
-                    <button className="w-full text-left px-3 py-2.5 rounded-xl flex items-center justify-between group transition-colors hover:bg-bg-200 dark:hover:bg-[#30302E] text-text-100 dark:text-[#ECECEC]">
-                        <span className="text-[13px] font-semibold">More models</span>
-                        <Icons.SelectArrow className="w-4 h-4 -rotate-90 text-text-300 dark:text-[#999999]" />
-                    </button>
                 </div>
             )}
         </div>

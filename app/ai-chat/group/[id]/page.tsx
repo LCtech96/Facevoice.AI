@@ -10,13 +10,14 @@ import LiquidGlass from '@/components/LiquidGlass'
 import { Chat, Message } from '@/app/ai-chat/page'
 import { Link as LinkIcon, Copy, Check, Users } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
 
 export default function GroupChatPage() {
   const params = useParams()
   const router = useRouter()
   const groupId = params?.id as string
   const [chat, setChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest')
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_CHAT_MODEL)
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [copied, setCopied] = useState(false)

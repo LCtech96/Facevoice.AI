@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
       .from('shared_chats')
       .insert({
         title: title || 'Shared Chat',
-        model: model || 'gemini-flash-latest',
+        model: model || DEFAULT_CHAT_MODEL,
         created_by: createdBy || 'anonymous',
       })
       .select()

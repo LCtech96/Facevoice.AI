@@ -7,6 +7,7 @@ import AIChatSidebar from '@/components/AIChatSidebar'
 import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import { createClient } from '@/lib/supabase-client'
+import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
 import type { User } from '@supabase/supabase-js'
 
 export interface Message {
@@ -39,7 +40,7 @@ export default function AIChatPage() {
   const [chats, setChats] = useState<Chat[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [currentChat, setCurrentChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest')
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_CHAT_MODEL)
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -98,7 +99,10 @@ export default function AIChatPage() {
       
       if (savedCurrentChat) {
         const chat = parsed.find((c: Chat) => c.id === savedCurrentChat)
-        if (chat) setCurrentChat(chat)
+        if (chat) {
+          setCurrentChat(chat)
+          setSelectedModel(resolveChatModel(chat.model))
+        }
       }
     }
 
@@ -206,7 +210,7 @@ export default function AIChatPage() {
 
   const selectChat = (chat: Chat) => {
     setCurrentChat(chat)
-    if (chat.model) setSelectedModel(chat.model)
+    if (chat.model) setSelectedModel(resolveChatModel(chat.model))
     setIsModelSelectorOpen(false)
   }
 
