@@ -1,5 +1,15 @@
 export const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash'
 
+/** Legacy model IDs saved in localStorage or old deploys */
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  'gemini-2.0-flash': 'gemini-2.5-flash',
+  'gemini-1.5-flash': 'gemini-2.5-flash',
+  'gemini-1.5-pro': 'gemini-2.5-flash',
+  'gemini-pro': 'gemini-2.5-flash',
+  'llama-3.1-8b-instant': 'gemini-2.5-flash',
+  'llama-3.3-70b-versatile': 'gemini-2.5-flash',
+}
+
 export const GEMINI_FALLBACK_MODELS = [
   'gemini-2.5-flash',
   'gemini-flash-latest',
@@ -38,6 +48,7 @@ export function getChatModelName(modelId: string): string {
 export function resolveChatModel(model?: string | null): string {
   if (!model) return DEFAULT_CHAT_MODEL
   if (CHAT_MODELS.some((m) => m.id === model)) return model
+  if (LEGACY_MODEL_MAP[model]) return LEGACY_MODEL_MAP[model]
   if (model.startsWith('gemini-')) return DEFAULT_CHAT_MODEL
   return DEFAULT_CHAT_MODEL
 }
@@ -63,7 +74,7 @@ export function getChatErrorMessage(error: unknown): string {
     message.includes('billing') ||
     message.includes('PAYMENT')
   ) {
-    return 'Crediti Gemini esauriti. Vai su Google AI Studio → Billing e ricarica i crediti del progetto.'
+    return 'Crediti prepagati esauriti su questo progetto Google. Crea una nuova chiave API gratuita su aistudio.google.com/apikey (senza ricarica) oppure ricarica i crediti in AI Studio → Billing.'
   }
 
   if (message.includes('Rate limit') || message.includes('429')) {
