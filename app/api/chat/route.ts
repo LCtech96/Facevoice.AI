@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
-import { callGeminiAPI, getGeminiApiKey, isGeminiModel } from '@/lib/gemini'
+import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
+import { callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
 
 type ChatMessage = {
   role: 'user' | 'assistant' | 'system'
@@ -19,11 +19,6 @@ function normalizeMessages(messages: unknown[]): ChatMessage[] {
             : 'system',
       content: String(msg.content).trim(),
     }))
-}
-
-function resolveGeminiModel(model: string): string {
-  if (isGeminiModel(model)) return model
-  return DEFAULT_CHAT_MODEL
 }
 
 export async function POST(req: NextRequest) {
@@ -112,7 +107,7 @@ ${availableTools}
 6. Be conversational and friendly, but keep it brief.`
 
     const userMessages = validMessages.filter((msg) => msg.role !== 'system')
-    const geminiModel = resolveGeminiModel(model)
+    const geminiModel = resolveChatModel(model)
 
     console.log(
       'Sending request to Gemini with model:',
@@ -121,36 +116,13 @@ ${availableTools}
       userMessages.length
     )
 
-    try {
-      const result = await callGeminiAPI(userMessages, geminiModel, systemMessage)
+    const result = await callGeminiWithFallback(userMessages, geminiModel, systemMessage)
 
-      return NextResponse.json({
-        message: result.message,
-        model: result.model,
-        usage: result.usage,
-      })
-    } catch (primaryError: any) {
-      if (geminiModel === 'gemini-1.5-flash') {
-        throw primaryError
-      }
-
-      console.warn(
-        'Primary Gemini model failed, trying fallback gemini-1.5-flash:',
-        primaryError.message
-      )
-
-      const result = await callGeminiAPI(
-        userMessages,
-        'gemini-1.5-flash',
-        systemMessage
-      )
-
-      return NextResponse.json({
-        message: result.message,
-        model: result.model,
-        usage: result.usage,
-      })
-    }
+    return NextResponse.json({
+      message: result.message,
+      model: result.model,
+      usage: result.usage,
+    })
   } catch (error: any) {
     console.error('Gemini API error:', {
       message: error.message,

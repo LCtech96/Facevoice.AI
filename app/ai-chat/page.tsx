@@ -304,13 +304,12 @@ export default function AIChatPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)] flex flex-col">
+    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pt-14 pb-[4.75rem] md:pt-0 md:pb-0">
       <Navigation />
       
-      {/* Spacing for desktop navigation */}
-      <div className="hidden md:block h-16" />
+      <div className="hidden md:block h-16 shrink-0" />
       
-      <div className="flex flex-1 w-full h-[calc(100vh-4rem)] md:h-[calc(100vh-4rem)] overflow-hidden relative">
+      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-3.5rem-4.75rem)] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { Chat, Message } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
-import { CHAT_MODELS, getChatModelName } from '@/lib/chat-models'
+import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
 
 interface AIChatMainProps {
   chat: Chat | null
@@ -180,7 +180,7 @@ export default function AIChatMain({
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
+        content: getChatErrorMessage(error),
         timestamp: new Date(),
       }
       const finalChat: Chat = {
@@ -434,9 +434,8 @@ export default function AIChatMain({
 
   if (!chat) {
     return (
-      <div className="flex-1 flex flex-col bg-[var(--background)]">
-        {/* Header - Always visible */}
-        <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
+      <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0">
+        <div className="px-3 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             {/* Model selector removed */}
           </div>
@@ -469,19 +468,17 @@ export default function AIChatMain({
           </div>
         </div>
         
-        {/* Empty State - ChatGPT Style */}
-        <div className="flex-1 flex flex-col items-center justify-center px-4 max-w-3xl mx-auto w-full">
-          <div className="mb-8">
-            <h1 className="text-4xl font-semibold text-[var(--text-primary)] mb-2 text-center">
+        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto pb-2">
+          <div className="mb-4 md:mb-8 pt-2 md:pt-0">
+            <h1 className="text-2xl md:text-4xl font-semibold text-[var(--text-primary)] mb-1 md:mb-2 text-center">
               FacevoiceAI
             </h1>
-            <p className="text-[var(--text-secondary)] text-center">
+            <p className="text-sm md:text-base text-[var(--text-secondary)] text-center">
               How can I help you today?
             </p>
           </div>
 
-          {/* Quick suggestions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3 w-full mb-4 md:mb-8">
             {[
               'Explain quantum computing',
               'Write a creative story',
@@ -501,20 +498,20 @@ export default function AIChatMain({
                     isThinkingEnabled: false,
                   })
                 }}
-                className="p-4 text-left bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl hover:bg-[var(--background-secondary)] transition-colors text-sm text-[var(--text-primary)]"
+                className="p-3 md:p-4 text-left bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl hover:bg-[var(--background-secondary)] transition-colors text-xs md:text-sm text-[var(--text-primary)]"
               >
                 {suggestion}
               </button>
             ))}
           </div>
 
-          {/* Input Area - Claude Style */}
-          <div className="w-full relative pb-4">
+          <div className="w-full relative pb-2 md:pb-4 shrink-0 sticky bottom-0 bg-[var(--background)]">
             <ClaudeChatInput
               onSendMessage={handleSendFromClaudeInput}
               selectedModel={selectedModel}
               models={[...CHAT_MODELS]}
               onModelSelect={(modelId) => onModelSelect(modelId)}
+              compact
             />
           </div>
         </div>
@@ -523,9 +520,8 @@ export default function AIChatMain({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[var(--background)]">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between">
+    <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0">
+      <div className="px-3 py-2 md:px-4 md:py-3 border-b border-[var(--border-color)] bg-[var(--background)] flex items-center justify-between shrink-0">
         {/* Left side - Empty on mobile to leave space for hamburger, show delete button on desktop */}
         <div className="flex items-center gap-2">
           {/* Delete button - only on desktop */}
@@ -597,8 +593,7 @@ export default function AIChatMain({
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 min-h-0">
         {chat.messages.map((msg) => (
           <div
             key={msg.id}
@@ -609,7 +604,7 @@ export default function AIChatMain({
                 <Bot className="w-4 h-4 text-white" />
               </div>
             )}
-            <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+            <div className={`max-w-[85%] md:max-w-[75%] rounded-2xl px-3 py-2 md:px-4 ${
               msg.role === 'user'
                 ? 'bg-[var(--accent-blue)] text-white'
                 : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
@@ -661,8 +656,7 @@ export default function AIChatMain({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input - Claude Style */}
-      <div className="px-4 py-4 border-t border-[var(--border-color)] bg-[var(--background)]">
+      <div className="px-2 py-2 md:px-4 md:py-4 border-t border-[var(--border-color)] bg-[var(--background)] shrink-0">
         <div className="max-w-3xl mx-auto">
           <ClaudeChatInput
             onSendMessage={handleSendFromClaudeInput}
@@ -670,6 +664,7 @@ export default function AIChatMain({
             models={[...CHAT_MODELS]}
             onModelSelect={(modelId) => onModelSelect(modelId)}
             onOpenImageDialog={() => setShowImageDialog(true)}
+            compact
           />
         </div>
       </div>

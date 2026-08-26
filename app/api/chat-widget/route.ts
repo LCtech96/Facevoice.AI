@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
-import { callGeminiAPI, getGeminiApiKey } from '@/lib/gemini'
+import { callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
 
 const getSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const result = await callGeminiAPI(chatMessages, DEFAULT_CHAT_MODEL, systemPrompt, {
+    const result = await callGeminiWithFallback(chatMessages, DEFAULT_CHAT_MODEL, systemPrompt, {
       temperature: 0.1,
       maxOutputTokens: 150,
     })

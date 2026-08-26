@@ -165,7 +165,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
 
     if (models.length <= 1) {
         return (
-            <div className="inline-flex items-center justify-center h-8 rounded-xl px-3 text-[14px] font-medium text-text-300 dark:text-[#B4B4B4] whitespace-nowrap">
+            <div className="inline-flex items-center justify-center h-8 rounded-xl px-2 text-[11px] md:text-[14px] font-medium text-text-300 dark:text-[#B4B4B4] whitespace-nowrap max-w-[7.5rem] md:max-w-none truncate">
                 {currentModel.name}
             </div>
         );
@@ -175,14 +175,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
         <div className="relative" ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className={`inline-flex items-center justify-center relative shrink-0 transition font-base duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] h-8 rounded-xl px-3 min-w-[4rem] active:scale-[0.98] whitespace-nowrap !text-xs pl-2.5 pr-2 gap-1 
+                className={`inline-flex items-center justify-center relative shrink-0 transition font-base duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] h-8 rounded-xl px-2 md:px-3 min-w-[3.5rem] md:min-w-[4rem] active:scale-[0.98] whitespace-nowrap !text-xs pl-2 pr-1.5 md:pl-2.5 md:pr-2 gap-1 max-w-[7.5rem] md:max-w-none
                 ${isOpen
                         ? 'bg-bg-200 text-text-100 dark:bg-[#454540] dark:text-[#ECECEC]'
                         : 'text-text-300 hover:text-text-200 hover:bg-bg-200 dark:text-[#B4B4B4] dark:hover:text-[#ECECEC] dark:hover:bg-[#454540]'}`}
             >
                 <div className="font-ui inline-flex gap-[3px] text-[14px] h-[14px] leading-none items-baseline">
                     <div className="flex items-center gap-[4px]">
-                        <div className="whitespace-nowrap select-none font-medium">{currentModel.name}</div>
+                        <div className="whitespace-nowrap select-none font-medium truncate">{currentModel.name}</div>
                     </div>
                 </div>
                 <div className="flex items-center justify-center opacity-75" style={{ width: '20px', height: '20px' }}>
@@ -243,6 +243,7 @@ interface ClaudeChatInputProps {
     models?: Model[];
     onModelSelect?: (modelId: string) => void;
     onOpenImageDialog?: () => void;
+    compact?: boolean;
 }
 
 export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({ 
@@ -250,7 +251,8 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
     selectedModel: externalSelectedModel,
     models: externalModels,
     onModelSelect: externalOnModelSelect,
-    onOpenImageDialog
+    onOpenImageDialog,
+    compact = false,
 }) => {
     const [message, setMessage] = useState("");
     const [files, setFiles] = useState<AttachedFile[]>([]);
@@ -380,19 +382,19 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
 
     return (
         <div
-            className={`relative w-full max-w-2xl mx-auto transition-all duration-300 font-sans`}
+            className={`relative w-full max-w-2xl mx-auto transition-all duration-300 font-sans ${compact ? 'px-0' : ''}`}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
         >
             <div className={`
-                !box-content flex flex-col mx-2 md:mx-0 items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-bg-300 dark:border-transparent 
+                !box-content flex flex-col ${compact ? 'mx-0' : 'mx-2 md:mx-0'} items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-bg-300 dark:border-transparent 
                 shadow-[0_0_15px_rgba(0,0,0,0.08)] hover:shadow-[0_0_20px_rgba(0,0,0,0.12)]
                 focus-within:shadow-[0_0_25px_rgba(0,0,0,0.15)]
                 bg-white dark:bg-[#30302E] font-sans antialiased
             `}>
 
-                <div className="flex flex-col px-3 pt-3 pb-2 gap-2">
+                <div className="flex flex-col px-2 pt-2 pb-1.5 md:px-3 md:pt-3 md:pb-2 gap-1.5 md:gap-2">
 
                     {(files.length > 0 || pastedContent.length > 0) && (
                         <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 px-1">
@@ -422,7 +424,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                 onPaste={handlePaste}
                                 onKeyDown={handleKeyDown}
                                 placeholder="How can I help you today?"
-                                className="w-full bg-transparent border-0 outline-none text-text-100 text-[16px] placeholder:text-text-400 resize-none overflow-hidden py-0 leading-relaxed block font-normal antialiased"
+                                className="w-full bg-transparent border-0 outline-none text-text-100 text-[15px] md:text-[16px] placeholder:text-text-400 resize-none overflow-hidden py-0 leading-relaxed block font-normal antialiased"
                                 rows={1}
                                 autoFocus
                                 style={{ minHeight: '1.5em' }}
@@ -430,8 +432,8 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                         </div>
                     </div>
 
-                    <div className="flex gap-2 w-full items-center">
-                        <div className="relative flex-1 flex items-center shrink min-w-0 gap-1">
+                    <div className="flex gap-1 md:gap-2 w-full items-center min-w-0">
+                        <div className="relative flex-1 flex items-center shrink min-w-0 gap-0.5 md:gap-1">
 
                             <button
                                 onClick={() => fileInputRef.current?.click()}
@@ -453,6 +455,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                 </button>
                             )}
 
+                            {!compact && (
                             <div className="flex shrink min-w-8 !shrink-0">
                                 <button
                                     onClick={() => setIsThinkingEnabled(!isThinkingEnabled)}
@@ -467,6 +470,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                     <Icons.Thinking className="w-5 h-5" />
                                 </button>
                             </div>
+                            )}
                         </div>
 
                         <div className="flex flex-row items-center min-w-0 gap-1">
