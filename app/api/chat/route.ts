@@ -6,6 +6,7 @@ import {
   type GeminiAttachment,
   type GeminiChatMessage,
 } from '@/lib/gemini'
+import { buildRealtimeDateTimeInstructions } from '@/lib/current-datetime'
 
 function normalizeMessages(messages: unknown[]): GeminiChatMessage[] {
   return messages
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const currentDate = 'Saturday, January 17, 2026'
+    const currentDateTimeInstructions = buildRealtimeDateTimeInstructions()
 
     const availableTools = `
 VIDEO & STILE:
@@ -107,7 +108,9 @@ CONTENUTI & PRODUTTIVITÀ:
 - Creatio: Piattaforma No-Code per Flussi di Lavoro
 `
 
-    const systemMessage = `You are a helpful AI assistant specialized in recommending AI tools. Today's date is ${currentDate}.
+    const systemMessage = `You are a helpful AI assistant specialized in recommending AI tools.
+
+${currentDateTimeInstructions}
 
 IMPORTANT GUIDELINES:
 1. Keep responses SHORT and CONCISE (2-4 sentences max). Break longer explanations into multiple messages to keep readers engaged.

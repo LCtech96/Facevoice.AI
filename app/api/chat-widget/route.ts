@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
 import { callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 
 const getSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -61,10 +62,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const timeGuardrail =
-      `Oggi è sabato 17 gennaio 2026 (fuso orario Europe/Rome). ` +
-      `Quando l'utente chiede data, ora o giorno della settimana, rispondi sempre con: "Oggi è sabato 17 gennaio 2026". ` +
-      `Sii sempre preciso e non indovinare mai.`
+    const timeGuardrail = buildRealtimeDateTimeInstructionsItalian()
 
     let knowledgeText = ''
     try {
