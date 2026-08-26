@@ -24,6 +24,16 @@ const teamMembers = [
     image_url: '/team/Sevara professionale fv.png',
   },
   {
+    name: 'Monia Cumbo',
+    role: 'Content Creator & Social Media Manager',
+    description:
+      'Laureata in Marketing e Comunicazione, eccelle nella creazione di contenuti e nella gestione dei social media.',
+    email: null,
+    linkedin: null,
+    instagram: 'https://www.instagram.com/monia_cumbo',
+    image_url: '/team/Monia professionale fv.png',
+  },
+  {
     name: 'Giuseppe Delli Paoli',
     role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
@@ -112,6 +122,7 @@ export async function POST(request: NextRequest) {
             description: member.description,
             email: member.email,
             linkedin: member.linkedin,
+            instagram: 'instagram' in member ? member.instagram : undefined,
             image_url: member.image_url,
             updated_at: new Date().toISOString(),
           })

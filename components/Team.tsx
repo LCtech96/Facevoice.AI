@@ -50,6 +50,20 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   },
   {
     id: 3,
+    name: 'Monia Cumbo',
+    role: 'Content Creator & Social Media Manager',
+    description:
+      'Laureata in Marketing e Comunicazione, eccelle nella creazione di contenuti e nella gestione dei social media.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/Monia professionale fv.png',
+    instagram: 'https://www.instagram.com/monia_cumbo',
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
+  {
+    id: 4,
     name: 'Umberto (alias Fischietto)',
     role: 'Director of Digital Strategy',
     description: 'Director of Digital Strategy social media, content creator.',
@@ -62,7 +76,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 4,
+    id: 5,
     name: 'Leonardo Alotta',
     role: 'Chief Financial Officer (CFO)',
     description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
@@ -75,7 +89,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 5,
+    id: 6,
     name: 'Giuseppe Delli Paoli',
     role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
@@ -88,7 +102,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 6,
+    id: 7,
     name: 'John Mcnova',
     role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
     description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
@@ -101,7 +115,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 7,
+    id: 8,
     name: 'Abraham Caur',
     role: 'Product Manager (PM), UX/UI Designer',
     description: 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences',
@@ -114,7 +128,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 8,
+    id: 9,
     name: 'Michael',
     role: 'Team Member',
     description: 'Member of the Facevoice AI team.',
@@ -127,7 +141,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 9,
+    id: 10,
     name: 'Sara Siddique',
     role: 'Data Engineer, Data Scientist',
     description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
@@ -140,7 +154,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     is_contractor: false,
   },
   {
-    id: 10,
+    id: 11,
     name: 'Katreen',
     role: 'Team Member',
     description: 'Member of the Facevoice AI team.',
@@ -157,6 +171,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
 const TEAM_ORDER = [
   { key: 'luca corrao', displayName: 'Luca Corrao' },
   { key: 'sevara urmaeva', displayName: 'Sevara Urmanaeva' },
+  { key: 'monia cumbo', displayName: 'Monia Cumbo' },
   { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)' },
   { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
   { key: 'giuseppe delli paoli', displayName: 'Giuseppe Delli Paoli', role: 'AI & Automation Specialist' },
