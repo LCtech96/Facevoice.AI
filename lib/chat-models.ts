@@ -1,43 +1,45 @@
-export const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash'
+export const DEFAULT_CHAT_MODEL = 'gemini-3.6-flash'
 
 /** Legacy model IDs saved in localStorage or old deploys */
 const LEGACY_MODEL_MAP: Record<string, string> = {
-  'gemini-2.0-flash': 'gemini-2.5-flash',
-  'gemini-1.5-flash': 'gemini-2.5-flash',
-  'gemini-1.5-pro': 'gemini-2.5-flash',
-  'gemini-pro': 'gemini-2.5-flash',
-  'llama-3.1-8b-instant': 'gemini-2.5-flash',
-  'llama-3.3-70b-versatile': 'gemini-2.5-flash',
+  'gemini-2.0-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-1.5-flash': 'gemini-3.6-flash',
+  'gemini-1.5-pro': 'gemini-3.6-flash',
+  'gemini-pro': 'gemini-3.6-flash',
+  'gemini-flash-latest': 'gemini-3.6-flash',
+  'llama-3.1-8b-instant': 'gemini-3.6-flash',
+  'llama-3.3-70b-versatile': 'gemini-3.6-flash',
 }
 
 export const GEMINI_FALLBACK_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-flash-latest',
-  'gemini-2.5-flash-lite',
-  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
   'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
 ] as const
 
 export const CHAT_MODELS = [
   {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
     description: 'Default fast model',
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: 'Balanced speed and quality',
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    description: 'Lightweight free-tier model',
   },
   {
     id: 'gemini-flash-latest',
     name: 'Gemini Flash (Latest)',
     description: 'Always uses the latest flash model',
-  },
-  {
-    id: 'gemini-2.5-flash-lite',
-    name: 'Gemini 2.5 Flash Lite',
-    description: 'Lightweight and efficient',
-  },
-  {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    description: 'Newest generation flash model',
   },
 ] as const
 
@@ -85,8 +87,8 @@ export function getChatErrorMessage(error: unknown): string {
     return 'Quota Gemini esaurita. Riprova più tardi o usa un altro modello.'
   }
 
-  if (message.includes('not found') || message.includes('NOT_FOUND')) {
-    return 'Modello Gemini non disponibile. Prova a selezionare un altro modello.'
+  if (message.includes('not found') || message.includes('NOT_FOUND') || message.includes('no longer available')) {
+    return 'Modello Gemini non disponibile. Prova a selezionare Gemini 3.6 Flash dal menu modelli.'
   }
 
   return `Errore chat: ${message}`
