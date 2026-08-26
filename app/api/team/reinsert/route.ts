@@ -27,7 +27,7 @@ const teamMembers = [
     name: 'Monia Cumbo',
     role: 'Content Creator & Social Media Manager',
     description:
-      'Laureata in Marketing e Comunicazione, eccelle nella creazione di contenuti e nella gestione dei social media.',
+      'Graduate in Marketing and Communication, she excels in content creation and social media management.',
     email: null,
     linkedin: null,
     instagram: 'https://www.instagram.com/monia_cumbo',

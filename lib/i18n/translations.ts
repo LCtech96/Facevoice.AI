@@ -145,7 +145,15 @@ export const translations = {
     },
     team: {
       title: 'Il Nostro Team',
+      subtitle: 'Conosci le persone che guidano l\'innovazione',
       loading: 'Caricamento...',
+      members: {
+        monia: {
+          role: 'Content Creator & Social Media Manager',
+          description:
+            'Laureata in Marketing e Comunicazione, eccelle nella creazione di contenuti e nella gestione dei social media.',
+        },
+      },
     },
     bookings: {
       title: 'Prenotazioni',
@@ -296,7 +304,15 @@ export const translations = {
     },
     team: {
       title: 'Our Team',
+      subtitle: 'Meet the talented individuals driving innovation',
       loading: 'Loading...',
+      members: {
+        monia: {
+          role: 'Content Creator & Social Media Manager',
+          description:
+            'Graduate in Marketing and Communication, she excels in content creation and social media management.',
+        },
+      },
     },
     bookings: {
       title: 'Bookings',
@@ -447,7 +463,15 @@ export const translations = {
     },
     team: {
       title: 'Notre Équipe',
+      subtitle: 'Rencontrez les talents qui stimulent l\'innovation',
       loading: 'Chargement...',
+      members: {
+        monia: {
+          role: 'Créatrice de Contenu & Social Media Manager',
+          description:
+            'Diplômée en marketing et communication, elle excelle dans la création de contenu et la gestion des réseaux sociaux.',
+        },
+      },
     },
     bookings: {
       title: 'Réservations',
@@ -598,7 +622,15 @@ export const translations = {
     },
     team: {
       title: 'Наша Команда',
+      subtitle: 'Познакомьтесь с людьми, которые двигают инновации',
       loading: 'Загрузка...',
+      members: {
+        monia: {
+          role: 'Контент-мейкер и SMM-менеджер',
+          description:
+            'Выпускница по маркетингу и коммуникациям, отлично справляется с созданием контента и управлением социальными сетями.',
+        },
+      },
     },
     bookings: {
       title: 'Бронирования',
@@ -749,7 +781,15 @@ export const translations = {
     },
     team: {
       title: 'Unser Team',
+      subtitle: 'Lernen Sie die Menschen kennen, die Innovation vorantreiben',
       loading: 'Laden...',
+      members: {
+        monia: {
+          role: 'Content Creator & Social Media Manager',
+          description:
+            'Absolventin in Marketing und Kommunikation, hervorragend in Content-Erstellung und Social-Media-Management.',
+        },
+      },
     },
     bookings: {
       title: 'Buchungen',
@@ -900,7 +940,15 @@ export const translations = {
     },
     team: {
       title: 'Nossa Equipe',
+      subtitle: 'Conheça as pessoas que impulsionam a inovação',
       loading: 'Carregando...',
+      members: {
+        monia: {
+          role: 'Criadora de Conteúdo & Social Media Manager',
+          description:
+            'Graduada em Marketing e Comunicação, destaca-se na criação de conteúdo e gestão de redes sociais.',
+        },
+      },
     },
     bookings: {
       title: 'Reservas',
@@ -1051,7 +1099,15 @@ export const translations = {
     },
     team: {
       title: 'فريقنا',
+      subtitle: 'تعرف على الأشخاص الذين يقودون الابتكار',
       loading: 'جاري التحميل...',
+      members: {
+        monia: {
+          role: 'منشئة محتوى ومديرة وسائل التواصل',
+          description:
+            'حاصلة على شهادة في التسويق والاتصال، تتميز في إنشاء المحتوى وإدارة وسائل التواصل الاجتماعي.',
+        },
+      },
     },
     bookings: {
       title: 'الحجوزات',
@@ -1202,7 +1258,14 @@ export const translations = {
     },
     team: {
       title: '我们的团队',
+      subtitle: '认识推动创新的优秀人才',
       loading: '加载中...',
+      members: {
+        monia: {
+          role: '内容创作者兼社交媒体经理',
+          description: '市场营销与传播专业毕业，擅长内容创作和社交媒体管理。',
+        },
+      },
     },
     bookings: {
       title: '预订',

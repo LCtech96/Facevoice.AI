@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { Linkedin, Mail, Instagram, Twitter, Briefcase } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase-client'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 interface TeamMember {
   id: number
@@ -53,7 +54,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     name: 'Monia Cumbo',
     role: 'Content Creator & Social Media Manager',
     description:
-      'Laureata in Marketing e Comunicazione, eccelle nella creazione di contenuti e nella gestione dei social media.',
+      'Graduate in Marketing and Communication, she excels in content creation and social media management.',
     email: null,
     linkedin: null,
     image_url: '/team/Monia professionale fv.png',
@@ -111,6 +112,34 @@ const TEAM_ORDER = [
   { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
   { key: 'giuseppe delli paoli', displayName: 'Giuseppe Delli Paoli', role: 'AI & Automation Specialist' },
 ]
+
+const MEMBER_TRANSLATION_KEYS: Record<string, { role?: string; description?: string }> = {
+  'monia cumbo': {
+    role: 'team.members.monia.role',
+    description: 'team.members.monia.description',
+  },
+}
+
+const getMemberRole = (
+  member: TeamMember,
+  t: (key: string) => string
+): string => {
+  const keys = MEMBER_TRANSLATION_KEYS[normalizeTeamName(member.name)]
+  if (keys?.role) return t(keys.role)
+  return member.role
+}
+
+const getMemberDescription = (
+  member: TeamMember,
+  t: (key: string) => string
+): string => {
+  const keys = MEMBER_TRANSLATION_KEYS[normalizeTeamName(member.name)]
+  if (keys?.description) return t(keys.description)
+  return (
+    member.description ||
+    `Expert in the role of ${member.role.toLowerCase()}, contributing specialized skills to the team's success.`
+  )
+}
 
 const normalizeTeamName = (name: string) =>
   name.toLowerCase().replace(/\s+/g, ' ').trim()
@@ -202,6 +231,7 @@ export default function Team() {
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
   const insertingRef = useRef(false)
+  const { t } = useTranslation()
 
   useEffect(() => {
     fetchTeamMembers()
@@ -309,7 +339,7 @@ export default function Team() {
     return (
       <section id="team" className="min-h-screen py-24 px-6 bg-[var(--background)]">
         <div className="container mx-auto text-center">
-          <p className="text-[var(--text-secondary)] text-xl">Loading team...</p>
+          <p className="text-[var(--text-secondary)] text-xl">{t('team.loading')}</p>
         </div>
       </section>
     )
@@ -325,10 +355,10 @@ export default function Team() {
         className="container mx-auto max-w-6xl"
       >
         <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
-          Our Team
+          {t('team.title')}
         </h2>
         <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
-          Meet the talented individuals driving innovation
+          {t('team.subtitle')}
         </p>
         
         {teamMembers.length === 0 ? (
@@ -364,9 +394,11 @@ export default function Team() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[var(--accent-blue)] mb-3 font-medium text-sm">{member.role}</p>
+                  <p className="text-[var(--accent-blue)] mb-3 font-medium text-sm">
+                    {getMemberRole(member, t)}
+                  </p>
                   <p className="text-[var(--text-secondary)] mb-6 text-sm leading-relaxed min-h-[3rem]">
-                    {member.description || `Expert in the role of ${member.role.toLowerCase()}, contributing specialized skills to the team's success.`}
+                    {getMemberDescription(member, t)}
                   </p>
                   <div className="flex justify-center gap-3">
                     {member.linkedin && (
