@@ -65,8 +65,8 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   {
     id: 4,
     name: 'Umberto (alias Fischietto)',
-    role: 'Director of Digital Strategy',
-    description: 'Director of Digital Strategy social media, content creator.',
+    role: 'Content Creator',
+    description: 'Content creator specializzato in social media e strategia digitale.',
     email: null,
     linkedin: null,
     image_url: '/team/Umberto-Facevoice.png',
@@ -101,85 +101,15 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     google: null,
     is_contractor: false,
   },
-  {
-    id: 7,
-    name: 'John Mcnova',
-    role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
-    description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
-    email: 'jonh@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/jonh-mcnova',
-    image_url: '/team/Jonh professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 8,
-    name: 'Abraham Caur',
-    role: 'Product Manager (PM), UX/UI Designer',
-    description: 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences',
-    email: 'abraham@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/abraham-caur',
-    image_url: '/team/Abraham professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 9,
-    name: 'Michael',
-    role: 'Team Member',
-    description: 'Member of the Facevoice AI team.',
-    email: null,
-    linkedin: null,
-    image_url: '/team/Michael professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 10,
-    name: 'Sara Siddique',
-    role: 'Data Engineer, Data Scientist',
-    description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
-    email: 'sara@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/sara-siddique',
-    image_url: '/team/Sara professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
-  {
-    id: 11,
-    name: 'Katreen',
-    role: 'Team Member',
-    description: 'Member of the Facevoice AI team.',
-    email: null,
-    linkedin: null,
-    image_url: '/team/Katreen professionale fv.png',
-    instagram: null,
-    x: null,
-    google: null,
-    is_contractor: false,
-  },
 ]
 
 const TEAM_ORDER = [
   { key: 'luca corrao', displayName: 'Luca Corrao' },
   { key: 'sevara urmaeva', displayName: 'Sevara Urmanaeva' },
   { key: 'monia cumbo', displayName: 'Monia Cumbo' },
-  { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)' },
+  { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)', role: 'Content Creator' },
   { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
   { key: 'giuseppe delli paoli', displayName: 'Giuseppe Delli Paoli', role: 'AI & Automation Specialist' },
-  { key: 'john mcnova', displayName: 'John Mcnova', aliases: ['jonh mcnova'] },
-  { key: 'abraham caur', displayName: 'Abraham Caur' },
-  { key: 'michael', displayName: 'Michael' },
-  { key: 'sara siddique', displayName: 'Sara Siddique' },
-  { key: 'katreen', displayName: 'Katreen' },
 ]
 
 const normalizeTeamName = (name: string) =>
@@ -198,9 +128,7 @@ const applyTeamOrdering = (members: TeamMember[]) => {
   const ordered: TeamMember[] = []
 
   TEAM_ORDER.forEach((entry, index) => {
-    const candidate =
-      byName.get(entry.key) ||
-      entry.aliases?.map((alias) => byName.get(alias)).find(Boolean)
+    const candidate = byName.get(entry.key)
 
     if (candidate) {
       ordered.push({
@@ -274,9 +202,6 @@ export default function Team() {
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
   const insertingRef = useRef(false)
-
-  const isAIgen = (name: string) =>
-    name === 'Sara Siddique' || name === 'John Mcnova' || name === 'Abraham Caur'
 
   useEffect(() => {
     fetchTeamMembers()
@@ -431,11 +356,6 @@ export default function Team() {
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <h3 className="text-xl font-semibold text-[var(--text-primary)]">
                       {member.name}
-                      {isAIgen(member.name) && (
-                        <span className="ml-2 text-xs font-medium text-[var(--text-secondary)]">
-                          (AIgen)
-                        </span>
-                      )}
                     </h3>
                     {member.is_contractor && (
                       <div className="flex items-center gap-1 px-2 py-1 bg-[var(--background-secondary)] rounded-full" title="Contractor">

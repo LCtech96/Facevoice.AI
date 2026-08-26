@@ -34,28 +34,12 @@ const teamMembers = [
     image_url: '/team/Monia professionale fv.png',
   },
   {
-    name: 'Giuseppe Delli Paoli',
-    role: 'AI & Automation Specialist',
-    description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
+    name: 'Umberto (alias Fischietto)',
+    role: 'Content Creator',
+    description: 'Content creator specializzato in social media e strategia digitale.',
     email: null,
     linkedin: null,
-    image_url: '/team/Giuseppe professionale fv.png',
-  },
-  {
-    name: 'Sara Siddique',
-    role: 'Data Engineer, Data Scientist',
-    description: 'Specialized in data engineering and data science, building scalable data pipelines and extracting actionable insights',
-    email: 'sara@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/sara-siddique',
-    image_url: '/team/Sara professionale fv.png',
-  },
-  {
-    name: 'John Mcnova',
-    role: 'Prompt Engineer, DevOps Engineer / Site Reliability Engineer (SRE)',
-    description: 'Expert in prompt engineering and DevOps practices, ensuring reliable and scalable infrastructure for AI systems',
-    email: 'jonh@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/jonh-mcnova',
-    image_url: '/team/Jonh professionale fv.png',
+    image_url: '/team/Umberto-Facevoice.png',
   },
   {
     name: 'Leonardo Alotta',
@@ -66,37 +50,22 @@ const teamMembers = [
     image_url: '/team/Leonardo professionale fv.png',
   },
   {
-    name: 'Abraham Caur',
-    role: 'Product Manager (PM), UX/UI Designer',
-    description: 'Expert in product management and UX/UI design, crafting intuitive and engaging user experiences',
-    email: 'abraham@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/abraham-caur',
-    image_url: '/team/Abraham professionale fv.png',
-  },
-  {
-    name: 'Umberto (alias Fischietto)',
-    role: 'Director of Digital Strategy',
-    description: 'Director of Digital Strategy social media, content creator.',
+    name: 'Giuseppe Delli Paoli',
+    role: 'AI & Automation Specialist',
+    description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
     email: null,
     linkedin: null,
-    image_url: '/team/Umberto-Facevoice.png',
+    image_url: '/team/Giuseppe professionale fv.png',
   },
-  {
-    name: 'Michael',
-    role: 'Team Member',
-    description: 'Member of the Facevoice AI team.',
-    email: null,
-    linkedin: null,
-    image_url: '/team/Michael professionale fv.png',
-  },
-  {
-    name: 'Katreen',
-    role: 'Team Member',
-    description: 'Member of the Facevoice AI team.',
-    email: null,
-    linkedin: null,
-    image_url: '/team/Katreen professionale fv.png',
-  },
+]
+
+const removedTeamMembers = [
+  'John Mcnova',
+  'Jonh Mcnova',
+  'Abraham Caur',
+  'Michael',
+  'Sara Siddique',
+  'Katreen',
 ]
 
 export async function POST(request: NextRequest) {
@@ -104,9 +73,14 @@ export async function POST(request: NextRequest) {
     const results = []
     const errors = []
 
-    // Inserisci ogni membro del team individualmente per gestire meglio i conflitti
+    for (const name of removedTeamMembers) {
+      const { error } = await supabase.from('team_members').delete().eq('name', name)
+      if (error) {
+        errors.push({ member: name, error: error.message, action: 'delete' })
+      }
+    }
+
     for (const member of teamMembers) {
-      // Prima verifica se esiste già
       const { data: existing } = await supabase
         .from('team_members')
         .select('id, name')
@@ -114,7 +88,6 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (existing) {
-        // Aggiorna il membro esistente
         const { data, error } = await supabase
           .from('team_members')
           .update({
@@ -136,7 +109,6 @@ export async function POST(request: NextRequest) {
           results.push(data)
         }
       } else {
-        // Inserisci nuovo membro
         const { data, error } = await supabase
           .from('team_members')
           .insert(member)
@@ -154,7 +126,7 @@ export async function POST(request: NextRequest) {
     if (errors.length > 0) {
       console.error('Errors inserting team members:', errors)
       return NextResponse.json(
-        { 
+        {
           success: true,
           message: `${results.length} membri inseriti/aggiornati, ${errors.length} errori`,
           data: results,
@@ -177,4 +149,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-
