@@ -4,7 +4,7 @@ export const translations = {
     nav: {
       home: 'Home',
       services: 'Servizi',
-      caseStudies: 'Case Studies',
+      workWithUs: 'Lavora con noi',
       team: 'Team',
       bookings: 'Prenotazioni',
       chat: 'Chat',
@@ -164,7 +164,7 @@ export const translations = {
     nav: {
       home: 'Home',
       services: 'Services',
-      caseStudies: 'Case Studies',
+      workWithUs: 'Work with us',
       team: 'Team',
       bookings: 'Bookings',
       chat: 'Chat',
@@ -323,7 +323,7 @@ export const translations = {
     nav: {
       home: 'Accueil',
       services: 'Services',
-      caseStudies: 'Études de Cas',
+      workWithUs: 'Travailler avec nous',
       team: 'Équipe',
       bookings: 'Réservations',
       chat: 'Chat',
@@ -482,7 +482,7 @@ export const translations = {
     nav: {
       home: 'Главная',
       services: 'Услуги',
-      caseStudies: 'Кейсы',
+      workWithUs: 'Работать с нами',
       team: 'Команда',
       bookings: 'Бронирование',
       chat: 'Чат',
@@ -641,7 +641,7 @@ export const translations = {
     nav: {
       home: 'Startseite',
       services: 'Dienste',
-      caseStudies: 'Fallstudien',
+      workWithUs: 'Arbeiten Sie mit uns',
       team: 'Team',
       bookings: 'Buchungen',
       chat: 'Chat',
@@ -800,7 +800,7 @@ export const translations = {
     nav: {
       home: 'Início',
       services: 'Serviços',
-      caseStudies: 'Casos de Estudo',
+      workWithUs: 'Trabalhe conosco',
       team: 'Equipe',
       bookings: 'Reservas',
       chat: 'Chat',
@@ -959,7 +959,7 @@ export const translations = {
     nav: {
       home: 'الرئيسية',
       services: 'الخدمات',
-      caseStudies: 'دراسات الحالة',
+      workWithUs: 'اعمل معنا',
       team: 'الفريق',
       bookings: 'الحجوزات',
       chat: 'الدردشة',
@@ -1118,7 +1118,7 @@ export const translations = {
     nav: {
       home: '首页',
       services: '服务',
-      caseStudies: '案例研究',
+      workWithUs: '与我们合作',
       team: '团队',
       bookings: '预订',
       chat: '聊天',

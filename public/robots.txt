@@ -8,7 +8,6 @@ User-agent: *
 Allow: /
 Allow: /home
 Allow: /services
-Allow: /case-studies
 Allow: /team
 
 # Blocca crawling delle pagine private/protette

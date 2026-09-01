@@ -47,7 +47,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica per imprese siciliane',
-    url: 'https://www.facevoice.ai',
+    url: 'https://www.facevoice.ai/home',
     siteName: 'Facevoice AI',
     locale: 'it_IT',
     type: 'website',

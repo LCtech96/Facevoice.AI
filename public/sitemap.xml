@@ -7,7 +7,7 @@
   <!-- Home Page - Priorità massima, aggiornata frequentemente -->
   <url>
     <loc>https://www.facevoice.ai/home</loc>
-    <lastmod>2026-01-09</lastmod>
+    <lastmod>2026-09-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
@@ -15,17 +15,9 @@
   <!-- Services Page - Alta priorità, aggiornata mensilmente -->
   <url>
     <loc>https://www.facevoice.ai/services</loc>
-    <lastmod>2026-01-09</lastmod>
+    <lastmod>2026-09-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
-  </url>
-  
-  <!-- Case Studies Page - Alta priorità, aggiornata quando aggiungiamo nuovi progetti -->
-  <url>
-    <loc>https://www.facevoice.ai/case-studies</loc>
-    <lastmod>2026-01-09</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
   </url>
   
   <!-- Team Page - Media priorità -->

@@ -5,6 +5,8 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
+import BrandBanner from '@/components/BrandBanner'
+import WorkWithUs from '@/components/WorkWithUs'
 import Feed from '@/components/Feed'
 import AIToolsFeed from '@/components/AIToolsFeed'
 import BlogSection from '@/components/BlogSection'
@@ -99,6 +101,12 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       <div id="hero">
         <Hero />
       </div>
+
+      {/* Brand Banner */}
+      <BrandBanner />
+
+      {/* Lavora con noi */}
+      <WorkWithUs />
       
       {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}
       {(searchQuery || categoryFilter) && (
