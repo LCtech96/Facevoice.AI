@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Star, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -84,7 +84,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const mainNavItems = [
     { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
     { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
-    { id: 'case-studies', label: t('nav.caseStudies'), icon: Star, href: '/case-studies' },
+    { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/home#lavora-con-noi' },
     { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
     ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
@@ -121,8 +121,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/team')
     } else if (item.href === '/services') {
       router.push('/services')
-    } else if (item.href === '/case-studies') {
-      router.push('/case-studies')
     } else if (item.href === '/bookings') {
       router.push('/bookings')
     } else if (item.href === '/payments') {
@@ -144,9 +142,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'services') {
       return pathname === '/services'
-    }
-    if (item.id === 'case-studies') {
-      return pathname === '/case-studies'
     }
     if (item.id === 'bookings') {
       return pathname === '/bookings'

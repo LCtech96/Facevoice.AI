@@ -41,7 +41,7 @@ const internalLinks = [
   },
   {
     keyword: 'Restyling sito web e-commerce per migliorare il tasso di conversione',
-    href: '/case-studies',
+    href: '/services',
     anchor: 'restyling-ecommerce'
   },
   {
