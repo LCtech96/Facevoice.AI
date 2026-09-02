@@ -14,7 +14,8 @@ interface Message {
 
 const WHATSAPP_NUMBER = '+393514206353'
 const EMAIL_RECIPIENT = 'lucacorrao1996@gmail.com'
-const INITIAL_MESSAGE = 'Ciao! Sono l\'assistente AI di Facevoice AI. Posso aiutarti con informazioni sui nostri servizi AI, software, l\'importanza di avere un sito web e come collegarlo al tuo account Google. Come posso aiutarti?'
+const INITIAL_MESSAGE =
+  'Ciao! Sono l\'assistente di Facevoice AI 👋 Posso spiegarti come sviluppiamo siti web, software su misura e soluzioni AI per aziende. Dimmi pure di cosa hai bisogno — se preferisci parlare con il team, puoi scriverci su WhatsApp o a luca@facevoice.ai.'
 
 export default function AIChatWidget() {
   const pathname = usePathname()
