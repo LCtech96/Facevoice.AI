@@ -7,6 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CheckIcon, ArrowRightIcon, Briefcase } from 'lucide-react'
 
+export const CAREER_PARTNERS = [
+  { value: 'facevoiceai', label: 'FaceVoiceAI (candidatura diretta)' },
+  { value: 'nomadiqe', label: 'Nomadiqe' },
+  { value: 'trattoria-piero-mondello', label: 'Trattoria da Piero Mondello' },
+  { value: 'lucas-appartaments', label: 'Lucas Appartaments' },
+] as const
+
 const steps = [
   { id: 1, field: 'name', label: 'Nome e Cognome', placeholder: 'Il tuo nome completo', type: 'text' as const },
   { id: 2, field: 'email', label: 'Email', placeholder: 'la.tua.email@esempio.com', type: 'email' as const },
@@ -17,6 +24,7 @@ const steps = [
 export default function WorkWithUs() {
   const [currentStep, setCurrentStep] = useState(0)
   const [formData, setFormData] = useState<Record<string, string>>({})
+  const [partner, setPartner] = useState<string>(CAREER_PARTNERS[0].value)
   const [isComplete, setIsComplete] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -39,6 +47,7 @@ export default function WorkWithUs() {
             email: formData.email,
             phone: formData.phone,
             message: formData.message || '',
+            partner,
           }),
         })
         if (!response.ok) {
@@ -98,6 +107,24 @@ export default function WorkWithUs() {
             </div>
           ) : (
             <>
+              <div className="mb-6 pb-6 border-b border-[var(--border-color)]">
+                <Label htmlFor="partner" className="text-[var(--text-primary)] font-medium mb-2 block">
+                  Oppure candidati con uno dei nostri partner
+                </Label>
+                <select
+                  id="partner"
+                  value={partner}
+                  onChange={(e) => setPartner(e.target.value)}
+                  className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                >
+                  {CAREER_PARTNERS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="mb-6">
                 <div className="flex justify-between text-xs text-[var(--text-secondary)] mb-2">
                   <span>Passo {currentStep + 1} di {steps.length}</span>

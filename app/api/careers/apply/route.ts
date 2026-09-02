@@ -2,9 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 
+const PARTNER_LABELS: Record<string, string> = {
+  facevoiceai: 'FaceVoiceAI (candidatura diretta)',
+  nomadiqe: 'Nomadiqe',
+  'trattoria-piero-mondello': 'Trattoria da Piero Mondello',
+  'lucas-appartaments': 'Lucas Appartaments',
+}
+
+function getPartnerLabel(partner?: string): string {
+  if (!partner) return PARTNER_LABELS.facevoiceai
+  return PARTNER_LABELS[partner] ?? partner
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, phone, message } = await req.json()
+    const { name, email, phone, message, partner } = await req.json()
 
     if (!name || !email || !phone) {
       return NextResponse.json(
@@ -32,11 +44,12 @@ export async function POST(req: NextRequest) {
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
     const toEmail = process.env.RESEND_TO_EMAIL || 'luca@facevoice.ai'
+    const partnerLabel = getPartnerLabel(partner)
 
     const emailData = {
       from: `FacevoiceAI <${fromEmail}>`,
       to: toEmail,
-      subject: `FACEVOICEAI — Nuova candidatura "Lavora con noi" da ${name.trim()}`,
+      subject: `FACEVOICEAI — Nuova candidatura "Lavora con noi" (${partnerLabel}) da ${name.trim()}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
           <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
@@ -52,6 +65,10 @@ export async function POST(req: NextRequest) {
             </h2>
 
             <table style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+              <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #666; width: 140px;">Partner:</td>
+                <td style="padding: 8px 0; color: #333;">${partnerLabel}</td>
+              </tr>
               <tr>
                 <td style="padding: 8px 0; font-weight: bold; color: #666; width: 140px;">Nome:</td>
                 <td style="padding: 8px 0; color: #333;">${name.trim()}</td>
@@ -84,6 +101,7 @@ export async function POST(req: NextRequest) {
       text: `
 FACEVOICEAI — Nuova richiesta dal sito web
 Sezione: Lavora con noi
+Partner: ${partnerLabel}
 
 Dati del candidato:
 - Nome: ${name.trim()}
