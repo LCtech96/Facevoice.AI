@@ -128,7 +128,7 @@ type TeamOrderEntry = {
 
 const TEAM_ORDER: TeamOrderEntry[] = [
   { key: 'luca corrao', displayName: 'Luca Corrao' },
-  { key: 'sevara urmanaeva', displayName: 'Sevara Urmanaeva' },
+  { key: 'sevara urmanaeva', displayName: 'Sevara Urmanaeva', role: 'CMO' },
   { key: 'monia cumbo', displayName: 'Monia Cumbo' },
   { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)', role: 'Content Creator' },
   { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
