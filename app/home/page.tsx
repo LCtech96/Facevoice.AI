@@ -6,7 +6,6 @@ import { motion } from 'framer-motion'
 import Navigation from '@/components/Navigation'
 import Hero from '@/components/Hero'
 import BrandBanner from '@/components/BrandBanner'
-import WorkWithUs from '@/components/WorkWithUs'
 import Feed from '@/components/Feed'
 import AIToolsFeed from '@/components/AIToolsFeed'
 import BlogSection from '@/components/BlogSection'
@@ -35,6 +34,10 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   // Gestisci scroll alle sezioni quando si naviga con hash
   useEffect(() => {
     const hash = window.location.hash.replace('#', '')
+    if (hash === 'lavora-con-noi') {
+      router.push('/lavora-con-noi')
+      return
+    }
     if (hash) {
       setActiveSection(hash)
       setTimeout(() => {
@@ -104,9 +107,6 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
 
       {/* Brand Banner */}
       <BrandBanner />
-
-      {/* Lavora con noi */}
-      <WorkWithUs />
       
       {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}
       {(searchQuery || categoryFilter) && (
