@@ -14,7 +14,6 @@ const brands = [
   { name: 'Bird Terrasini', logo: '/clients/bird-terrasini.png', alt: 'Bird Terrasini - ristorante e pizzeria' },
   { name: 'Sicily by Car', logo: '/clients/sicilybycar.svg', alt: 'Sicily by Car - noleggio auto' },
   { name: 'KrainAI', logo: '/clients/krainai.svg', alt: 'KrainAI - infrastruttura per l\'economia AI' },
-  { name: 'Deploy in Produzione', logo: '/clients/deploy-in-produzione.svg', alt: 'Deploy in Produzione' },
 ]
 
 const logoClassName = 'h-10 md:h-12 w-auto object-contain max-w-[120px] md:max-w-[140px]'
