@@ -84,7 +84,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const mainNavItems = [
     { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
     { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
-    { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/home#lavora-con-noi' },
+    { id: 'lavora-con-noi', label: t('nav.workWithUs'), mobileLabel: t('nav.workWithUsShort'), icon: Handshake, href: '/home#lavora-con-noi' },
     { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
     ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
@@ -316,7 +316,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
       {/* Mobile Navigation - Top (hidden on chat — uses bottom nav + chat header) */}
       {!isChatPage && (
-      <nav className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[var(--background)]/95 backdrop-blur-xl border-b border-[var(--border-color)]">
+      <nav className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[var(--background)]/95 backdrop-blur-xl border-b border-[var(--border-color)] pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-2 px-3 py-2.5 min-h-14">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
@@ -432,24 +432,27 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
       {/* Mobile Navigation - Bottom */}
       <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom ${isChatPage ? 'z-30' : ''}`}>
-        <div className="flex items-center justify-around px-1 py-1.5">
+        <div className="flex items-stretch justify-around px-0.5 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
           {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
+            const displayLabel = 'mobileLabel' in item && item.mobileLabel ? item.mobileLabel : item.label
 
             return (
               <motion.button
                 key={item.id}
                 whileTap={{ scale: 0.9 }}
                 onClick={(e) => handleItemClick(item, e)}
-                className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0 flex-1 max-w-[4.5rem] ${
+                className={`flex flex-col items-center justify-center gap-0.5 px-1 py-1 rounded-xl transition-all min-w-0 flex-1 ${
                   active
                     ? 'text-[var(--accent-blue)]'
                     : 'text-[var(--text-secondary)]'
                 }`}
               >
-                <Icon size={20} />
-                <span className="text-[10px] font-medium truncate w-full text-center">{item.label}</span>
+                <Icon size={20} className="shrink-0" />
+                <span className="text-[9px] sm:text-[10px] font-medium text-center leading-tight w-full px-0.5">
+                  {displayLabel}
+                </span>
               </motion.button>
             )
           })}
