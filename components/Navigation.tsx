@@ -84,13 +84,13 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const mainNavItems = [
     { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
     { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
-    { id: 'lavora-con-noi', label: t('nav.workWithUs'), mobileLabel: t('nav.workWithUsShort'), icon: Handshake, href: '/home#lavora-con-noi' },
     { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
     ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
 
-  // Menu a tendina (bookings, payments, admin)
+  // Menu a tendina (lavora con noi, bookings, payments, admin)
   const dropdownMenuItems = [
+    { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/lavora-con-noi' },
     ...(user ? [
       { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
       { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
@@ -121,6 +121,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       router.push('/team')
     } else if (item.href === '/services') {
       router.push('/services')
+    } else if (item.href === '/lavora-con-noi') {
+      router.push('/lavora-con-noi')
     } else if (item.href === '/bookings') {
       router.push('/bookings')
     } else if (item.href === '/payments') {
@@ -142,6 +144,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
     if (item.id === 'services') {
       return pathname === '/services'
+    }
+    if (item.id === 'lavora-con-noi') {
+      return pathname === '/lavora-con-noi'
     }
     if (item.id === 'bookings') {
       return pathname === '/bookings'
@@ -436,7 +441,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
           {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
-            const displayLabel = 'mobileLabel' in item && item.mobileLabel ? item.mobileLabel : item.label
+            const displayLabel = item.label
 
             return (
               <motion.button
