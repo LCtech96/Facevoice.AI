@@ -95,10 +95,10 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       <div className="hidden md:block h-8" />
       
       {/* Spacing per mobile navigation */}
-      <div className="md:hidden h-1" />
+      <div className="md:hidden h-14 shrink-0" aria-hidden="true" />
       
       {/* Hero Section */}
-      <div id="hero">
+      <div id="hero" className="scroll-mt-14">
         <Hero />
       </div>
 
