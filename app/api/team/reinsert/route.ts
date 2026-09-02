@@ -95,21 +95,27 @@ export async function POST(request: NextRequest) {
         lookupNames.push('Giuseppe Delli Paoli')
       }
 
-      let existing: { id: number; name: string } | null = null
+      const existingMembers: { id: number; name: string }[] = []
       for (const lookupName of lookupNames) {
         const { data } = await supabase
           .from('team_members')
           .select('id, name')
           .eq('name', lookupName)
-          .maybeSingle()
+          .order('id', { ascending: true })
 
-        if (data) {
-          existing = data
-          break
+        if (data?.length) {
+          existingMembers.push(...data)
         }
       }
 
-      if (existing) {
+      const uniqueExisting = Array.from(
+        new Map(existingMembers.map((entry) => [entry.id, entry])).values()
+      ).sort((a, b) => a.id - b.id)
+
+      if (uniqueExisting.length > 0) {
+        const primary = uniqueExisting[0]
+        const duplicateIds = uniqueExisting.slice(1).map((entry) => entry.id)
+
         const { data, error } = await supabase
           .from('team_members')
           .update({
@@ -122,7 +128,7 @@ export async function POST(request: NextRequest) {
             image_url: member.image_url,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', existing.id)
+          .eq('id', primary.id)
           .select()
           .single()
 
@@ -130,6 +136,17 @@ export async function POST(request: NextRequest) {
           errors.push({ member: member.name, error: error.message })
         } else {
           results.push(data)
+        }
+
+        if (duplicateIds.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('team_members')
+            .delete()
+            .in('id', duplicateIds)
+
+          if (deleteError) {
+            errors.push({ member: member.name, error: deleteError.message, action: 'delete-duplicates' })
+          }
         }
       } else {
         const { data, error } = await supabase
