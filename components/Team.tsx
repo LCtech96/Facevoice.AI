@@ -91,7 +91,7 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   },
   {
     id: 6,
-    name: 'Giuseppe Delli Paoli',
+    name: 'Giuseppe Paoli',
     role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
     email: null,
@@ -102,15 +102,44 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     google: null,
     is_contractor: false,
   },
+  {
+    id: 7,
+    name: 'Jacob Rodriguez J',
+    role: 'Software Engineer (FL)',
+    description:
+      'Software engineer based in Florida, focused on building reliable web applications and contributing to Facevoice AI with a collaborative, team-first mindset.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/jacob-rodriguez.jpg',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
 ]
 
-const TEAM_ORDER = [
+type TeamOrderEntry = {
+  key: string
+  aliases?: string[]
+  displayName?: string
+  role?: string
+  linkedin?: string | null
+}
+
+const TEAM_ORDER: TeamOrderEntry[] = [
   { key: 'luca corrao', displayName: 'Luca Corrao' },
-  { key: 'sevara urmaeva', displayName: 'Sevara Urmanaeva' },
+  { key: 'sevara urmanaeva', displayName: 'Sevara Urmanaeva' },
   { key: 'monia cumbo', displayName: 'Monia Cumbo' },
   { key: 'umberto (alias fischietto)', displayName: 'Umberto (alias Fischietto)', role: 'Content Creator' },
   { key: 'leonardo alotta', displayName: 'Leonardo Alotta' },
-  { key: 'giuseppe delli paoli', displayName: 'Giuseppe Delli Paoli', role: 'AI & Automation Specialist' },
+  {
+    key: 'giuseppe paoli',
+    aliases: ['giuseppe delli paoli'],
+    displayName: 'Giuseppe Paoli',
+    role: 'AI & Automation Specialist',
+    linkedin: null,
+  },
+  { key: 'jacob rodriguez j', displayName: 'Jacob Rodriguez J', role: 'Software Engineer (FL)' },
 ]
 
 const MEMBER_TRANSLATION_KEYS: Record<string, { role?: string; description?: string }> = {
@@ -157,7 +186,9 @@ const applyTeamOrdering = (members: TeamMember[]) => {
   const ordered: TeamMember[] = []
 
   TEAM_ORDER.forEach((entry, index) => {
-    const candidate = byName.get(entry.key)
+    const lookupKeys = [entry.key, ...(entry.aliases || [])]
+    const matchedKey = lookupKeys.find((key) => byName.has(key))
+    const candidate = matchedKey ? byName.get(matchedKey) : undefined
 
     if (candidate) {
       ordered.push({
@@ -165,6 +196,7 @@ const applyTeamOrdering = (members: TeamMember[]) => {
         id: index + 1,
         name: entry.displayName || candidate.name,
         role: entry.role || candidate.role,
+        linkedin: entry.linkedin !== undefined ? entry.linkedin : candidate.linkedin,
       })
     }
   })

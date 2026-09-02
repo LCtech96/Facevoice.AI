@@ -50,12 +50,21 @@ const teamMembers = [
     image_url: '/team/Leonardo professionale fv.png',
   },
   {
-    name: 'Giuseppe Delli Paoli',
+    name: 'Giuseppe Paoli',
     role: 'AI & Automation Specialist',
     description: 'Expert in AI solutions and automation systems, transforming workflows through intelligent technology',
     email: null,
     linkedin: null,
     image_url: '/team/Giuseppe professionale fv.png',
+  },
+  {
+    name: 'Jacob Rodriguez J',
+    role: 'Software Engineer (FL)',
+    description:
+      'Software engineer based in Florida, focused on building reliable web applications and contributing to Facevoice AI with a collaborative, team-first mindset.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/jacob-rodriguez.jpg',
   },
 ]
 
@@ -81,16 +90,30 @@ export async function POST(request: NextRequest) {
     }
 
     for (const member of teamMembers) {
-      const { data: existing } = await supabase
-        .from('team_members')
-        .select('id, name')
-        .eq('name', member.name)
-        .single()
+      const lookupNames = [member.name]
+      if (member.name === 'Giuseppe Paoli') {
+        lookupNames.push('Giuseppe Delli Paoli')
+      }
+
+      let existing: { id: number; name: string } | null = null
+      for (const lookupName of lookupNames) {
+        const { data } = await supabase
+          .from('team_members')
+          .select('id, name')
+          .eq('name', lookupName)
+          .maybeSingle()
+
+        if (data) {
+          existing = data
+          break
+        }
+      }
 
       if (existing) {
         const { data, error } = await supabase
           .from('team_members')
           .update({
+            name: member.name,
             role: member.role,
             description: member.description,
             email: member.email,
@@ -99,7 +122,7 @@ export async function POST(request: NextRequest) {
             image_url: member.image_url,
             updated_at: new Date().toISOString(),
           })
-          .eq('name', member.name)
+          .eq('id', existing.id)
           .select()
           .single()
 
