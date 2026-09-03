@@ -58,8 +58,8 @@ const teamMembers = [
     image_url: '/team/Giuseppe professionale fv.png',
   },
   {
-    name: 'Jacob Rodriguez J',
-    role: 'Software Engineer (FL)',
+    name: 'Jacob Rodriguez',
+    role: 'Software Engineer J',
     description:
       'Software engineer based in Florida, focused on building reliable web applications and contributing to Facevoice AI with a collaborative, team-first mindset.',
     email: null,
@@ -93,6 +93,9 @@ export async function POST(request: NextRequest) {
       const lookupNames = [member.name]
       if (member.name === 'Giuseppe Paoli') {
         lookupNames.push('Giuseppe Delli Paoli')
+      }
+      if (member.name === 'Jacob Rodriguez') {
+        lookupNames.push('Jacob Rodriguez J')
       }
 
       const existingMembers: { id: number; name: string }[] = []

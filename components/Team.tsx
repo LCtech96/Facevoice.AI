@@ -11,6 +11,7 @@ interface TeamMember {
   id: number
   name: string
   role: string
+  role_subtitle?: string | null
   image_url: string | null
   description: string | null
   email: string | null
@@ -104,8 +105,9 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
   },
   {
     id: 7,
-    name: 'Jacob Rodriguez J',
-    role: 'Software Engineer (FL)',
+    name: 'Jacob Rodriguez',
+    role: 'Software Engineer J',
+    role_subtitle: 'FL',
     description:
       'Software engineer based in Florida, focused on building reliable web applications and contributing to Facevoice AI with a collaborative, team-first mindset.',
     email: null,
@@ -123,6 +125,7 @@ type TeamOrderEntry = {
   aliases?: string[]
   displayName?: string
   role?: string
+  roleSubtitle?: string | null
   linkedin?: string | null
 }
 
@@ -139,7 +142,13 @@ const TEAM_ORDER: TeamOrderEntry[] = [
     role: 'AI & Automation Specialist',
     linkedin: null,
   },
-  { key: 'jacob rodriguez j', displayName: 'Jacob Rodriguez J', role: 'Software Engineer (FL)' },
+  {
+    key: 'jacob rodriguez',
+    aliases: ['jacob rodriguez j'],
+    displayName: 'Jacob Rodriguez',
+    role: 'Software Engineer J',
+    roleSubtitle: 'FL',
+  },
 ]
 
 const MEMBER_TRANSLATION_KEYS: Record<string, { role?: string; description?: string }> = {
@@ -196,6 +205,8 @@ const applyTeamOrdering = (members: TeamMember[]) => {
         id: index + 1,
         name: entry.displayName || candidate.name,
         role: entry.role || candidate.role,
+        role_subtitle:
+          entry.roleSubtitle !== undefined ? entry.roleSubtitle : candidate.role_subtitle,
         linkedin: entry.linkedin !== undefined ? entry.linkedin : candidate.linkedin,
       })
     }
@@ -426,9 +437,16 @@ export default function Team() {
                       </div>
                     )}
                   </div>
-                  <p className="text-[var(--accent-blue)] mb-3 font-medium text-sm">
-                    {getMemberRole(member, t)}
-                  </p>
+                  <div className="mb-3">
+                    <p className="text-[var(--accent-blue)] font-medium text-sm">
+                      {getMemberRole(member, t)}
+                    </p>
+                    {member.role_subtitle && (
+                      <p className="text-[var(--text-secondary)] text-xs mt-1 tracking-wide">
+                        {member.role_subtitle}
+                      </p>
+                    )}
+                  </div>
                   <p className="text-[var(--text-secondary)] mb-6 text-sm leading-relaxed min-h-[3rem]">
                     {getMemberDescription(member, t)}
                   </p>
