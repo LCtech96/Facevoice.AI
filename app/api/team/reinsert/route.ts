@@ -64,7 +64,7 @@ const teamMembers = [
       'Software engineer based in Florida, focused on building reliable web applications and contributing to Facevoice AI with a collaborative, team-first mindset.',
     email: null,
     linkedin: null,
-    image_url: '/team/jacob-rodriguez.jpg',
+    image_url: '/team/jacob-rodriguez-2026.jpg',
   },
 ]
 
