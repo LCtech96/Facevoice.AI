@@ -3,21 +3,24 @@ export const DEFAULT_CHAT_MODEL = 'gemini-3.6-flash'
 /** Legacy model IDs saved in localStorage or old deploys */
 const LEGACY_MODEL_MAP: Record<string, string> = {
   'gemini-2.0-flash': 'gemini-3.6-flash',
-  'gemini-2.5-flash': 'gemini-3.6-flash',
-  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
   'gemini-1.5-flash': 'gemini-3.6-flash',
   'gemini-1.5-pro': 'gemini-3.6-flash',
   'gemini-pro': 'gemini-3.6-flash',
-  'gemini-flash-latest': 'gemini-3.6-flash',
   'llama-3.1-8b-instant': 'gemini-3.6-flash',
   'llama-3.3-70b-versatile': 'gemini-3.6-flash',
 }
 
+/**
+ * Ordered fallbacks when the selected model is overloaded / unavailable.
+ * Prefer capacity-stable flash variants after the user's choice.
+ */
 export const GEMINI_FALLBACK_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-flash-latest',
+  'gemini-3.6-flash',
 ] as const
 
 export const CHAT_MODELS = [
@@ -35,6 +38,11 @@ export const CHAT_MODELS = [
     id: 'gemini-3.5-flash-lite',
     name: 'Gemini 3.5 Flash Lite',
     description: 'Lightweight free-tier model',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    description: 'Stable capacity fallback',
   },
   {
     id: 'gemini-flash-latest',
@@ -79,6 +87,16 @@ export function getChatErrorMessage(error: unknown): string {
     return 'Crediti prepagati esauriti su questo progetto Google. Crea una nuova chiave API gratuita su aistudio.google.com/apikey (senza ricarica) oppure ricarica i crediti in AI Studio → Billing.'
   }
 
+  if (
+    message.includes('high demand') ||
+    message.includes('UNAVAILABLE') ||
+    message.includes('overloaded') ||
+    message.includes('no capacity') ||
+    message.includes('temporaneamente sovraccarico')
+  ) {
+    return 'I modelli Gemini sono temporaneamente sovraccarichi. Riprova tra qualche secondo o seleziona Gemini 3.5 Flash Lite.'
+  }
+
   if (message.includes('Rate limit') || message.includes('429')) {
     return 'Limite richieste raggiunto. Riprova tra qualche secondo.'
   }
@@ -88,7 +106,7 @@ export function getChatErrorMessage(error: unknown): string {
   }
 
   if (message.includes('not found') || message.includes('NOT_FOUND') || message.includes('no longer available')) {
-    return 'Modello Gemini non disponibile. Prova a selezionare Gemini 3.6 Flash dal menu modelli.'
+    return 'Modello Gemini non disponibile. Prova a selezionare Gemini 3.5 Flash Lite dal menu modelli.'
   }
 
   return `Errore chat: ${message}`

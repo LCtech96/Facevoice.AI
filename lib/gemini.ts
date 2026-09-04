@@ -11,13 +11,14 @@ export type GeminiChatMessage = {
   attachments?: GeminiAttachment[]
 }
 
+/** Map UI / legacy IDs to real Gemini API model names (1:1 for stable fallbacks). */
 const GEMINI_MODELS: Record<string, string> = {
   'gemini-3.6-flash': 'gemini-3.6-flash',
   'gemini-3.5-flash': 'gemini-3.5-flash',
   'gemini-3.5-flash-lite': 'gemini-3.5-flash-lite',
-  'gemini-2.5-flash': 'gemini-3.6-flash',
-  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
-  'gemini-2.5-pro': 'gemini-3.5-flash',
+  'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
+  'gemini-2.5-pro': 'gemini-2.5-pro',
   'gemini-flash-latest': 'gemini-flash-latest',
   'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
   'gemini-pro': 'gemini-3.5-flash',
@@ -110,6 +111,7 @@ function getGeminiFailureReason(data: any): string | null {
 
 function parseGeminiError(response: Response, data: any): Error {
   const errorMessage = data?.error?.message || `Gemini API error: ${response.status}`
+  const errorStatus = String(data?.error?.status || '')
 
   if (response.status === 429) {
     if (errorMessage.includes('prepayment credits are depleted')) {
@@ -126,7 +128,50 @@ function parseGeminiError(response: Response, data: any): Error {
     )
   }
 
+  // Preserve capacity signals so fallback logic can switch models.
+  if (
+    response.status === 503 ||
+    errorStatus === 'UNAVAILABLE' ||
+    errorMessage.includes('high demand') ||
+    errorMessage.toLowerCase().includes('overloaded')
+  ) {
+    return new Error(
+      errorMessage.includes('high demand')
+        ? errorMessage
+        : `This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later. (${response.status})`
+    )
+  }
+
   return new Error(errorMessage)
+}
+
+/** True when another Gemini model may succeed (capacity / availability), not billing/auth. */
+export function isRetryableGeminiError(error: Error): boolean {
+  const message = error.message
+
+  if (
+    message.includes('prepayment credits are depleted') ||
+    message.includes('API key not valid') ||
+    message.includes('API_KEY_INVALID') ||
+    message.includes('API key not configured')
+  ) {
+    return false
+  }
+
+  return (
+    message.includes('high demand') ||
+    message.includes('UNAVAILABLE') ||
+    message.includes('overloaded') ||
+    message.includes('no capacity') ||
+    message.includes('MODEL_CAPACITY_EXHAUSTED') ||
+    message.includes('Rate limit') ||
+    message.includes('429') ||
+    message.includes('not found') ||
+    message.includes('NOT_FOUND') ||
+    message.includes('is not supported') ||
+    message.includes('no longer available') ||
+    message.includes('Invalid response')
+  )
 }
 
 export async function callGeminiAPI(
@@ -224,14 +269,7 @@ export async function callGeminiWithFallback(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
 
-      const retryable =
-        lastError.message.includes('not found') ||
-        lastError.message.includes('NOT_FOUND') ||
-        lastError.message.includes('is not supported') ||
-        lastError.message.includes('no longer available') ||
-        lastError.message.includes('Invalid response')
-
-      if (!retryable) {
+      if (!isRetryableGeminiError(lastError)) {
         throw lastError
       }
 
