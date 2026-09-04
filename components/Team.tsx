@@ -143,12 +143,6 @@ type TeamOrderEntry = {
   linkedin?: string | null
 }
 
-const EXECUTIVE_KEYS = new Set([
-  'luca corrao',
-  'sevara urmanaeva',
-  'leonardo alotta',
-])
-
 const TEAM_ORDER: TeamOrderEntry[] = [
   { key: 'luca corrao', displayName: 'Luca Corrao' },
   { key: 'sevara urmanaeva', displayName: 'Sevara Urmanaeva', role: 'CMO' },
@@ -240,20 +234,14 @@ const applyTeamOrdering = (members: TeamMember[]) => {
   return ordered
 }
 
-function isExecutiveMember(member: TeamMember) {
-  return EXECUTIVE_KEYS.has(normalizeTeamName(member.name))
-}
-
 function TeamMemberCard({
   member,
   index,
   t,
-  featured = false,
 }: {
   member: TeamMember
   index: number
   t: (key: string) => string
-  featured?: boolean
 }) {
   return (
     <motion.div
@@ -262,25 +250,15 @@ function TeamMemberCard({
       viewport={{ once: true }}
       transition={{ duration: 0.6, delay: index * 0.1 }}
       whileHover={{ scale: 1.02, y: -5 }}
-      className={`bg-[var(--card-background)] border border-[var(--border-color)] p-6 rounded-2xl text-center group hover:shadow-lg transition-all ${
-        featured ? 'md:p-8' : ''
-      }`}
+      className="bg-[var(--card-background)] border border-[var(--border-color)] p-6 rounded-2xl text-center group hover:shadow-lg transition-all"
     >
       <div className="mb-6 relative">
-        <div
-          className={`mx-auto rounded-full overflow-hidden border-2 border-[var(--border-color)] relative ${
-            featured ? 'w-40 h-40' : 'w-32 h-32'
-          }`}
-        >
+        <div className="w-32 h-32 mx-auto rounded-full overflow-hidden border-2 border-[var(--border-color)] relative">
           <TeamMemberImage member={member} />
         </div>
       </div>
       <div className="flex items-center justify-center gap-2 mb-2">
-        <h3
-          className={`font-semibold text-[var(--text-primary)] ${
-            featured ? 'text-2xl' : 'text-xl'
-          }`}
-        >
+        <h3 className="text-xl font-semibold text-[var(--text-primary)]">
           {member.name}
         </h3>
         {member.is_contractor && (
@@ -568,9 +546,6 @@ export default function Team() {
     )
   }
 
-  const executiveMembers = teamMembers.filter(isExecutiveMember)
-  const coreTeamMembers = teamMembers.filter((member) => !isExecutiveMember(member))
-
   return (
     <section id="team" className="min-h-screen py-24 px-6 bg-[var(--background)]">
       <motion.div
@@ -580,58 +555,29 @@ export default function Team() {
         transition={{ duration: 0.8 }}
         className="container mx-auto max-w-6xl"
       >
+        <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
+          {t('team.title')}
+        </h2>
+        <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
+          {t('team.subtitle')}
+        </p>
+
         {teamMembers.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-[var(--text-secondary)] text-xl">No team members found.</p>
           </div>
         ) : (
-          <div className="space-y-20">
-            {executiveMembers.length > 0 && (
-              <div id="team-executive">
-                <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
-                  {t('team.executiveTitle')}
-                </h2>
-                <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
-                  {t('team.executiveSubtitle')}
-                </p>
-                <div className="flex justify-center">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl w-full">
-                    {executiveMembers.map((member, index) => (
-                      <TeamMemberCard
-                        key={member.id}
-                        member={member}
-                        index={index}
-                        t={t}
-                        featured
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {coreTeamMembers.length > 0 && (
-              <div id="team-members">
-                <h2 className="text-4xl md:text-5xl font-bold text-center mb-4 text-[var(--text-primary)]">
-                  {t('team.title')}
-                </h2>
-                <p className="text-lg text-[var(--text-secondary)] text-center mb-16 max-w-2xl mx-auto">
-                  {t('team.subtitle')}
-                </p>
-                <div className="flex justify-center">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl w-full">
-                    {coreTeamMembers.map((member, index) => (
-                      <TeamMemberCard
-                        key={member.id}
-                        member={member}
-                        index={index}
-                        t={t}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
+          <div className="flex justify-center">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl w-full">
+              {teamMembers.map((member, index) => (
+                <TeamMemberCard
+                  key={member.id}
+                  member={member}
+                  index={index}
+                  t={t}
+                />
+              ))}
+            </div>
           </div>
         )}
       </motion.div>
