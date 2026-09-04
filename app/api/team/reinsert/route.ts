@@ -66,6 +66,15 @@ const teamMembers = [
     linkedin: null,
     image_url: '/team/jacob-rodriguez-2026.jpg',
   },
+  {
+    name: 'Francesco Troia',
+    role: 'Client Success Manager',
+    description:
+      'With a warm smile and a genuine focus on people, Francesco makes every client feel heard—turning first conversations into lasting, successful partnerships with Facevoice AI.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/francesco-troia.jpg',
+  },
 ]
 
 const removedTeamMembers = [

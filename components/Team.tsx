@@ -118,6 +118,20 @@ const FALLBACK_TEAM_MEMBERS: TeamMember[] = [
     google: null,
     is_contractor: false,
   },
+  {
+    id: 8,
+    name: 'Francesco Troia',
+    role: 'Client Success Manager',
+    description:
+      'With a warm smile and a genuine focus on people, Francesco makes every client feel heard—turning first conversations into lasting, successful partnerships with Facevoice AI.',
+    email: null,
+    linkedin: null,
+    image_url: '/team/francesco-troia.jpg',
+    instagram: null,
+    x: null,
+    google: null,
+    is_contractor: false,
+  },
 ]
 
 type TeamOrderEntry = {
@@ -148,6 +162,11 @@ const TEAM_ORDER: TeamOrderEntry[] = [
     displayName: 'Jacob Rodriguez',
     role: 'Software Engineer J',
     roleSubtitle: 'FL',
+  },
+  {
+    key: 'francesco troia',
+    displayName: 'Francesco Troia',
+    role: 'Client Success Manager',
   },
 ]
 
