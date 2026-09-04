@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 import Team from '@/components/Team'
+import SEOHead from '@/components/SEO/SEOHead'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
@@ -39,6 +40,19 @@ export default function TeamPage() {
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
+      <SEOHead
+        title="Team Executive | Facevoice AI"
+        description="Conosci il Team Executive di Facevoice AI: Luca Corrao (CEO), Sevara Urmanaeva (CMO) e Leonardo Alotta (CFO), e il team che costruisce innovazione ogni giorno."
+        keywords={[
+          'team Facevoice AI',
+          'team executive Facevoice',
+          'Luca Corrao',
+          'Sevara Urmanaeva',
+          'Leonardo Alotta',
+        ]}
+        canonical="https://www.facevoice.ai/team"
+        page="team"
+      />
       <Navigation />
       
       {/* Spacing per desktop navigation */}
