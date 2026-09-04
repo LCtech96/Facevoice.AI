@@ -24,6 +24,14 @@ const teamMembers = [
     image_url: '/team/Sevara professionale fv.png',
   },
   {
+    name: 'Leonardo Alotta',
+    role: 'Chief Financial Officer (CFO)',
+    description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
+    email: 'leonardo@facevoice.ai',
+    linkedin: 'https://linkedin.com/in/leonardo-alotta',
+    image_url: '/team/Leonardo professionale fv.png',
+  },
+  {
     name: 'Monia Cumbo',
     role: 'Content Creator & Social Media Manager',
     description:
@@ -40,14 +48,6 @@ const teamMembers = [
     email: null,
     linkedin: null,
     image_url: '/team/Umberto-Facevoice.png',
-  },
-  {
-    name: 'Leonardo Alotta',
-    role: 'Chief Financial Officer (CFO)',
-    description: 'Strategic financial leader driving growth and ensuring fiscal responsibility across all business operations',
-    email: 'leonardo@facevoice.ai',
-    linkedin: 'https://linkedin.com/in/leonardo-alotta',
-    image_url: '/team/Leonardo professionale fv.png',
   },
   {
     name: 'Giuseppe Paoli',
