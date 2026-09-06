@@ -147,8 +147,6 @@ export const translations = {
     team: {
       title: 'Il Nostro Team',
       subtitle: 'Le persone che costruiscono innovazione ogni giorno',
-      executiveTitle: 'Team Executive',
-      executiveSubtitle: 'La leadership che guida Facevoice AI',
       loading: 'Caricamento...',
       members: {
         monia: {
@@ -309,8 +307,6 @@ export const translations = {
     team: {
       title: 'Our Team',
       subtitle: 'The people building innovation every day',
-      executiveTitle: 'Executive Team',
-      executiveSubtitle: 'The leadership guiding Facevoice AI',
       loading: 'Loading...',
       members: {
         monia: {
@@ -471,8 +467,6 @@ export const translations = {
     team: {
       title: 'Notre Équipe',
       subtitle: 'Les personnes qui construisent l\'innovation au quotidien',
-      executiveTitle: 'Équipe Executive',
-      executiveSubtitle: 'La direction qui guide Facevoice AI',
       loading: 'Chargement...',
       members: {
         monia: {
@@ -633,8 +627,6 @@ export const translations = {
     team: {
       title: 'Наша Команда',
       subtitle: 'Люди, которые создают инновации каждый день',
-      executiveTitle: 'Руководящая команда',
-      executiveSubtitle: 'Лидерство, которое направляет Facevoice AI',
       loading: 'Загрузка...',
       members: {
         monia: {
@@ -795,8 +787,6 @@ export const translations = {
     team: {
       title: 'Unser Team',
       subtitle: 'Die Menschen, die jeden Tag Innovation aufbauen',
-      executiveTitle: 'Executive Team',
-      executiveSubtitle: 'Die Führung, die Facevoice AI leitet',
       loading: 'Laden...',
       members: {
         monia: {
@@ -957,8 +947,6 @@ export const translations = {
     team: {
       title: 'Nossa Equipe',
       subtitle: 'As pessoas que constroem inovação todos os dias',
-      executiveTitle: 'Equipe Executive',
-      executiveSubtitle: 'A liderança que guia a Facevoice AI',
       loading: 'Carregando...',
       members: {
         monia: {
@@ -1119,8 +1107,6 @@ export const translations = {
     team: {
       title: 'فريقنا',
       subtitle: 'الأشخاص الذين يبنون الابتكار كل يوم',
-      executiveTitle: 'الفريق التنفيذي',
-      executiveSubtitle: 'القيادة التي توجه Facevoice AI',
       loading: 'جاري التحميل...',
       members: {
         monia: {
@@ -1281,8 +1267,6 @@ export const translations = {
     team: {
       title: '我们的团队',
       subtitle: '每天打造创新的伙伴们',
-      executiveTitle: '高管团队',
-      executiveSubtitle: '引领 Facevoice AI 的领导层',
       loading: '加载中...',
       members: {
         monia: {

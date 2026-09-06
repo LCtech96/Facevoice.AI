@@ -41,11 +41,10 @@ export default function TeamPage() {
   return (
     <main className="min-h-screen bg-[var(--background)]">
       <SEOHead
-        title="Team Executive | Facevoice AI"
-        description="Conosci il Team Executive di Facevoice AI: Luca Corrao (CEO), Sevara Urmanaeva (CMO) e Leonardo Alotta (CFO), e il team che costruisce innovazione ogni giorno."
+        title="Il Nostro Team | Facevoice AI"
+        description="Conosci il team di Facevoice AI: le persone che guidano e costruiscono innovazione ogni giorno."
         keywords={[
           'team Facevoice AI',
-          'team executive Facevoice',
           'Luca Corrao',
           'Sevara Urmanaeva',
           'Leonardo Alotta',
