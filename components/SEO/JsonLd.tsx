@@ -1,0 +1,163 @@
+import { GEO, ORG, SITE_URL, SICILY_CITIES } from '@/lib/seo/site'
+
+/**
+ * Componente server: lo script finisce nell'HTML iniziale, quindi lo
+ * vedono anche i crawler che non eseguono JavaScript — cioe' quasi tutti
+ * quelli dei motori generativi.
+ */
+function Script({ data }: { data: Record<string, unknown> }) {
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+    />
+  )
+}
+
+/**
+ * L'entita' azienda, con un @id stabile a cui le altre pagine si
+ * riferiscono. Senza un identificatore condiviso, ogni pagina descrive
+ * un'azienda diversa che si chiama allo stesso modo.
+ */
+export const ORG_ID = `${SITE_URL}/#organization`
+
+export function OrganizationJsonLd() {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'ProfessionalService',
+        '@id': ORG_ID,
+        name: ORG.name,
+        legalName: ORG.legalName,
+        url: ORG.url,
+        logo: ORG.logo,
+        image: ORG.logo,
+        description: ORG.oneLiner,
+        email: ORG.email,
+        telephone: ORG.phone,
+        founder: { '@type': 'Person', name: ORG.founder },
+        address: {
+          '@type': 'PostalAddress',
+          addressLocality: ORG.city,
+          addressRegion: ORG.region,
+          addressCountry: ORG.country,
+        },
+        geo: {
+          '@type': 'GeoCoordinates',
+          latitude: GEO.latitude,
+          longitude: GEO.longitude,
+        },
+        // Tutta la Sicilia, non la sola Palermo: e' la risposta alla
+        // domanda "quali aziende in Sicilia fanno X".
+        areaServed: [
+          { '@type': 'AdministrativeArea', name: 'Sicilia' },
+          ...SICILY_CITIES.map((city) => ({ '@type': 'City', name: city.name })),
+        ],
+        knowsAbout: [
+          'Intelligenza artificiale applicata alle imprese',
+          'Agenti AI e chatbot per assistenza clienti',
+          'Automazione della messaggistica',
+          'Property management e affitti brevi',
+          'Software gestionale su misura',
+          'Integrazioni API',
+          'Sviluppo full-stack',
+          'Blockchain',
+        ],
+        ...(ORG.sameAs.length > 0 ? { sameAs: ORG.sameAs } : {}),
+      }}
+    />
+  )
+}
+
+export function WebSiteJsonLd() {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        '@id': `${SITE_URL}/#website`,
+        url: SITE_URL,
+        name: ORG.name,
+        publisher: { '@id': ORG_ID },
+        inLanguage: 'it-IT',
+      }}
+    />
+  )
+}
+
+export function ServiceJsonLd({
+  name,
+  description,
+  url,
+  areaName,
+}: {
+  name: string
+  description: string
+  url: string
+  areaName: string
+}) {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'Service',
+        name,
+        description,
+        url,
+        serviceType: 'Sviluppo software e automazioni AI',
+        provider: { '@id': ORG_ID },
+        areaServed: { '@type': 'AdministrativeArea', name: areaName },
+        audience: {
+          '@type': 'BusinessAudience',
+          name: 'Property manager, gestori di affitti brevi, agenzie immobiliari',
+        },
+      }}
+    />
+  )
+}
+
+export type FaqItem = { question: string; answer: string }
+
+/**
+ * Le FAQ sono il formato che i motori generativi riusano piu' volentieri:
+ * domanda e risposta sono gia' separate, quindi la risposta si puo'
+ * citare senza doverla ricostruire dal testo attorno.
+ */
+export function FaqJsonLd({ items, url }: { items: FaqItem[]; url: string }) {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        '@id': `${url}#faq`,
+        mainEntity: items.map((item) => ({
+          '@type': 'Question',
+          name: item.question,
+          acceptedAnswer: { '@type': 'Answer', text: item.answer },
+        })),
+      }}
+    />
+  )
+}
+
+export function BreadcrumbJsonLd({
+  items,
+}: {
+  items: Array<{ name: string; url: string }>
+}) {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: items.map((item, index) => ({
+          '@type': 'ListItem',
+          position: index + 1,
+          name: item.name,
+          item: item.url,
+        })),
+      }}
+    />
+  )
+}

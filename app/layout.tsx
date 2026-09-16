@@ -6,6 +6,8 @@ import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
 import ContactsFooter from '@/components/ContactsFooter'
 import RecoveryRedirect from '@/components/RecoveryRedirect'
+import { OrganizationJsonLd, WebSiteJsonLd } from '@/components/SEO/JsonLd'
+import { SITE_URL } from '@/lib/seo/site'
 import { LanguageProvider } from '@/lib/i18n/LanguageContext'
 
 const montserrat = Montserrat({
@@ -15,6 +17,8 @@ const montserrat = Montserrat({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  alternates: { canonical: '/' },
   title: 'Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale',
   description: 'Sviluppo software su misura per automazione aziendale a Palermo. Integrazione intelligenza artificiale per gestione magazzino e-commerce, consulenza SEO per Shopify e WooCommerce, chatbot AI personalizzati per assistenza clienti h24. Ottimizzazione velocità siti e-commerce professionali.',
   keywords: [
@@ -48,13 +52,13 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica per imprese siciliane',
-    url: 'https://www.facevoice.ai/home',
+    url: `${SITE_URL}/home`,
     siteName: 'Facevoice AI',
     locale: 'it_IT',
     type: 'website',
     images: [
       {
-        url: 'https://www.facevoice.ai/Facevoice.png',
+        url: `${SITE_URL}/Facevoice.png`,
         width: 1200,
         height: 630,
         alt: 'Facevoice AI - Sviluppo Software e Integrazione AI',
@@ -65,7 +69,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica',
-    images: ['https://www.facevoice.ai/Facevoice.png'],
+    images: [`${SITE_URL}/Facevoice.png`],
   },
   robots: {
     index: true,
@@ -88,6 +92,8 @@ export default function RootLayout({
   return (
     <html lang="it" className="dark">
       <body className={montserrat.className}>
+        <OrganizationJsonLd />
+        <WebSiteJsonLd />
         <LanguageProvider>
           <RecoveryRedirect />
           {children}
