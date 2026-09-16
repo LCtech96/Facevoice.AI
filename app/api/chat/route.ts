@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { callClaude, type ClaudeChatMessage } from '@/lib/claude'
+import { refusalNotice, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
 import { calculateCostUsd, resolveChatModel } from '@/lib/chat-models'
 import {
   ChatAuthError,
@@ -11,6 +11,8 @@ import {
 } from '@/lib/chat-auth'
 
 export const dynamic = 'force-dynamic'
+// Una risposta lunga in streaming supera i 10s di default di Vercel.
+export const maxDuration = 300
 
 type Attachment = { mimeType: string; data: string }
 
@@ -111,51 +113,123 @@ export async function POST(req: NextRequest) {
       { role: 'user', content, attachments },
     ]
 
-    const result = await callClaude(conversation, model, projectInstructions)
+    // --- Risposta in streaming (NDJSON) -------------------------------
+    // Ogni riga e' un evento JSON: 'chat' (id definitivo), 'delta'
+    // (testo), 'done' (messaggio salvato + consumo), 'error'.
+    const finalChatId = chatId
+    const encoder = new TextEncoder()
 
-    const { data: savedAssistantMessage } = await supabaseAdmin
-      .from('user_chat_messages')
-      .insert({
-        chat_id: chatId,
-        user_id: member.user_id,
-        role: 'assistant',
-        content: result.message,
-      })
-      .select('id, created_at')
-      .single()
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+        }
 
-    const costUsd = calculateCostUsd(model, result.usage)
-    await recordUsage({
-      userId: member.user_id,
-      chatId,
-      model,
-      usage: result.usage,
-      costUsd,
+        let fullText = ''
+
+        try {
+          send({
+            type: 'chat',
+            chatId: finalChatId,
+            userMessageId: savedUserMessage.id,
+          })
+
+          const claudeStream = streamClaude(conversation, model, projectInstructions)
+
+          for await (const event of claudeStream) {
+            if (
+              event.type === 'content_block_delta' &&
+              event.delta.type === 'text_delta'
+            ) {
+              fullText += event.delta.text
+              send({ type: 'delta', text: event.delta.text })
+            }
+          }
+
+          const finalMessage = await claudeStream.finalMessage()
+          const refused = finalMessage.stop_reason === 'refusal'
+          const content = refused ? refusalNotice() : fullText.trim()
+
+          const { data: savedAssistantMessage } = await supabaseAdmin
+            .from('user_chat_messages')
+            .insert({
+              chat_id: finalChatId,
+              user_id: member.user_id,
+              role: 'assistant',
+              content,
+            })
+            .select('id, created_at')
+            .single()
+
+          const usageTotals = {
+            input_tokens: finalMessage.usage.input_tokens ?? 0,
+            output_tokens: finalMessage.usage.output_tokens ?? 0,
+            cache_creation_input_tokens:
+              finalMessage.usage.cache_creation_input_tokens ?? 0,
+            cache_read_input_tokens: finalMessage.usage.cache_read_input_tokens ?? 0,
+          }
+
+          const costUsd = calculateCostUsd(model, usageTotals)
+          await recordUsage({
+            userId: member.user_id,
+            chatId: finalChatId,
+            model,
+            usage: usageTotals,
+            costUsd,
+          })
+
+          await supabaseAdmin
+            .from('user_chats')
+            .update({ model, updated_at: new Date().toISOString() })
+            .eq('id', finalChatId)
+
+          const usage = await getUsageSummary(member)
+
+          send({
+            type: 'done',
+            message: {
+              id: savedAssistantMessage?.id,
+              role: 'assistant',
+              content,
+              timestamp: savedAssistantMessage?.created_at,
+            },
+            model: finalMessage.model,
+            refused,
+            usage: {
+              costUsd,
+              spentUsd: usage.spentUsd,
+              limitUsd: usage.limitUsd,
+              remainingUsd: usage.remainingUsd,
+            },
+          })
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Errore durante la risposta'
+          console.error('Chat stream error:', message)
+
+          // Se qualcosa era gia' arrivato, salvalo: meglio una risposta
+          // troncata di una conversazione con un buco.
+          if (fullText.trim()) {
+            await supabaseAdmin.from('user_chat_messages').insert({
+              chat_id: finalChatId,
+              user_id: member.user_id,
+              role: 'assistant',
+              content: fullText.trim(),
+            })
+          }
+
+          send({ type: 'error', error: message })
+        } finally {
+          controller.close()
+        }
+      },
     })
 
-    await supabaseAdmin
-      .from('user_chats')
-      .update({ model, updated_at: new Date().toISOString() })
-      .eq('id', chatId)
-
-    const usage = await getUsageSummary(member)
-
-    return NextResponse.json({
-      chatId,
-      message: {
-        id: savedAssistantMessage?.id,
-        role: 'assistant',
-        content: result.message,
-        timestamp: savedAssistantMessage?.created_at,
-      },
-      userMessageId: savedUserMessage.id,
-      model: result.model,
-      refused: result.refused,
-      usage: {
-        costUsd,
-        spentUsd: usage.spentUsd,
-        limitUsd: usage.limitUsd,
-        remainingUsd: usage.remainingUsd,
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
       },
     })
   } catch (error) {

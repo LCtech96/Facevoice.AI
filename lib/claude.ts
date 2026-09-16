@@ -103,14 +103,35 @@ function buildSystem(projectInstructions?: string | null): Anthropic.TextBlockPa
   return blocks
 }
 
-export async function callClaude(
+/**
+ * Prepara la richiesta in streaming. Il chiamante itera sugli eventi e
+ * alla fine legge `finalMessage()` per usage e stop_reason.
+ *
+ * max_tokens e' alto perche' in streaming non c'e' il rischio di timeout
+ * HTTP che limita le richieste normali.
+ */
+export function streamClaude(
   messages: ClaudeChatMessage[],
   model: string,
   projectInstructions?: string | null
-): Promise<ClaudeResult> {
+) {
   const client = getClient()
-  const resolvedModel = resolveChatModel(model) || DEFAULT_CHAT_MODEL
+  const apiMessages = toApiMessages(messages)
 
+  return client.messages.stream({
+    model: resolveChatModel(model) || DEFAULT_CHAT_MODEL,
+    max_tokens: 64000,
+    system: buildSystem(projectInstructions),
+    messages: apiMessages,
+    cache_control: { type: 'ephemeral' },
+  })
+}
+
+export function refusalNotice(): string {
+  return 'Claude ha rifiutato di rispondere a questa richiesta per motivi di sicurezza. Riformulala o cambia argomento.'
+}
+
+function toApiMessages(messages: ClaudeChatMessage[]): Anthropic.MessageParam[] {
   const apiMessages: Anthropic.MessageParam[] = messages
     .filter((msg) => msg.content.trim() || msg.attachments?.length)
     .map((msg) => ({
@@ -121,6 +142,18 @@ export async function callClaude(
   if (apiMessages.length === 0) {
     throw new Error('Nessun messaggio valido da inviare.')
   }
+
+  return apiMessages
+}
+
+export async function callClaude(
+  messages: ClaudeChatMessage[],
+  model: string,
+  projectInstructions?: string | null
+): Promise<ClaudeResult> {
+  const client = getClient()
+  const resolvedModel = resolveChatModel(model) || DEFAULT_CHAT_MODEL
+  const apiMessages = toApiMessages(messages)
 
   const response = await client.messages.create({
     model: resolvedModel,
@@ -141,9 +174,7 @@ export async function callClaude(
   const refused = response.stop_reason === 'refusal'
 
   return {
-    message: refused
-      ? 'Claude ha rifiutato di rispondere a questa richiesta per motivi di sicurezza. Riformulala o cambia argomento.'
-      : text,
+    message: refused ? refusalNotice() : text,
     model: response.model,
     usage: {
       input_tokens: response.usage.input_tokens ?? 0,

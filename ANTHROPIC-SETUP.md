@@ -56,6 +56,21 @@ Il contatore riparte il primo del mese (UTC).
 I prezzi stanno in `lib/chat-models.ts`: se Anthropic li cambia, si
 aggiornano li' e il calcolo dei costi si adegua.
 
+## Streaming
+
+Le risposte arrivano parola per parola. La route `/api/chat` restituisce
+NDJSON (un evento JSON per riga): `chat` con l'id definitivo della chat,
+`delta` per ogni pezzo di testo, `done` con il messaggio salvato e il
+consumo, `error` se qualcosa si rompe.
+
+Il messaggio viene salvato su database e il consumo registrato solo a
+fine stream, quando si conoscono i token effettivi. Se lo stream si
+interrompe a meta', la parte gia' ricevuta viene comunque salvata.
+
+`maxDuration = 300` in `app/api/chat/route.ts` serve perche' il default
+di Vercel (10 secondi) troncherebbe le risposte lunghe. Su piano Hobby
+il tetto reale e' piu' basso: se vedi risposte tagliate, e' quello.
+
 ## Progetti e istruzioni
 
 Un progetto e' una cartella con un campo istruzioni. Le istruzioni

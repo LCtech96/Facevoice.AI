@@ -63,6 +63,8 @@ export default function AIChatMain({
 }: AIChatMainProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  /** Testo della risposta mentre arriva, prima di diventare un messaggio. */
+  const [streamingText, setStreamingText] = useState('')
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [copied, setCopied] = useState(false)
@@ -80,7 +82,7 @@ export default function AIChatMain({
 
   useEffect(() => {
     scrollToBottom()
-  }, [chat?.messages])
+  }, [chat?.messages, streamingText])
 
   // Messaggio digitato in home: parte da solo appena la chat e' pronta.
   useEffect(() => {
@@ -198,26 +200,73 @@ export default function AIChatMain({
         }),
       })
 
-      const data = await response.json().catch(() => ({}))
-
       if (!response.ok) {
+        // Gli errori (401, 402 limite, 404...) arrivano come JSON, non
+        // come stream.
+        const data = await response.json().catch(() => ({}))
         throw new Error(data.error || `HTTP ${response.status}: risposta non riuscita`)
       }
 
-      if (!data.message?.content) {
-        throw new Error(data.error || 'Risposta vuota dal modello')
+      if (!response.body) {
+        throw new Error('Risposta senza corpo dal server')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let serverChatId: string | null = null
+      let finalEvent: any = null
+      let streamed = ''
+
+      // NDJSON: un evento per riga. L'ultima riga del buffer puo'
+      // essere parziale, quindi resta in attesa del chunk successivo.
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+
+          let event: any
+          try {
+            event = JSON.parse(line)
+          } catch {
+            continue
+          }
+
+          if (event.type === 'chat') {
+            serverChatId = event.chatId
+          } else if (event.type === 'delta') {
+            streamed += event.text
+            setStreamingText(streamed)
+          } else if (event.type === 'done') {
+            finalEvent = event
+          } else if (event.type === 'error') {
+            throw new Error(event.error)
+          }
+        }
+      }
+
+      if (!finalEvent?.message?.content) {
+        throw new Error('Risposta interrotta prima di essere completata')
       }
 
       const assistantMessage: Message = {
-        id: data.message.id || (Date.now() + 1).toString(),
+        id: finalEvent.message.id || (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.message.content,
-        timestamp: data.message.timestamp ? new Date(data.message.timestamp) : new Date(),
+        content: finalEvent.message.content,
+        timestamp: finalEvent.message.timestamp
+          ? new Date(finalEvent.message.timestamp)
+          : new Date(),
       }
 
       const finalChat: Chat = {
         ...updatedChat,
-        id: data.chatId || updatedChat.id,
+        id: serverChatId || updatedChat.id,
         title:
           wasDraft && updatedChat.title === 'Nuova chat'
             ? userMessage.content.slice(0, 60) || 'Nuova chat'
@@ -228,11 +277,11 @@ export default function AIChatMain({
 
       onChatUpdate(finalChat, previousId)
 
-      if (data.usage && onUsageUpdate) {
+      if (finalEvent.usage && onUsageUpdate) {
         onUsageUpdate({
-          spentUsd: data.usage.spentUsd,
-          limitUsd: data.usage.limitUsd,
-          remainingUsd: data.usage.remainingUsd,
+          spentUsd: finalEvent.usage.spentUsd,
+          limitUsd: finalEvent.usage.limitUsd,
+          remainingUsd: finalEvent.usage.remainingUsd,
         })
       }
     } catch (error) {
@@ -250,6 +299,7 @@ export default function AIChatMain({
       }
       onChatUpdate(finalChat, previousId)
     } finally {
+      setStreamingText('')
       setIsLoading(false)
     }
   }
@@ -821,16 +871,27 @@ export default function AIChatMain({
         
         {isLoading && (
           <div className="flex gap-3 justify-start">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center flex-shrink-0">
               <Bot className="w-4 h-4 text-white" />
             </div>
-            <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-2">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" />
-                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+            {streamingText ? (
+              // La risposta mentre arriva: stessa bolla dei messaggi
+              // salvati, con un cursore che segnala che non e' finita.
+              <div className="max-w-[85%] md:max-w-[75%] rounded-2xl px-3 py-2 md:px-4 bg-[var(--background-secondary)] text-[var(--text-primary)]">
+                <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                  {streamingText}
+                  <span className="inline-block w-1.5 h-4 ml-0.5 -mb-0.5 bg-[var(--accent-blue)] animate-pulse" />
+                </p>
               </div>
-            </div>
+            ) : (
+              <div className="bg-[var(--background-secondary)] rounded-2xl px-4 py-2">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" />
+                  <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  <div className="w-2 h-2 bg-[var(--accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div ref={messagesEndRef} />
