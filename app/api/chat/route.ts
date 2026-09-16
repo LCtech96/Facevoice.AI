@@ -22,6 +22,9 @@ export const maxDuration = 300
 
 type Attachment = { mimeType: string; data: string }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const BASE_SYSTEM_PROMPT = `Sei l'assistente AI interno di Facevoice.AI, usato dal team per lavorare sui progetti dei clienti.
 
 Rispondi nella lingua dell'utente (di norma italiano). Sii diretto e concreto: niente preamboli, niente riepiloghi di quello che stai per fare. Quando una richiesta è ambigua, fai una sola domanda di chiarimento invece di indovinare. Se non sai una cosa, dillo.`
@@ -69,7 +72,12 @@ export async function POST(req: NextRequest) {
       await assertWithinLimit(member)
     }
 
-    let chatId: string | null = body?.chatId ? String(body.chatId) : null
+    // Un id che non e' un UUID non puo' corrispondere a nessuna riga:
+    // e' una bozza lato client (o un client vecchio ancora in cache),
+    // quindi vale come "chat nuova", non come chat mancante.
+    const requestedChatId = body?.chatId ? String(body.chatId) : null
+    let chatId: string | null =
+      requestedChatId && UUID_PATTERN.test(requestedChatId) ? requestedChatId : null
 
     // --- Chat: esistente (e di questo utente) oppure nuova ------------
     let projectId: string | null = body?.projectId ? String(body.projectId) : null
