@@ -17,7 +17,7 @@ export default function ModelSelector({
 }: ModelSelectorProps) {
   const models = CHAT_MODELS.map((model) => ({
     ...model,
-    provider: 'Anthropic',
+    provider: model.provider === 'google' ? 'Google' : 'Anthropic',
     available: true,
   }))
 

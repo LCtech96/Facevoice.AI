@@ -5,6 +5,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
 import ContactsFooter from '@/components/ContactsFooter'
+import RecoveryRedirect from '@/components/RecoveryRedirect'
 import { LanguageProvider } from '@/lib/i18n/LanguageContext'
 
 const montserrat = Montserrat({
@@ -88,6 +89,7 @@ export default function RootLayout({
     <html lang="it" className="dark">
       <body className={montserrat.className}>
         <LanguageProvider>
+          <RecoveryRedirect />
           {children}
           <ContactsFooter />
           <AIChatWidget />

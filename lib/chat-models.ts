@@ -8,48 +8,99 @@
 
 export const DEFAULT_CHAT_MODEL = 'claude-opus-5'
 
-/** Prezzi Anthropic in USD per milione di token. */
+/** Prezzi in USD per milione di token. */
 type ModelPricing = {
   input: number
   output: number
 }
 
+export type ChatProvider = 'anthropic' | 'google'
+
 export type ChatModel = {
   id: string
   name: string
+  provider: ChatProvider
   description: string
-  pricing: ModelPricing
+  /**
+   * null = non conteggiato nel budget.
+   *
+   * I modelli Gemini girano sulla chiave gratuita di AI Studio: i token
+   * vengono registrati lo stesso, ma il costo resta a zero. Se passi a
+   * un piano a pagamento, metti qui i prezzi reali di Google e il
+   * conteggio si adegua da solo.
+   */
+  pricing: ModelPricing | null
 }
 
 export const CHAT_MODELS: ChatModel[] = [
   {
     id: 'claude-opus-5',
     name: 'Claude Opus 5',
+    provider: 'anthropic',
     description: "Il più capace. Per analisi complesse e lavoro lungo.",
     pricing: { input: 5, output: 25 },
   },
   {
     id: 'claude-sonnet-5',
     name: 'Claude Sonnet 5',
+    provider: 'anthropic',
     description: "Equilibrio tra qualità e costo. Buono per l'uso quotidiano.",
     pricing: { input: 2, output: 10 },
   },
   {
     id: 'claude-haiku-4-5',
     name: 'Claude Haiku 4.5',
+    provider: 'anthropic',
     description: "Il più economico e rapido. Per domande brevi.",
     pricing: { input: 1, output: 5 },
   },
+  {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    provider: 'google',
+    description: 'Rapido e senza costo sul budget. Buono per bozze e domande veloci.',
+    pricing: null,
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    provider: 'google',
+    description: 'Versione precedente del Flash. Senza costo sul budget.',
+    pricing: null,
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    provider: 'google',
+    description: 'Il più leggero. Senza costo sul budget.',
+    pricing: null,
+  },
 ]
+
+export function getChatModel(modelId: string): ChatModel | undefined {
+  return CHAT_MODELS.find((m) => m.id === modelId)
+}
+
+export function getModelProvider(modelId: string): ChatProvider {
+  return getChatModel(modelId)?.provider ?? 'anthropic'
+}
+
+/** Solo i modelli con un prezzo consumano il budget mensile. */
+export function isBilledModel(modelId: string): boolean {
+  return getChatModel(modelId)?.pricing != null
+}
 
 /** Modelli non piu' offerti, salvati in vecchie chat o in localStorage. */
 const LEGACY_MODEL_MAP: Record<string, string> = {
-  'gemini-3.6-flash': DEFAULT_CHAT_MODEL,
-  'gemini-3.5-flash': DEFAULT_CHAT_MODEL,
-  'gemini-3.5-flash-lite': 'claude-haiku-4-5',
-  'gemini-flash-latest': DEFAULT_CHAT_MODEL,
-  'llama-3.1-8b-instant': DEFAULT_CHAT_MODEL,
-  'llama-3.3-70b-versatile': DEFAULT_CHAT_MODEL,
+  'gemini-2.0-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-1.5-flash': 'gemini-3.6-flash',
+  'gemini-1.5-pro': 'gemini-3.6-flash',
+  'gemini-pro': 'gemini-3.6-flash',
+  'gemini-flash-latest': 'gemini-3.6-flash',
+  'llama-3.1-8b-instant': 'gemini-3.6-flash',
+  'llama-3.3-70b-versatile': 'gemini-3.6-flash',
 }
 
 export function getChatModelName(modelId: string): string {
@@ -77,9 +128,8 @@ export function calculateCostUsd(
     cache_read_input_tokens?: number
   }
 ): number {
-  const pricing =
-    CHAT_MODELS.find((m) => m.id === model)?.pricing ??
-    CHAT_MODELS.find((m) => m.id === DEFAULT_CHAT_MODEL)!.pricing
+  const pricing = getChatModel(model)?.pricing
+  if (!pricing) return 0
 
   const perToken = (millionPrice: number) => millionPrice / 1_000_000
 
