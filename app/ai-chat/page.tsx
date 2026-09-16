@@ -52,8 +52,21 @@ type ProjectRecord = {
   system_instructions: string | null
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Una chat esiste sul server solo se il suo id e' un UUID assegnato da
+ * Postgres. Qualunque altro id (bozza locale, vecchio id da
+ * localStorage) va trattato come non ancora salvata: mandarlo al server
+ * darebbe "Chat non trovata".
+ */
+export function isPersistedChatId(id: string | null | undefined): boolean {
+  return !!id && UUID_PATTERN.test(id)
+}
+
 export function isDraftChat(chat: Chat | null): boolean {
-  return !!chat && chat.id.startsWith('draft-')
+  return !!chat && !isPersistedChatId(chat.id)
 }
 
 export default function AIChatPage() {
@@ -219,7 +232,7 @@ export default function AIChatPage() {
     setChats((prev) => prev.filter((chat) => chat.id !== chatId))
     if (currentChatId === chatId) setCurrentChatId(null)
 
-    if (chatId.startsWith('draft-')) return
+    if (!isPersistedChatId(chatId)) return
 
     try {
       await authFetch(`/api/chat/chats/${chatId}`, { method: 'DELETE' })
@@ -287,7 +300,7 @@ export default function AIChatPage() {
 
     // Un draft non esiste ancora sul server: erediterà il progetto
     // quando viene creato col primo messaggio.
-    if (chatId.startsWith('draft-')) return
+    if (!isPersistedChatId(chatId)) return
 
     try {
       await authFetch(`/api/chat/chats/${chatId}`, {

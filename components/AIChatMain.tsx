@@ -18,7 +18,7 @@ import {
   Users,
   Menu,
 } from 'lucide-react'
-import { Chat, Message, UsageState } from '@/app/ai-chat/page'
+import { Chat, Message, UsageState, isPersistedChatId } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
 import { filesToAttachments } from '@/lib/chat-attachments'
@@ -145,7 +145,8 @@ export default function AIChatMain({
     let updatedChat: Chat
     if (!chat) {
       updatedChat = {
-        id: Date.now().toString(),
+        // Bozza: il server le assegna un id vero al primo messaggio.
+        id: `draft-${Date.now()}`,
         title: userMessage.content.slice(0, 50),
         messages: [userMessage],
         createdAt: new Date(),
@@ -174,7 +175,7 @@ export default function AIChatMain({
 
     // Il draft non esiste ancora sul server: lo crea /api/chat al primo
     // messaggio e ci restituisce l'id definitivo.
-    const wasDraft = updatedChat.id.startsWith('draft-')
+    const wasDraft = !isPersistedChatId(updatedChat.id)
     const previousId = updatedChat.id
 
     try {
