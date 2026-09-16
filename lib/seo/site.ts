@@ -53,9 +53,8 @@ export const ORG = {
     // Ditta individuale Corrao Luca, l'entita' giuridica dietro il marchio
     'https://registroaziende.it/azienda/corrao-luca-terrasini',
     'https://www.ufficiocamerale.it/4345/corrao-luca',
-    // TODO: sostituire con l'URL completo del profilo Google Business
-    // (quello di Maps), non il link breve di condivisione.
-    'https://share.google/07HHQZXBqabZQudbj',
+    // Profilo Google Business (link di condivisione ufficiale)
+    'https://share.google/dY2KYXGKGULpkzcKT',
   ] as string[],
 } as const
 

@@ -1,15 +1,22 @@
 import type { MetadataRoute } from 'next'
 import { SITE_URL, SICILY_CITIES } from '@/lib/seo/site'
+import { SECTORS } from '@/lib/seo/sectors'
+import { PROJECTS } from '@/lib/seo/projects'
 
 /**
- * Sostituisce public/sitemap.xml, che andava aggiornato a mano e si era
- * gia' disallineato dalle pagine reali.
+ * Generata dalle stesse strutture dati che generano le pagine, cosi' non
+ * puo' disallinearsi dalle rotte reali come faceva quella scritta a mano.
  */
 
-const STATIC_PAGES: Array<{ path: string; priority: number; changeFrequency: MetadataRoute.Sitemap[number]['changeFrequency'] }> = [
+const STATIC_PAGES: Array<{
+  path: string
+  priority: number
+  changeFrequency: MetadataRoute.Sitemap[number]['changeFrequency']
+}> = [
   { path: '/home', priority: 1, changeFrequency: 'weekly' },
   { path: '/services', priority: 0.9, changeFrequency: 'monthly' },
-  { path: '/settori/property-management', priority: 0.9, changeFrequency: 'monthly' },
+  { path: '/settori', priority: 0.9, changeFrequency: 'monthly' },
+  { path: '/case-studies', priority: 0.9, changeFrequency: 'monthly' },
   { path: '/team', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/bookings', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/blog', priority: 0.7, changeFrequency: 'weekly' },
@@ -29,8 +36,22 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: page.changeFrequency,
       priority: page.priority,
     })),
-    ...SICILY_CITIES.map((city) => ({
-      url: `${SITE_URL}/settori/property-management/${city.slug}`,
+    ...SECTORS.map((sector) => ({
+      url: `${SITE_URL}/settori/${sector.slug}`,
+      lastModified,
+      changeFrequency: 'monthly' as const,
+      priority: 0.85,
+    })),
+    ...SECTORS.filter((sector) => sector.hasCities).flatMap((sector) =>
+      SICILY_CITIES.map((city) => ({
+        url: `${SITE_URL}/settori/${sector.slug}/${city.slug}`,
+        lastModified,
+        changeFrequency: 'monthly' as const,
+        priority: 0.75,
+      }))
+    ),
+    ...PROJECTS.map((project) => ({
+      url: `${SITE_URL}/case-studies/${project.slug}`,
       lastModified,
       changeFrequency: 'monthly' as const,
       priority: 0.8,
