@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
   return {
     title: `AI e automazioni per property management e affitti brevi a ${city.name} | ${ORG.name}`,
-    description: `Assistenti AI, automazioni di messaggistica e integrazioni su misura per property manager, case vacanza e agenzie immobiliari a ${city.name}. Software house con sede a ${ORG.city}.`,
+    description: `Assistenti AI, automazioni di messaggistica e integrazioni su misura per property manager, case vacanza e agenzie immobiliari a ${city.name}. Software house con sede a ${ORG.city}, provincia di ${ORG.province}.`,
     alternates: { canonical: url },
     openGraph: {
       title: `AI per property management e affitti brevi a ${city.name}`,

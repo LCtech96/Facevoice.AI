@@ -38,10 +38,13 @@ export function OrganizationJsonLd() {
         email: ORG.email,
         telephone: ORG.phone,
         founder: { '@type': 'Person', name: ORG.founder },
+        // Nessun indirizzo civico: la sede e' legale, non aperta al
+        // pubblico. Comune, provincia e regione bastano a collocare
+        // l'azienda senza promettere un ufficio dove presentarsi.
         address: {
           '@type': 'PostalAddress',
           addressLocality: ORG.city,
-          addressRegion: ORG.region,
+          addressRegion: ORG.province,
           addressCountry: ORG.country,
         },
         geo: {
@@ -49,11 +52,18 @@ export function OrganizationJsonLd() {
           latitude: GEO.latitude,
           longitude: GEO.longitude,
         },
-        // Tutta la Sicilia, non la sola Palermo: e' la risposta alla
-        // domanda "quali aziende in Sicilia fanno X".
+        // L'area servita, non il luogo in cui si sta: e' la risposta
+        // alla domanda "quali aziende in Sicilia fanno X".
         areaServed: [
+          { '@type': 'Country', name: 'Italia' },
           { '@type': 'AdministrativeArea', name: 'Sicilia' },
           ...SICILY_CITIES.map((city) => ({ '@type': 'City', name: city.name })),
+        ],
+        // serviceArea dichiara che si opera presso il cliente: e' il
+        // modo corretto di descrivere un'attivita' senza sede visitabile.
+        serviceArea: [
+          { '@type': 'AdministrativeArea', name: 'Sicilia' },
+          { '@type': 'Country', name: 'Italia' },
         ],
         knowsAbout: [
           'Intelligenza artificiale applicata alle imprese',

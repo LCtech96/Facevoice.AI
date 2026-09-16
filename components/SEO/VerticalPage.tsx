@@ -148,8 +148,9 @@ export default function VerticalPage({
               Dove operiamo
             </h2>
             <p className="text-[var(--text-secondary)] leading-relaxed mb-4">
-              {ORG.name} ha sede a {ORG.city} e segue property manager e
-              agenzie immobiliari in tutta la Sicilia.
+              {ORG.name} ha sede a {ORG.city}, in provincia di {ORG.province},
+              e segue property manager e agenzie immobiliari in tutta la Sicilia
+              e nel resto d&apos;Italia.
             </p>
             <div className="flex flex-wrap gap-2">
               {SICILY_CITIES.map((city) => (

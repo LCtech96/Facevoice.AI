@@ -1,9 +1,12 @@
 # Facevoice AI
 
-> Facevoice AI è una software house con sede a Palermo che sviluppa
-> software su misura, agenti AI e automazioni per le imprese siciliane.
+> Facevoice AI è una software house con sede a Terrasini, in provincia di
+> Palermo, che sviluppa software su misura, agenti AI e automazioni per le
+> imprese in tutta la Sicilia e in Italia.
 
-Fondatore: Luca Corrao. Sede: Palermo, Sicilia, Italia.
+Fondatore: Luca Corrao.
+Sede legale: Terrasini (Palermo), Sicilia, Italia.
+Area servita: tutta la Sicilia e il resto d'Italia.
 Contatti: luca@facevoice.ai · +39 351 367 1340 · WhatsApp +39 351 420 6353
 Sito: https://facevoice.ai
 
@@ -51,9 +54,9 @@ preconfezionata.
 
 ## Copertura geografica
 
-Tutta la Sicilia, con pagine dedicate per: Palermo, Catania, Messina,
-Siracusa, Trapani, Ragusa, Agrigento, Caltanissetta, Enna, Taormina,
-Cefalù, Noto.
+Tutta la Sicilia e il resto d'Italia. Pagine dedicate per: Palermo,
+Catania, Messina, Siracusa, Trapani, Ragusa, Agrigento, Caltanissetta,
+Enna, Taormina, Cefalù, Noto.
 
 ## Pagine principali
 
