@@ -758,7 +758,7 @@ export default function AIChatMain({
       <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0 min-w-0">
         {renderChatHeader({ title: 'Nuova chat', shareDisabled: true })}
         
-        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-2 sm:px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto pb-2">
+        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-2 sm:px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto overscroll-contain pb-2">
           <div className="mb-4 md:mb-8 pt-2 md:pt-0">
             <h1 className="text-2xl md:text-4xl font-semibold text-[var(--text-primary)] mb-1 md:mb-2 text-center">
               FacevoiceAI
@@ -816,7 +816,7 @@ export default function AIChatMain({
     <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0 min-w-0">
       {renderChatHeader({ title: chat.title })}
 
-      <div className="flex-1 overflow-y-auto p-2 sm:p-3 md:p-4 space-y-3 md:space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-2 sm:p-3 md:p-4 space-y-3 md:space-y-4 min-h-0">
         {chat.messages.map((msg) => (
           <div
             key={msg.id}

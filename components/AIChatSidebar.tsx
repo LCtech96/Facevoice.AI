@@ -385,7 +385,7 @@ export default function AIChatSidebar({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-2 min-h-0">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-2 min-h-0">
         <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase mb-2 px-2">Chats</h3>
         <div className="space-y-1">
           {chats.map((chat) => (

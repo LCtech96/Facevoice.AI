@@ -479,7 +479,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                 onPaste={handlePaste}
                                 onKeyDown={handleKeyDown}
                                 placeholder="How can I help you today?"
-                                className="w-full bg-transparent border-0 outline-none text-text-100 text-[15px] md:text-[16px] placeholder:text-text-400 resize-none overflow-hidden py-0 leading-relaxed block font-normal antialiased"
+                                className="w-full bg-transparent border-0 outline-none text-text-100 text-[16px] placeholder:text-text-400 resize-none overflow-hidden py-0 leading-relaxed block font-normal antialiased"
                                 rows={1}
                                 autoFocus
                                 style={{ minHeight: '1.5em' }}
