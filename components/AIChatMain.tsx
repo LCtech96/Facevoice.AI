@@ -18,18 +18,24 @@ import {
   Users,
   Menu,
 } from 'lucide-react'
-import { Chat, Message } from '@/app/ai-chat/page'
+import { Chat, Message, UsageState } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
 import { filesToAttachments } from '@/lib/chat-attachments'
+import { getAccessToken } from '@/lib/session-token'
 
 interface AIChatMainProps {
   chat: Chat | null
   selectedModel: string
   isModelSelectorOpen: boolean
+  /** Messaggio arrivato dalla home, da inviare appena la chat e' pronta. */
+  initialMessage?: string | null
+  onInitialMessageSent?: () => void
+  onUsageUpdate?: (usage: UsageState) => void
   onModelSelectorToggle: () => void
   onModelSelect: (model: string) => void
-  onChatUpdate: (chat: Chat) => void
+  /** previousId serve quando un draft riceve il suo id definitivo. */
+  onChatUpdate: (chat: Chat, previousId?: string) => void
   onCreateGroupChat: (name: string) => Promise<void>
   onDeleteChat?: () => void
   isSharedChat?: boolean // Indica se è una chat condivisa
@@ -42,6 +48,9 @@ export default function AIChatMain({
   chat,
   selectedModel,
   isModelSelectorOpen,
+  initialMessage,
+  onInitialMessageSent,
+  onUsageUpdate,
   onModelSelectorToggle,
   onModelSelect,
   onChatUpdate,
@@ -72,6 +81,24 @@ export default function AIChatMain({
   useEffect(() => {
     scrollToBottom()
   }, [chat?.messages])
+
+  // Messaggio digitato in home: parte da solo appena la chat e' pronta.
+  useEffect(() => {
+    if (!initialMessage || isSharedChat || isLoading) return
+    if (!chat || chat.messages.length > 0) return
+
+    onInitialMessageSent?.()
+    handleSendMessage(
+      {
+        id: Date.now().toString(),
+        role: 'user',
+        content: initialMessage,
+        timestamp: new Date(),
+      },
+      selectedModel
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage, chat?.id])
 
 
   const scrollToBottom = () => {
@@ -143,45 +170,71 @@ export default function AIChatMain({
 
     setIsLoading(true)
 
+    // Il draft non esiste ancora sul server: lo crea /api/chat al primo
+    // messaggio e ci restituisce l'id definitivo.
+    const wasDraft = updatedChat.id.startsWith('draft-')
+    const previousId = updatedChat.id
+
     try {
+      const token = await getAccessToken()
+      if (!token) {
+        throw new Error('Sessione scaduta. Ricarica la pagina e accedi di nuovo.')
+      }
+
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          messages: updatedChat.messages.map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-            attachments: msg.attachments,
-          })),
+          // Lo storico lo rilegge il server dal database: qui basta
+          // il messaggio nuovo.
+          chatId: wasDraft ? null : updatedChat.id,
+          projectId: updatedChat.projectId ?? null,
+          content: userMessage.content,
+          attachments: userMessage.attachments ?? [],
           model: modelToUse,
         }),
       })
 
+      const data = await response.json().catch(() => ({}))
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to get response`)
+        throw new Error(data.error || `HTTP ${response.status}: risposta non riuscita`)
       }
 
-      const data = await response.json()
-      
-      if (!data.message) {
-        throw new Error(data.error || 'Empty response from AI')
+      if (!data.message?.content) {
+        throw new Error(data.error || 'Risposta vuota dal modello')
       }
 
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: data.message.id || (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.message,
-        timestamp: new Date(),
+        content: data.message.content,
+        timestamp: data.message.timestamp ? new Date(data.message.timestamp) : new Date(),
       }
 
       const finalChat: Chat = {
         ...updatedChat,
+        id: data.chatId || updatedChat.id,
+        title:
+          wasDraft && updatedChat.title === 'Nuova chat'
+            ? userMessage.content.slice(0, 60) || 'Nuova chat'
+            : updatedChat.title,
         messages: [...updatedChat.messages, assistantMessage],
         updatedAt: new Date(),
       }
 
-      onChatUpdate(finalChat)
+      onChatUpdate(finalChat, previousId)
+
+      if (data.usage && onUsageUpdate) {
+        onUsageUpdate({
+          spentUsd: data.usage.spentUsd,
+          limitUsd: data.usage.limitUsd,
+          remainingUsd: data.usage.remainingUsd,
+        })
+      }
     } catch (error) {
       console.error('Error sending message:', error)
       const errorMessage: Message = {
@@ -195,7 +248,7 @@ export default function AIChatMain({
         messages: [...updatedChat.messages, errorMessage],
         updatedAt: new Date(),
       }
-      onChatUpdate(finalChat)
+      onChatUpdate(finalChat, previousId)
     } finally {
       setIsLoading(false)
     }

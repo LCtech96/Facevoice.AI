@@ -523,6 +523,12 @@ export default function AdminPage() {
               <div>
                 <h1 className="text-3xl font-bold text-[var(--text-primary)]">Pannello Admin</h1>
                 <p className="text-[var(--text-secondary)]">Gestisci commenti e prenotazioni</p>
+                <a
+                  href="/admin/usage"
+                  className="inline-block mt-2 text-sm text-[var(--accent-blue)] hover:underline"
+                >
+                  Consumo AI del team &rarr;
+                </a>
               </div>
             </div>
             <button

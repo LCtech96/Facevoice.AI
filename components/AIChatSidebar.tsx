@@ -11,8 +11,9 @@ import {
   Trash2,
   Plus,
   X,
+  Settings2,
 } from 'lucide-react'
-import { Chat, Project } from '@/app/ai-chat/page'
+import { Chat, Project, UsageState } from '@/app/ai-chat/page'
 
 interface AIChatSidebarProps {
   chats: Chat[]
@@ -20,11 +21,16 @@ interface AIChatSidebarProps {
   currentChat: Chat | null
   sidebarOpen: boolean
   searchQuery: string
+  usage?: UsageState | null
   onToggleSidebar: () => void
   onNewChat: () => void
   onSelectChat: (chat: Chat) => void
   onDeleteChat: (chatId: string) => void
   onCreateProject: (name: string, color: string) => void
+  onUpdateProject: (
+    projectId: string,
+    updates: { name?: string; color?: string; system_instructions?: string }
+  ) => void
   onDeleteProject: (projectId: string) => void
   onAddChatToProject: (chatId: string, projectId: string) => void
   onSearchChange: (query: string) => void
@@ -44,11 +50,13 @@ export default function AIChatSidebar({
   currentChat,
   sidebarOpen,
   searchQuery,
+  usage,
   onToggleSidebar,
   onNewChat,
   onSelectChat,
   onDeleteChat,
   onCreateProject,
+  onUpdateProject,
   onDeleteProject,
   onAddChatToProject,
   onSearchChange,
@@ -56,6 +64,18 @@ export default function AIChatSidebar({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [showNewProject, setShowNewProject] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
+  const [editingInstructionsFor, setEditingInstructionsFor] = useState<string | null>(null)
+  const [instructionsDraft, setInstructionsDraft] = useState('')
+
+  const openInstructions = (project: Project) => {
+    setEditingInstructionsFor(project.id)
+    setInstructionsDraft(project.systemInstructions || '')
+  }
+
+  const saveInstructions = (projectId: string) => {
+    onUpdateProject(projectId, { system_instructions: instructionsDraft })
+    setEditingInstructionsFor(null)
+  }
   const [selectedColor, setSelectedColor] = useState(PROJECT_COLORS[0])
 
   const toggleProject = (projectId: string) => {
@@ -210,9 +230,23 @@ export default function AIChatSidebar({
                     <span className="flex-1 text-left truncate">{project.name}</span>
                   </button>
                   <button
+                    title="Istruzioni del progetto"
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (confirm(`Delete project "${project.name}"?`)) {
+                      openInstructions(project)
+                    }}
+                    className={`p-1 hover:bg-[var(--background-secondary)] rounded transition-all shrink-0 ${
+                      project.systemInstructions
+                        ? 'opacity-100 text-[var(--accent-blue)]'
+                        : 'opacity-0 group-hover:opacity-100 text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <Settings2 className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (confirm(`Eliminare il progetto "${project.name}"? Le chat restano, escono solo dal progetto.`)) {
                         onDeleteProject(project.id)
                       }
                     }}
@@ -244,12 +278,46 @@ export default function AIChatSidebar({
                       ))}
                       {project.chats.length === 0 && (
                         <p className="text-xs text-[var(--text-secondary)] px-2 py-1">
-                          No chats in this project
+                          Nessuna chat in questo progetto
                         </p>
                       )}
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                {editingInstructionsFor === project.id && (
+                  <div className="mt-2 p-2 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg">
+                    <label className="block text-xs font-medium text-[var(--text-primary)] mb-1">
+                      Istruzioni per {project.name}
+                    </label>
+                    <p className="text-[11px] text-[var(--text-secondary)] mb-2 leading-snug">
+                      Contesto e regole validi per tutte le chat di questo progetto:
+                      chi e&apos; il cliente, cosa fa, come parlargli.
+                    </p>
+                    <textarea
+                      value={instructionsDraft}
+                      onChange={(e) => setInstructionsDraft(e.target.value)}
+                      rows={6}
+                      placeholder={'Es. Cliente: Rossi Srl, ristorazione a Palermo.\nTono: professionale ma diretto.\nNon proporre sconti senza approvazione.'}
+                      className="w-full px-2 py-1.5 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] resize-y"
+                      autoFocus
+                    />
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={() => saveInstructions(project.id)}
+                        className="flex-1 px-2 py-1.5 bg-[var(--accent-blue)] text-white rounded text-xs hover:opacity-90 transition-opacity"
+                      >
+                        Salva
+                      </button>
+                      <button
+                        onClick={() => setEditingInstructionsFor(null)}
+                        className="px-2 py-1.5 bg-[var(--background-secondary)] rounded text-xs text-[var(--text-primary)] hover:bg-[var(--border-color)] transition-colors"
+                      >
+                        Annulla
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -367,11 +435,41 @@ export default function AIChatSidebar({
           ))}
           {chats.length === 0 && (
             <p className="text-xs text-[var(--text-secondary)] text-center py-8">
-              No chats yet. Create one to get started!
+              Nessuna chat. Creane una per iniziare.
             </p>
           )}
         </div>
       </div>
+
+      {usage && usage.limitUsd > 0 && (
+        <div className="p-3 border-t border-[var(--border-color)] shrink-0">
+          <div className="flex items-center justify-between text-[11px] text-[var(--text-secondary)] mb-1.5">
+            <span>Budget del mese</span>
+            <span>
+              ${usage.spentUsd.toFixed(2)} / ${usage.limitUsd.toFixed(2)}
+            </span>
+          </div>
+          <div className="h-1.5 w-full bg-[var(--background)] rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.min(100, (usage.spentUsd / usage.limitUsd) * 100)}%`,
+                backgroundColor:
+                  usage.remainingUsd <= 0
+                    ? '#FF3B30'
+                    : usage.spentUsd / usage.limitUsd > 0.8
+                      ? '#FF9500'
+                      : 'var(--accent-blue)',
+              }}
+            />
+          </div>
+          {usage.remainingUsd <= 0 && (
+            <p className="text-[11px] text-[#FF3B30] mt-1.5">
+              Limite raggiunto. Riparte il primo del mese.
+            </p>
+          )}
+        </div>
+      )}
     </>
   )
 
