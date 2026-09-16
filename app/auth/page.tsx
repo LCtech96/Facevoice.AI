@@ -7,7 +7,7 @@ import { Mail, Lock, ArrowRight, CheckCircle, XCircle, Eye, EyeOff } from 'lucid
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
-type AuthMode = 'signin' | 'signup' | 'verify'
+type AuthMode = 'signin' | 'signup' | 'verify' | 'forgot'
 
 export default function AuthPage() {
   const router = useRouter()
@@ -184,6 +184,37 @@ export default function AuthPage() {
     }
   }
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    setMessage(null)
+
+    if (!email || !email.includes('@')) {
+      setError('Inserisci un indirizzo email valido')
+      setLoading(false)
+      return
+    }
+
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      })
+
+      if (resetError) throw resetError
+
+      // Nessuna conferma che l'email esista: dirlo permetterebbe a
+      // chiunque di scoprire quali indirizzi sono registrati.
+      setMessage(
+        'Se esiste un account con questa email, riceverai un link per reimpostare la password. Controlla anche lo spam.'
+      )
+    } catch (err: any) {
+      setError(err.message || 'Impossibile inviare il link di recupero')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -237,16 +268,18 @@ export default function AuthPage() {
               {mode === 'signin' && 'Accedi'}
               {mode === 'signup' && 'Registrati'}
               {mode === 'verify' && 'Verifica Email'}
+              {mode === 'forgot' && 'Password dimenticata'}
             </h1>
             <p className="text-[var(--text-secondary)]">
               {mode === 'signin' && 'Inserisci le tue credenziali per accedere'}
               {mode === 'signup' && 'Crea un nuovo account per iniziare'}
               {mode === 'verify' && `Inserisci il codice inviato a ${email}`}
+              {mode === 'forgot' && 'Ti mandiamo un link per impostarne una nuova'}
             </p>
           </div>
 
           {/* Toggle Sign In / Sign Up - Solo quando non si sta verificando */}
-          {mode !== 'verify' && (
+          {mode !== 'verify' && mode !== 'forgot' && (
             <div className="flex gap-2 mb-6 bg-[var(--background-secondary)] p-1 rounded-lg">
               <button
                 type="button"
@@ -374,6 +407,99 @@ export default function AuthPage() {
                   </>
                 )}
               </motion.button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('forgot')
+                  setError(null)
+                  setMessage(null)
+                  setPassword('')
+                }}
+                className="w-full text-center text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
+              >
+                Password dimenticata?
+              </button>
+            </form>
+          )}
+
+          {/* Forgot Password Form */}
+          {mode === 'forgot' && (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="email-forgot"
+                  className="block text-sm font-medium text-[var(--text-primary)] mb-2"
+                >
+                  Indirizzo Email
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+                  <input
+                    id="email-forgot"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nome@esempio.com"
+                    autoComplete="email"
+                    className="w-full pl-11 pr-4 py-3 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>{error}</span>
+                </motion.div>
+              )}
+
+              {message && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-start gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-500 text-sm"
+                >
+                  <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{message}</span>
+                </motion.div>
+              )}
+
+              <motion.button
+                type="submit"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-2 bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Invio in corso...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Inviami il link</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </motion.button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('signin')
+                  setError(null)
+                  setMessage(null)
+                }}
+                className="w-full text-center text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
+              >
+                Torna all&apos;accesso
+              </button>
             </form>
           )}
 

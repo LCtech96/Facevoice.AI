@@ -11,6 +11,17 @@ export async function GET(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key')
 
+  // Un link di recupero password non va consumato qui: lo scambio del
+  // codice deve avvenire nel browser, sulla pagina che imposta la nuova
+  // password. Succede se Supabase usa il Site URL come fallback.
+  if (type === 'recovery') {
+    const target = new URL('/auth/reset-password', request.url)
+    requestUrl.searchParams.forEach((value, key) => {
+      target.searchParams.set(key, value)
+    })
+    return NextResponse.redirect(target)
+  }
+
   if (code) {
     // Exchange code for session (OAuth callback)
     await supabase.auth.exchangeCodeForSession(code)
