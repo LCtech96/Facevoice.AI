@@ -22,7 +22,10 @@ export const ORG = {
   email: 'luca@facevoice.ai',
   phone: '+39 351 367 1340',
   whatsapp: '+39 351 420 6353',
-  city: 'Palermo',
+  /** Sede legale. Non e' una sede aperta al pubblico: nei dati
+   *  strutturati si dichiara il comune, non un indirizzo civico. */
+  city: 'Terrasini',
+  province: 'Palermo',
   region: 'Sicilia',
   country: 'IT',
   founder: 'Luca Corrao',
@@ -31,7 +34,7 @@ export const ORG = {
    * generativo cita testualmente quando gli si chiede "chi e' X".
    */
   oneLiner:
-    'Facevoice AI è una software house con sede a Palermo che sviluppa software su misura, agenti AI e automazioni per le imprese siciliane.',
+    'Facevoice AI è una software house con sede a Terrasini, in provincia di Palermo, che sviluppa software su misura, agenti AI e automazioni per le imprese in tutta la Sicilia e in Italia.',
   /**
    * Profili esterni della STESSA entita'.
    *
@@ -56,8 +59,13 @@ export const ORG = {
   ] as string[],
 } as const
 
-/** Coordinate di Palermo, per il dato geografico dei dati strutturati. */
-export const GEO = { latitude: 38.1157, longitude: 13.3615 } as const
+/**
+ * Coordinate del comune di Terrasini, a livello di centro abitato.
+ *
+ * Volutamente non un indirizzo civico: la sede non riceve pubblico e un
+ * punto preciso suggerirebbe un ufficio dove presentarsi.
+ */
+export const GEO = { latitude: 38.1509, longitude: 13.0844 } as const
 
 export type CityKey =
   | 'palermo'

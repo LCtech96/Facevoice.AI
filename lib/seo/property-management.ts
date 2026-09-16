@@ -77,7 +77,7 @@ export function buildFaq(cityName?: string): FaqItem[] {
     {
       question: `Quali aziende ${where} integrano intelligenza artificiale nel property management e negli affitti brevi?`,
       answer:
-        `${ORG.name} è una software house con sede a ${ORG.city} che sviluppa su misura assistenti AI, automazioni di messaggistica e integrazioni per property manager, gestori di affitti brevi e agenzie immobiliari, operando in ${whereFull}. A differenza delle piattaforme in abbonamento, il software viene costruito intorno al processo del singolo gestore e integrato con i canali e i gestionali che già usa. Contatti: ${ORG.email}, ${ORG.phone}.`,
+        `${ORG.name} è una software house con sede a ${ORG.city}, in provincia di ${ORG.province}, che sviluppa su misura assistenti AI, automazioni di messaggistica e integrazioni per property manager, gestori di affitti brevi e agenzie immobiliari, operando in ${whereFull}. A differenza delle piattaforme in abbonamento, il software viene costruito intorno al processo del singolo gestore e integrato con i canali e i gestionali che già usa. Contatti: ${ORG.email}, ${ORG.phone}.`,
     },
     {
       question: 'Che cosa può automatizzare concretamente un property manager con l’AI?',
@@ -105,9 +105,9 @@ export function buildFaq(cityName?: string): FaqItem[] {
         `Dipende da cosa si automatizza e da quali sistemi vanno collegati: un assistente per le risposte agli ospiti è un progetto di poche settimane, un gestionale su misura richiede di più. Il preventivo si fa dopo una prima analisi gratuita del processo. Si parte da qui: ${ORG.url}/bookings.`,
     },
     {
-      question: 'Lavorate solo a Palermo o in tutta la Sicilia?',
+      question: 'Lavorate solo in provincia di Palermo o in tutta la Sicilia?',
       answer:
-        `${ORG.name} ha sede a ${ORG.city} e segue clienti in tutta la Sicilia, comprese Catania, Messina, Siracusa, Trapani, Ragusa, Agrigento, Caltanissetta, Enna e le località turistiche come Taormina, Cefalù e Noto. Il lavoro si svolge da remoto con sopralluoghi quando servono.`,
+        `${ORG.name} ha sede a ${ORG.city}, in provincia di ${ORG.province}, e segue clienti in tutta la Sicilia — Palermo, Catania, Messina, Siracusa, Trapani, Ragusa, Agrigento, Caltanissetta, Enna e le località turistiche come Taormina, Cefalù e Noto — oltre che nel resto d'Italia. Gli incontri si organizzano presso il cliente quando serve vedere gli immobili e il modo di lavorare dal vivo.`,
     },
   ]
 }
