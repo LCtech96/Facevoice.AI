@@ -1,4 +1,5 @@
 import { GEO, ORG, SITE_URL, SICILY_CITIES } from '@/lib/seo/site'
+import { PROJECTS } from '@/lib/seo/projects'
 
 /**
  * Componente server: lo script finisce nell'HTML iniziale, quindi lo
@@ -156,6 +157,48 @@ export function BreadcrumbJsonLd({
           position: index + 1,
           name: item.name,
           item: item.url,
+        })),
+      }}
+    />
+  )
+}
+
+/**
+ * I lavori realizzati, dichiarati come opere di cui Facevoice AI e'
+ * l'autore, con i riferimenti agli articoli che ne hanno parlato.
+ *
+ * E' cosi' che si collega la rassegna stampa esistente all'azienda: un
+ * articolo su Nomadiqe parla di affitti brevi in Sicilia, ma da solo non
+ * dice a nessuna macchina chi ha costruito Nomadiqe.
+ */
+export function ProjectsJsonLd() {
+  return (
+    <Script
+      data={{
+        '@context': 'https://schema.org',
+        '@type': 'ItemList',
+        '@id': `${SITE_URL}/#projects`,
+        name: `Progetti realizzati da ${ORG.name}`,
+        itemListElement: PROJECTS.map((project, index) => ({
+          '@type': 'ListItem',
+          position: index + 1,
+          item: {
+            '@type': 'WebSite',
+            name: project.name,
+            url: project.url,
+            description: project.description,
+            creator: { '@id': ORG_ID },
+            ...(project.press?.length
+              ? {
+                  subjectOf: project.press.map((article) => ({
+                    '@type': 'NewsArticle',
+                    headline: article.title,
+                    url: article.url,
+                    publisher: { '@type': 'Organization', name: article.publisher },
+                  })),
+                }
+              : {}),
+          },
         })),
       }}
     />

@@ -7,7 +7,12 @@
  * generativo usa per decidere se una cosa e' vera.
  */
 
-export const SITE_URL = 'https://facevoice.ai'
+/**
+ * Dominio di produzione su Vercel. L'apex facevoice.ai risponde con un
+ * 308 verso questo indirizzo, quindi il canonical deve essere il www:
+ * puntare all'apex manderebbe ogni crawler su un redirect.
+ */
+export const SITE_URL = 'https://www.facevoice.ai'
 
 export const ORG = {
   name: 'Facevoice AI',
@@ -28,15 +33,27 @@ export const ORG = {
   oneLiner:
     'Facevoice AI è una software house con sede a Palermo che sviluppa software su misura, agenti AI e automazioni per le imprese siciliane.',
   /**
-   * Profili esterni verificabili.
+   * Profili esterni della STESSA entita'.
    *
-   * IMPORTANTE: un motore generativo si fida di cio' che trova su piu'
-   * fonti indipendenti, non di cio' che un sito dice di se'. Aggiungi qui
-   * i profili reali (LinkedIn aziendale, Google Business Profile,
-   * Crunchbase, registro imprese) man mano che li apri: sono il segnale
-   * che pesa di piu'.
+   * sameAs significa "questo e' lo stesso soggetto, altrove": serve a far
+   * combaciare il sito con l'azienda reale. Vanno solo profili di
+   * Facevoice AI e della ditta individuale che la esercita — i marchi
+   * collegati (Nomadiqe) sono un'altra entita' e si dichiarano a parte,
+   * altrimenti si confondono le due identita' invece di chiarirle.
+   *
+   * Gli URL vanno senza parametri di tracciamento: quelli cambiano a ogni
+   * condivisione e non identificano una risorsa stabile.
    */
-  sameAs: [] as string[],
+  sameAs: [
+    'https://www.linkedin.com/company/facevoice/',
+    'https://www.instagram.com/facevoice.ai',
+    // Ditta individuale Corrao Luca, l'entita' giuridica dietro il marchio
+    'https://registroaziende.it/azienda/corrao-luca-terrasini',
+    'https://www.ufficiocamerale.it/4345/corrao-luca',
+    // TODO: sostituire con l'URL completo del profilo Google Business
+    // (quello di Maps), non il link breve di condivisione.
+    'https://share.google/07HHQZXBqabZQudbj',
+  ] as string[],
 } as const
 
 /** Coordinate di Palermo, per il dato geografico dei dati strutturati. */
