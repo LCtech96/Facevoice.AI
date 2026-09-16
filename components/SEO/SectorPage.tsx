@@ -4,57 +4,47 @@ import {
   BreadcrumbJsonLd,
   FaqJsonLd,
   ServiceJsonLd,
-  type FaqItem,
 } from '@/components/SEO/JsonLd'
 import { ORG, SITE_URL, SICILY_CITIES } from '@/lib/seo/site'
-import {
-  AUDIENCE,
-  CAPABILITIES,
-  DIFFERENTIATORS,
-} from '@/lib/seo/property-management'
+import type { Sector } from '@/lib/seo/sectors'
+import { projectsForSector } from '@/lib/seo/projects'
 
 /**
- * Impaginazione condivisa fra la pagina del settore e le pagine citta'.
+ * Pagina di settore, renderizzata lato server.
  *
- * E' un componente server di proposito: il testo deve stare nell'HTML
- * iniziale. Se fosse reso dal client, i crawler dei motori generativi
- * troverebbero una pagina vuota.
+ * Deve restare un componente server: i crawler dei motori generativi in
+ * gran parte non eseguono JavaScript, quindi una pagina costruita dal
+ * client per loro e' vuota.
  */
-export default function VerticalPage({
+export default function SectorPage({
+  sector,
   cityName,
-  intro,
-  faq,
-  canonicalPath,
 }: {
+  sector: Sector
   cityName?: string
-  intro: string
-  faq: FaqItem[]
-  canonicalPath: string
 }) {
-  const url = `${SITE_URL}${canonicalPath}`
-  const areaName = cityName ?? 'Sicilia'
-  const heading = cityName
-    ? `Software e AI per property management e affitti brevi a ${cityName}`
-    : 'Software e AI per property management e affitti brevi in Sicilia'
+  const path = cityName
+    ? `/settori/${sector.slug}/${cityName.toLowerCase().replace(/[^a-z]/g, '')}`
+    : `/settori/${sector.slug}`
+  const url = `${SITE_URL}${path}`
+  const heading = cityName ? `${sector.heading} a ${cityName}` : sector.heading
+  const faq = cityName && sector.faqForCity ? sector.faqForCity(cityName) : sector.faq
+  const projects = projectsForSector(sector.slug)
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
-      {/* L'entita' azienda e' gia' nel layout: qui basta riferirla
-          tramite il suo @id, che ServiceJsonLd usa come provider. */}
       <ServiceJsonLd
         name={heading}
-        description={intro}
+        description={sector.intro}
         url={url}
-        areaName={areaName}
+        areaName={cityName ?? 'Sicilia'}
       />
       <FaqJsonLd items={faq} url={url} />
       <BreadcrumbJsonLd
         items={[
           { name: 'Home', url: `${SITE_URL}/home` },
-          {
-            name: 'Property management',
-            url: `${SITE_URL}/settori/property-management`,
-          },
+          { name: 'Settori', url: `${SITE_URL}/settori` },
+          { name: sector.name, url: `${SITE_URL}/settori/${sector.slug}` },
           ...(cityName ? [{ name: cityName, url }] : []),
         ]}
       />
@@ -67,18 +57,34 @@ export default function VerticalPage({
             {heading}
           </h1>
 
-          {/* Prima frase in chiaro: e' quella che un motore generativo
-              cita quando deve dire chi siamo e cosa facciamo. */}
           <p className="mt-5 text-lg text-[var(--text-secondary)] leading-relaxed">
-            {intro}
+            {sector.intro}
           </p>
+
+          {sector.problems && sector.problems.length > 0 && (
+            <section className="mt-12">
+              <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-4">
+                I problemi da cui si parte
+              </h2>
+              <ul className="space-y-2">
+                {sector.problems.map((item) => (
+                  <li
+                    key={item}
+                    className="text-[var(--text-secondary)] leading-relaxed pl-5 relative before:content-['—'] before:absolute before:left-0 before:text-[var(--accent-blue)]"
+                  >
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section className="mt-12">
             <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-5">
               Che cosa sviluppiamo
             </h2>
             <div className="space-y-5">
-              {CAPABILITIES.map((item) => (
+              {sector.capabilities.map((item) => (
                 <div key={item.title}>
                   <h3 className="font-semibold text-[var(--text-primary)]">
                     {item.title}
@@ -96,7 +102,7 @@ export default function VerticalPage({
               Per chi lavoriamo
             </h2>
             <ul className="space-y-2">
-              {AUDIENCE.map((item) => (
+              {sector.audience.map((item) => (
                 <li
                   key={item}
                   className="text-[var(--text-secondary)] leading-relaxed pl-5 relative before:content-['—'] before:absolute before:left-0 before:text-[var(--accent-blue)]"
@@ -107,23 +113,29 @@ export default function VerticalPage({
             </ul>
           </section>
 
-          <section className="mt-12">
-            <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-5">
-              Come lavoriamo
-            </h2>
-            <div className="space-y-5">
-              {DIFFERENTIATORS.map((item) => (
-                <div key={item.title}>
-                  <h3 className="font-semibold text-[var(--text-primary)]">
-                    {item.title}
-                  </h3>
-                  <p className="text-[var(--text-secondary)] leading-relaxed mt-1">
-                    {item.body}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
+          {projects.length > 0 && (
+            <section className="mt-12">
+              <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-4">
+                Progetti realizzati in questo settore
+              </h2>
+              <div className="space-y-3">
+                {projects.map((project) => (
+                  <Link
+                    key={project.slug}
+                    href={`/case-studies/${project.slug}`}
+                    className="block p-4 rounded-xl border border-[var(--border-color)] hover:border-[var(--accent-blue)] transition-colors"
+                  >
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {project.name}
+                    </span>
+                    <span className="block text-sm text-[var(--text-secondary)] mt-1">
+                      {project.summary}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="mt-12">
             <h2 className="text-2xl font-semibold text-[var(--text-primary)] mb-5">
@@ -148,21 +160,22 @@ export default function VerticalPage({
               Dove operiamo
             </h2>
             <p className="text-[var(--text-secondary)] leading-relaxed mb-4">
-              {ORG.name} ha sede a {ORG.city}, in provincia di {ORG.province},
-              e segue property manager e agenzie immobiliari in tutta la Sicilia
-              e nel resto d&apos;Italia.
+              {ORG.name} ha sede a {ORG.city}, in provincia di {ORG.province}, e
+              segue clienti in tutta la Sicilia e nel resto d&apos;Italia.
             </p>
-            <div className="flex flex-wrap gap-2">
-              {SICILY_CITIES.map((city) => (
-                <Link
-                  key={city.slug}
-                  href={`/settori/property-management/${city.slug}`}
-                  className="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--accent-blue)] hover:border-[var(--accent-blue)] transition-colors"
-                >
-                  {city.name}
-                </Link>
-              ))}
-            </div>
+            {sector.hasCities && (
+              <div className="flex flex-wrap gap-2">
+                {SICILY_CITIES.map((city) => (
+                  <Link
+                    key={city.slug}
+                    href={`/settori/${sector.slug}/${city.slug}`}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--accent-blue)] hover:border-[var(--accent-blue)] transition-colors"
+                  >
+                    {city.name}
+                  </Link>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="mt-12 p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)]">
@@ -171,8 +184,8 @@ export default function VerticalPage({
             </h2>
             <p className="text-[var(--text-secondary)] leading-relaxed">
               La prima analisi del processo è gratuita: si guarda dove se ne
-              vanno le ore e si dice con franchezza se l’automazione conviene
-              o no.
+              vanno le ore e si dice con franchezza se l&apos;automazione
+              conviene o no.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
@@ -186,12 +199,6 @@ export default function VerticalPage({
                 className="px-4 py-2 rounded-lg border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
               >
                 {ORG.email}
-              </a>
-              <a
-                href={`tel:${ORG.phone.replace(/\s/g, '')}`}
-                className="px-4 py-2 rounded-lg border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
-              >
-                {ORG.phone}
               </a>
             </div>
           </section>

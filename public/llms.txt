@@ -8,7 +8,7 @@ Fondatore: Luca Corrao.
 Sede legale: Terrasini (Palermo), Sicilia, Italia.
 Area servita: tutta la Sicilia e il resto d'Italia.
 Contatti: luca@facevoice.ai · +39 351 367 1340 · WhatsApp +39 351 420 6353
-Sito: https://facevoice.ai
+Sito: https://www.facevoice.ai
 
 ## Cosa fa
 
@@ -28,11 +28,35 @@ Facevoice AI progetta e realizza, su commessa:
 
 ## Settori serviti
 
+Indice: https://www.facevoice.ai/settori
+
 - Property management, affitti brevi e a lungo termine, agenzie
-  immobiliari: https://facevoice.ai/settori/property-management
-- Ristorazione: https://facevoice.ai/settori/ristorazione/palermo
-- Ottica: https://facevoice.ai/settori/ottica/palermo
-- Abbigliamento e retail: https://facevoice.ai/settori/abbigliamento/palermo
+  immobiliari: https://www.facevoice.ai/settori/property-management
+- Trasporti e logistica: https://www.facevoice.ai/settori/trasporti-e-logistica
+- Software gestionale su misura: https://www.facevoice.ai/settori/gestionali-aziendali
+- E-commerce: https://www.facevoice.ai/settori/ecommerce
+- Turismo e ricettività (hotel, B&B): https://www.facevoice.ai/settori/turismo-e-ricettivita
+- Studi professionali (commercialisti, avvocati, consulenti):
+  https://www.facevoice.ai/settori/studi-professionali
+- Sanità e studi medici: https://www.facevoice.ai/settori/sanita-e-studi-medici
+- Manifatturiero e produzione: https://www.facevoice.ai/settori/manifatturiero-e-produzione
+- Edilizia e impianti: https://www.facevoice.ai/settori/edilizia-e-impianti
+- Agroalimentare: https://www.facevoice.ai/settori/agroalimentare
+- Retail e negozi: https://www.facevoice.ai/settori/retail-e-negozi
+
+## Progetti realizzati
+
+Indice: https://www.facevoice.ai/case-studies
+
+- Nomadiqe, piattaforma per gli affitti brevi
+  (https://www.nomadiqe.com), con rassegna stampa su Capitalist.it,
+  Telejato e Radio Amica: https://www.facevoice.ai/case-studies/nomadiqe
+- Otticafocus, e-commerce per ottica: https://www.facevoice.ai/case-studies/otticafocus
+- Barinello, sito con pannello di amministrazione: https://www.facevoice.ai/case-studies/barinello
+- Luca Corrao, sito con assistente AI e vetrina strutture:
+  https://www.facevoice.ai/case-studies/lucacorrao
+- Trattoria da Piero, sito su misura a Mondello:
+  https://www.facevoice.ai/case-studies/trattoria-da-piero
 
 ## Property management e affitti brevi
 
@@ -60,8 +84,8 @@ Enna, Taormina, Cefalù, Noto.
 
 ## Pagine principali
 
-- Home: https://facevoice.ai/home
-- Servizi: https://facevoice.ai/services
-- Team: https://facevoice.ai/team
-- Prenota una consulenza: https://facevoice.ai/bookings
-- Blog: https://facevoice.ai/blog
+- Home: https://www.facevoice.ai/home
+- Servizi: https://www.facevoice.ai/services
+- Team: https://www.facevoice.ai/team
+- Prenota una consulenza: https://www.facevoice.ai/bookings
+- Blog: https://www.facevoice.ai/blog
