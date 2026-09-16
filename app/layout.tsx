@@ -6,7 +6,11 @@ import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
 import ContactsFooter from '@/components/ContactsFooter'
 import RecoveryRedirect from '@/components/RecoveryRedirect'
-import { OrganizationJsonLd, WebSiteJsonLd } from '@/components/SEO/JsonLd'
+import {
+  OrganizationJsonLd,
+  ProjectsJsonLd,
+  WebSiteJsonLd,
+} from '@/components/SEO/JsonLd'
 import { SITE_URL } from '@/lib/seo/site'
 import { LanguageProvider } from '@/lib/i18n/LanguageContext'
 
@@ -94,6 +98,7 @@ export default function RootLayout({
       <body className={montserrat.className}>
         <OrganizationJsonLd />
         <WebSiteJsonLd />
+        <ProjectsJsonLd />
         <LanguageProvider>
           <RecoveryRedirect />
           {children}
