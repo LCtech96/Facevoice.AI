@@ -7,14 +7,14 @@ import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import { Chat } from '@/app/ai-chat/page'
 import { Copy, Check, Users, ArrowLeft } from 'lucide-react'
-import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
+import { GEMINI_DEFAULT_MODEL } from '@/lib/gemini'
 
 export default function GroupChatPage() {
   const params = useParams()
   const router = useRouter()
   const groupId = params?.id as string
   const [chat, setChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_CHAT_MODEL)
+  const [selectedModel, setSelectedModel] = useState(GEMINI_DEFAULT_MODEL)
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [copied, setCopied] = useState(false)

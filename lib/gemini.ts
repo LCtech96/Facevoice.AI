@@ -1,4 +1,3 @@
-import { getGeminiModelsToTry } from '@/lib/chat-models'
 
 export type GeminiAttachment = {
   mimeType: string
@@ -31,6 +30,25 @@ const IMAGE_MODELS = [
 ] as const
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta'
+
+/** Modello usato dal widget pubblico e dalle chat condivise. */
+export const GEMINI_DEFAULT_MODEL = 'gemini-3.6-flash'
+
+const GEMINI_FALLBACK_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
+] as const
+
+export function resolveGeminiModel(model?: string | null): string {
+  if (!model) return GEMINI_DEFAULT_MODEL
+  return GEMINI_MODELS[model] ?? GEMINI_DEFAULT_MODEL
+}
+
+export function getGeminiModelsToTry(model: string): string[] {
+  return [...new Set([resolveGeminiModel(model), ...GEMINI_FALLBACK_MODELS])]
+}
 
 type GeminiPart =
   | { text: string }

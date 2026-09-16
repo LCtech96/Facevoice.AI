@@ -311,10 +311,10 @@ Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascu
     })
 
     // Estrai il testo dalla risposta
-    const textBlock = response.content.find(
-      (block: any): block is { type: 'text'; text: string } => block.type === 'text'
-    )
-    const responseText = textBlock?.text || ''
+    const responseText = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
 
     // Prova a parsare la risposta JSON
     let toolIds: string[] = []

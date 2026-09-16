@@ -1,47 +1,56 @@
-export const DEFAULT_CHAT_MODEL = 'gemini-3.6-flash'
+/**
+ * Modelli selezionabili nella chat interna (dipendenti).
+ *
+ * Il widget pubblico del sito (`/api/chat-widget`) e le route immagini
+ * restano su Gemini: sono gratuiti e non autenticati, non devono
+ * consumare credito Anthropic.
+ */
 
-/** Legacy model IDs saved in localStorage or old deploys */
-const LEGACY_MODEL_MAP: Record<string, string> = {
-  'gemini-2.0-flash': 'gemini-3.6-flash',
-  'gemini-2.5-flash': 'gemini-3.6-flash',
-  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
-  'gemini-1.5-flash': 'gemini-3.6-flash',
-  'gemini-1.5-pro': 'gemini-3.6-flash',
-  'gemini-pro': 'gemini-3.6-flash',
-  'gemini-flash-latest': 'gemini-3.6-flash',
-  'llama-3.1-8b-instant': 'gemini-3.6-flash',
-  'llama-3.3-70b-versatile': 'gemini-3.6-flash',
+export const DEFAULT_CHAT_MODEL = 'claude-opus-5'
+
+/** Prezzi Anthropic in USD per milione di token. */
+type ModelPricing = {
+  input: number
+  output: number
 }
 
-export const GEMINI_FALLBACK_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest',
-] as const
+export type ChatModel = {
+  id: string
+  name: string
+  description: string
+  pricing: ModelPricing
+}
 
-export const CHAT_MODELS = [
+export const CHAT_MODELS: ChatModel[] = [
   {
-    id: 'gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
-    description: 'Default fast model',
+    id: 'claude-opus-5',
+    name: 'Claude Opus 5',
+    description: "Il più capace. Per analisi complesse e lavoro lungo.",
+    pricing: { input: 5, output: 25 },
   },
   {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    description: 'Balanced speed and quality',
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
+    description: "Equilibrio tra qualità e costo. Buono per l'uso quotidiano.",
+    pricing: { input: 2, output: 10 },
   },
   {
-    id: 'gemini-3.5-flash-lite',
-    name: 'Gemini 3.5 Flash Lite',
-    description: 'Lightweight free-tier model',
+    id: 'claude-haiku-4-5',
+    name: 'Claude Haiku 4.5',
+    description: "Il più economico e rapido. Per domande brevi.",
+    pricing: { input: 1, output: 5 },
   },
-  {
-    id: 'gemini-flash-latest',
-    name: 'Gemini Flash (Latest)',
-    description: 'Always uses the latest flash model',
-  },
-] as const
+]
+
+/** Modelli non piu' offerti, salvati in vecchie chat o in localStorage. */
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  'gemini-3.6-flash': DEFAULT_CHAT_MODEL,
+  'gemini-3.5-flash': DEFAULT_CHAT_MODEL,
+  'gemini-3.5-flash-lite': 'claude-haiku-4-5',
+  'gemini-flash-latest': DEFAULT_CHAT_MODEL,
+  'llama-3.1-8b-instant': DEFAULT_CHAT_MODEL,
+  'llama-3.3-70b-versatile': DEFAULT_CHAT_MODEL,
+}
 
 export function getChatModelName(modelId: string): string {
   return CHAT_MODELS.find((m) => m.id === modelId)?.name ?? modelId
@@ -50,45 +59,55 @@ export function getChatModelName(modelId: string): string {
 export function resolveChatModel(model?: string | null): string {
   if (!model) return DEFAULT_CHAT_MODEL
   if (CHAT_MODELS.some((m) => m.id === model)) return model
-  if (LEGACY_MODEL_MAP[model]) return LEGACY_MODEL_MAP[model]
-  if (model.startsWith('gemini-')) return DEFAULT_CHAT_MODEL
-  return DEFAULT_CHAT_MODEL
+  return LEGACY_MODEL_MAP[model] ?? DEFAULT_CHAT_MODEL
 }
 
-export function getGeminiModelsToTry(model: string): string[] {
-  const resolved = resolveChatModel(model)
-  return [...new Set([resolved, ...GEMINI_FALLBACK_MODELS])]
+/**
+ * Costo in USD di una chiamata.
+ *
+ * I token scritti in cache costano ~1.25x l'input, quelli letti dalla
+ * cache ~0.1x: e' da qui che arriva il risparmio sulle conversazioni lunghe.
+ */
+export function calculateCostUsd(
+  model: string,
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
+  }
+): number {
+  const pricing =
+    CHAT_MODELS.find((m) => m.id === model)?.pricing ??
+    CHAT_MODELS.find((m) => m.id === DEFAULT_CHAT_MODEL)!.pricing
+
+  const perToken = (millionPrice: number) => millionPrice / 1_000_000
+
+  return (
+    usage.input_tokens * perToken(pricing.input) +
+    usage.output_tokens * perToken(pricing.output) +
+    (usage.cache_creation_input_tokens ?? 0) * perToken(pricing.input) * 1.25 +
+    (usage.cache_read_input_tokens ?? 0) * perToken(pricing.input) * 0.1
+  )
 }
 
 export function getChatErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : 'Errore sconosciuto'
 
-  if (
-    message.includes('API key not valid') ||
-    message.includes('API_KEY_INVALID') ||
-    message.includes('API key not configured')
-  ) {
-    return 'Chiave API Gemini non valida o mancante. Verifica GEMINI_API_KEY su Vercel (Generative Language API abilitata, senza restrizioni referrer).'
+  if (message.includes('ANTHROPIC_API_KEY') || message.includes('authentication')) {
+    return 'Chiave API Anthropic mancante o non valida. Controlla ANTHROPIC_API_KEY.'
   }
 
-  if (
-    message.includes('prepayment credits are depleted') ||
-    message.includes('billing') ||
-    message.includes('PAYMENT')
-  ) {
-    return 'Crediti prepagati esauriti su questo progetto Google. Crea una nuova chiave API gratuita su aistudio.google.com/apikey (senza ricarica) oppure ricarica i crediti in AI Studio → Billing.'
+  if (message.includes('limite mensile') || message.includes('Limite mensile')) {
+    return message
   }
 
-  if (message.includes('Rate limit') || message.includes('429')) {
-    return 'Limite richieste raggiunto. Riprova tra qualche secondo.'
+  if (message.includes('rate') || message.includes('429')) {
+    return 'Troppe richieste in poco tempo. Riprova tra qualche secondo.'
   }
 
-  if (message.includes('Quota') || message.includes('quota')) {
-    return 'Quota Gemini esaurita. Riprova più tardi o usa un altro modello.'
-  }
-
-  if (message.includes('not found') || message.includes('NOT_FOUND') || message.includes('no longer available')) {
-    return 'Modello Gemini non disponibile. Prova a selezionare Gemini 3.6 Flash dal menu modelli.'
+  if (message.includes('credit') || message.includes('billing')) {
+    return 'Credito Anthropic esaurito. Ricarica dalla console Anthropic.'
   }
 
   return `Errore chat: ${message}`

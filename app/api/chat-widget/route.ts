@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { DEFAULT_CHAT_MODEL } from '@/lib/chat-models'
-import { callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import {
+  GEMINI_DEFAULT_MODEL,
+  callGeminiWithFallback,
+  getGeminiApiKey,
+} from '@/lib/gemini'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 
 const getSupabaseAdmin = () => {
@@ -129,7 +132,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const result = await callGeminiWithFallback(chatMessages, DEFAULT_CHAT_MODEL, systemPrompt, {
+    const result = await callGeminiWithFallback(chatMessages, GEMINI_DEFAULT_MODEL, systemPrompt, {
       temperature: 0.65,
       maxOutputTokens: 800,
     })

@@ -1,156 +1,238 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { refusalNotice, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
+import { calculateCostUsd, resolveChatModel } from '@/lib/chat-models'
 import {
-  callGeminiWithFallback,
-  getGeminiApiKey,
-  type GeminiAttachment,
-  type GeminiChatMessage,
-} from '@/lib/gemini'
-import { buildRealtimeDateTimeInstructions } from '@/lib/current-datetime'
+  ChatAuthError,
+  assertWithinLimit,
+  getUsageSummary,
+  recordUsage,
+  requireChatMember,
+} from '@/lib/chat-auth'
 
-function normalizeMessages(messages: unknown[]): GeminiChatMessage[] {
-  return messages
-    .filter((msg: any) => msg && msg.role && (msg.content || msg.attachments?.length))
-    .map((msg: any): GeminiChatMessage => {
-      const attachments: GeminiAttachment[] | undefined = Array.isArray(msg.attachments)
-        ? msg.attachments
-            .filter((item: any) => item?.mimeType && item?.data)
-            .map((item: any) => ({
-              mimeType: String(item.mimeType),
-              data: String(item.data),
-            }))
-        : undefined
+export const dynamic = 'force-dynamic'
+// Una risposta lunga in streaming supera i 10s di default di Vercel.
+export const maxDuration = 300
 
-      return {
-        role:
-          msg.role === 'user'
-            ? 'user'
-            : msg.role === 'assistant'
-              ? 'assistant'
-              : 'system',
-        content: String(msg.content || '').trim(),
-        attachments: attachments?.length ? attachments : undefined,
-      }
-    })
+type Attachment = { mimeType: string; data: string }
+
+function errorResponse(error: unknown) {
+  if (error instanceof ChatAuthError) {
+    return NextResponse.json({ error: error.message }, { status: error.status })
+  }
+  const message = error instanceof Error ? error.message : 'Errore sconosciuto'
+  console.error('Chat API error:', message)
+  return NextResponse.json({ error: message }, { status: 500 })
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const requestBody = await req.json()
-    const { messages, model = DEFAULT_CHAT_MODEL } = requestBody
+    const member = await requireChatMember(req)
+    await assertWithinLimit(member)
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json(
-        { error: 'Messages array is required and must not be empty' },
-        { status: 400 }
-      )
+    const body = await req.json()
+    const content: string = String(body?.content || '').trim()
+    const attachments: Attachment[] = Array.isArray(body?.attachments)
+      ? body.attachments.filter((a: any) => a?.mimeType && a?.data)
+      : []
+
+    if (!content && attachments.length === 0) {
+      return NextResponse.json({ error: 'Messaggio vuoto.' }, { status: 400 })
     }
 
-    const validMessages = normalizeMessages(messages)
+    const model = resolveChatModel(body?.model)
+    let chatId: string | null = body?.chatId ? String(body.chatId) : null
 
-    if (validMessages.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid messages found' },
-        { status: 400 }
-      )
+    // --- Chat: esistente (e di questo utente) oppure nuova ------------
+    let projectId: string | null = body?.projectId ? String(body.projectId) : null
+
+    if (chatId) {
+      const { data: chat, error } = await supabaseAdmin
+        .from('user_chats')
+        .select('id, user_id, project_id')
+        .eq('id', chatId)
+        .maybeSingle()
+
+      if (error || !chat || chat.user_id !== member.user_id) {
+        return NextResponse.json({ error: 'Chat non trovata.' }, { status: 404 })
+      }
+      projectId = chat.project_id
+    } else {
+      const title = (content || 'Nuova chat').slice(0, 60)
+      const { data: created, error } = await supabaseAdmin
+        .from('user_chats')
+        .insert({ user_id: member.user_id, project_id: projectId, title, model })
+        .select('id')
+        .single()
+
+      if (error || !created) {
+        return NextResponse.json({ error: 'Impossibile creare la chat.' }, { status: 500 })
+      }
+      chatId = created.id
     }
 
-    if (!getGeminiApiKey()) {
-      return NextResponse.json(
-        {
-          error:
-            'Gemini API key not configured. Please set GEMINI_API_KEY or GOOGLE_API_KEY environment variable.',
-        },
-        { status: 500 }
-      )
+    // --- Istruzioni del progetto -------------------------------------
+    let projectInstructions: string | null = null
+    if (projectId) {
+      const { data: project } = await supabaseAdmin
+        .from('chat_projects')
+        .select('system_instructions, user_id')
+        .eq('id', projectId)
+        .maybeSingle()
+
+      if (project?.user_id === member.user_id) {
+        projectInstructions = project.system_instructions
+      }
     }
 
-    const currentDateTimeInstructions = buildRealtimeDateTimeInstructions()
+    // --- Storico dal database, non dal client ------------------------
+    const { data: history } = await supabaseAdmin
+      .from('user_chat_messages')
+      .select('role, content, attachments')
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: true })
 
-    const availableTools = `
-VIDEO & STILE:
-- Higgsfield: Video e Generazione Stile con estensione Chrome
-- Runway: Generazione Video (Gen-3) e VFX
-- DomoAI: Generazione Video e Animazione tramite Discord
-- Synthesia: Avatar Parlanti e Video Aziendali
-- Pika Labs: Generazione Video da Testo/Immagine
-- Google Veo: Generazione Video avanzata
-- Kling AI: Generazione Video avanzata
-- Descript: Editor Video Basato su Testo
-- OpusClip: Clip Brevi e Riutilizzo Contenuti
-- Muapi.ai: API per Effetti Video
+    const { data: savedUserMessage, error: insertError } = await supabaseAdmin
+      .from('user_chat_messages')
+      .insert({
+        chat_id: chatId,
+        user_id: member.user_id,
+        role: 'user',
+        content,
+        attachments: attachments.length ? attachments : null,
+      })
+      .select('id, created_at')
+      .single()
 
-IMMAGINI & GRAFICA:
-- Midjourney: Generazione di Immagini artistiche
-- DALL·E 3: Generazione Immagini da OpenAI
-- Canva (Magic Studio): Suite di Design AI
-- Adobe Sensei: AI in Creative Cloud
-- Nano Banana (Google): Editing Immagini avanzato
-- OpenArt: Piattaforma per Modelli AI di Immagini
-- Khroma: Generatore di Palette Colori AI
-- Deep Art Effects: Trasformazione Immagini in Arte
-- Jasper Art: Generazione Immagini per Marketing
-- VREE Labs: Modellazione 3D da Immagini 2D
+    if (insertError || !savedUserMessage) {
+      return NextResponse.json({ error: 'Impossibile salvare il messaggio.' }, { status: 500 })
+    }
 
-UX/UI & PROtotipazione:
-- Figma AI (Plugins): Assistenti di Design e Wireframe
-- Uizard: Prototipazione Rapida e Autodesigner
-- Visily: Wireframing e Design Rapido AI
-- UXPin: Prototipazione e Test di Accessibilità
-- UX Pilot: Flusso di Lavoro UX e Color Palette AI
+    const conversation: ClaudeChatMessage[] = [
+      ...((history || []) as ClaudeChatMessage[]),
+      { role: 'user', content, attachments },
+    ]
 
-CONTENUTI & PRODUTTIVITÀ:
-- ChatGPT / Gemini (Flash): Generazione Testo e Brainstorming
-- Wordtune: Riscrittura e Miglioramento Contenuti
-- Fireflies.ai: Trascrizione e Sintesi Riunioni
-- Otter AI: Trascrizione e Sottotitoli
-- ElevenLabs: Sintesi Vocale e Clonazione Vocale
-- Creatio: Piattaforma No-Code per Flussi di Lavoro
-`
+    // --- Risposta in streaming (NDJSON) -------------------------------
+    // Ogni riga e' un evento JSON: 'chat' (id definitivo), 'delta'
+    // (testo), 'done' (messaggio salvato + consumo), 'error'.
+    const finalChatId = chatId
+    const encoder = new TextEncoder()
 
-    const systemMessage = `You are a helpful AI assistant specialized in recommending AI tools.
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+        }
 
-${currentDateTimeInstructions}
+        let fullText = ''
 
-IMPORTANT GUIDELINES:
-1. Keep responses SHORT and CONCISE (2-4 sentences max). Break longer explanations into multiple messages to keep readers engaged.
-2. When users ask for AI tool recommendations, ALWAYS prioritize tools from this list first:
-${availableTools}
-3. If a user asks about a specific use case, recommend 1-2 relevant tools from the list above that match their needs.
-4. Only suggest tools NOT in the list if the user specifically asks for something different or if no tool in the list fits their needs.
-5. If no tool in the list fits, ask ONE follow-up question to understand their needs better - don't ask multiple questions at once.
-6. Be conversational and friendly, but keep it brief.
-7. When the user sends images, analyze them carefully and answer in Italian unless they write in another language.`
+        try {
+          send({
+            type: 'chat',
+            chatId: finalChatId,
+            userMessageId: savedUserMessage.id,
+          })
 
-    const userMessages = validMessages.filter((msg) => msg.role !== 'system')
-    const geminiModel = resolveChatModel(model)
+          const claudeStream = streamClaude(conversation, model, projectInstructions)
 
-    console.log(
-      'Sending request to Gemini with model:',
-      geminiModel,
-      'Messages count:',
-      userMessages.length
-    )
+          for await (const event of claudeStream) {
+            if (
+              event.type === 'content_block_delta' &&
+              event.delta.type === 'text_delta'
+            ) {
+              fullText += event.delta.text
+              send({ type: 'delta', text: event.delta.text })
+            }
+          }
 
-    const result = await callGeminiWithFallback(userMessages, geminiModel, systemMessage)
+          const finalMessage = await claudeStream.finalMessage()
+          const refused = finalMessage.stop_reason === 'refusal'
+          const content = refused ? refusalNotice() : fullText.trim()
 
-    return NextResponse.json({
-      message: result.message,
-      model: result.model,
-      usage: result.usage,
-    })
-  } catch (error: any) {
-    console.error('Gemini API error:', {
-      message: error.message,
-      stack: error.stack,
-    })
+          const { data: savedAssistantMessage } = await supabaseAdmin
+            .from('user_chat_messages')
+            .insert({
+              chat_id: finalChatId,
+              user_id: member.user_id,
+              role: 'assistant',
+              content,
+            })
+            .select('id, created_at')
+            .single()
 
-    return NextResponse.json(
-      {
-        error: error.message || 'Failed to get AI response',
-        type: error.constructor?.name,
+          const usageTotals = {
+            input_tokens: finalMessage.usage.input_tokens ?? 0,
+            output_tokens: finalMessage.usage.output_tokens ?? 0,
+            cache_creation_input_tokens:
+              finalMessage.usage.cache_creation_input_tokens ?? 0,
+            cache_read_input_tokens: finalMessage.usage.cache_read_input_tokens ?? 0,
+          }
+
+          const costUsd = calculateCostUsd(model, usageTotals)
+          await recordUsage({
+            userId: member.user_id,
+            chatId: finalChatId,
+            model,
+            usage: usageTotals,
+            costUsd,
+          })
+
+          await supabaseAdmin
+            .from('user_chats')
+            .update({ model, updated_at: new Date().toISOString() })
+            .eq('id', finalChatId)
+
+          const usage = await getUsageSummary(member)
+
+          send({
+            type: 'done',
+            message: {
+              id: savedAssistantMessage?.id,
+              role: 'assistant',
+              content,
+              timestamp: savedAssistantMessage?.created_at,
+            },
+            model: finalMessage.model,
+            refused,
+            usage: {
+              costUsd,
+              spentUsd: usage.spentUsd,
+              limitUsd: usage.limitUsd,
+              remainingUsd: usage.remainingUsd,
+            },
+          })
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Errore durante la risposta'
+          console.error('Chat stream error:', message)
+
+          // Se qualcosa era gia' arrivato, salvalo: meglio una risposta
+          // troncata di una conversazione con un buco.
+          if (fullText.trim()) {
+            await supabaseAdmin.from('user_chat_messages').insert({
+              chat_id: finalChatId,
+              user_id: member.user_id,
+              role: 'assistant',
+              content: fullText.trim(),
+            })
+          }
+
+          send({ type: 'error', error: message })
+        } finally {
+          controller.close()
+        }
       },
-      { status: 500 }
-    )
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    })
+  } catch (error) {
+    return errorResponse(error)
   }
 }

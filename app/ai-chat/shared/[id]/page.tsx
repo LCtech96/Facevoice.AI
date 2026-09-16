@@ -7,7 +7,7 @@ import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import { Chat, Message } from '@/app/ai-chat/page'
 import { createClient } from '@/lib/supabase-client'
-import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
+import { GEMINI_DEFAULT_MODEL, resolveGeminiModel } from '@/lib/gemini'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 export default function SharedChatPage() {
@@ -15,7 +15,7 @@ export default function SharedChatPage() {
   const router = useRouter()
   const chatId = params?.id as string
   const [chat, setChat] = useState<Chat | null>(null)
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_CHAT_MODEL)
+  const [selectedModel, setSelectedModel] = useState(GEMINI_DEFAULT_MODEL)
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const supabase = createClient()
@@ -58,7 +58,7 @@ export default function SharedChatPage() {
             })),
             createdAt: new Date(data.chat.created_at),
             updatedAt: new Date(data.chat.updated_at),
-            model: resolveChatModel(data.chat.model),
+            model: resolveGeminiModel(data.chat.model),
           }
           
           console.log('Final loaded chat:', {
@@ -69,7 +69,7 @@ export default function SharedChatPage() {
           })
           
           setChat(loadedChat)
-          setSelectedModel(resolveChatModel(loadedChat.model))
+          setSelectedModel(resolveGeminiModel(loadedChat.model))
         } else {
           console.error('Failed to load chat - no success or chat data:', data)
         }
@@ -219,7 +219,7 @@ export default function SharedChatPage() {
         // Invia il messaggio all'AI
         console.log('Sending to AI, messages count:', messagesForAI.length)
         try {
-          const aiResponse = await fetch('/api/chat', {
+          const aiResponse = await fetch('/api/chat/public', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

@@ -23,16 +23,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-      perPage: 200,
-    })
+    // listUsers e' paginato: senza il ciclo ci fermeremmo alla prima pagina
+    // e il totale mostrato nel pannello sarebbe sbagliato per difetto.
+    const PER_PAGE = 200
+    const MAX_PAGES = 100 // 20.000 utenti: limite di sicurezza contro loop infiniti
+    const allUsers = []
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+        page,
+        perPage: PER_PAGE,
+      })
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      allUsers.push(...data.users)
+
+      // Ultima pagina: meno risultati del richiesto.
+      if (data.users.length < PER_PAGE) break
     }
 
     return NextResponse.json({
-      users: data.users.map((user) => ({
+      users: allUsers.map((user) => ({
         id: user.id,
         email: user.email,
         created_at: user.created_at,
