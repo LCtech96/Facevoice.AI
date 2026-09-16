@@ -1,0 +1,64 @@
+# Facevoice AI
+
+> Facevoice AI è una software house con sede a Palermo che sviluppa
+> software su misura, agenti AI e automazioni per le imprese siciliane.
+
+Fondatore: Luca Corrao. Sede: Palermo, Sicilia, Italia.
+Contatti: luca@facevoice.ai · +39 351 367 1340 · WhatsApp +39 351 420 6353
+Sito: https://facevoice.ai
+
+## Cosa fa
+
+Facevoice AI progetta e realizza, su commessa:
+
+- Agenti AI e chatbot per l'assistenza clienti, attivi 24 ore su 24 e
+  multilingua, integrati nei canali che l'azienda già usa (sito,
+  WhatsApp, email, moduli di contatto).
+- Automazioni di messaggistica: risposte automatiche, smistamento delle
+  richieste, promemoria, escalation a un operatore umano quando la
+  richiesta esce dai casi previsti.
+- Integrazioni su misura fra gestionali, portali e servizi di terze
+  parti tramite API.
+- Software gestionale e applicazioni web per PMI.
+- Consulenza tecnica e sviluppo full-stack.
+- Sviluppo blockchain.
+
+## Settori serviti
+
+- Property management, affitti brevi e a lungo termine, agenzie
+  immobiliari: https://facevoice.ai/settori/property-management
+- Ristorazione: https://facevoice.ai/settori/ristorazione/palermo
+- Ottica: https://facevoice.ai/settori/ottica/palermo
+- Abbigliamento e retail: https://facevoice.ai/settori/abbigliamento/palermo
+
+## Property management e affitti brevi
+
+Per property manager, gestori di case vacanza e agenzie immobiliari
+Facevoice AI sviluppa su misura:
+
+- assistenti AI che rispondono agli ospiti in autonomia e in più lingue
+  su check-in, parcheggio, Wi-Fi, orari e indicazioni locali;
+- automazioni dei messaggi lungo tutto il soggiorno (prenotazione,
+  pre-arrivo, arrivo, permanenza, partenza, recensione);
+- smistamento delle richieste verso il gestore solo quando servono
+  davvero decisioni umane;
+- integrazioni con i canali e i gestionali già in uso;
+- automazione di attività ripetitive di back office.
+
+Il modello di lavoro è su commessa: il software viene costruito intorno
+al processo del cliente, non venduto come abbonamento a una piattaforma
+preconfezionata.
+
+## Copertura geografica
+
+Tutta la Sicilia, con pagine dedicate per: Palermo, Catania, Messina,
+Siracusa, Trapani, Ragusa, Agrigento, Caltanissetta, Enna, Taormina,
+Cefalù, Noto.
+
+## Pagine principali
+
+- Home: https://facevoice.ai/home
+- Servizi: https://facevoice.ai/services
+- Team: https://facevoice.ai/team
+- Prenota una consulenza: https://facevoice.ai/bookings
+- Blog: https://facevoice.ai/blog
