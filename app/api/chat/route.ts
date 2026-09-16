@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refusalNotice, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
-import { calculateCostUsd, resolveChatModel } from '@/lib/chat-models'
+import {
+  calculateCostUsd,
+  getModelProvider,
+  isBilledModel,
+  resolveChatModel,
+} from '@/lib/chat-models'
+import { callGeminiWithFallback, type GeminiChatMessage } from '@/lib/gemini'
 import {
   ChatAuthError,
   assertWithinLimit,
@@ -16,6 +22,22 @@ export const maxDuration = 300
 
 type Attachment = { mimeType: string; data: string }
 
+const BASE_SYSTEM_PROMPT = `Sei l'assistente AI interno di Facevoice.AI, usato dal team per lavorare sui progetti dei clienti.
+
+Rispondi nella lingua dell'utente (di norma italiano). Sii diretto e concreto: niente preamboli, niente riepiloghi di quello che stai per fare. Quando una richiesta è ambigua, fai una sola domanda di chiarimento invece di indovinare. Se non sai una cosa, dillo.`
+
+/** Stesso contesto che riceve Claude, nel formato che vuole Gemini. */
+function buildGeminiSystemPrompt(projectInstructions?: string | null): string {
+  const instructions = projectInstructions?.trim()
+  if (!instructions) return BASE_SYSTEM_PROMPT
+
+  return `${BASE_SYSTEM_PROMPT}
+
+Contesto specifico di questo progetto. Vale per tutta la conversazione:
+
+${instructions}`
+}
+
 function errorResponse(error: unknown) {
   if (error instanceof ChatAuthError) {
     return NextResponse.json({ error: error.message }, { status: error.status })
@@ -28,8 +50,6 @@ function errorResponse(error: unknown) {
 export async function POST(req: NextRequest) {
   try {
     const member = await requireChatMember(req)
-    await assertWithinLimit(member)
-
     const body = await req.json()
     const content: string = String(body?.content || '').trim()
     const attachments: Attachment[] = Array.isArray(body?.attachments)
@@ -41,6 +61,14 @@ export async function POST(req: NextRequest) {
     }
 
     const model = resolveChatModel(body?.model)
+    const provider = getModelProvider(model)
+
+    // Gemini gira sulla chiave gratuita: non intacca il budget, quindi
+    // resta usabile anche a tetto Claude esaurito.
+    if (isBilledModel(model)) {
+      await assertWithinLimit(member)
+    }
+
     let chatId: string | null = body?.chatId ? String(body.chatId) : null
 
     // --- Chat: esistente (e di questo utente) oppure nuova ------------
@@ -134,20 +162,66 @@ export async function POST(req: NextRequest) {
             userMessageId: savedUserMessage.id,
           })
 
-          const claudeStream = streamClaude(conversation, model, projectInstructions)
+          let refused = false
+          let servedModel = model
+          let usageTotals = {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }
 
-          for await (const event of claudeStream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
-              fullText += event.delta.text
-              send({ type: 'delta', text: event.delta.text })
+          if (provider === 'google') {
+            // Gemini non ha streaming in questo wrapper: la risposta
+            // arriva intera e viene inviata come un unico delta, cosi'
+            // il protocollo resta lo stesso per entrambi i provider.
+            const geminiMessages: GeminiChatMessage[] = conversation.map((msg) => ({
+              role: msg.role,
+              content: msg.content,
+              attachments: msg.attachments ?? undefined,
+            }))
+
+            const result = await callGeminiWithFallback(
+              geminiMessages,
+              model,
+              buildGeminiSystemPrompt(projectInstructions)
+            )
+
+            fullText = result.message
+            servedModel = result.model
+            usageTotals = {
+              input_tokens: result.usage?.prompt_tokens ?? 0,
+              output_tokens: result.usage?.completion_tokens ?? 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            }
+
+            send({ type: 'delta', text: fullText })
+          } else {
+            const claudeStream = streamClaude(conversation, model, projectInstructions)
+
+            for await (const event of claudeStream) {
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'text_delta'
+              ) {
+                fullText += event.delta.text
+                send({ type: 'delta', text: event.delta.text })
+              }
+            }
+
+            const finalMessage = await claudeStream.finalMessage()
+            refused = finalMessage.stop_reason === 'refusal'
+            servedModel = finalMessage.model
+            usageTotals = {
+              input_tokens: finalMessage.usage.input_tokens ?? 0,
+              output_tokens: finalMessage.usage.output_tokens ?? 0,
+              cache_creation_input_tokens:
+                finalMessage.usage.cache_creation_input_tokens ?? 0,
+              cache_read_input_tokens: finalMessage.usage.cache_read_input_tokens ?? 0,
             }
           }
 
-          const finalMessage = await claudeStream.finalMessage()
-          const refused = finalMessage.stop_reason === 'refusal'
           const content = refused ? refusalNotice() : fullText.trim()
 
           const { data: savedAssistantMessage } = await supabaseAdmin
@@ -160,14 +234,6 @@ export async function POST(req: NextRequest) {
             })
             .select('id, created_at')
             .single()
-
-          const usageTotals = {
-            input_tokens: finalMessage.usage.input_tokens ?? 0,
-            output_tokens: finalMessage.usage.output_tokens ?? 0,
-            cache_creation_input_tokens:
-              finalMessage.usage.cache_creation_input_tokens ?? 0,
-            cache_read_input_tokens: finalMessage.usage.cache_read_input_tokens ?? 0,
-          }
 
           const costUsd = calculateCostUsd(model, usageTotals)
           await recordUsage({
@@ -193,7 +259,7 @@ export async function POST(req: NextRequest) {
               content,
               timestamp: savedAssistantMessage?.created_at,
             },
-            model: finalMessage.model,
+            model: servedModel,
             refused,
             usage: {
               costUsd,

@@ -47,14 +47,25 @@ Il contatore riparte il primo del mese (UTC).
 
 ## Modelli disponibili
 
-| Modello | Input $/1M | Output $/1M |
-| --- | --- | --- |
-| Claude Opus 5 (default) | 5 | 25 |
-| Claude Sonnet 5 | 2 | 10 |
-| Claude Haiku 4.5 | 1 | 5 |
+| Modello | Provider | Input $/1M | Output $/1M | Sul budget |
+| --- | --- | --- | --- | --- |
+| Claude Opus 5 (default) | Anthropic | 5 | 25 | si' |
+| Claude Sonnet 5 | Anthropic | 2 | 10 | si' |
+| Claude Haiku 4.5 | Anthropic | 1 | 5 | si' |
+| Gemini 3.6 Flash | Google | — | — | no |
+| Gemini 3.5 Flash | Google | — | — | no |
+| Gemini 3.5 Flash Lite | Google | — | — | no |
 
 I prezzi stanno in `lib/chat-models.ts`: se Anthropic li cambia, si
 aggiornano li' e il calcolo dei costi si adegua.
+
+I modelli Gemini hanno `pricing: null`, cioe' costo zero. Girano sulla
+chiave gratuita di AI Studio: i token vengono comunque registrati in
+`chat_usage` e si vedono in `/admin/usage`, ma non intaccano il tetto
+mensile — e restano usabili anche quando il budget Claude e' esaurito.
+
+Se passi a un piano Google a pagamento, inserisci i prezzi reali al posto
+di `null` e il conteggio si adegua senza altre modifiche.
 
 ## Streaming
 
