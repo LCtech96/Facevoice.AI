@@ -85,6 +85,28 @@ export default function AIChatPage() {
   const [pendingInitialMessage, setPendingInitialMessage] = useState<string | null>(null)
   const supabase = createClient()
 
+  // Schermata fissa: niente scroll di pagina, niente rimbalzo elastico
+  // su iOS. Scorrono solo la lista messaggi e la sidebar.
+  useEffect(() => {
+    const { style } = document.body
+    const previousOverflow = style.overflow
+    const previousOverscroll = style.overscrollBehavior
+    const previousPadding = style.paddingBottom
+
+    style.overflow = 'hidden'
+    style.overscrollBehavior = 'none'
+    // Il body ha un padding per la safe area: sommato a 100dvh
+    // spingerebbe fuori schermo il campo di scrittura su iPhone.
+    // Qui la safe area la gestisce gia' lo spaziatore in fondo.
+    style.paddingBottom = '0px'
+
+    return () => {
+      style.overflow = previousOverflow
+      style.overscrollBehavior = previousOverscroll
+      style.paddingBottom = previousPadding
+    }
+  }, [])
+
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 768px)')
     const syncSidebar = () => setSidebarOpen(mq.matches)
@@ -332,7 +354,7 @@ export default function AIChatPage() {
   // --- Render ----------------------------------------------------------
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="h-[100dvh] bg-[var(--background)] flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[var(--accent-blue)]/30 border-t-[var(--accent-blue)] rounded-full animate-spin mx-auto mb-4" />
           <p className="text-[var(--text-secondary)]">Caricamento...</p>
@@ -345,7 +367,7 @@ export default function AIChatPage() {
 
   if (accessError) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex flex-col">
+      <main className="h-[100dvh] bg-[var(--background)] flex flex-col overflow-hidden">
         <Navigation />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md text-center">
@@ -360,12 +382,16 @@ export default function AIChatPage() {
   }
 
   return (
-    <main className="min-h-[100dvh] bg-[var(--background)] flex flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-0">
+    <main className="h-[100dvh] bg-[var(--background)] flex flex-col overflow-hidden">
       <Navigation />
 
+      {/* Spazio per la navbar desktop, che e' in posizione fissa */}
       <div className="hidden md:block h-16 shrink-0" />
 
-      <div className="flex flex-1 w-full min-h-0 h-[calc(100dvh-4.25rem-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-4rem)] overflow-hidden relative">
+      {/* flex-1 + min-h-0: l'area chat prende lo spazio che resta senza
+          bisogno di calcoli su vh, che su iPhone sbagliano quando la
+          barra del browser si ritrae. */}
+      <div className="flex flex-1 w-full min-h-0 overflow-hidden relative">
         <AIChatSidebar
           chats={filteredChats}
           projects={projects}
@@ -440,6 +466,10 @@ export default function AIChatPage() {
           />
         )}
       </div>
+
+      {/* Spazio per la barra di navigazione mobile, anch'essa fissa.
+          env(safe-area-inset-bottom) copre la home bar di iPhone. */}
+      <div className="shrink-0 md:hidden h-[calc(4.25rem+env(safe-area-inset-bottom,0px))]" />
     </main>
   )
 }

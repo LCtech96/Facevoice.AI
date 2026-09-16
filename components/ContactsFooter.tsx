@@ -1,8 +1,17 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import { Mail, Phone, MessageSquare } from 'lucide-react'
 
 export default function ContactsFooter() {
+  const pathname = usePathname()
+
+  // La chat occupa lo schermo intero: un footer sotto costringerebbe a
+  // scorrere la pagina per tornare ai messaggi.
+  if (pathname?.startsWith('/ai-chat')) {
+    return null
+  }
+
   const phone = '+39 3513671340'
   const whatsapp = '+39 3514206353'
   const whatsappLink = `https://wa.me/${whatsapp.replace(/[^0-9]/g, '')}`
