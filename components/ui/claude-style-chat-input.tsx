@@ -145,9 +145,11 @@ interface ModelSelectorProps {
     models: Model[];
     selectedModel: string;
     onSelect: (modelId: string) => void;
+    /** Claude Code–style pill next to the + button */
+    pill?: boolean;
 }
 
-const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, onSelect }) => {
+const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, onSelect, pill = false }) => {
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -165,7 +167,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
 
     if (models.length <= 1) {
         return (
-            <div className="inline-flex items-center justify-center h-8 rounded-xl px-2 text-[11px] md:text-[14px] font-medium text-text-300 dark:text-[#B4B4B4] whitespace-nowrap max-w-[7.5rem] md:max-w-none truncate">
+            <div className={`inline-flex items-center justify-center h-8 rounded-xl px-2 text-[11px] md:text-[14px] font-medium text-text-300 dark:text-[#B4B4B4] whitespace-nowrap truncate ${pill ? 'bg-bg-200 max-w-[9rem]' : 'max-w-[7.5rem] md:max-w-none'}`}>
                 {currentModel.name}
             </div>
         );
@@ -175,10 +177,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
         <div className="relative" ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className={`inline-flex items-center justify-center relative shrink-0 transition font-base duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] h-8 rounded-xl px-2 md:px-3 min-w-[3.5rem] md:min-w-[4rem] active:scale-[0.98] whitespace-nowrap !text-xs pl-2 pr-1.5 md:pl-2.5 md:pr-2 gap-1 max-w-[7.5rem] md:max-w-none
-                ${isOpen
-                        ? 'bg-bg-200 text-text-100 dark:bg-[#454540] dark:text-[#ECECEC]'
-                        : 'text-text-300 hover:text-text-200 hover:bg-bg-200 dark:text-[#B4B4B4] dark:hover:text-[#ECECEC] dark:hover:bg-[#454540]'}`}
+                className={`inline-flex items-center justify-center relative shrink-0 transition font-base duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] active:scale-[0.98] whitespace-nowrap gap-1
+                ${pill
+                    ? `h-9 rounded-full px-3 max-w-[10.5rem] text-[13px] bg-bg-200 text-text-200 hover:bg-bg-300 dark:bg-[#3a3a38] dark:text-[#ECECEC] dark:hover:bg-[#454540] ${isOpen ? 'ring-1 ring-bg-300' : ''}`
+                    : `h-8 rounded-xl px-2 md:px-3 min-w-[3.5rem] md:min-w-[4rem] !text-xs pl-2 pr-1.5 md:pl-2.5 md:pr-2 max-w-[7.5rem] md:max-w-none ${
+                        isOpen
+                            ? 'bg-bg-200 text-text-100 dark:bg-[#454540] dark:text-[#ECECEC]'
+                            : 'text-text-300 hover:text-text-200 hover:bg-bg-200 dark:text-[#B4B4B4] dark:hover:text-[#ECECEC] dark:hover:bg-[#454540]'
+                    }`}`}
             >
                 <div className="font-ui inline-flex gap-[3px] text-[14px] h-[14px] leading-none items-baseline">
                     <div className="flex items-center gap-[4px]">
@@ -191,7 +197,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
             </button>
 
             {isOpen && (
-                <div className="absolute bottom-full right-0 mb-2 w-[260px] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col p-1.5 animate-fade-in origin-bottom-right">
+                <div className={`absolute bottom-full mb-2 w-[260px] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col p-1.5 animate-fade-in ${pill ? 'left-0 origin-bottom-left' : 'right-0 origin-bottom-right'}`}>
                     {models.map(model => (
                         <button
                             key={model.id}
@@ -244,6 +250,9 @@ interface ClaudeChatInputProps {
     onModelSelect?: (modelId: string) => void;
     onOpenImageDialog?: () => void;
     compact?: boolean;
+    /** Claude Code–style floating dock: larger radius, soft shadow, outer margin feel */
+    floating?: boolean;
+    placeholder?: string;
 }
 
 export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({ 
@@ -253,6 +262,8 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
     onModelSelect: externalOnModelSelect,
     onOpenImageDialog,
     compact = false,
+    floating = false,
+    placeholder = "How can I help you today?",
 }) => {
     const [message, setMessage] = useState("");
     const [files, setFiles] = useState<AttachedFile[]>([]);
@@ -437,19 +448,20 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
 
     return (
         <div
-            className={`relative w-full max-w-2xl mx-auto transition-all duration-300 font-sans ${compact ? 'px-0' : ''}`}
+            className={`relative w-full ${floating ? 'max-w-none' : 'max-w-2xl'} mx-auto transition-all duration-300 font-sans ${compact ? 'px-0' : ''}`}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
         >
             <div className={`
-                !box-content flex flex-col ${compact ? 'mx-0' : 'mx-2 md:mx-0'} items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-bg-300 dark:border-transparent 
-                shadow-[0_0_15px_rgba(0,0,0,0.08)] hover:shadow-[0_0_20px_rgba(0,0,0,0.12)]
-                focus-within:shadow-[0_0_25px_rgba(0,0,0,0.15)]
+                !box-content flex flex-col ${compact || floating ? 'mx-0' : 'mx-2 md:mx-0'} items-stretch transition-all duration-200 relative z-10 cursor-text border border-bg-300 dark:border-transparent 
+                ${floating
+                    ? 'rounded-[28px] shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.45)] hover:shadow-[0_10px_36px_rgba(0,0,0,0.16)]'
+                    : 'rounded-2xl shadow-[0_0_15px_rgba(0,0,0,0.08)] hover:shadow-[0_0_20px_rgba(0,0,0,0.12)] focus-within:shadow-[0_0_25px_rgba(0,0,0,0.15)]'}
                 bg-white dark:bg-[#30302E] font-sans antialiased
             `}>
 
-                <div className="flex flex-col px-2 pt-2 pb-1.5 md:px-3 md:pt-3 md:pb-2 gap-1.5 md:gap-2">
+                <div className={`flex flex-col gap-2 ${floating ? 'px-3.5 pt-3.5 pb-2.5 md:px-4 md:pt-4 md:pb-3' : 'px-2 pt-2 pb-1.5 md:px-3 md:pt-3 md:pb-2 gap-1.5 md:gap-2'}`}>
 
                     {(files.length > 0 || pastedContent.length > 0) && (
                         <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 px-1">
@@ -470,19 +482,19 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                         </div>
                     )}
 
-                    <div className="relative mb-1">
-                        <div className="max-h-96 w-full overflow-y-auto custom-scrollbar font-sans break-words transition-opacity duration-200 min-h-[2.5rem] pl-1">
+                    <div className="relative mb-0.5">
+                        <div className={`max-h-96 w-full overflow-y-auto custom-scrollbar font-sans break-words transition-opacity duration-200 pl-1 ${floating ? 'min-h-[2.75rem]' : 'min-h-[2.5rem]'}`}>
                             <textarea
                                 ref={textareaRef}
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
                                 onPaste={handlePaste}
                                 onKeyDown={handleKeyDown}
-                                placeholder="How can I help you today?"
+                                placeholder={placeholder}
                                 className="w-full bg-transparent border-0 outline-none text-text-100 text-[16px] placeholder:text-text-400 resize-none overflow-hidden py-0 leading-relaxed block font-normal antialiased"
                                 rows={1}
                                 autoFocus
-                                style={{ minHeight: '1.5em' }}
+                                style={{ minHeight: floating ? '1.75em' : '1.5em' }}
                             />
                         </div>
                     </div>
@@ -492,37 +504,36 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
 
                             <button
                                 onClick={() => fileInputRef.current?.click()}
-                                className="inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200"
+                                className={`inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200 ${
+                                    floating ? 'h-9 w-9 rounded-full bg-bg-200/80' : 'h-8 w-8 rounded-lg'
+                                }`}
                                 type="button"
                                 aria-label="Upload files"
                             >
                                 <Icons.Plus className="w-5 h-5" />
                             </button>
 
+                            {floating ? (
+                                <div className="shrink-0">
+                                    <ModelSelector
+                                        models={models}
+                                        selectedModel={selectedModel}
+                                        onSelect={handleModelSelect}
+                                        pill
+                                    />
+                                </div>
+                            ) : null}
+
                             {onOpenImageDialog && (
                                 <button
                                     onClick={onOpenImageDialog}
-                                    className="inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200"
+                                    className={`inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 active:scale-95 text-text-400 hover:text-text-200 hover:bg-bg-200 ${
+                                        floating ? 'h-9 w-9 rounded-full' : 'h-8 w-8 rounded-lg'
+                                    }`}
                                     type="button"
                                     aria-label="Generate or edit image"
                                 >
                                     <ImageIcon className="w-5 h-5" />
-                                </button>
-                            )}
-
-                            {speechSupported && (
-                                <button
-                                    onClick={toggleListening}
-                                    className={`inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 h-8 w-8 rounded-lg active:scale-95 ${
-                                        isListening
-                                            ? 'text-red-500 bg-red-500/10 animate-pulse'
-                                            : 'text-text-400 hover:text-text-200 hover:bg-bg-200'
-                                    }`}
-                                    type="button"
-                                    aria-label="Voice input"
-                                    title={isListening ? 'Ferma registrazione' : 'Input vocale'}
-                                >
-                                    <Mic className="w-5 h-5" />
                                 </button>
                             )}
 
@@ -545,6 +556,25 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                         </div>
 
                         <div className="flex flex-row items-center min-w-0 gap-1">
+                            {speechSupported && (
+                                <button
+                                    onClick={toggleListening}
+                                    className={`inline-flex items-center justify-center relative shrink-0 transition-colors duration-200 active:scale-95 ${
+                                        floating ? 'h-9 w-9 rounded-full' : 'h-8 w-8 rounded-lg'
+                                    } ${
+                                        isListening
+                                            ? 'text-red-500 bg-red-500/10 animate-pulse'
+                                            : 'text-text-400 hover:text-text-200 hover:bg-bg-200'
+                                    }`}
+                                    type="button"
+                                    aria-label="Voice input"
+                                    title={isListening ? 'Ferma registrazione' : 'Input vocale'}
+                                >
+                                    <Mic className="w-5 h-5" />
+                                </button>
+                            )}
+
+                            {!floating && (
                             <div className="shrink-0 p-1 -m-1">
                                 <ModelSelector
                                     models={models}
@@ -552,16 +582,20 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
                                     onSelect={handleModelSelect}
                                 />
                             </div>
+                            )}
 
                             <div>
                                 <button
                                     onClick={handleSend}
                                     disabled={!hasContent}
                                     className={`
-                                        inline-flex items-center justify-center relative shrink-0 transition-colors h-8 w-8 rounded-md active:scale-95 !rounded-xl !h-8 !w-8
+                                        inline-flex items-center justify-center relative shrink-0 transition-colors active:scale-95
+                                        ${floating ? 'h-9 w-9 rounded-full' : 'h-8 w-8 rounded-xl'}
                                         ${hasContent
                                             ? 'bg-accent text-bg-0 hover:bg-accent-hover shadow-md'
-                                            : 'bg-accent/30 text-bg-0/60 cursor-default'}
+                                            : floating
+                                                ? 'bg-[#1a1a1a] dark:bg-[#ECECEC] text-white dark:text-[#1a1a1a] opacity-90'
+                                                : 'bg-accent/30 text-bg-0/60 cursor-default'}
                                     `}
                                     type="button"
                                     aria-label="Send message"
@@ -575,7 +609,7 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
             </div>
 
             {isDragging && (
-                <div className="absolute inset-0 bg-bg-200/90 border-2 border-dashed border-accent rounded-2xl z-50 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none">
+                <div className={`absolute inset-0 bg-bg-200/90 border-2 border-dashed border-accent z-50 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none ${floating ? 'rounded-[28px]' : 'rounded-2xl'}`}>
                     <Icons.Archive className="w-10 h-10 text-accent mb-2 animate-bounce" />
                     <p className="text-accent font-medium">Drop files to upload</p>
                 </div>

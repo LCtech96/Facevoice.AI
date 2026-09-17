@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Image from 'next/image'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send,
@@ -18,6 +19,7 @@ import {
   Users,
   Menu,
 } from 'lucide-react'
+import { Instrument_Serif } from 'next/font/google'
 import { Chat, Message, UsageState, isPersistedChatId } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
@@ -27,6 +29,12 @@ import {
   filesToAttachments,
 } from '@/lib/chat-attachments'
 import { getAccessToken } from '@/lib/session-token'
+
+const emptyStateSerif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+})
 
 interface AIChatMainProps {
   chat: Chat | null
@@ -782,54 +790,42 @@ export default function AIChatMain({
       <>
       <div className="flex-1 flex flex-col bg-[var(--background)] min-h-0 min-w-0">
         {renderChatHeader({ title: 'Nuova chat', shareDisabled: true })}
-        
-        <div className="flex-1 flex flex-col items-center justify-start md:justify-center px-2 sm:px-3 md:px-4 max-w-3xl mx-auto w-full min-h-0 overflow-y-auto overscroll-contain pb-2">
-          <div className="mb-4 md:mb-8 pt-2 md:pt-0">
-            <h1 className="text-2xl md:text-4xl font-semibold text-[var(--text-primary)] mb-1 md:mb-2 text-center">
-              FacevoiceAI
-            </h1>
-            <p className="text-sm md:text-base text-[var(--text-secondary)] text-center">
-              How can I help you today?
-            </p>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3 w-full mb-4 md:mb-8">
-            {[
-              'Explain quantum computing',
-              'Write a creative story',
-              'Plan a trip itinerary',
-              'Help with coding',
-            ].map((suggestion, idx) => (
-              <button
-                key={idx}
-                onClick={() => {
-                  // Per ora, quando si clicca una suggestion, la gestiamo manualmente
-                  // Il componente ClaudeChatInput gestirà il proprio stato
-                  handleSendFromClaudeInput({
-                    message: suggestion,
-                    files: [],
-                    pastedContent: [],
-                    model: selectedModel,
-                    isThinkingEnabled: false,
-                  })
-                }}
-                className="p-3 md:p-4 text-left bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl hover:bg-[var(--background-secondary)] transition-colors text-xs md:text-sm text-[var(--text-primary)]"
-              >
-                {suggestion}
-              </button>
-            ))}
-          </div>
-
-          <div className="w-full relative pb-2 md:pb-4 shrink-0 sticky bottom-0 bg-[var(--background)]">
-            <ClaudeChatInput
-              onSendMessage={handleSendFromClaudeInput}
-              selectedModel={selectedModel}
-              models={[...CHAT_MODELS]}
-              onModelSelect={(modelId) => onModelSelect(modelId)}
-              onOpenImageDialog={() => setShowImageDialog(true)}
-              compact
+        {/* Empty state: brand centered like Claude Code, input docked at the bottom */}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 min-h-0">
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="flex flex-col items-center text-center max-w-sm"
+          >
+            <Image
+              src="/Facevoice.png"
+              alt="FaceVoice"
+              width={280}
+              height={42}
+              priority
+              className="h-9 md:h-11 w-auto object-contain mb-5 md:mb-6"
             />
-          </div>
+            <p
+              className={`${emptyStateSerif.className} text-[1.65rem] md:text-[2rem] leading-tight tracking-[-0.02em] text-[var(--text-primary)]`}
+            >
+              Let&apos;s get to work
+            </p>
+          </motion.div>
+        </div>
+
+        <div className="shrink-0 w-full max-w-3xl mx-auto px-3 pb-3 pt-1 md:px-4 md:pb-4">
+          <ClaudeChatInput
+            onSendMessage={handleSendFromClaudeInput}
+            selectedModel={selectedModel}
+            models={[...CHAT_MODELS]}
+            onModelSelect={(modelId) => onModelSelect(modelId)}
+            onOpenImageDialog={() => setShowImageDialog(true)}
+            placeholder="Chat with FaceVoice"
+            floating
+            compact
+          />
         </div>
       </div>
       {imageDialog}
@@ -923,17 +919,17 @@ export default function AIChatMain({
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="px-2 py-2 md:px-4 md:py-4 border-t border-[var(--border-color)] bg-[var(--background)] shrink-0">
-        <div className="max-w-3xl mx-auto">
-          <ClaudeChatInput
-            onSendMessage={handleSendFromClaudeInput}
-            selectedModel={selectedModel}
-            models={[...CHAT_MODELS]}
-            onModelSelect={(modelId) => onModelSelect(modelId)}
-            onOpenImageDialog={() => setShowImageDialog(true)}
-            compact
-          />
-        </div>
+      <div className="shrink-0 w-full max-w-3xl mx-auto px-3 pb-3 pt-1 md:px-4 md:pb-4 bg-[var(--background)]">
+        <ClaudeChatInput
+          onSendMessage={handleSendFromClaudeInput}
+          selectedModel={selectedModel}
+          models={[...CHAT_MODELS]}
+          onModelSelect={(modelId) => onModelSelect(modelId)}
+          onOpenImageDialog={() => setShowImageDialog(true)}
+          placeholder="Chat with FaceVoice"
+          floating
+          compact
+        />
       </div>
 
       {/* Share Dialog */}
