@@ -156,7 +156,17 @@ export function getChatErrorMessage(error: unknown): string {
     return 'Allegati troppo pesanti per essere inviati. Riprova con un\u2019immagine per volta, oppure con una foto più leggera.'
   }
 
-  if (message.includes('rate') || message.includes('429')) {
+  if (
+    message.includes('high demand') ||
+    message.includes('UNAVAILABLE') ||
+    message.includes('overloaded') ||
+    message.includes('no capacity') ||
+    message.includes('temporaneamente sovraccarichi')
+  ) {
+    return 'I modelli Gemini sono temporaneamente sovraccarichi. Riprova tra qualche secondo o seleziona Gemini 3.5 Flash Lite.'
+  }
+
+  if (message.includes('rate') || message.includes('429') || message.includes('Rate limit')) {
     return 'Troppe richieste in poco tempo. Riprova tra qualche secondo.'
   }
 
