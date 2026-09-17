@@ -152,6 +152,10 @@ export function getChatErrorMessage(error: unknown): string {
     return message
   }
 
+  if (message.includes('413')) {
+    return 'Allegati troppo pesanti per essere inviati. Riprova con un\u2019immagine per volta, oppure con una foto più leggera.'
+  }
+
   if (message.includes('rate') || message.includes('429')) {
     return 'Troppe richieste in poco tempo. Riprova tra qualche secondo.'
   }

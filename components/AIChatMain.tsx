@@ -21,7 +21,11 @@ import {
 import { Chat, Message, UsageState, isPersistedChatId } from '@/app/ai-chat/page'
 import ClaudeChatInput from '@/components/ui/claude-style-chat-input'
 import { CHAT_MODELS, getChatModelName, getChatErrorMessage } from '@/lib/chat-models'
-import { filesToAttachments } from '@/lib/chat-attachments'
+import {
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  attachmentsSize,
+  filesToAttachments,
+} from '@/lib/chat-attachments'
 import { getAccessToken } from '@/lib/session-token'
 
 interface AIChatMainProps {
@@ -114,7 +118,28 @@ export default function AIChatMain({
     model: string;
     isThinkingEnabled: boolean;
   }) => {
-    const attachments = await filesToAttachments(data.files)
+    let attachments
+    try {
+      attachments = await filesToAttachments(data.files)
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Non è stato possibile preparare l\u2019immagine.'
+      )
+      return
+    }
+
+    // Il limite va verificato qui: se la richiesta parte troppo grande,
+    // il server risponde 413 senza che il codice della route venga
+    // eseguito, e l'utente vedrebbe solo un errore HTTP.
+    if (attachmentsSize(attachments) > MAX_TOTAL_ATTACHMENT_BYTES) {
+      alert(
+        'Le immagini allegate sono troppe o troppo pesanti. Provane meno per volta.'
+      )
+      return
+    }
+
     const pastedText = data.pastedContent.map((item) => item.content).join('\n\n')
     const messageContent =
       [data.message.trim(), pastedText].filter(Boolean).join('\n\n') ||
