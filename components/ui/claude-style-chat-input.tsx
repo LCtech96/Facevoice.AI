@@ -191,7 +191,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
             </button>
 
             {isOpen && (
-                <div className="absolute bottom-full right-0 mb-2 w-[260px] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-hidden z-50 flex flex-col p-1.5 animate-fade-in origin-bottom-right">
+                // max-h + overflow-y-auto: con piu' modelli la lista supera
+                // l'altezza dello schermo di un telefono, e senza questi
+                // veniva semplicemente tagliata. overscroll-contain evita
+                // che lo scorrimento si propaghi alla pagina sotto.
+                <div className="absolute bottom-full right-0 mb-2 w-[260px] max-h-[min(60dvh,26rem)] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-y-auto overscroll-contain z-50 flex flex-col p-1.5 animate-fade-in origin-bottom-right">
                     {models.map(model => (
                         <button
                             key={model.id}
@@ -199,7 +203,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
                                 onSelect(model.id);
                                 setIsOpen(false);
                             }}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl flex items-start justify-between group transition-colors hover:bg-bg-200 dark:hover:bg-[#30302E]`}
+                            className={`w-full shrink-0 text-left px-3 py-2.5 rounded-xl flex items-start justify-between group transition-colors hover:bg-bg-200 dark:hover:bg-[#30302E]`}
                         >
                             <div className="flex flex-col gap-0.5">
                                 <div className="flex items-center gap-2">
