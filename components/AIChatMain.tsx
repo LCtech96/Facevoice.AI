@@ -812,9 +812,6 @@ export default function AIChatMain({
             >
               Let&apos;s get to work
             </p>
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              Mettiamoci al lavoro
-            </p>
           </motion.div>
         </div>
 
