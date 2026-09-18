@@ -6,7 +6,9 @@
  * consumare credito Anthropic.
  */
 
-export const DEFAULT_CHAT_MODEL = 'claude-opus-5'
+// Gemini di default: non intacca il budget mensile dei dipendenti.
+// Chi vuole Claude lo sceglie dal menu quando gli serve davvero.
+export const DEFAULT_CHAT_MODEL = 'gemini-3.6-flash'
 
 /** Prezzi in USD per milione di token. */
 type ModelPricing = {
