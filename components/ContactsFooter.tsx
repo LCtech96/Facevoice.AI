@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Mail, Phone, MessageSquare } from 'lucide-react'
 
@@ -62,6 +63,15 @@ export default function ContactsFooter() {
               <p className="text-[var(--text-primary)] font-medium break-all">{email}</p>
             </div>
           </a>
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-[var(--border-color)]">
+          <Link
+            href="/privacy"
+            className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
+          >
+            Informativa Privacy
+          </Link>
         </div>
       </div>
       {/* Spacing per mobile navbar fissa in basso */}
