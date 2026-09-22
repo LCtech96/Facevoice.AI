@@ -21,6 +21,7 @@ const STATIC_PAGES: Array<{
   { path: '/bookings', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/blog', priority: 0.7, changeFrequency: 'weekly' },
   { path: '/lavora-con-noi', priority: 0.5, changeFrequency: 'yearly' },
+  { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
 ]
 
 const LEGACY_SECTORS = ['ristorazione', 'ottica', 'abbigliamento']
