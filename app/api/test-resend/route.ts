@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Usa l'email dell'account Resend se il dominio non è verificato
-    // Per inviare a luca@facevoice.ai, verifica il dominio facevoice.ai su Resend
+    // Per inviare a assistenza@facevoice.ai, verifica il dominio facevoice.ai su Resend
     const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
     const toEmail = process.env.RESEND_TO_EMAIL || 'facevoiceai@gmail.com'
     
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       hasApiKey: !!RESEND_API_KEY,
       apiKeyPrefix: RESEND_API_KEY?.substring(0, 10) + '...',
       note: toEmail === 'facevoiceai@gmail.com' 
-        ? '⚠️ Usando email account Resend. Per inviare a luca@facevoice.ai, verifica il dominio su Resend.'
+        ? '⚠️ Usando email account Resend. Per inviare a assistenza@facevoice.ai, verifica il dominio su Resend.'
         : '✅ Usando email personalizzata'
     })
 

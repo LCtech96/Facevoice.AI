@@ -19,7 +19,7 @@ export const ORG = {
   legalName: 'Facevoice AI',
   url: SITE_URL,
   logo: `${SITE_URL}/Facevoice.png`,
-  email: 'luca@facevoice.ai',
+  email: 'info@facevoice.ai',
   phone: '+39 351 367 1340',
   whatsapp: '+39 351 420 6353',
   /** Sede legale. Non e' una sede aperta al pubblico: nei dati

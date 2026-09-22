@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
-    const toEmail = process.env.RESEND_TO_EMAIL || 'luca@facevoice.ai'
+    const toEmail = process.env.RESEND_TO_EMAIL || 'assistenza@facevoice.ai'
     const partnerLabel = getPartnerLabel(partner)
 
     const emailData = {

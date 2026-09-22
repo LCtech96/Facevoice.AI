@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
           : 'Non specificata'
 
         // Usa l'email dell'account Resend se il dominio non è verificato
-        // Per inviare a luca@facevoice.ai, verifica il dominio facevoice.ai su Resend
+        // Per inviare a assistenza@facevoice.ai, verifica il dominio facevoice.ai su Resend
         const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
         const toEmail = process.env.RESEND_TO_EMAIL || 'facevoiceai@gmail.com'
         
@@ -222,7 +222,7 @@ Prenotazione ricevuta il ${new Date().toLocaleString('it-IT')}
             console.warn('⚠️ Email non inviata. Errore:', errorMessage)
           }
         } else {
-          console.log('✅ Booking email sent successfully to luca@facevoice.ai', {
+          console.log('✅ Booking email sent successfully to assistenza@facevoice.ai', {
             emailId: responseData.id,
             message: 'Email inviata con successo'
           })

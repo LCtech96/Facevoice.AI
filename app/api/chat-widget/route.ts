@@ -21,7 +21,7 @@ const getSupabaseAdmin = () => {
 
 const CONTACT_INFO = {
   whatsapp: '+39 351 420 6353',
-  email: 'luca@facevoice.ai',
+  email: 'info@facevoice.ai',
   phone: '+39 351 367 1340',
   website: 'https://www.facevoice.ai',
 }
