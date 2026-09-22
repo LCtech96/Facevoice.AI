@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
         console.error('Error sending email to collaborator:', emailError)
       }
 
-      // Email all'admin (luca@facevoice.ai)
+      // Email all'admin (assistenza@facevoice.ai)
       try {
         await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
           },
           body: JSON.stringify({
             from: `FacevoiceAI <${RESEND_FROM_EMAIL}>`,
-            to: 'luca@facevoice.ai',
+            to: 'assistenza@facevoice.ai',
             subject: `Nuovo pagamento registrato per ${collaborator_email} - ${amountText}`,
             html: emailHtml,
           }),

@@ -23,7 +23,7 @@ export default function StructuredData({ type, page = 'home' }: StructuredDataPr
       '@type': 'ContactPoint',
       telephone: '+39-351-367-1340',
       contactType: 'customer service',
-      email: 'luca@facevoice.ai',
+      email: 'info@facevoice.ai',
       areaServed: 'IT',
       availableLanguage: ['Italian', 'English']
     },

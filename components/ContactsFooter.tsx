@@ -16,7 +16,7 @@ export default function ContactsFooter() {
   const phone = '+39 3513671340'
   const whatsapp = '+39 3514206353'
   const whatsappLink = `https://wa.me/${whatsapp.replace(/[^0-9]/g, '')}`
-  const email = 'luca@facevoice.ai'
+  const email = 'info@facevoice.ai'
 
   return (
     <footer className="mt-16 border-t border-[var(--border-color)] bg-[var(--background)]">

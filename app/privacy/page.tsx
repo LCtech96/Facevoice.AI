@@ -155,8 +155,8 @@ export default function PrivacyPage() {
                   o più dei suoi Concessionari è FacevoiceAI, con sede in Via
                   Vito Di Stefano 32 - Terrasini (PA), Italia, contattabile al
                   seguente indirizzo:{' '}
-                  <a href="mailto:luca@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
-                    luca@facevoice.ai
+                  <a href="mailto:privacy@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
+                    privacy@facevoice.ai
                   </a>
                   .
                 </p>
@@ -292,8 +292,8 @@ export default function PrivacyPage() {
                     a quelli già acquistati. L&apos;Interessato potrà
                     interrompere, in qualunque momento e gratuitamente, la
                     ricezione di queste comunicazioni, scrivendo a{' '}
-                    <a href="mailto:luca@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
-                      luca@facevoice.ai
+                    <a href="mailto:privacy@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
+                      privacy@facevoice.ai
                     </a>
                     , ferma restando la liceità del trattamento;
                   </li>
@@ -391,8 +391,8 @@ export default function PrivacyPage() {
                   </strong>
                   : Art. 6 par. 1, lett. f Reg. UE 2016/679. L&apos;Interessato
                   può opporsi in qualsiasi momento scrivendo a{' '}
-                  <a href="mailto:luca@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
-                    luca@facevoice.ai
+                  <a href="mailto:privacy@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
+                    privacy@facevoice.ai
                   </a>
                   .
                 </li>
@@ -423,8 +423,8 @@ export default function PrivacyPage() {
                 società di factoring, ed Autorità competenti. Laddove tali
                 soggetti siano nominati responsabili, un elenco completo può
                 essere richiesto scrivendo a{' '}
-                <a href="mailto:luca@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
-                  luca@facevoice.ai
+                <a href="mailto:privacy@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
+                  privacy@facevoice.ai
                 </a>
                 .
               </p>
@@ -513,8 +513,8 @@ export default function PrivacyPage() {
                   L&apos;Interessato ha il diritto di esercitare i propri
                   diritti (Accesso, Rettifica, Cancellazione, Limitazione,
                   Portabilità, Opposizione, Revoca del Consenso) scrivendo a{' '}
-                  <a href="mailto:luca@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
-                    luca@facevoice.ai
+                  <a href="mailto:privacy@facevoice.ai" className="text-[var(--accent-blue)] hover:underline">
+                    privacy@facevoice.ai
                   </a>
                   . L&apos;Utente dei servizi Google può revocare le
                   autorizzazioni direttamente dal proprio account. Maggiori
