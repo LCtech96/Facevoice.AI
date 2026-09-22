@@ -3,32 +3,48 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 import ParticleBackground from './ParticleBackground'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { Megaphone, Code2, BrainCircuit, LayoutDashboard } from 'lucide-react'
 
-const services = [
-  {
-    icon: Megaphone,
-    title: 'Social & Marketing',
-    description: 'Gestione social, marketing e comunicazione',
-  },
-  {
-    icon: Code2,
-    title: 'Sviluppo Software',
-    description: 'Soluzioni digitali su misura',
-  },
-  {
-    icon: BrainCircuit,
-    title: 'Integrazione AI',
-    description: 'Intelligenza artificiale per il tuo business',
-  },
-  {
-    icon: LayoutDashboard,
-    title: 'Gestionali',
-    description: 'ERP, CRM e automazione aziendale',
-  },
-]
+// Un'icona per posizione: il testo (titolo, descrizione) arriva dalle
+// traduzioni, l'icona resta fissa e non ha bisogno di essere tradotta.
+const serviceIcons = [Megaphone, Code2, BrainCircuit, LayoutDashboard]
+
+type HeroTranslation = {
+  imageAlt: string
+  subtitleParts: Array<{ text: string; bold: boolean }>
+  services: Array<{ title: string; description: string }>
+}
 
 export default function Hero() {
+  const { tData } = useTranslation()
+  const hero = tData<HeroTranslation>('home.hero')
+
+  const imageAlt =
+    hero?.imageAlt ||
+    'Facevoice AI - Sviluppo software su misura, automazione aziendale e integrazione intelligenza artificiale'
+  const subtitleParts = hero?.subtitleParts?.length
+    ? hero.subtitleParts
+    : [
+        { text: 'Trasformiamo le idee in soluzioni digitali. Ci occupiamo di ', bold: false },
+        { text: 'gestione social, marketing e comunicazione', bold: true },
+        { text: ', ', bold: false },
+        { text: 'sviluppo software', bold: true },
+        { text: ', ', bold: false },
+        { text: 'integrazione AI', bold: true },
+        { text: ' e ', bold: false },
+        { text: 'gestionali', bold: true },
+        { text: ' per far crescere la tua azienda.', bold: false },
+      ]
+  const services = hero?.services?.length
+    ? hero.services
+    : [
+        { title: 'Social & Marketing', description: 'Gestione social, marketing e comunicazione' },
+        { title: 'Sviluppo Software', description: 'Soluzioni digitali su misura' },
+        { title: 'Integrazione AI', description: 'Intelligenza artificiale per il tuo business' },
+        { title: 'Gestionali', description: 'ERP, CRM e automazione aziendale' },
+      ]
+
   return (
     <section className="min-h-0 md:min-h-[55vh] flex items-center relative pt-4 pb-8 md:pt-4 px-4 sm:px-6 bg-black overflow-x-hidden">
       <ParticleBackground />
@@ -44,7 +60,7 @@ export default function Hero() {
             <div className="mb-5 flex justify-center lg:justify-start">
               <Image
                 src="/Facevoice.png"
-                alt="Facevoice AI - Sviluppo software su misura, automazione aziendale e integrazione intelligenza artificiale"
+                alt={imageAlt}
                 width={400}
                 height={120}
                 className="w-full max-w-[240px] sm:max-w-[300px] md:max-w-[340px] h-auto object-contain"
@@ -54,16 +70,20 @@ export default function Hero() {
             </div>
 
             <p className="text-sm sm:text-base md:text-lg text-gray-300 mb-5 md:mb-6 max-w-xl mx-auto lg:mx-0 leading-relaxed px-1">
-              Trasformiamo le idee in soluzioni digitali. Ci occupiamo di{' '}
-              <span className="text-white font-medium">gestione social, marketing e comunicazione</span>,{' '}
-              <span className="text-white font-medium">sviluppo software</span>,{' '}
-              <span className="text-white font-medium">integrazione AI</span> e{' '}
-              <span className="text-white font-medium">gestionali</span> per far crescere la tua azienda.
+              {subtitleParts.map((part, index) =>
+                part.bold ? (
+                  <span key={index} className="text-white font-medium">
+                    {part.text}
+                  </span>
+                ) : (
+                  <span key={index}>{part.text}</span>
+                )
+              )}
             </p>
 
             <div className="grid grid-cols-2 gap-2.5 sm:gap-3 max-w-md mx-auto lg:mx-0">
               {services.map((service, index) => {
-                const Icon = service.icon
+                const Icon = serviceIcons[index] || Megaphone
                 return (
                   <motion.div
                     key={service.title}
@@ -95,7 +115,7 @@ export default function Hero() {
               <div className="absolute -inset-3 sm:-inset-4 bg-gradient-to-r from-[var(--accent-blue)]/20 to-purple-500/20 rounded-3xl blur-2xl" />
               <Image
                 src="/hero-services.svg"
-                alt="Facevoice AI - Servizi digitali: social marketing, sviluppo software, AI e gestionali"
+                alt={imageAlt}
                 width={600}
                 height={500}
                 className="relative w-full h-auto rounded-2xl shadow-2xl"

@@ -71,8 +71,26 @@ export const translations = {
       more: 'Altro',
     },
     home: {
-      hero: 'Soluzioni AI Avanzate per il tuo Business',
-      subtitle: 'Trasforma la tua azienda con l\'intelligenza artificiale',
+      hero: {
+        imageAlt: 'Facevoice AI - Servizi digitali: social marketing, sviluppo software, AI e gestionali',
+        subtitleParts: [
+        { text: 'Trasformiamo le idee in soluzioni digitali. Ci occupiamo di ', bold: false },
+        { text: 'gestione social, marketing e comunicazione', bold: true },
+        { text: ', ', bold: false },
+        { text: 'sviluppo software', bold: true },
+        { text: ', ', bold: false },
+        { text: 'integrazione AI', bold: true },
+        { text: ' e ', bold: false },
+        { text: 'gestionali', bold: true },
+        { text: ' per far crescere la tua azienda.', bold: false },
+        ],
+        services: [
+        { title: 'Social & Marketing', description: 'Gestione social, marketing e comunicazione' },
+        { title: 'Sviluppo Software', description: 'Soluzioni digitali su misura' },
+        { title: 'Integrazione AI', description: 'Intelligenza artificiale per il tuo business' },
+        { title: 'Gestionali', description: 'ERP, CRM e automazione aziendale' },
+        ],
+      },
     },
     blog: {
       title: 'Blog',
@@ -231,8 +249,26 @@ export const translations = {
       unavailable: 'Unavailable',
     },
     home: {
-      hero: 'Advanced AI Solutions for Your Business',
-      subtitle: 'Transform your business with artificial intelligence',
+      hero: {
+        imageAlt: 'Facevoice AI - Digital services: social media marketing, software development, AI and business management software',
+        subtitleParts: [
+        { text: 'We turn ideas into digital solutions. We handle ', bold: false },
+        { text: 'social media management, marketing and communication', bold: true },
+        { text: ', ', bold: false },
+        { text: 'software development', bold: true },
+        { text: ', ', bold: false },
+        { text: 'AI integration', bold: true },
+        { text: ' and ', bold: false },
+        { text: 'business management software', bold: true },
+        { text: ' to grow your company.', bold: false },
+        ],
+        services: [
+        { title: 'Social & Marketing', description: 'Social media management, marketing and communication' },
+        { title: 'Software Development', description: 'Custom digital solutions' },
+        { title: 'AI Integration', description: 'Artificial intelligence for your business' },
+        { title: 'Business Software', description: 'ERP, CRM and business automation' },
+        ],
+      },
     },
     blog: {
       title: 'Blog',
@@ -391,8 +427,26 @@ export const translations = {
       unavailable: 'Indisponible',
     },
     home: {
-      hero: 'Solutions IA Avancées pour Votre Entreprise',
-      subtitle: 'Transformez votre entreprise avec l\'intelligence artificielle',
+      hero: {
+        imageAlt: 'Facevoice AI - Services numériques : réseaux sociaux et marketing, développement logiciel, IA et logiciels de gestion',
+        subtitleParts: [
+        { text: 'Nous transformons les idées en solutions numériques. Nous nous occupons de ', bold: false },
+        { text: 'gestion des réseaux sociaux, marketing et communication', bold: true },
+        { text: ', ', bold: false },
+        { text: 'développement logiciel', bold: true },
+        { text: ', ', bold: false },
+        { text: 'intégration de l\'IA', bold: true },
+        { text: ' et ', bold: false },
+        { text: 'logiciels de gestion', bold: true },
+        { text: ' pour faire grandir votre entreprise.', bold: false },
+        ],
+        services: [
+        { title: 'Réseaux sociaux & Marketing', description: 'Gestion des réseaux sociaux, marketing et communication' },
+        { title: 'Développement logiciel', description: 'Solutions numériques sur mesure' },
+        { title: 'Intégration IA', description: 'Intelligence artificielle pour votre entreprise' },
+        { title: 'Logiciels de gestion', description: 'ERP, CRM et automatisation d\'entreprise' },
+        ],
+      },
     },
     blog: {
       title: 'Blog',
@@ -551,8 +605,26 @@ export const translations = {
       unavailable: 'Недоступно',
     },
     home: {
-      hero: 'Продвинутые AI Решения для Вашего Бизнеса',
-      subtitle: 'Преобразуйте свой бизнес с помощью искусственного интеллекта',
+      hero: {
+        imageAlt: 'Facevoice AI - Цифровые услуги: маркетинг в соцсетях, разработка ПО, ИИ и учётные системы',
+        subtitleParts: [
+        { text: 'Мы превращаем идеи в цифровые решения. Мы занимаемся ', bold: false },
+        { text: 'управлением соцсетями, маркетингом и коммуникациями', bold: true },
+        { text: ', ', bold: false },
+        { text: 'разработкой ПО', bold: true },
+        { text: ', ', bold: false },
+        { text: 'интеграцией ИИ', bold: true },
+        { text: ' и ', bold: false },
+        { text: 'учётными системами', bold: true },
+        { text: ', чтобы ваш бизнес рос.', bold: false },
+        ],
+        services: [
+        { title: 'Соцсети и маркетинг', description: 'Управление соцсетями, маркетинг и коммуникации' },
+        { title: 'Разработка ПО', description: 'Индивидуальные цифровые решения' },
+        { title: 'Интеграция ИИ', description: 'Искусственный интеллект для вашего бизнеса' },
+        { title: 'Учётные системы', description: 'ERP, CRM и автоматизация бизнеса' },
+        ],
+      },
     },
     blog: {
       title: 'Блог',
@@ -711,8 +783,26 @@ export const translations = {
       unavailable: 'Nicht verfügbar',
     },
     home: {
-      hero: 'Fortschrittliche KI-Lösungen für Ihr Unternehmen',
-      subtitle: 'Transformieren Sie Ihr Unternehmen mit künstlicher Intelligenz',
+      hero: {
+        imageAlt: 'Facevoice AI - Digitale Dienstleistungen: Social-Media-Marketing, Softwareentwicklung, KI und Unternehmenssoftware',
+        subtitleParts: [
+        { text: 'Wir verwandeln Ideen in digitale Lösungen. Wir kümmern uns um ', bold: false },
+        { text: 'Social-Media-Management, Marketing und Kommunikation', bold: true },
+        { text: ', ', bold: false },
+        { text: 'Softwareentwicklung', bold: true },
+        { text: ', ', bold: false },
+        { text: 'KI-Integration', bold: true },
+        { text: ' und ', bold: false },
+        { text: 'Unternehmenssoftware', bold: true },
+        { text: ', damit Ihr Unternehmen wächst.', bold: false },
+        ],
+        services: [
+        { title: 'Social Media & Marketing', description: 'Social-Media-Management, Marketing und Kommunikation' },
+        { title: 'Softwareentwicklung', description: 'Maßgeschneiderte digitale Lösungen' },
+        { title: 'KI-Integration', description: 'Künstliche Intelligenz für Ihr Unternehmen' },
+        { title: 'Unternehmenssoftware', description: 'ERP, CRM und Unternehmensautomatisierung' },
+        ],
+      },
     },
     blog: {
       title: 'Blog',
@@ -871,8 +961,26 @@ export const translations = {
       unavailable: 'Indisponível',
     },
     home: {
-      hero: 'Soluções de IA Avançadas para o Seu Negócio',
-      subtitle: 'Transforme seu negócio com inteligência artificial',
+      hero: {
+        imageAlt: 'Facevoice AI - Serviços digitais: marketing em redes sociais, desenvolvimento de software, IA e softwares de gestão',
+        subtitleParts: [
+        { text: 'Transformamos ideias em soluções digitais. Cuidamos da ', bold: false },
+        { text: 'gestão de redes sociais, marketing e comunicação', bold: true },
+        { text: ', ', bold: false },
+        { text: 'desenvolvimento de software', bold: true },
+        { text: ', ', bold: false },
+        { text: 'integração de IA', bold: true },
+        { text: ' e ', bold: false },
+        { text: 'softwares de gestão', bold: true },
+        { text: ' para fazer sua empresa crescer.', bold: false },
+        ],
+        services: [
+        { title: 'Redes Sociais & Marketing', description: 'Gestão de redes sociais, marketing e comunicação' },
+        { title: 'Desenvolvimento de Software', description: 'Soluções digitais sob medida' },
+        { title: 'Integração de IA', description: 'Inteligência artificial para o seu negócio' },
+        { title: 'Softwares de Gestão', description: 'ERP, CRM e automação empresarial' },
+        ],
+      },
     },
     blog: {
       title: 'Blog',
@@ -1031,8 +1139,26 @@ export const translations = {
       unavailable: 'غير متاح',
     },
     home: {
-      hero: 'حلول الذكاء الاصطناعي المتقدمة لعملك',
-      subtitle: 'حول عملك بالذكاء الاصطناعي',
+      hero: {
+        imageAlt: 'Facevoice AI - خدمات رقمية: التسويق عبر وسائل التواصل الاجتماعي، تطوير البرمجيات، الذكاء الاصطناعي وأنظمة الإدارة',
+        subtitleParts: [
+        { text: 'نحوّل الأفكار إلى حلول رقمية. نهتم بـ ', bold: false },
+        { text: 'إدارة وسائل التواصل الاجتماعي والتسويق والاتصال', bold: true },
+        { text: '، و', bold: false },
+        { text: 'تطوير البرمجيات', bold: true },
+        { text: '، و', bold: false },
+        { text: 'دمج الذكاء الاصطناعي', bold: true },
+        { text: '، و', bold: false },
+        { text: 'أنظمة الإدارة', bold: true },
+        { text: ' لتنمية عملك.', bold: false },
+        ],
+        services: [
+        { title: 'التواصل الاجتماعي والتسويق', description: 'إدارة وسائل التواصل الاجتماعي والتسويق والاتصال' },
+        { title: 'تطوير البرمجيات', description: 'حلول رقمية مخصصة' },
+        { title: 'دمج الذكاء الاصطناعي', description: 'الذكاء الاصطناعي لعملك' },
+        { title: 'أنظمة الإدارة', description: 'ERP وCRM وأتمتة الأعمال' },
+        ],
+      },
     },
     blog: {
       title: 'المدونة',
@@ -1191,8 +1317,26 @@ export const translations = {
       unavailable: '不可用',
     },
     home: {
-      hero: '先进的AI解决方案为您的业务',
-      subtitle: '用人工智能改变您的业务',
+      hero: {
+        imageAlt: 'Facevoice AI - 数字服务：社交媒体营销、软件开发、人工智能与企业管理系统',
+        subtitleParts: [
+        { text: '我们将创意转化为数字解决方案。我们提供', bold: false },
+        { text: '社交媒体管理、营销与传播', bold: true },
+        { text: '、', bold: false },
+        { text: '软件开发', bold: true },
+        { text: '、', bold: false },
+        { text: 'AI 集成', bold: true },
+        { text: ' 以及 ', bold: false },
+        { text: '管理系统', bold: true },
+        { text: '，助力您的企业成长。', bold: false },
+        ],
+        services: [
+        { title: '社交与营销', description: '社交媒体管理、营销与传播' },
+        { title: '软件开发', description: '定制化数字解决方案' },
+        { title: 'AI 集成', description: '为您的企业提供人工智能' },
+        { title: '管理系统', description: 'ERP、CRM 与企业自动化' },
+        ],
+      },
     },
     blog: {
       title: '博客',
