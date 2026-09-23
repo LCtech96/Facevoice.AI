@@ -134,7 +134,10 @@ export async function POST(req: NextRequest) {
 
     const result = await callGeminiWithFallback(chatMessages, GEMINI_DEFAULT_MODEL, systemPrompt, {
       temperature: 0.65,
-      maxOutputTokens: 800,
+      // 800 tagliava a meta' frase le risposte piu' articolate (con
+      // contatti, domanda di follow-up, contesto dalla knowledge base).
+      // Margine piu' ampio ora che il thinking di Gemini non lo eroda piu'.
+      maxOutputTokens: 2048,
     })
 
     if (!result.message) {

@@ -181,6 +181,16 @@ export async function callGeminiAPI(
     generationConfig: {
       temperature: options?.temperature ?? 0.7,
       maxOutputTokens: options?.maxOutputTokens ?? 8192,
+      // I modelli Gemini 3.x ragionano prima di rispondere, e quel
+      // "pensiero" pesca dallo stesso budget di maxOutputTokens della
+      // risposta visibile. Con un budget stretto (es. il widget
+      // pubblico, a 800 token) il ragionamento poteva consumarne la
+      // maggior parte e troncare il testo a meta' frase, senza che
+      // l'errore emergesse: la risposta parziale veniva restituita
+      // come se fosse completa. Qui non serve un ragionamento
+      // profondo — sono risposte da chat, non problemi complessi —
+      // quindi lo disattiviamo.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   }
 
@@ -210,6 +220,16 @@ export async function callGeminiAPI(
 
   const text = extractGeminiText(data)
   if (text) {
+    if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+      // Il testo c'e' ma e' stato interrotto a meta': meglio saperlo
+      // dai log che scoprirlo da uno screenshot di un utente.
+      console.warn(
+        `Gemini (${geminiModel}) ha troncato la risposta per limite di token (maxOutputTokens: ${
+          (requestBody.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens
+        })`
+      )
+    }
+
     return {
       message: text,
       model: (data.modelVersion as string) || geminiModel,
