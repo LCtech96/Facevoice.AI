@@ -8,6 +8,7 @@ import { useSearchParams } from 'next/navigation'
 import type { AITool } from './Feed'
 import type { User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase-client'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface AIToolCardCompactProps {
   tool: AITool
@@ -27,7 +28,7 @@ export default function AIToolCardCompact({ tool, user, onLike, onComment, onSha
   const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; user_email: string; comment: string; created_at: string; is_approved: boolean }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
   const supabase = createClient()
-  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isAdmin = isAdminEmail(user?.email)
 
   useEffect(() => {
     const verified = searchParams?.get('verified')

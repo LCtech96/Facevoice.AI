@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 // Usa SERVICE_ROLE_KEY per bypassare RLS e permettere commenti pubblici
 const supabase = createClient(
@@ -115,7 +116,7 @@ export async function POST(
     const finalUserName = userName || userEmail.split('@')[0] || 'Guest'
 
     // Verifica se è admin (luca@facevoice.ai) - auto-approva
-    const isAdmin = userEmail.trim().toLowerCase() === 'luca@facevoice.ai'
+    const isAdmin = isAdminEmail(userEmail)
 
     // Aggiungi commento (auto-approvato se admin, altrimenti non verificato)
     const { data, error } = await supabase

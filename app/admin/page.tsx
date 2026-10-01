@@ -8,6 +8,7 @@ import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface PendingComment {
   id: string
@@ -100,7 +101,7 @@ export default function AdminPage() {
   const supabase = createClient()
 
   useEffect(() => {
-    if (user?.email === 'luca@facevoice.ai') {
+    if (isAdminEmail(user?.email)) {
       loadBookings()
     }
   }, [bookingStatusFilter, user])
@@ -108,7 +109,7 @@ export default function AdminPage() {
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user || user.email !== 'luca@facevoice.ai') {
+      if (!user || !isAdminEmail(user.email)) {
         router.push('/home')
         return
       }
@@ -123,7 +124,7 @@ export default function AdminPage() {
     checkUser()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user || session.user.email !== 'luca@facevoice.ai') {
+      if (!session?.user || !isAdminEmail(session.user.email)) {
         router.push('/home')
       } else {
         setUser(session.user)

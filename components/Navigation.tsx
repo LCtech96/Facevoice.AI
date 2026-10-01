@@ -8,6 +8,7 @@ import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface NavigationProps {
   activeSection?: string | null
@@ -76,7 +77,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     router.push('/home')
   }
   
-  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isAdmin = isAdminEmail(user?.email)
   const isChatPage = pathname?.startsWith('/ai-chat')
   const { t } = useTranslation()
   
@@ -400,7 +401,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                   className="flex items-center justify-center h-9 w-9 rounded-lg bg-[var(--background-secondary)] text-[var(--text-primary)] border border-[var(--border-color)]"
                   aria-label="Account"
                 >
-                  {user.email === 'luca@facevoice.ai' ? (
+                  {isAdminEmail(user.email) ? (
                     <Shield size={18} className="text-yellow-500" />
                   ) : (
                     <UserIcon size={18} />

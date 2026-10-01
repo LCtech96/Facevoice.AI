@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -22,7 +23,7 @@ export async function POST(
     }
 
     // Verifica se è admin (luca@facevoice.ai) - auto-approva
-    const isAdmin = userEmail.trim().toLowerCase() === 'luca@facevoice.ai'
+    const isAdmin = isAdminEmail(userEmail)
 
     const { data, error } = await supabase
       .from('case_study_comments')

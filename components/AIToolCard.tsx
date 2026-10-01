@@ -7,6 +7,7 @@ import { Heart, MessageCircle, Share2, Send, X } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { AITool } from './Feed'
 import type { User } from '@supabase/supabase-js'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface AIToolCardProps {
   tool: AITool
@@ -26,7 +27,7 @@ export default function AIToolCard({ tool, user, onLike, onComment, onShare, isH
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
   const [comments, setComments] = useState<Array<{ id: string; user_id: string; user_name: string; user_email: string; comment: string; created_at: string; is_approved: boolean }>>([])
   const [loadingComments, setLoadingComments] = useState(false)
-  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isAdmin = isAdminEmail(user?.email)
 
   // Controlla se siamo tornati dalla verifica e apri/ricarica i commenti
   useEffect(() => {

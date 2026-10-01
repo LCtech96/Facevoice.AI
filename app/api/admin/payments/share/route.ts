@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -14,7 +15,7 @@ const isAdminRequest = async (req: NextRequest) => {
   if (!authHeader) return false
   const token = authHeader.replace('Bearer ', '')
   const { data } = await supabaseAuth.auth.getUser(token)
-  return data.user?.email === 'luca@facevoice.ai'
+  return isAdminEmail(data.user?.email)
 }
 
 export async function POST(req: NextRequest) {

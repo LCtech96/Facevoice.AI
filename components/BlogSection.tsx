@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface BlogPost {
   id: string
@@ -29,7 +30,7 @@ export default function BlogSection({ user }: { user: User | null }) {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isAdmin = isAdminEmail(user?.email)
   const isFischietto = user?.email === 'umberto.fischietto@gmail.com'
   const canPublish = isAdmin || isFischietto
   const supabase = createClient()
