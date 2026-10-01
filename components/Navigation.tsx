@@ -79,13 +79,16 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   
   const isAdmin = isAdminEmail(user?.email)
   const isChatPage = pathname?.startsWith('/ai-chat')
+  const isAdminArea = pathname === '/admin' || pathname?.startsWith('/admin/')
   const { t } = useTranslation()
-  
-  // Nav bar principale (sempre visibile)
+
+  // Nell'area admin le voci del sito pubblico sono solo rumore.
   const mainNavItems = [
-    { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
-    { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
-    { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
+    ...(isAdminArea ? [] : [
+      { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
+      { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
+      { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
+    ]),
     ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
   ]
 

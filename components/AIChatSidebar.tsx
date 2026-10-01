@@ -14,6 +14,7 @@ import {
   Settings2,
 } from 'lucide-react'
 import { Chat, Project, UsageState } from '@/app/ai-chat/page'
+import ChatReportButton from '@/components/ChatReportButton'
 
 interface AIChatSidebarProps {
   chats: Chat[]
@@ -470,6 +471,10 @@ export default function AIChatSidebar({
           )}
         </div>
       )}
+
+      <div className="px-2 py-2 border-t border-[var(--border-color)] shrink-0">
+        <ChatReportButton />
+      </div>
     </>
   )
 
