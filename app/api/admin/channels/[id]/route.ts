@@ -28,17 +28,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json()
 
     const updates: Record<string, unknown> = {}
-    if (typeof body?.title === 'string' && body.title.trim()) {
-      updates.title = body.title.trim()
+    if (typeof body?.display_name === 'string') {
+      updates.display_name = body.display_name.trim() || null
     }
-    if (typeof body?.content === 'string' && body.content.trim()) {
-      updates.content = body.content.trim()
+    if (typeof body?.handle === 'string') {
+      updates.handle = body.handle.trim() || null
     }
-    if ('category' in (body || {})) {
-      updates.category = body.category?.trim() || null
+    if (typeof body?.status === 'string') {
+      if (!['not_connected', 'in_progress', 'connected', 'error'].includes(body.status)) {
+        return NextResponse.json({ error: 'Stato non valido' }, { status: 400 })
+      }
+      updates.status = body.status
     }
-    if (typeof body?.is_active === 'boolean') {
-      updates.is_active = body.is_active
+    if (typeof body?.notes === 'string') {
+      updates.notes = body.notes.trim() || null
     }
 
     if (Object.keys(updates).length === 0) {
@@ -46,7 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const { data, error } = await supabaseAdmin
-      .from('ai_knowledge')
+      .from('social_channels')
       .update(updates)
       .eq('id', id)
       .select()
@@ -56,38 +59,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
     if (!data) {
-      return NextResponse.json({ error: 'Voce non trovata' }, { status: 404 })
+      return NextResponse.json({ error: 'Canale non trovato' }, { status: 404 })
     }
 
-    return NextResponse.json({ item: data })
+    return NextResponse.json({ channel: data })
   } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || 'Errore nell\'aggiornamento' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    if (!(await isAdminRequest(req))) {
-      return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-    }
-
-    const { id } = await params
-    const { error } = await supabaseAdmin
-      .from('ai_knowledge')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: error.message || 'Errore nell\'eliminazione' },
+      { error: error.message || 'Errore nell\'aggiornamento del canale' },
       { status: 500 }
     )
   }

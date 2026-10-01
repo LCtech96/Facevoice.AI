@@ -18,6 +18,11 @@ const isAdminRequest = async (req: NextRequest) => {
   return isAdminEmail(data.user?.email)
 }
 
+/**
+ * Stato di avanzamento dei canali social, non un'integrazione vera.
+ * Niente credenziali qui: solo a che punto e' la richiesta di accesso
+ * presso ogni piattaforma, per tenerne traccia senza un foglio a parte.
+ */
 export async function GET(req: NextRequest) {
   try {
     if (!(await isAdminRequest(req))) {
@@ -25,57 +30,18 @@ export async function GET(req: NextRequest) {
     }
 
     const { data, error } = await supabaseAdmin
-      .from('ai_knowledge')
+      .from('social_channels')
       .select('*')
-      .order('created_at', { ascending: false })
+      .order('platform', { ascending: true })
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ items: data || [] })
+    return NextResponse.json({ channels: data || [] })
   } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || 'Errore nel recuperare la conoscenza AI' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    if (!(await isAdminRequest(req))) {
-      return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-    }
-
-    const { title, content, category } = await req.json()
-
-    if (!title || !content) {
-      return NextResponse.json(
-        { error: 'Titolo e contenuto sono obbligatori' },
-        { status: 400 }
-      )
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('ai_knowledge')
-      .insert({
-        title: title.trim(),
-        content: content.trim(),
-        category: category?.trim() || null,
-        is_active: true,
-      })
-      .select()
-      .single()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({ item: data })
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: error.message || 'Errore nel creare la conoscenza AI' },
+      { error: error.message || 'Errore nel recuperare i canali' },
       { status: 500 }
     )
   }

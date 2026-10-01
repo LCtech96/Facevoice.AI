@@ -373,10 +373,13 @@ CREATE TABLE IF NOT EXISTS public.ai_knowledge (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title      TEXT NOT NULL,
   content    TEXT NOT NULL,
+  category   TEXT,
   is_active  BOOLEAN DEFAULT true NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_ai_knowledge_category ON public.ai_knowledge(category);
 
 ALTER TABLE public.ai_knowledge ENABLE ROW LEVEL SECURITY;
 
@@ -388,6 +391,79 @@ DROP TRIGGER IF EXISTS update_ai_knowledge_updated_at ON public.ai_knowledge;
 CREATE TRIGGER update_ai_knowledge_updated_at
   BEFORE UPDATE ON public.ai_knowledge
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+-- ---------------------------------------------------------------------
+-- 9bis. CANALI SOCIAL E POST PROGRAMMATI
+-- ---------------------------------------------------------------------
+-- Vedi supabase/migrations/2026-10-01_ai_control_center.sql per il
+-- contesto. social_channels tiene solo stato e note, non credenziali:
+-- quelle arriveranno con una migrazione a parte quando esiste
+-- un'integrazione vera da collegare.
+CREATE TABLE IF NOT EXISTS public.social_channels (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  platform     TEXT NOT NULL UNIQUE
+               CHECK (platform IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedin', 'x')),
+  display_name TEXT,
+  handle       TEXT,
+  status       TEXT NOT NULL DEFAULT 'not_connected'
+               CHECK (status IN ('not_connected', 'in_progress', 'connected', 'error')),
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+DROP TRIGGER IF EXISTS update_social_channels_updated_at ON public.social_channels;
+CREATE TRIGGER update_social_channels_updated_at
+  BEFORE UPDATE ON public.social_channels
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS public.scheduled_posts (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Riferimento logico a social_channels.platform, non FK: si puo'
+  -- programmare un post per una piattaforma prima ancora che il canale
+  -- sia stato approvato.
+  platforms      TEXT[] NOT NULL DEFAULT '{}',
+  caption        TEXT NOT NULL DEFAULT '',
+  media_urls     TEXT[] NOT NULL DEFAULT '{}',
+  scheduled_at   TIMESTAMPTZ,
+  status         TEXT NOT NULL DEFAULT 'draft'
+                 CHECK (status IN ('draft', 'scheduled', 'published', 'failed', 'canceled')),
+  published_at   TIMESTAMPTZ,
+  error_message  TEXT,
+  created_by     TEXT NOT NULL,
+  created_at     TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at     TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_posts_status       ON public.scheduled_posts(status);
+CREATE INDEX IF NOT EXISTS idx_scheduled_posts_scheduled_at ON public.scheduled_posts(scheduled_at);
+
+DROP TRIGGER IF EXISTS update_scheduled_posts_updated_at ON public.scheduled_posts;
+CREATE TRIGGER update_scheduled_posts_updated_at
+  BEFORE UPDATE ON public.scheduled_posts
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+ALTER TABLE public.social_channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scheduled_posts ENABLE ROW LEVEL SECURITY;
+
+-- Difesa in profondita': l'accesso vero passa dalle API route con
+-- SERVICE_ROLE_KEY, gia' verificate da isAdminEmail() lato server.
+DROP POLICY IF EXISTS "social_channels_admin_only" ON public.social_channels;
+CREATE POLICY "social_channels_admin_only"
+  ON public.social_channels FOR ALL
+  USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
+  WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
+
+DROP POLICY IF EXISTS "scheduled_posts_admin_only" ON public.scheduled_posts;
+CREATE POLICY "scheduled_posts_admin_only"
+  ON public.scheduled_posts FOR ALL
+  USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
+  WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
+
+INSERT INTO public.social_channels (platform) VALUES
+  ('whatsapp'), ('instagram'), ('facebook'), ('tiktok'), ('linkedin'), ('x')
+ON CONFLICT (platform) DO NOTHING;
 
 
 -- ---------------------------------------------------------------------
