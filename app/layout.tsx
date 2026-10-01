@@ -47,11 +47,11 @@ export const metadata: Metadata = {
   ],
   icons: {
     icon: [
-      { url: '/favicon.png', type: 'image/png' },
       { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
     ],
-    shortcut: '/favicon.png',
-    apple: '/favicon.png',
+    shortcut: '/icon-180.png',
+    apple: { url: '/icon-180.png', sizes: '180x180' },
   },
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
