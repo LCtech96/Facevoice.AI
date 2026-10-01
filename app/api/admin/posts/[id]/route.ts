@@ -18,6 +18,8 @@ const isAdminRequest = async (req: NextRequest) => {
   return isAdminEmail(data.user?.email)
 }
 
+const VALID_PLATFORMS = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedin', 'x']
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     if (!(await isAdminRequest(req))) {
@@ -28,17 +30,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json()
 
     const updates: Record<string, unknown> = {}
-    if (typeof body?.title === 'string' && body.title.trim()) {
-      updates.title = body.title.trim()
+    if (typeof body?.caption === 'string') {
+      updates.caption = body.caption.trim()
     }
-    if (typeof body?.content === 'string' && body.content.trim()) {
-      updates.content = body.content.trim()
+    if (Array.isArray(body?.platforms)) {
+      updates.platforms = body.platforms.filter(
+        (p: unknown) => typeof p === 'string' && VALID_PLATFORMS.includes(p)
+      )
     }
-    if ('category' in (body || {})) {
-      updates.category = body.category?.trim() || null
+    if (Array.isArray(body?.media_urls)) {
+      updates.media_urls = body.media_urls.filter((u: unknown) => typeof u === 'string' && u.trim())
     }
-    if (typeof body?.is_active === 'boolean') {
-      updates.is_active = body.is_active
+    if ('scheduled_at' in (body || {})) {
+      updates.scheduled_at = body.scheduled_at || null
+      // Rimettere o togliere una data riporta coerente lo stato, a meno
+      // che il post non sia gia' stato pubblicato o annullato.
+      if (!['published', 'canceled', 'failed'].includes(body.currentStatus)) {
+        updates.status = updates.scheduled_at ? 'scheduled' : 'draft'
+      }
+    }
+    if (body?.status === 'canceled') {
+      updates.status = 'canceled'
     }
 
     if (Object.keys(updates).length === 0) {
@@ -46,7 +58,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const { data, error } = await supabaseAdmin
-      .from('ai_knowledge')
+      .from('scheduled_posts')
       .update(updates)
       .eq('id', id)
       .select()
@@ -56,13 +68,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
     if (!data) {
-      return NextResponse.json({ error: 'Voce non trovata' }, { status: 404 })
+      return NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
     }
 
-    return NextResponse.json({ item: data })
+    return NextResponse.json({ post: data })
   } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || 'Errore nell\'aggiornamento' },
+      { error: error.message || 'Errore nell\'aggiornamento del post' },
       { status: 500 }
     )
   }
@@ -75,10 +87,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
 
     const { id } = await params
-    const { error } = await supabaseAdmin
-      .from('ai_knowledge')
-      .delete()
-      .eq('id', id)
+    const { error } = await supabaseAdmin.from('scheduled_posts').delete().eq('id', id)
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
