@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Send } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 interface CaseStudyCommentsProps {
   caseStudyId: string
@@ -26,7 +27,7 @@ export default function CaseStudyComments({ caseStudyId, user }: CaseStudyCommen
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const isAdmin = user?.email === 'luca@facevoice.ai'
+  const isAdmin = isAdminEmail(user?.email)
 
   useEffect(() => {
     loadComments()

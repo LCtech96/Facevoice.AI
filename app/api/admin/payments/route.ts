@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -9,17 +10,18 @@ const supabaseAuth = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key')
 
-const isAdminRequest = async (req: NextRequest) => {
+/** null = non autorizzato; altrimenti l'email dell'admin autenticato. */
+const getAdminEmail = async (req: NextRequest): Promise<string | null> => {
   const authHeader = req.headers.get('authorization')
-  if (!authHeader) return false
+  if (!authHeader) return null
   const token = authHeader.replace('Bearer ', '')
   const { data } = await supabaseAuth.auth.getUser(token)
-  return data.user?.email === 'luca@facevoice.ai'
+  return isAdminEmail(data.user?.email) ? data.user!.email! : null
 }
 
 export async function GET(req: NextRequest) {
   try {
-    if (!(await isAdminRequest(req))) {
+    if (!(await getAdminEmail(req))) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
@@ -43,7 +45,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!(await isAdminRequest(req))) {
+    const adminEmail = await getAdminEmail(req)
+    if (!adminEmail) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
@@ -81,7 +84,7 @@ export async function POST(req: NextRequest) {
         entry_date,
         entry_time,
         due_date,
-        created_by: 'luca@facevoice.ai',
+        created_by: adminEmail,
       })
       .select()
       .single()
