@@ -135,6 +135,11 @@ export default function AdminUsagePage() {
       }
 
       setNewEmail('')
+      if (data.emailSent) {
+        alert(`Dipendente aggiunto. Email di benvenuto inviata a ${email}.`)
+      } else {
+        alert('Dipendente aggiunto, ma l’email di benvenuto non è stata inviata (era già abilitato, oppure invio email non configurato).')
+      }
       load()
     } finally {
       setAdding(false)
