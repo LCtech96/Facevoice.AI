@@ -72,18 +72,19 @@ const PLATFORM_META: Record<
     label: 'WhatsApp',
     icon: MessageCircle,
     requirement:
-      'Numero WhatsApp Business verificato + fornitore (Meta Cloud API o Twilio/360dialog). Costo a conversazione.',
+      'Integrato (app Meta FVoiceAI). Finché l’app non è pubblicata risponde solo ai numeri di test; per i clienti veri servono numero dedicato e verifica aziendale.',
   },
   instagram: {
     label: 'Instagram',
     icon: Instagram,
     requirement:
-      'Account Instagram Business collegato a una Pagina Facebook + app sviluppatore Meta approvata per i permessi di messaggistica.',
+      'Integrato: Direct e commenti di @facevoice.ai. Finché l’app Meta non è pubblicata risponde solo agli account con un ruolo sull’app.',
   },
   facebook: {
     label: 'Facebook',
     icon: Facebook,
-    requirement: 'Pagina Facebook Business + app sviluppatore Meta approvata (stessa app di Instagram).',
+    requirement:
+      'Integrato: Messenger e commenti della Pagina Facevoiceai. Finché l’app Meta non è pubblicata risponde solo agli account con un ruolo sull’app.',
   },
   tiktok: {
     label: 'TikTok',
@@ -546,10 +547,11 @@ function ChannelsTab({
   return (
     <div>
       <p className="text-sm text-[var(--text-secondary)] mb-5">
-        Qui si traccia solo <strong className="text-[var(--text-primary)]">a che punto è</strong>{' '}
-        la richiesta di accesso a ogni piattaforma — non ci sono ancora
-        integrazioni reali. Nessuna di queste piattaforme risponde o pubblica
-        da sola finché non viene collegata un&apos;app approvata.
+        Lo stato <strong className="text-[var(--text-primary)]">Connesso</strong> è
+        l&apos;interruttore dell&apos;agente AI: su WhatsApp, Facebook (Messenger e
+        commenti) e Instagram (Direct e commenti) risponde in automatico usando la
+        Memoria AI. Con qualsiasi altro stato i messaggi vengono solo salvati.
+        LinkedIn, TikTok e X non sono ancora integrati.
       </p>
 
       <div className="space-y-3">
