@@ -19,7 +19,7 @@ const NON_TEXT_REPLY =
   'Grazie per il messaggio! Al momento posso leggere solo messaggi di testo: scrivimi pure qui cosa ti serve e ti rispondo subito.'
 
 export function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
-  const secret = process.env.META_APP_SECRET
+  const secret = process.env.META_APP_SECRET?.trim()
   if (!secret || !signatureHeader?.startsWith('sha256=')) return false
 
   const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
