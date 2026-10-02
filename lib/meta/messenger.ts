@@ -3,6 +3,7 @@ import { fetchContactName, getPageToken } from '@/lib/meta/graph'
 
 // Messenger e i Direct di Instagram arrivano con lo stesso formato ("messaging").
 // I commenti arrivano come "changes": "feed" su Facebook, "comments" su Instagram.
+// Alcuni invii Instagram (es. il "Test" della dashboard Meta) usano "changes" con field "messages".
 
 type MessagingEvent = {
   sender?: { id?: string }
@@ -12,12 +13,12 @@ type MessagingEvent = {
 
 type CommentChange = {
   field?: string
-  value?: {
+  value?: MessagingEvent & {
     item?: string
     verb?: string
     comment_id?: string
     id?: string
-    message?: string
+    message?: string | MessagingEvent['message']
     text?: string
     from?: { id?: string; name?: string; username?: string }
   }
@@ -58,7 +59,7 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
   if (!isFacebookComment && !isInstagramComment) return
 
   const commentId = value.comment_id || value.id
-  const text = (value.message || value.text || '').trim()
+  const text = (typeof value.message === 'string' ? value.message : value.text || '').trim()
   const authorId = value.from?.id
   if (!commentId || !text || !authorId) return
 
@@ -91,6 +92,13 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
     }
     for (const change of entry.changes || []) {
       try {
+        if (change.field === 'messages') {
+          const value = change.value
+          if (value && typeof value.message === 'object') {
+            await handleEvent(platform, entry.id, { sender: value.sender, recipient: value.recipient, message: value.message })
+          }
+          continue
+        }
         await handleComment(platform, entry.id, change)
       } catch (error) {
         console.error(`${platform} webhook: errore sul commento`, change.value?.comment_id || change.value?.id, error)
