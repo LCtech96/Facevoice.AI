@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
-import { handleWhatsAppWebhook, verifyMetaSignature } from '@/lib/meta/whatsapp'
+import { verifyMetaSignature } from '@/lib/meta/agent'
+import { handleWhatsAppWebhook, type WhatsAppPayload } from '@/lib/meta/whatsapp'
+import { handleMessagingWebhook, type MessagingPayload } from '@/lib/meta/messenger'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +29,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse('Invalid signature', { status: 401 })
   }
 
-  let payload: unknown
+  let payload: { object?: string }
   try {
     payload = JSON.parse(rawBody)
   } catch {
@@ -35,7 +37,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Meta vuole un 200 rapido; la risposta AI parte dopo, senza farlo aspettare.
-  after(() => handleWhatsAppWebhook(payload as Parameters<typeof handleWhatsAppWebhook>[0]))
+  if (payload.object === 'whatsapp_business_account') {
+    after(() => handleWhatsAppWebhook(payload as WhatsAppPayload))
+  } else if (payload.object === 'page' || payload.object === 'instagram') {
+    after(() => handleMessagingWebhook(payload as MessagingPayload))
+  }
 
   return NextResponse.json({ received: true })
 }
