@@ -403,7 +403,7 @@ CREATE TRIGGER update_ai_knowledge_updated_at
 CREATE TABLE IF NOT EXISTS public.social_channels (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   platform     TEXT NOT NULL UNIQUE
-               CHECK (platform IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedin', 'x')),
+               CHECK (platform IN ('whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'linkedin', 'x')),
   display_name TEXT,
   handle       TEXT,
   status       TEXT NOT NULL DEFAULT 'not_connected'
@@ -473,7 +473,7 @@ ON CONFLICT (platform) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.social_messages (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   platform      TEXT NOT NULL
-                CHECK (platform IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedin', 'x')),
+                CHECK (platform IN ('whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'linkedin', 'x')),
   contact_id    TEXT NOT NULL,
   contact_name  TEXT,
   direction     TEXT NOT NULL CHECK (direction IN ('in', 'out')),

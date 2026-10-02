@@ -17,12 +17,13 @@ import {
   X,
   Link2,
   Unlink,
+  Mail,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 
-type Platform = 'whatsapp' | 'facebook' | 'instagram'
+type Platform = 'whatsapp' | 'facebook' | 'instagram' | 'email'
 
 type Conversation = {
   key: string
@@ -55,6 +56,7 @@ const PLATFORM: Record<Platform, { label: string; icon: typeof Instagram; color:
   whatsapp: { label: 'WhatsApp', icon: MessageCircle, color: '#25D366' },
   facebook: { label: 'Messenger', icon: Facebook, color: '#0866FF' },
   instagram: { label: 'Instagram', icon: Instagram, color: '#E1306C' },
+  email: { label: 'Email', icon: Mail, color: '#EA4335' },
 }
 
 const POLL_MS = 15_000
@@ -481,7 +483,7 @@ function InboxPage() {
           <div>
             <h1 className="text-2xl font-bold text-[var(--text-primary)]">Messaggi</h1>
             <p className="text-sm text-[var(--text-secondary)]">
-              WhatsApp, Messenger e Instagram in un posto solo.
+              WhatsApp, Messenger, Instagram ed email in un posto solo.
               {totals.pending > 0 && (
                 <span className="ml-1 text-[#FF9500] font-medium">
                   {totals.pending === 1 ? '1 risposta AI da approvare.' : `${totals.pending} risposte AI da approvare.`}
