@@ -513,18 +513,18 @@ export default function AdminPage() {
   const totalPending = toolComments.length + caseComments.length
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       <Navigation />
-      <div className="pt-20 md:pt-24">
-        <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="pt-20 md:pt-24 pb-24 md:pb-0">
+        <div className="container mx-auto px-4 py-6 md:py-8 max-w-6xl">
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-3">
-              <Shield className="w-8 h-8 text-yellow-500" />
-              <div>
-                <h1 className="text-3xl font-bold text-[var(--text-primary)]">Pannello Admin</h1>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div className="flex items-start gap-3 min-w-0">
+              <Shield className="w-7 h-7 md:w-8 md:h-8 text-yellow-500 shrink-0 mt-1" />
+              <div className="min-w-0">
+                <h1 className="text-2xl md:text-3xl font-bold text-[var(--text-primary)]">Pannello Admin</h1>
                 <p className="text-[var(--text-secondary)]">Gestisci commenti e prenotazioni</p>
-                <div className="flex flex-wrap gap-x-4 mt-2">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
                   <a
                     href="/admin/inbox"
                     className="text-sm text-[var(--accent-blue)] hover:underline"
@@ -555,7 +555,7 @@ export default function AdminPage() {
                 loadUsers()
               }}
               disabled={loadingComments || loadingBookings}
-              className="px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2 disabled:opacity-50"
+              className="self-start sm:self-auto px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg hover:bg-[var(--accent-blue)]/90 flex items-center gap-2 disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${(loadingComments || loadingBookings) ? 'animate-spin' : ''}`} />
               Aggiorna
@@ -607,11 +607,11 @@ export default function AdminPage() {
                 {toolComments.map((comment) => (
                   <div
                     key={comment.id}
-                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6"
                   >
                     <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
+                      <div className="flex-1 min-w-0 break-words">
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
                           <span className="font-semibold text-[var(--text-primary)]">{comment.user_name}</span>
                           <span className="text-sm text-[var(--text-secondary)]">{comment.user_email}</span>
                           <span className="px-2 py-0.5 bg-orange-500/20 text-orange-600 rounded text-xs">
@@ -623,7 +623,7 @@ export default function AdminPage() {
                         </p>
                         <p className="text-[var(--text-primary)] leading-relaxed">{comment.comment}</p>
                       </div>
-                      <div className="flex gap-2 ml-4">
+                      <div className="flex gap-2 ml-3 shrink-0">
                         <button
                           onClick={() => handleApproveToolComment(comment.id)}
                           className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-600 rounded-lg transition-colors"
@@ -659,11 +659,11 @@ export default function AdminPage() {
                 {caseComments.map((comment) => (
                   <div
                     key={comment.id}
-                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6"
                   >
                     <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
+                      <div className="flex-1 min-w-0 break-words">
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
                           <span className="font-semibold text-[var(--text-primary)]">{comment.user_name}</span>
                           <span className="text-sm text-[var(--text-secondary)]">{comment.user_email}</span>
                           <span className="px-2 py-0.5 bg-purple-500/20 text-purple-600 rounded text-xs">
@@ -675,7 +675,7 @@ export default function AdminPage() {
                         </p>
                         <p className="text-[var(--text-primary)] leading-relaxed">{comment.comment}</p>
                       </div>
-                      <div className="flex gap-2 ml-4">
+                      <div className="flex gap-2 ml-3 shrink-0">
                         <button
                           onClick={() => handleApproveCaseComment(comment.id)}
                           className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-600 rounded-lg transition-colors"
@@ -712,12 +712,12 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             className="mt-12"
           >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <h2 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Calendar className="w-6 h-6" />
                 {t('admin.bookings')} ({bookings.length})
               </h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {['all', 'pending', 'contacted', 'completed', 'cancelled'].map((status) => (
                   <button
                     key={status}
@@ -743,11 +743,11 @@ export default function AdminPage() {
                 {bookings.map((booking) => (
                   <div
                     key={booking.id}
-                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6"
                   >
                     <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
+                      <div className="flex-1 min-w-0 break-words">
+                        <div className="flex flex-wrap items-center gap-3 mb-2">
                           <span className="text-lg font-semibold text-[var(--text-primary)]">{booking.name}</span>
                           <span className={`px-2 py-0.5 rounded text-xs ${
                             booking.status === 'pending' ? 'bg-orange-500/20 text-orange-600' :
@@ -779,7 +779,7 @@ export default function AdminPage() {
                           <p className="text-[var(--text-secondary)] leading-relaxed">{booking.service}</p>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-2 ml-4">
+                      <div className="flex flex-col gap-2 ml-3 shrink-0">
                         {booking.status === 'pending' && (
                           <>
                             <button
@@ -847,8 +847,8 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             className="mt-12"
           >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <h2 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <MessageCircle className="w-6 h-6" />
                 {t('admin.aiKnowledge')}
               </h2>
@@ -862,7 +862,7 @@ export default function AdminPage() {
             </div>
 
             {showKnowledgeForm && (
-              <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+              <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6 mb-6">
                 <div className="grid grid-cols-1 gap-4">
                   <input
                     type="text"
@@ -896,10 +896,10 @@ export default function AdminPage() {
                 {knowledgeItems.map((item) => (
                   <div
                     key={item.id}
-                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6"
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0 break-words">
                         <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
                           {item.title}
                         </h3>
@@ -930,14 +930,14 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             className="mt-12"
           >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <h2 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Wallet className="w-6 h-6" />
                 {t('admin.payments')}
               </h2>
             </div>
 
-            <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6 mb-6">
+            <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6 mb-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   type="text"
@@ -1027,10 +1027,10 @@ export default function AdminPage() {
                 {payments.map((payment) => (
                   <div
                     key={payment.id}
-                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-6"
+                    className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4 md:p-6"
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0 break-words">
                         <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
                           {payment.collaborator_name || payment.collaborator_email}
                         </h3>
@@ -1096,8 +1096,8 @@ export default function AdminPage() {
             animate={{ opacity: 1, y: 0 }}
             className="mt-12"
           >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <h2 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] flex items-center gap-3">
                 <Users className="w-6 h-6" />
                 {t('admin.users')} ({users.length})
               </h2>
