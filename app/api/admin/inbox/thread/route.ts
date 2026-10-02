@@ -2,81 +2,88 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { deliver, type SocialPlatform } from '@/lib/meta/agent'
+import { resolveKey, type Member } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
 
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
+const SELECT =
+  'id, platform, contact_id, kind, direction, body, status, error_message, contact_name, reply_to, created_at'
 
-function readParams(req: NextRequest) {
-  const platform = req.nextUrl.searchParams.get('platform') || ''
-  const contact = req.nextUrl.searchParams.get('contact') || ''
-  return PLATFORMS.includes(platform) && contact ? { platform, contact } : null
+async function readMembers(req: NextRequest): Promise<Member[]> {
+  const key = req.nextUrl.searchParams.get('c') || ''
+  const members = key ? await resolveKey(key) : []
+  return members.filter((m) => PLATFORMS.includes(m.platform) && m.contactId)
 }
 
-/** Messaggi di una conversazione; segna come letti quelli in arrivo. */
+function membersFilter(members: Member[]) {
+  return members.map((m) => `and(platform.eq.${m.platform},contact_id.eq.${m.contactId})`).join(',')
+}
+
+/** Messaggi della conversazione (tutti i canali della persona); segna come letti quelli in arrivo. */
 export async function GET(req: NextRequest) {
   if (!(await getAdminEmail(req))) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
-  const p = readParams(req)
-  if (!p) return NextResponse.json({ error: 'Parametri mancanti' }, { status: 400 })
+  const members = await readMembers(req)
+  if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
   const { data, error } = await supabaseAdmin
     .from('social_messages')
-    .select('id, kind, direction, body, status, error_message, contact_name, reply_to, created_at')
-    .eq('platform', p.platform)
-    .eq('contact_id', p.contact)
+    .select(SELECT)
+    .or(membersFilter(members))
     .order('created_at', { ascending: true })
-    .limit(500)
+    .limit(800)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   await supabaseAdmin
     .from('social_messages')
     .update({ read_at: new Date().toISOString() })
-    .eq('platform', p.platform)
-    .eq('contact_id', p.contact)
+    .or(membersFilter(members))
     .eq('direction', 'in')
     .is('read_at', null)
 
-  return NextResponse.json({ messages: data || [] })
+  return NextResponse.json({ messages: data || [], members })
 }
 
-/** Risposta scritta a mano dall'admin (messaggio privato). */
+/** Risposta scritta a mano. body: { text, platform? } — senza platform si usa l'ultimo canale privato usato. */
 export async function POST(req: NextRequest) {
   if (!(await getAdminEmail(req))) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
-  const p = readParams(req)
-  if (!p) return NextResponse.json({ error: 'Parametri mancanti' }, { status: 400 })
+  const members = await readMembers(req)
+  if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
   const text = String(body?.text || '').trim().slice(0, 1900)
   if (!text) return NextResponse.json({ error: 'Scrivi un messaggio' }, { status: 400 })
 
-  // Il numero/Pagina da cui rispondere e' quello che ha ricevuto l'ultimo messaggio privato.
-  const { data: last } = await supabaseAdmin
-    .from('social_messages')
-    .select('channel_account_id, contact_name')
-    .eq('platform', p.platform)
-    .eq('contact_id', p.contact)
-    .eq('direction', 'in')
-    .eq('kind', 'message')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const candidates = body?.platform ? members.filter((m) => m.platform === body.platform) : members
+
+  const { data: last } = candidates.length
+    ? await supabaseAdmin
+        .from('social_messages')
+        .select('platform, contact_id, channel_account_id, contact_name')
+        .or(membersFilter(candidates))
+        .eq('direction', 'in')
+        .eq('kind', 'message')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null }
 
   if (!last) {
     return NextResponse.json(
-      { error: 'Questo contatto non ti ha mai scritto in privato: si può rispondere solo ai commenti.' },
+      { error: 'Su questo canale il contatto non ti ha mai scritto in privato: puoi rispondere solo ai suoi commenti.' },
       { status: 400 }
     )
   }
 
   const target = {
-    platform: p.platform as SocialPlatform,
+    platform: last.platform as SocialPlatform,
     kind: 'message' as const,
-    contact_id: p.contact,
+    contact_id: last.contact_id,
     channel_account_id: last.channel_account_id,
     reply_to: null,
   }
@@ -93,7 +100,7 @@ export async function POST(req: NextRequest) {
       status: sent.error ? 'failed' : 'sent',
       error_message: sent.error ?? null,
     })
-    .select('id, kind, direction, body, status, error_message, contact_name, reply_to, created_at')
+    .select(SELECT)
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

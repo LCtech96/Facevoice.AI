@@ -1,5 +1,6 @@
 'use client'
 
+import { isAdminEmail } from '@/lib/admin-auth'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -8,6 +9,10 @@ import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
 type AuthMode = 'signin' | 'signup' | 'verify' | 'forgot'
+
+
+/** Gli admin entrano nella dashboard gestionale, il resto del team nella chat interna. */
+const homeFor = (email?: string | null) => (isAdminEmail(email) ? '/admin/inbox' : '/ai-chat')
 
 export default function AuthPage() {
   const router = useRouter()
@@ -30,7 +35,7 @@ export default function AuthPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setUser(user)
-        router.push('/ai-chat')
+        router.push(homeFor(user.email))
       }
     }
     checkUser()
@@ -38,7 +43,7 @@ export default function AuthPage() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser(session.user)
-        router.push('/ai-chat')
+        router.push(homeFor(session.user.email))
       }
     })
 
@@ -147,7 +152,7 @@ export default function AuthPage() {
       setMessage('Email verificata e accesso completato! Reindirizzamento in corso...')
       
       setTimeout(() => {
-        router.push('/ai-chat')
+        router.push(homeFor(email))
       }, 1500)
     } catch (err: any) {
       setError(err.message || 'Codice non valido. Riprova.')
@@ -244,7 +249,7 @@ export default function AuthPage() {
       if (data.user) {
         setMessage('Accesso completato! Reindirizzamento in corso...')
         setTimeout(() => {
-          router.push('/ai-chat')
+          router.push(homeFor(data.user?.email))
         }, 1000)
       }
     } catch (err: any) {

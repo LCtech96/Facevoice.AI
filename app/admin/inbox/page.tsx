@@ -15,6 +15,8 @@ import {
   Search,
   Send,
   X,
+  Link2,
+  Unlink,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
@@ -23,8 +25,9 @@ import { getAccessToken } from '@/lib/session-token'
 type Platform = 'whatsapp' | 'facebook' | 'instagram'
 
 type Conversation = {
-  platform: Platform
-  contactId: string
+  key: string
+  members: { platform: string; contactId: string; contactName: string | null }[]
+  platforms: string[]
   contactName: string | null
   lastMessage: string
   lastDirection: 'in' | 'out'
@@ -33,10 +36,13 @@ type Conversation = {
   unread: number
   pending: number
   hasComments: boolean
+  linked: boolean
+  suggestion?: { key: string; name: string; platforms: string[] }
 }
 
 type Message = {
   id: string
+  platform: string
   kind: 'message' | 'comment'
   direction: 'in' | 'out'
   body: string
@@ -182,6 +188,23 @@ function PushToggle() {
 // Pagina
 // ---------------------------------------------------------------------
 
+function PlatformBadge({ platform, size = 'sm' }: { platform: string; size?: 'sm' | 'xs' }) {
+  const meta = PLATFORM[platform as Platform]
+  if (!meta) return null
+  const Icon = meta.icon
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full font-medium ${
+        size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]'
+      }`}
+      style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
+    >
+      <Icon className={size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
+      {meta.label}
+    </span>
+  )
+}
+
 function InboxPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -193,18 +216,23 @@ function InboxPage() {
   const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'unread'>('all')
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<{ platform: Platform; contactId: string } | null>(null)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [reply, setReply] = useState('')
+  const [replyPlatform, setReplyPlatform] = useState<string>('')
   const [notice, setNotice] = useState<string | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const [linking, setLinking] = useState(false)
+  const [linkQuery, setLinkQuery] = useState('')
+  const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const platform = searchParams.get('platform') as Platform | null
+    const key = searchParams.get('c')
+    const platform = searchParams.get('platform')
     const contact = searchParams.get('contact')
-    if (platform && contact && PLATFORM[platform]) setSelected({ platform, contactId: contact })
+    if (key) setSelectedKey(key)
+    else if (platform && contact) setSelectedKey(`${platform}:${contact}`)
   }, [searchParams])
 
   const loadConversations = useCallback(async () => {
@@ -222,13 +250,11 @@ function InboxPage() {
   }, [platformFilter, statusFilter, query])
 
   const loadThread = useCallback(async () => {
-    if (!selected) return
-    const res = await authFetch(
-      `/api/admin/inbox/thread?platform=${selected.platform}&contact=${encodeURIComponent(selected.contactId)}`
-    )
+    if (!selectedKey) return
+    const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(selectedKey)}`)
     const data = await res.json()
     if (res.ok) setMessages(data.messages || [])
-  }, [selected])
+  }, [selectedKey])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -243,6 +269,8 @@ function InboxPage() {
 
   useEffect(() => {
     setMessages([])
+    setReplyPlatform('')
+    setLinking(false)
     loadThread()
   }, [loadThread])
 
@@ -255,9 +283,16 @@ function InboxPage() {
     return () => clearInterval(id)
   }, [loadConversations, loadThread])
 
+  // Scorre solo l'area messaggi: scrollIntoView spostava l'intera pagina su mobile.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end' })
+    const el = threadRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages.length])
+
+  const select = (key: string | null) => {
+    setSelectedKey(key)
+    router.replace(key ? `/admin/inbox?c=${encodeURIComponent(key)}` : '/admin/inbox', { scroll: false })
+  }
 
   const act = async (message: Message, action: 'approve' | 'reject') => {
     setBusyId(message.id)
@@ -276,15 +311,22 @@ function InboxPage() {
     }
   }
 
+  const current = selectedKey ? conversations.find((c) => c.key === selectedKey) : undefined
+  const privatePlatforms = Array.from(
+    new Set(messages.filter((m) => m.direction === 'in' && m.kind === 'message').map((m) => m.platform))
+  )
+  const lastPrivate = [...messages].reverse().find((m) => m.direction === 'in' && m.kind === 'message')
+  const activeReplyPlatform = replyPlatform || lastPrivate?.platform || ''
+
   const sendManual = async () => {
-    if (!selected || !reply.trim()) return
+    if (!selectedKey || !reply.trim()) return
     setBusyId('manual')
     setNotice(null)
     try {
-      const res = await authFetch(
-        `/api/admin/inbox/thread?platform=${selected.platform}&contact=${encodeURIComponent(selected.contactId)}`,
-        { method: 'POST', body: JSON.stringify({ text: reply }) }
-      )
+      const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(selectedKey)}`, {
+        method: 'POST',
+        body: JSON.stringify({ text: reply, platform: activeReplyPlatform || undefined }),
+      })
       const data = await res.json()
       if (data.message) setMessages((list) => [...list, data.message])
       if (res.ok) setReply('')
@@ -295,16 +337,28 @@ function InboxPage() {
     }
   }
 
-  const openConversation = (c: Conversation) => {
-    setSelected({ platform: c.platform, contactId: c.contactId })
-    router.replace(`/admin/inbox?platform=${c.platform}&contact=${encodeURIComponent(c.contactId)}`, {
-      scroll: false,
+  const link = async (otherKey: string) => {
+    if (!selectedKey) return
+    const res = await authFetch('/api/admin/inbox/link', {
+      method: 'POST',
+      body: JSON.stringify({ a: selectedKey, b: otherKey }),
     })
+    const data = await res.json()
+    if (!res.ok) return setNotice(data.error || 'Collegamento non riuscito')
+    setLinking(false)
+    select(data.key)
+    loadConversations()
   }
 
-  const current = selected
-    ? conversations.find((c) => c.platform === selected.platform && c.contactId === selected.contactId)
-    : null
+  const unlink = async (platform: string, contactId: string) => {
+    const res = await authFetch('/api/admin/inbox/link', {
+      method: 'DELETE',
+      body: JSON.stringify({ platform, contactId }),
+    })
+    if (!res.ok) return setNotice('Separazione non riuscita')
+    select(null)
+    loadConversations()
+  }
 
   if (authorized === false) {
     return (
@@ -322,12 +376,17 @@ function InboxPage() {
         : 'border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
     }`
 
+  const linkCandidates = conversations
+    .filter((c) => c.key !== selectedKey)
+    .filter((c) => !linkQuery.trim() || (c.contactName || '').toLowerCase().includes(linkQuery.trim().toLowerCase()))
+    .slice(0, 30)
+
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       <Navigation />
 
-      <div className="max-w-6xl mx-auto px-4 pt-24 pb-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <div className="max-w-6xl mx-auto px-4 pt-20 md:pt-24 pb-24 md:pb-6">
+        <div className={`flex-wrap items-start justify-between gap-3 mb-4 ${selectedKey ? 'hidden md:flex' : 'flex'}`}>
           <div>
             <h1 className="text-2xl font-bold text-[var(--text-primary)]">Messaggi</h1>
             <p className="text-sm text-[var(--text-secondary)]">
@@ -351,11 +410,15 @@ function InboxPage() {
           </div>
         )}
 
-        <div className="grid md:grid-cols-[340px_1fr] gap-4 h-[calc(100dvh-11rem)] min-h-[420px]">
+        <div
+          className={`grid grid-cols-1 md:grid-cols-[340px_1fr] gap-4 md:h-[calc(100dvh-11rem)] min-h-[380px] ${
+            selectedKey ? 'h-[calc(100dvh-10.5rem)]' : 'h-[calc(100dvh-18rem)]'
+          }`}
+        >
           {/* Elenco conversazioni */}
           <section
-            className={`flex flex-col min-h-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
-              selected ? 'hidden md:flex' : 'flex'
+            className={`flex-col min-h-0 min-w-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
+              selectedKey ? 'hidden md:flex' : 'flex'
             }`}
           >
             <div className="p-3 space-y-2 border-b border-[var(--border-color)]">
@@ -399,31 +462,37 @@ function InboxPage() {
                 <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Nessuna conversazione.</p>
               )}
               {conversations.map((c) => {
-                const meta = PLATFORM[c.platform]
-                const Icon = meta.icon
-                const active = selected?.platform === c.platform && selected.contactId === c.contactId
+                const active = c.key === selectedKey
                 return (
                   <button
-                    key={`${c.platform}:${c.contactId}`}
-                    onClick={() => openConversation(c)}
+                    key={c.key}
+                    onClick={() => select(c.key)}
                     className={`w-full text-left px-3 py-3 flex gap-3 border-b border-[var(--border-color)] transition-colors ${
                       active ? 'bg-[var(--background-secondary)]' : 'hover:bg-[var(--background-secondary)]'
                     }`}
                   >
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
-                    >
-                      <Icon className="w-4 h-4" />
+                    <div className="flex -space-x-2 shrink-0">
+                      {c.platforms.map((p) => {
+                        const meta = PLATFORM[p as Platform]
+                        if (!meta) return null
+                        const Icon = meta.icon
+                        return (
+                          <div
+                            key={p}
+                            className="w-8 h-8 rounded-full flex items-center justify-center ring-2 ring-[var(--card-background)]"
+                            style={{ backgroundColor: `${meta.color}33`, color: meta.color }}
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                          </div>
+                        )
+                      })}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <p
-                          className={`text-sm truncate ${
-                            c.unread ? 'font-semibold text-[var(--text-primary)]' : 'text-[var(--text-primary)]'
-                          }`}
+                          className={`text-sm truncate text-[var(--text-primary)] ${c.unread ? 'font-semibold' : ''}`}
                         >
-                          {c.contactName || c.contactId}
+                          {c.contactName || c.members[0]?.contactId}
                         </p>
                         <span className="text-[11px] text-[var(--text-secondary)] shrink-0">{formatTime(c.lastAt)}</span>
                       </div>
@@ -431,7 +500,7 @@ function InboxPage() {
                         {c.lastStatus === 'pending' ? 'Bozza AI: ' : c.lastDirection === 'out' ? 'Tu: ' : ''}
                         {c.lastMessage}
                       </p>
-                      <div className="flex gap-1.5 mt-1">
+                      <div className="flex flex-wrap gap-1.5 mt-1">
                         {c.pending > 0 && (
                           <span className="px-1.5 py-0.5 text-[10px] rounded bg-[#FF9500]/15 text-[#FF9500]">
                             {c.pending} da approvare
@@ -440,6 +509,16 @@ function InboxPage() {
                         {c.unread > 0 && (
                           <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)]/15 text-[var(--accent-blue)]">
                             {c.unread} nuovi
+                          </span>
+                        )}
+                        {c.linked && c.platforms.length > 1 && (
+                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--background-secondary)] text-[var(--text-secondary)]">
+                            stessa persona su {c.platforms.length} canali
+                          </span>
+                        )}
+                        {c.suggestion && (
+                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[#AF52DE]/15 text-[#AF52DE]">
+                            possibile doppione
                           </span>
                         )}
                         {c.hasComments && (
@@ -457,49 +536,120 @@ function InboxPage() {
 
           {/* Conversazione */}
           <section
-            className={`flex flex-col min-h-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
-              selected ? 'flex' : 'hidden md:flex'
+            className={`flex-col min-h-0 min-w-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
+              selectedKey ? 'flex' : 'hidden md:flex'
             }`}
           >
-            {!selected ? (
+            {!selectedKey ? (
               <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-secondary)] gap-2">
                 <MessageSquareText className="w-8 h-8" />
                 <p className="text-sm">Seleziona una conversazione</p>
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-3 px-3 py-2.5 border-b border-[var(--border-color)]">
-                  <button
-                    className="md:hidden p-1 -ml-1 text-[var(--text-secondary)]"
-                    onClick={() => {
-                      setSelected(null)
-                      router.replace('/admin/inbox', { scroll: false })
-                    }}
-                    aria-label="Indietro"
-                  >
-                    <ArrowLeft className="w-5 h-5" />
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-[var(--text-primary)] truncate">
-                      {current?.contactName || selected.contactId}
-                    </p>
-                    <p className="text-xs" style={{ color: PLATFORM[selected.platform].color }}>
-                      {PLATFORM[selected.platform].label}
-                    </p>
+                <div className="px-3 py-2.5 border-b border-[var(--border-color)] space-y-2">
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="md:hidden p-1 -ml-1 text-[var(--text-secondary)]"
+                      onClick={() => select(null)}
+                      aria-label="Indietro"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+                        {current?.contactName || current?.members[0]?.contactId || 'Conversazione'}
+                      </p>
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {(current?.members || []).map((m) => (
+                          <span key={`${m.platform}:${m.contactId}`} className="inline-flex items-center gap-1">
+                            <PlatformBadge platform={m.platform} size="xs" />
+                            {current?.linked && current.members.length > 1 && (
+                              <button
+                                onClick={() => unlink(m.platform, m.contactId)}
+                                className="text-[10px] text-[var(--text-secondary)] hover:text-[#FF3B30]"
+                                title="Separa questo account"
+                              >
+                                <Unlink className="w-3 h-3" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setLinking((v) => !v)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      title="Collega a un altro canale della stessa persona"
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Stessa persona</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        loadThread()
+                        loadConversations()
+                      }}
+                      className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]"
+                      aria-label="Aggiorna"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      loadThread()
-                      loadConversations()
-                    }}
-                    className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]"
-                    aria-label="Aggiorna"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
+
+                  {current?.suggestion && !linking && (
+                    <div className="flex flex-wrap items-center gap-2 px-2.5 py-2 rounded-lg bg-[#AF52DE]/10 text-xs text-[var(--text-primary)]">
+                      <span>
+                        Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
+                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}.
+                      </span>
+                      <button
+                        onClick={() => link(current.suggestion!.key)}
+                        className="px-2 py-1 rounded-md bg-[#AF52DE] text-white font-medium"
+                      >
+                        Collega
+                      </button>
+                    </div>
+                  )}
+
+                  {linking && (
+                    <div className="rounded-lg border border-[var(--border-color)] p-2 space-y-2">
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        Scegli la conversazione della stessa persona su un altro canale: verranno unite qui e l&apos;AI
+                        terrà conto di entrambe.
+                      </p>
+                      <input
+                        value={linkQuery}
+                        onChange={(e) => setLinkQuery(e.target.value)}
+                        placeholder="Cerca per nome…"
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none"
+                      />
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        {linkCandidates.map((c) => (
+                          <button
+                            key={c.key}
+                            onClick={() => link(c.key)}
+                            className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-left text-xs hover:bg-[var(--background-secondary)]"
+                          >
+                            <span className="truncate text-[var(--text-primary)]">
+                              {c.contactName || c.members[0]?.contactId}
+                            </span>
+                            <span className="flex gap-1 shrink-0">
+                              {c.platforms.map((p) => (
+                                <PlatformBadge key={p} platform={p} size="xs" />
+                              ))}
+                            </span>
+                          </button>
+                        ))}
+                        {linkCandidates.length === 0 && (
+                          <p className="text-xs text-[var(--text-secondary)] px-2">Nessuna altra conversazione.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                <div ref={threadRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-2">
                   {messages.map((m) => {
                     const isIn = m.direction === 'in'
                     const isPending = m.status === 'pending' || m.status === 'failed'
@@ -511,7 +661,15 @@ function InboxPage() {
                       )
                     }
                     return (
-                      <div key={m.id} className={`flex ${isIn ? 'justify-start' : 'justify-end'}`}>
+                      <div key={m.id} className={`flex flex-col ${isIn ? 'items-start' : 'items-end'}`}>
+                        <div className="flex items-center gap-1 mb-0.5 px-1">
+                          <PlatformBadge platform={m.platform} size="xs" />
+                          {m.kind === 'comment' && (
+                            <span className="text-[10px] text-[var(--text-secondary)]">
+                              {isIn ? 'commento pubblico' : 'risposta al commento'}
+                            </span>
+                          )}
+                        </div>
                         <div
                           className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                             isIn
@@ -521,13 +679,8 @@ function InboxPage() {
                                 : 'bg-[var(--accent-blue)] text-white'
                           }`}
                         >
-                          {m.kind === 'comment' && (
-                            <p className="text-[10px] uppercase tracking-wide opacity-70 mb-0.5">
-                              {isIn ? 'Commento pubblico' : 'Risposta al commento'}
-                            </p>
-                          )}
                           {isPending ? (
-                            <div className="space-y-2 min-w-[240px]">
+                            <div className="space-y-2 min-w-[min(240px,70vw)]">
                               <p className="text-[11px] font-medium text-[#FF9500]">
                                 {m.status === 'failed' ? `Invio fallito: ${m.error_message}` : 'Bozza AI · da approvare'}
                               </p>
@@ -568,7 +721,6 @@ function InboxPage() {
                       </div>
                     )
                   })}
-                  <div ref={bottomRef} />
                 </div>
 
                 <form
@@ -578,11 +730,29 @@ function InboxPage() {
                   }}
                   className="flex gap-2 p-3 border-t border-[var(--border-color)]"
                 >
+                  {privatePlatforms.length > 1 && (
+                    <select
+                      value={activeReplyPlatform}
+                      onChange={(e) => setReplyPlatform(e.target.value)}
+                      className="px-2 text-xs rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)]"
+                      aria-label="Canale di risposta"
+                    >
+                      {privatePlatforms.map((p) => (
+                        <option key={p} value={p}>
+                          {PLATFORM[p as Platform]?.label || p}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <input
                     value={reply}
                     onChange={(e) => setReply(e.target.value)}
-                    placeholder="Scrivi una risposta…"
-                    className="flex-1 px-3 py-2 text-sm rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
+                    placeholder={
+                      activeReplyPlatform
+                        ? `Rispondi su ${PLATFORM[activeReplyPlatform as Platform]?.label || activeReplyPlatform}…`
+                        : 'Scrivi una risposta…'
+                    }
+                    className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
                   />
                   <button
                     type="submit"

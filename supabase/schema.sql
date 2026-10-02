@@ -502,6 +502,25 @@ CREATE POLICY "social_messages_admin_only"
   USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
   WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
 
+-- Stessa persona su piu' canali (vedi 2026-10-02c_social_identities.sql).
+CREATE TABLE IF NOT EXISTS public.social_identities (
+  platform   TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  person_id  UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (platform, contact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_identities_person ON public.social_identities (person_id);
+
+ALTER TABLE public.social_identities ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "social_identities_admin_only" ON public.social_identities;
+CREATE POLICY "social_identities_admin_only"
+  ON public.social_identities FOR ALL
+  USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
+  WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
+
 -- Dispositivi iscritti alle notifiche push (vedi 2026-10-02b_social_inbox.sql).
 CREATE TABLE IF NOT EXISTS public.push_subscriptions (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

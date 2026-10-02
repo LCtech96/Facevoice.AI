@@ -4,6 +4,7 @@ import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { replyToComment, sendMessengerText, sendWhatsAppText, type SendResult } from '@/lib/meta/graph'
 import { notifyNewMessage } from '@/lib/meta/notify'
+import { linkedMembers } from '@/lib/meta/identities'
 
 const HISTORY_LIMIT = 12
 
@@ -68,13 +69,20 @@ async function loadKnowledge(): Promise<string> {
     .join('\n')
 }
 
-/** Solo messaggi privati gia' scambiati (non bozze scartate o in attesa). */
+/**
+ * Messaggi privati gia' scambiati con questa persona, anche sugli altri canali
+ * a cui e' stata collegata (es. Instagram + Messenger). Esclude bozze non inviate.
+ */
 async function loadHistory(platform: SocialPlatform, contactId: string) {
+  const members = await linkedMembers(platform, contactId)
+  const filter = members
+    .map((m) => `and(platform.eq.${m.platform},contact_id.eq.${m.contactId})`)
+    .join(',')
+
   const { data } = await supabaseAdmin
     .from('social_messages')
-    .select('direction, body, status')
-    .eq('platform', platform)
-    .eq('contact_id', contactId)
+    .select('platform, direction, body, status')
+    .or(filter)
     .eq('kind', 'message')
     .order('created_at', { ascending: false })
     .limit(HISTORY_LIMIT)
@@ -82,7 +90,14 @@ async function loadHistory(platform: SocialPlatform, contactId: string) {
   return (data || [])
     .reverse()
     .filter((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
-    .map((m) => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: m.body as string }))
+    .map((m) => ({
+      role: m.direction === 'in' ? 'user' : 'assistant',
+      // Se la persona ha scritto da un altro canale, l'AI lo sa.
+      content:
+        m.platform !== platform
+          ? `[su ${PLATFORM_LABEL[m.platform as SocialPlatform] ?? m.platform}] ${m.body}`
+          : (m.body as string),
+    }))
 }
 
 async function generateReply(

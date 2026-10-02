@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -79,92 +79,64 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   
   const isAdmin = isAdminEmail(user?.email)
   const isChatPage = pathname?.startsWith('/ai-chat')
-  const isAdminArea = pathname === '/admin' || pathname?.startsWith('/admin/')
   const { t } = useTranslation()
 
-  // Nell'area admin le voci del sito pubblico sono solo rumore.
-  const mainNavItems = [
-    ...(isAdminArea ? [] : [
-      { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
-      { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
-      { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
-    ]),
-    ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
-  ]
-
-  // Menu a tendina (lavora con noi, bookings, payments, admin)
-  const dropdownMenuItems = [
-    { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/lavora-con-noi' },
-    ...(user ? [
-      { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
-      { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
-    ] : []),
-    ...(isAdmin ? [{ id: 'admin', label: t('nav.admin'), icon: Shield, href: '/admin' }] : []),
-  ]
-
-  const handleNavClick = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0]) => {
-    if (item.href.startsWith('/home#')) {
-      // Navigate to home page and scroll to section
-      if (pathname !== '/home') {
-        router.push(item.href)
-      } else {
-        const section = item.href.replace('/home#', '')
-        setActiveSection?.(section)
-        setTimeout(() => {
-          const element = document.getElementById(section)
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
-        }, 100)
-      }
-    } else if (item.href === '/home') {
-      router.push('/home')
-    } else if (item.href === '/ai-chat') {
-      router.push('/ai-chat')
-    } else if (item.href === '/team') {
-      router.push('/team')
-    } else if (item.href === '/services') {
-      router.push('/services')
-    } else if (item.href === '/lavora-con-noi') {
-      router.push('/lavora-con-noi')
-    } else if (item.href === '/bookings') {
-      router.push('/bookings')
-    } else if (item.href === '/payments') {
-      router.push('/payments')
-    } else if (item.href === '/admin') {
-      router.push('/admin')
+  // L'admin non usa il sito pubblico: dalle sue pagine va dritto alla dashboard.
+  useEffect(() => {
+    if (isAdmin && ['/', '/home', '/team', '/services'].includes(pathname || '')) {
+      router.replace('/admin/inbox')
     }
+  }, [isAdmin, pathname, router])
+
+  type NavItem = { id: string; label: string; icon: typeof Home; href: string }
+
+  const mainNavItems: NavItem[] = isAdmin
+    ? [
+        { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
+        { id: 'admin-control', label: 'Canali e AI', icon: Bot, href: '/admin/control' },
+        { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
+        { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
+      ]
+    : [
+        { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
+        { id: 'services', label: t('nav.services'), icon: Briefcase, href: '/services' },
+        { id: 'team', label: t('nav.team'), icon: Users, href: '/team' },
+        ...(user ? [{ id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' }] : []),
+      ]
+
+  const dropdownMenuItems: NavItem[] = isAdmin
+    ? [
+        { id: 'chat', label: 'Assistente AI interno', icon: MessageSquare, href: '/ai-chat' },
+        { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
+        { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
+      ]
+    : [
+        { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/lavora-con-noi' },
+        ...(user ? [
+          { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
+          { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
+        ] : []),
+      ]
+
+  const handleNavClick = (item: NavItem) => {
+    if (item.href.startsWith('/home#') && pathname === '/home') {
+      const section = item.href.replace('/home#', '')
+      setActiveSection?.(section)
+      setTimeout(() => {
+        document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
+      return
+    }
+    router.push(item.href)
   }
 
-  const isActive = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0]) => {
-    if (item.id === 'chat') {
-      return pathname === '/ai-chat'
-    }
-    if (item.id === 'home') {
-      return pathname === '/home' && !activeSection
-    }
-    if (item.id === 'team') {
-      return pathname === '/team'
-    }
-    if (item.id === 'services') {
-      return pathname === '/services'
-    }
-    if (item.id === 'lavora-con-noi') {
-      return pathname === '/lavora-con-noi'
-    }
-    if (item.id === 'bookings') {
-      return pathname === '/bookings'
-    }
-    if (item.id === 'payments') {
-      return pathname === '/payments'
-    }
-    if (item.id === 'admin') {
-      return pathname === '/admin'
-    }
-    return pathname === '/home' && activeSection === item.id
+  const isActive = (item: NavItem) => {
+    if (item.id === 'home') return pathname === '/home' && !activeSection
+    if (item.href.startsWith('/home#')) return pathname === '/home' && activeSection === item.id
+    return pathname === item.href
   }
 
-  const handleItemClick = (item: typeof mainNavItems[0] | typeof dropdownMenuItems[0], e: React.MouseEvent) => {
+  const handleItemClick = (item: NavItem, e: React.MouseEvent) => {
     e.preventDefault()
     handleNavClick(item)
     setShowDropdownMenu(false)
@@ -179,7 +151,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
-              onClick={() => router.push('/ai-chat')}
+              onClick={() => router.push(isAdmin ? '/admin/inbox' : '/ai-chat')}
               className="text-xl font-semibold text-[var(--text-primary)] cursor-pointer"
             >
               FacevoiceAI
@@ -330,7 +302,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            onClick={() => router.push('/home')}
+            onClick={() => router.push(isAdmin ? '/admin/inbox' : '/home')}
             className="text-base font-semibold text-[var(--text-primary)] cursor-pointer truncate min-w-0 flex-1"
           >
             FacevoiceAI

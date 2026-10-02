@@ -3,6 +3,7 @@ import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
+import { conversationKeyFor } from '@/lib/meta/identities'
 
 const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' } as const
 const EMAIL_QUIET_MINUTES = 10
@@ -19,7 +20,8 @@ export async function notifyNewMessage(input: {
 }) {
   const channel = input.kind === 'comment' ? `commento ${LABEL[input.platform]}` : LABEL[input.platform]
   const who = input.contactName || 'Nuovo contatto'
-  const url = `${SITE_URL}/admin/inbox?platform=${input.platform}&contact=${encodeURIComponent(input.contactId)}`
+  const key = await conversationKeyFor(input.platform, input.contactId)
+  const url = `${SITE_URL}/admin/inbox?c=${encodeURIComponent(key)}`
   const preview = input.body.length > 140 ? `${input.body.slice(0, 140)}…` : input.body
   const action = input.hasPendingDraft ? 'Risposta AI pronta da approvare.' : ''
 
@@ -28,7 +30,7 @@ export async function notifyNewMessage(input: {
       title: `${who} · ${channel}`,
       body: [preview, action].filter(Boolean).join('\n'),
       url,
-      tag: `${input.platform}:${input.contactId}`,
+      tag: key,
     }),
   ]
 
