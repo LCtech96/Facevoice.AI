@@ -185,6 +185,97 @@ function PushToggle() {
 }
 
 // ---------------------------------------------------------------------
+// Risposte automatiche per canale
+// ---------------------------------------------------------------------
+
+type ChannelRow = { id: string; platform: string; status: string; reply_mode?: 'auto' | 'approval' }
+
+function AutoReplyToggles() {
+  const [channels, setChannels] = useState<ChannelRow[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    authFetch('/api/admin/channels')
+      .then((res) => (res.ok ? res.json() : { channels: [] }))
+      .then((data) =>
+        setChannels(
+          (data.channels || []).filter(
+            (c: ChannelRow) => c.status === 'connected' && c.platform in PLATFORM
+          )
+        )
+      )
+      .catch(() => setChannels([]))
+  }, [])
+
+  const toggle = async (channel: ChannelRow) => {
+    const next = channel.reply_mode === 'auto' ? 'approval' : 'auto'
+    if (
+      next === 'auto' &&
+      !window.confirm(
+        `Le risposte AI su ${PLATFORM[channel.platform as Platform].label} partiranno subito, senza approvazione. Confermi?`
+      )
+    ) {
+      return
+    }
+    setError(null)
+    setBusyId(channel.id)
+    try {
+      const res = await authFetch(`/api/admin/channels/${channel.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ reply_mode: next }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Modifica non riuscita')
+      setChannels((list) => list.map((c) => (c.id === channel.id ? { ...c, reply_mode: next } : c)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Errore')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (!channels.length) return null
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)]">
+      <span className="text-xs font-medium text-[var(--text-secondary)]">Risposte AI automatiche:</span>
+      {channels.map((channel) => {
+        const meta = PLATFORM[channel.platform as Platform]
+        const Icon = meta.icon
+        const on = channel.reply_mode === 'auto'
+        return (
+          <button
+            key={channel.id}
+            role="switch"
+            aria-checked={on}
+            onClick={() => toggle(channel)}
+            disabled={busyId === channel.id}
+            className="inline-flex items-center gap-2 text-xs text-[var(--text-primary)] disabled:opacity-50"
+            title={on ? 'Inviate subito, senza approvazione' : 'Da approvare prima dell\'invio'}
+          >
+            <Icon className="w-3.5 h-3.5" style={{ color: meta.color }} />
+            {meta.label}
+            <span
+              className={`relative inline-block w-9 h-5 rounded-full transition-colors ${
+                on ? 'bg-[#34C759]' : 'bg-[var(--border-color)]'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  on ? 'translate-x-4' : ''
+                }`}
+              />
+            </span>
+            <span className={on ? 'text-[#34C759]' : 'text-[var(--text-secondary)]'}>{on ? 'Attive' : 'Con approvazione'}</span>
+          </button>
+        )
+      })}
+      {error && <span className="text-xs text-[#FF3B30]">{error}</span>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------
 // Pagina
 // ---------------------------------------------------------------------
 
@@ -399,6 +490,10 @@ function InboxPage() {
             </p>
           </div>
           <PushToggle />
+        </div>
+
+        <div className={selectedKey ? 'hidden md:block' : ''}>
+          <AutoReplyToggles />
         </div>
 
         {notice && (
