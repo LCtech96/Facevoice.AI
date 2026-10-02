@@ -17,6 +17,8 @@ import {
   Calendar,
   BookOpen,
   Link2,
+  Mail,
+  RefreshCw,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
@@ -106,6 +108,17 @@ const PLATFORM_META: Record<
   },
 }
 
+// Canali solo di messaggistica: non compaiono tra le piattaforme dei post.
+const CHANNEL_ONLY_META: typeof PLATFORM_META = {
+  email: {
+    label: 'Email',
+    icon: Mail,
+    requirement: 'Casella Google Workspace collegata: le nuove email arrivano in Messaggi con la risposta AI.',
+  },
+}
+
+const REPLY_PLATFORMS = ['whatsapp', 'facebook', 'instagram', 'email']
+
 const STATUS_LABEL: Record<ChannelStatus, string> = {
   not_connected: 'Non connesso',
   in_progress: 'In corso',
@@ -134,6 +147,12 @@ export default function AdminControlPage() {
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('memory')
   const supabase = createClient()
+
+  // Ritorno dal collegamento Gmail: /admin/control?tab=channels
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab')
+    if (requested === 'channels' || requested === 'posts' || requested === 'memory') setTab(requested)
+  }, [])
 
   const [knowledge, setKnowledge] = useState<KnowledgeItem[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
@@ -511,6 +530,132 @@ function MemoryTab({
 // Tab: Canali
 // =======================================================================
 
+type EmailStatus = {
+  configured: boolean
+  cron: boolean
+  connected: boolean
+  email: string | null
+}
+
+const EMAIL_RESULT: Record<string, string> = {
+  connected: 'Casella collegata. Le nuove email arriveranno in Messaggi entro un paio di minuti.',
+  denied: 'Collegamento annullato su Google.',
+  invalid: 'Link di collegamento scaduto: riprova.',
+  error: 'Google non ha completato il collegamento: riprova.',
+}
+
+function EmailConnect({ authFetch }: { authFetch: (url: string, init?: RequestInit) => Promise<Response> }) {
+  const [status, setStatus] = useState<EmailStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    const res = await authFetch('/api/admin/email')
+    if (res.ok) setStatus(await res.json())
+  }, [authFetch])
+
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get('email')
+    if (result && EMAIL_RESULT[result]) setMessage(EMAIL_RESULT[result])
+    load().catch(() => undefined)
+  }, [load])
+
+  const run = async (init: RequestInit) => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const res = await authFetch('/api/admin/email', init)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Operazione non riuscita')
+      return data
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Errore')
+      return null
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const connect = async () => {
+    const data = await run({ method: 'POST', body: JSON.stringify({ action: 'connect' }) })
+    if (data?.url) window.location.href = data.url
+  }
+
+  const sync = async () => {
+    const data = await run({ method: 'POST', body: JSON.stringify({ action: 'sync' }) })
+    if (data) {
+      setMessage(
+        data.error
+          ? `Errore: ${data.error}`
+          : `Controllo fatto: ${data.processed} nuove email in Messaggi${data.skipped ? `, ${data.skipped} ignorate (newsletter, notifiche, posta interna)` : ''}.`
+      )
+    }
+  }
+
+  const disconnect = async () => {
+    if (!window.confirm('Scollegare la casella? L’agente smetterà di leggere e rispondere alle email.')) return
+    if (await run({ method: 'DELETE' })) window.location.reload()
+  }
+
+  if (!status) return null
+
+  return (
+    <div className="mb-6 p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-[#EA4335]/10 flex items-center justify-center shrink-0">
+            <Mail className="w-4.5 h-4.5 text-[#EA4335]" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-medium text-[var(--text-primary)]">Email (Google Workspace)</p>
+            <p className="text-sm text-[var(--text-secondary)] break-words">
+              {status.connected
+                ? `Collegata: ${status.email}. Le email dei clienti arrivano in Messaggi; newsletter, notifiche e posta interna @facevoice.ai vengono ignorate.`
+                : status.configured
+                  ? 'Collega la casella per ricevere le email in Messaggi con la risposta AI pronta.'
+                  : 'Mancano GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET nelle variabili di Vercel.'}
+            </p>
+            {status.connected && !status.cron && (
+              <p className="text-xs text-[#FF9500] mt-1">
+                Controllo automatico spento: manca CRON_SECRET su Vercel. Intanto usa «Controlla ora».
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {status.connected ? (
+            <>
+              <button
+                onClick={sync}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-[var(--border-color)] text-[var(--text-primary)] disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} /> Controlla ora
+              </button>
+              <button
+                onClick={disconnect}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-lg text-sm text-[#FF3B30] border border-[var(--border-color)] disabled:opacity-50"
+              >
+                Scollega
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={connect}
+              disabled={busy || !status.configured}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--accent-blue)] text-white disabled:opacity-50"
+            >
+              Collega casella Gmail
+            </button>
+          )}
+        </div>
+      </div>
+      {message && <p className="text-sm text-[var(--text-secondary)] mt-3">{message}</p>}
+    </div>
+  )
+}
+
 function ChannelsTab({
   channels,
   authFetch,
@@ -548,6 +693,8 @@ function ChannelsTab({
 
   return (
     <div>
+      <EmailConnect authFetch={authFetch} />
+
       <p className="text-sm text-[var(--text-secondary)] mb-5">
         Lo stato <strong className="text-[var(--text-primary)]">Connesso</strong> è
         l&apos;interruttore dell&apos;agente AI su WhatsApp, Facebook (Messenger e
@@ -560,7 +707,7 @@ function ChannelsTab({
 
       <div className="space-y-3">
         {channels.map((channel) => {
-          const meta = PLATFORM_META[channel.platform]
+          const meta = PLATFORM_META[channel.platform] || CHANNEL_ONLY_META[channel.platform]
           const Icon = meta?.icon || Link2
           const isEditing = editingId === channel.id
 
@@ -588,7 +735,7 @@ function ChannelsTab({
                       >
                         {STATUS_LABEL[channel.status]}
                       </span>
-                      {channel.status === 'connected' && ['whatsapp', 'facebook', 'instagram'].includes(channel.platform) && (
+                      {channel.status === 'connected' && REPLY_PLATFORMS.includes(channel.platform) && (
                         <span className="px-2 py-0.5 text-xs rounded-full bg-[var(--background-secondary)] text-[var(--text-secondary)]">
                           {channel.reply_mode === 'auto' ? 'Risposte AI automatiche' : 'Risposte AI da approvare'}
                         </span>
@@ -633,7 +780,7 @@ function ChannelsTab({
                       </option>
                     ))}
                   </select>
-                  {['whatsapp', 'facebook', 'instagram'].includes(channel.platform) && (
+                  {REPLY_PLATFORMS.includes(channel.platform) && (
                     <select
                       value={draft.reply_mode || 'approval'}
                       onChange={(e) => setDraft({ ...draft, reply_mode: e.target.value as 'auto' | 'approval' })}

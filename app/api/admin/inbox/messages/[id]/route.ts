@@ -49,7 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Azione non valida' }, { status: 400 })
   }
 
-  const text = String(body?.text ?? draft.body).trim().slice(0, 1900)
+  const text = String(body?.text ?? draft.body).trim().slice(0, draft.platform === 'email' ? 10000 : 1900)
   if (!text) return NextResponse.json({ error: 'Il messaggio è vuoto' }, { status: 400 })
 
   // Blocco ottimistico: solo una richiesta alla volta puo' passare da pending/failed a sending.

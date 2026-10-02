@@ -5,27 +5,36 @@ import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime
 import { replyToComment, sendMessengerText, sendWhatsAppText, type SendResult } from '@/lib/meta/graph'
 import { notifyNewMessage } from '@/lib/meta/notify'
 import { linkedMembers } from '@/lib/meta/identities'
+import { sendThreadReply } from '@/lib/gmail'
 
 const HISTORY_LIMIT = 12
 
-export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram'
+export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram' | 'email'
 export type MessageKind = 'message' | 'comment'
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   whatsapp: 'WhatsApp',
   facebook: 'Messenger',
   instagram: 'Instagram',
+  email: 'Email',
 }
 
 const NON_TEXT_REPLY =
   'Grazie per il messaggio! Al momento posso leggere solo messaggi di testo: scrivimi pure qui cosa ti serve e ti rispondo subito.'
 
+const CHAT_STYLE = `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi lunghi, niente markdown.`
+
+const EMAIL_STYLE = `- Stai rispondendo a un'EMAIL ricevuta su luca@facevoice.ai. Scrivi una risposta email completa ma concisa: saluto iniziale con il nome se lo conosci, 2-6 frasi, chiusura "Cordiali saluti,\nLuca Corrao\nFacevoice AI".
+- Testo semplice: niente markdown, niente oggetto (lo aggiunge il sistema).
+- Se l'email non richiede una risposta (ricevute, conferme automatiche, pubblicità, spam, semplici ringraziamenti finali) rispondi solo con: NESSUNA_RISPOSTA`
+
 function agentPrompt(platform: SocialPlatform) {
-  return `Sei l'assistente di Facevoice AI su ${PLATFORM_LABEL[platform]}. Facevoice AI è un'azienda siciliana di sviluppo software su misura, integrazione AI, digitalizzazione e social media management per imprese, che lavora in tutta la Sicilia e in Italia.
+  const where = platform === 'email' ? 'via email' : `su ${PLATFORM_LABEL[platform]}`
+  return `Sei l'assistente di Facevoice AI ${where}. Facevoice AI è un'azienda siciliana di sviluppo software su misura, integrazione AI, digitalizzazione e social media management per imprese, che lavora in tutta la Sicilia e in Italia.
 
 ## Come rispondi
 - Scrivi in italiano (o nella lingua del cliente), tono cordiale e professionale, come una persona del team.
-- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi lunghi, niente markdown.
+${platform === 'email' ? EMAIL_STYLE : CHAT_STYLE}
 - Usa SOLO le informazioni ufficiali qui sotto per servizi, prezzi, tempi e dettagli. Se un'informazione non c'è, non inventarla: di' che un collega del team ricontatterà il cliente.
 - Se il cliente chiede un preventivo, un appuntamento o di parlare con una persona, raccogli in breve cosa gli serve e conferma che il team lo ricontatterà a breve.
 - Non chiedere mai password, dati di pagamento o documenti.`
@@ -132,11 +141,11 @@ async function generateReply(
   try {
     const result = await callGeminiWithFallback(history, GEMINI_DEFAULT_MODEL, system, {
       temperature: 0.5,
-      maxOutputTokens: 1024,
+      maxOutputTokens: platform === 'email' ? 2048 : 1024,
     })
     const reply = (result.message || '').trim()
     if (reply.includes('NESSUNA_RISPOSTA')) return ''
-    return reply.slice(0, 1900)
+    return reply.slice(0, platform === 'email' ? 6000 : 1900)
   } catch (error) {
     console.error(`${platform} agent: generazione risposta fallita`, error)
     return ''
@@ -154,8 +163,14 @@ export type OutgoingTarget = {
 /** Invia davvero una risposta al canale giusto. Usato sia in automatico sia all'approvazione. */
 export async function deliver(target: OutgoingTarget, text: string): Promise<SendResult> {
   if (target.kind === 'comment') {
-    if (target.platform === 'whatsapp' || !target.reply_to) return { error: 'Commento di origine mancante' }
+    if (target.platform === 'whatsapp' || target.platform === 'email' || !target.reply_to) {
+      return { error: 'Commento di origine mancante' }
+    }
     return replyToComment(target.platform, target.reply_to, text)
+  }
+  if (target.platform === 'email') {
+    if (!target.channel_account_id) return { error: 'Conversazione email di origine mancante' }
+    return sendThreadReply(target.channel_account_id, target.contact_id, text)
   }
   if (target.platform === 'whatsapp') {
     if (!target.channel_account_id) return { error: 'Numero WhatsApp di origine mancante' }
@@ -179,7 +194,7 @@ export async function handleIncoming(input: {
   text: string | null
   fallbackLabel: string
 }) {
-  const body = input.text ? input.text.slice(0, 4000) : input.fallbackLabel
+  const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
   // Meta ritenta i webhook: il vincolo UNIQUE su external_id evita doppie risposte.
   const { data: inserted, error } = await supabaseAdmin

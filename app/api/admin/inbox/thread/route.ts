@@ -6,7 +6,7 @@ import { resolveKey, type Member } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
 
-const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
+const PLATFORMS = ['whatsapp', 'facebook', 'instagram', 'email']
 const SELECT =
   'id, platform, contact_id, kind, direction, body, status, error_message, contact_name, reply_to, created_at'
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
-  const text = String(body?.text || '').trim().slice(0, 1900)
+  const text = String(body?.text || '').trim().slice(0, 10000)
   if (!text) return NextResponse.json({ error: 'Scrivi un messaggio' }, { status: 400 })
 
   const candidates = body?.platform ? members.filter((m) => m.platform === body.platform) : members
@@ -78,6 +78,10 @@ export async function POST(req: NextRequest) {
       { error: 'Su questo canale il contatto non ti ha mai scritto in privato: puoi rispondere solo ai suoi commenti.' },
       { status: 400 }
     )
+  }
+
+  if (last.platform !== 'email' && text.length > 1900) {
+    return NextResponse.json({ error: 'Messaggio troppo lungo (massimo 1900 caratteri)' }, { status: 400 })
   }
 
   const target = {

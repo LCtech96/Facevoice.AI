@@ -5,7 +5,7 @@ import { loadIdentityMap } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
 
-const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
+const PLATFORMS = ['whatsapp', 'facebook', 'instagram', 'email']
 const SCAN_LIMIT = 3000
 
 type Row = {

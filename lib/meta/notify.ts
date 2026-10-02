@@ -5,7 +5,7 @@ import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { conversationKeyFor } from '@/lib/meta/identities'
 
-const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' } as const
+const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', email: 'Email' } as const
 const EMAIL_QUIET_MINUTES = 10
 
 /** Avvisa gli admin di un nuovo messaggio: push sempre, email al massimo una ogni 10 minuti per contatto. */
@@ -44,7 +44,8 @@ export async function notifyNewMessage(input: {
     .neq('id', input.messageId)
     .gte('created_at', since)
 
-  if (!count) {
+  // Per le email niente avviso via email: arriverebbe nella stessa casella letta dall'agente.
+  if (!count && input.platform !== 'email') {
     tasks.push(
       sendEmail({
         to: [...ADMIN_EMAILS],
