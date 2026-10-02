@@ -22,9 +22,25 @@ type MessagingEvent = {
   }
 }
 
+// Commenti: Facebook li manda come change "feed", Instagram come change "comments".
+type CommentChange = {
+  field?: string
+  value?: {
+    item?: string
+    verb?: string
+    comment_id?: string
+    id?: string
+    message?: string
+    text?: string
+    parent_id?: string
+    post_id?: string
+    from?: { id?: string; name?: string; username?: string }
+  }
+}
+
 export type MessagingPayload = {
   object?: string
-  entry?: Array<{ id?: string; messaging?: MessagingEvent[] }>
+  entry?: Array<{ id?: string; messaging?: MessagingEvent[]; changes?: CommentChange[] }>
 }
 
 let cachedPageToken: { pageId: string; token: string } | null = null
@@ -114,6 +130,70 @@ async function handleEvent(platform: 'facebook' | 'instagram', event: MessagingE
   })
 }
 
+async function replyToComment(platform: 'facebook' | 'instagram', commentId: string, text: string) {
+  const page = await getPageToken()
+  if (!page) return { error: 'Token della Pagina non disponibile' }
+
+  const edge = platform === 'instagram' ? 'replies' : 'comments'
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/${edge}?access_token=${encodeURIComponent(page.token)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    }
+  )
+
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    if (response.status === 401 || data?.error?.code === 190) cachedPageToken = null
+    return { error: data?.error?.message || `HTTP ${response.status}` }
+  }
+  return { id: data?.id as string | undefined }
+}
+
+async function handleComment(platform: 'facebook' | 'instagram', accountId: string | undefined, change: CommentChange) {
+  const value = change.value
+  if (!value) return
+
+  const isFacebookComment =
+    platform === 'facebook' && change.field === 'feed' && value.item === 'comment' && value.verb === 'add'
+  const isInstagramComment = platform === 'instagram' && change.field === 'comments'
+  if (!isFacebookComment && !isInstagramComment) return
+
+  const commentId = value.comment_id || value.id
+  const text = (value.message || value.text || '').trim()
+  const authorId = value.from?.id
+  if (!commentId || !text || !authorId) return
+
+  // Mai rispondere ai commenti scritti dall'account stesso (comprese le nostre risposte).
+  const page = await getPageToken()
+  if (authorId === accountId || authorId === page?.pageId) return
+
+  const authorName = value.from?.name || value.from?.username || null
+  const isNew = await recordIncoming({
+    platform,
+    contactId: authorId,
+    contactName: authorName,
+    externalId: commentId,
+    body: `[commento] ${text.slice(0, 4000)}`,
+  })
+  if (!isNew || !(await isAutoReplyEnabled(platform))) return
+
+  const reply = await generateReply(platform, authorId, authorName, text)
+  if (!reply) return
+
+  const sent = await replyToComment(platform, commentId, reply)
+  await recordOutgoing({
+    platform,
+    contactId: authorId,
+    contactName: authorName,
+    body: `[risposta commento] ${reply}`,
+    externalId: sent.id,
+    error: sent.error,
+  })
+}
+
 export async function handleMessagingWebhook(payload: MessagingPayload) {
   const platform = payload.object === 'instagram' ? 'instagram' : 'facebook'
 
@@ -123,6 +203,13 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
         await handleEvent(platform, event)
       } catch (error) {
         console.error(`${platform} webhook: errore sul messaggio`, event.message?.mid, error)
+      }
+    }
+    for (const change of entry.changes || []) {
+      try {
+        await handleComment(platform, entry.id, change)
+      } catch (error) {
+        console.error(`${platform} webhook: errore sul commento`, change.value?.comment_id || change.value?.id, error)
       }
     }
   }

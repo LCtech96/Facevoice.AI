@@ -133,17 +133,27 @@ async function loadHistory(platform: SocialPlatform, contactId: string) {
 export async function generateReply(
   platform: SocialPlatform,
   contactId: string,
-  contactName: string | null
+  contactName: string | null,
+  publicComment?: string
 ): Promise<string> {
   if (!getGeminiApiKey()) {
     console.error(`${platform} agent: GEMINI_API_KEY mancante, nessuna risposta inviata`)
     return ''
   }
 
-  const [knowledge, history] = await Promise.all([loadKnowledge(), loadHistory(platform, contactId)])
+  // Un commento pubblico si risponde da solo: lo storico privato non va mai citato in pubblico.
+  const [knowledge, history] = await Promise.all([
+    loadKnowledge(),
+    publicComment
+      ? Promise.resolve([{ role: 'user', content: publicComment }])
+      : loadHistory(platform, contactId),
+  ])
 
   const system = [
     agentPrompt(platform),
+    publicComment
+      ? `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un post\n- Massimo 1-2 frasi, tono cordiale.\n- Non chiedere né citare dati personali, prezzi o dettagli riservati: per quelli invita a scrivere in privato (messaggio diretto).\n- Se il commento è offensivo, spam o non richiede risposta, rispondi solo con: NESSUNA_RISPOSTA`
+      : '',
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
@@ -154,7 +164,9 @@ export async function generateReply(
       temperature: 0.5,
       maxOutputTokens: 1024,
     })
-    return (result.message || '').trim().slice(0, 1900)
+    const reply = (result.message || '').trim()
+    if (reply.includes('NESSUNA_RISPOSTA')) return ''
+    return reply.slice(0, 1900)
   } catch (error) {
     console.error(`${platform} agent: generazione risposta fallita`, error)
     return ''
