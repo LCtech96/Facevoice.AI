@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Plus, ChevronDown, ArrowUp, X, FileText, Loader2, Check, Archive, Image as ImageIcon, Mic } from "lucide-react";
 
 /* --- ICONS --- */
@@ -149,19 +150,45 @@ interface ModelSelectorProps {
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, onSelect }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [menuPos, setMenuPos] = useState<{ bottom: number; right: number; maxHeight: number } | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
 
     const currentModel = models.find(m => m.id === selectedModel) || models[0];
 
     useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
+        const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+            const target = event.target as Node;
+            if (dropdownRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+            setIsOpen(false);
         };
         document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
+        document.addEventListener("touchstart", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("touchstart", handleClickOutside);
+        };
     }, []);
+
+    // Il menu va in un portal con position: fixed. Dentro la chat era
+    // ritagliato dal contenitore scorrevole: su iPhone la parte alta finiva
+    // sotto l'intestazione e la lista non si poteva scorrere.
+    useEffect(() => {
+        if (!isOpen) return;
+        const place = () => {
+            const rect = dropdownRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const viewportHeight = window.innerHeight;
+            setMenuPos({
+                bottom: viewportHeight - rect.top + 8,
+                right: Math.max(8, window.innerWidth - rect.right),
+                maxHeight: Math.min(rect.top - 72, 416),
+            });
+        };
+        place();
+        window.addEventListener("resize", place);
+        return () => window.removeEventListener("resize", place);
+    }, [isOpen]);
 
     if (models.length <= 1) {
         return (
@@ -190,12 +217,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
                 </div>
             </button>
 
-            {isOpen && (
-                // max-h + overflow-y-auto: con piu' modelli la lista supera
-                // l'altezza dello schermo di un telefono, e senza questi
-                // veniva semplicemente tagliata. overscroll-contain evita
-                // che lo scorrimento si propaghi alla pagina sotto.
-                <div className="absolute bottom-full right-0 mb-2 w-[260px] max-h-[min(60dvh,26rem)] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-y-auto overscroll-contain z-50 flex flex-col p-1.5 animate-fade-in origin-bottom-right">
+            {isOpen && menuPos && createPortal(
+                <div
+                    ref={menuRef}
+                    style={{ bottom: menuPos.bottom, right: menuPos.right, maxHeight: Math.max(menuPos.maxHeight, 160), WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+                    className="fixed w-[min(260px,calc(100vw-16px))] bg-white dark:bg-[#212121] border border-[#DDDDDD] dark:border-[#30302E] rounded-2xl shadow-2xl overflow-y-auto overscroll-contain z-[100] flex flex-col p-1.5 animate-fade-in origin-bottom-right">
                     {models.map(model => (
                         <button
                             key={model.id}
@@ -229,7 +255,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ models, selectedModel, on
                         </button>
                     ))}
 
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
