@@ -526,6 +526,12 @@ export default function AdminPage() {
                 <p className="text-[var(--text-secondary)]">Gestisci commenti e prenotazioni</p>
                 <div className="flex flex-wrap gap-x-4 mt-2">
                   <a
+                    href="/admin/inbox"
+                    className="text-sm text-[var(--accent-blue)] hover:underline"
+                  >
+                    Messaggi social &rarr;
+                  </a>
+                  <a
                     href="/admin/usage"
                     className="text-sm text-[var(--accent-blue)] hover:underline"
                   >

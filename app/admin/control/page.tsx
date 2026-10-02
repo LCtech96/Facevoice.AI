@@ -44,6 +44,7 @@ type Channel = {
   handle: string | null
   status: ChannelStatus
   notes: string | null
+  reply_mode?: 'auto' | 'approval'
 }
 
 type PostStatus = 'draft' | 'scheduled' | 'published' | 'failed' | 'canceled'
@@ -535,6 +536,7 @@ function ChannelsTab({
         handle: draft.handle,
         status: draft.status,
         notes: draft.notes,
+        reply_mode: draft.reply_mode,
       }),
     })
     const data = await res.json()
@@ -548,10 +550,12 @@ function ChannelsTab({
     <div>
       <p className="text-sm text-[var(--text-secondary)] mb-5">
         Lo stato <strong className="text-[var(--text-primary)]">Connesso</strong> è
-        l&apos;interruttore dell&apos;agente AI: su WhatsApp, Facebook (Messenger e
-        commenti) e Instagram (Direct e commenti) risponde in automatico usando la
-        Memoria AI. Con qualsiasi altro stato i messaggi vengono solo salvati.
-        LinkedIn, TikTok e X non sono ancora integrati.
+        l&apos;interruttore dell&apos;agente AI su WhatsApp, Facebook (Messenger e
+        commenti) e Instagram (Direct e commenti): prepara le risposte con la Memoria
+        AI e, a seconda della modalità, le invia da solo o le lascia da approvare in{' '}
+        <a href="/admin/inbox" className="text-[var(--accent-blue)] hover:underline">Messaggi</a>.
+        Con qualsiasi altro stato i messaggi vengono solo salvati. LinkedIn, TikTok e X
+        non sono ancora integrati.
       </p>
 
       <div className="space-y-3">
@@ -584,6 +588,11 @@ function ChannelsTab({
                       >
                         {STATUS_LABEL[channel.status]}
                       </span>
+                      {channel.status === 'connected' && ['whatsapp', 'facebook', 'instagram'].includes(channel.platform) && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-[var(--background-secondary)] text-[var(--text-secondary)]">
+                          {channel.reply_mode === 'auto' ? 'Risposte AI automatiche' : 'Risposte AI da approvare'}
+                        </span>
+                      )}
                     </div>
                     {!isEditing && (channel.display_name || channel.handle) && (
                       <p className="text-sm text-[var(--text-secondary)] mt-0.5">
@@ -624,6 +633,16 @@ function ChannelsTab({
                       </option>
                     ))}
                   </select>
+                  {['whatsapp', 'facebook', 'instagram'].includes(channel.platform) && (
+                    <select
+                      value={draft.reply_mode || 'approval'}
+                      onChange={(e) => setDraft({ ...draft, reply_mode: e.target.value as 'auto' | 'approval' })}
+                      className="w-full px-3 py-2 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
+                    >
+                      <option value="approval">Risposte AI da approvare (le trovi nella casella Messaggi)</option>
+                      <option value="auto">Risposte AI inviate in automatico</option>
+                    </select>
+                  )}
                   <input
                     type="text"
                     value={draft.display_name || ''}

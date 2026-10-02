@@ -40,6 +40,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       updates.status = body.status
     }
+    if (body?.reply_mode === 'auto' || body?.reply_mode === 'approval') {
+      updates.reply_mode = body.reply_mode
+    }
     if (typeof body?.notes === 'string') {
       updates.notes = body.notes.trim() || null
     }
