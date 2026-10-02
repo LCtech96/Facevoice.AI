@@ -53,6 +53,9 @@ export const metadata: Metadata = {
     shortcut: '/icon-180.png',
     apple: { url: '/icon-180.png', sizes: '180x180' },
   },
+  // Su iPhone le notifiche push funzionano solo se il sito è aggiunto alla Home come app.
+  manifest: '/site.webmanifest',
+  appleWebApp: { capable: true, title: 'Facevoice AI', statusBarStyle: 'black-translucent' },
   openGraph: {
     title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica per imprese siciliane',

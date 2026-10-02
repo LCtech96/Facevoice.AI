@@ -409,6 +409,9 @@ CREATE TABLE IF NOT EXISTS public.social_channels (
   status       TEXT NOT NULL DEFAULT 'not_connected'
                CHECK (status IN ('not_connected', 'in_progress', 'connected', 'error')),
   notes        TEXT,
+  -- 'approval': l'AI prepara una bozza da approvare; 'auto': invio diretto.
+  reply_mode   TEXT NOT NULL DEFAULT 'approval'
+               CHECK (reply_mode IN ('auto', 'approval')),
   created_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
@@ -476,13 +479,20 @@ CREATE TABLE IF NOT EXISTS public.social_messages (
   direction     TEXT NOT NULL CHECK (direction IN ('in', 'out')),
   external_id   TEXT UNIQUE,
   body          TEXT NOT NULL DEFAULT '',
+  -- in uscita: pending (bozza AI da approvare) | sent | failed | rejected
   status        TEXT,
   error_message TEXT,
+  kind          TEXT NOT NULL DEFAULT 'message', -- message | comment
+  channel_account_id TEXT,                       -- phone_number_id WhatsApp o id Pagina
+  reply_to      TEXT,                            -- id del commento a cui rispondere
+  read_at       TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_social_messages_contact
   ON public.social_messages (platform, contact_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_messages_pending
+  ON public.social_messages (status) WHERE status = 'pending';
 
 ALTER TABLE public.social_messages ENABLE ROW LEVEL SECURITY;
 
@@ -491,6 +501,33 @@ CREATE POLICY "social_messages_admin_only"
   ON public.social_messages FOR ALL
   USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
   WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
+
+-- Dispositivi iscritti alle notifiche push (vedi 2026-10-02b_social_inbox.sql).
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  user_email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "push_subscriptions_admin_only" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_admin_only"
+  ON public.push_subscriptions FOR ALL
+  USING (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'))
+  WITH CHECK (LOWER(auth.jwt() ->> 'email') IN ('luca@facevoice.ai', 'lucacorrao1996@gmail.com'));
+
+-- Impostazioni lette solo dal server (service role); RLS senza policy = nessun client.
+CREATE TABLE IF NOT EXISTS public.app_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
 
 
 -- ---------------------------------------------------------------------

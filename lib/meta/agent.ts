@@ -2,11 +2,13 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
+import { replyToComment, sendMessengerText, sendWhatsAppText, type SendResult } from '@/lib/meta/graph'
+import { notifyNewMessage } from '@/lib/meta/notify'
 
-export const GRAPH_VERSION = 'v25.0'
 const HISTORY_LIMIT = 12
 
 export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram'
+export type MessageKind = 'message' | 'comment'
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   whatsapp: 'WhatsApp',
@@ -14,7 +16,7 @@ const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   instagram: 'Instagram',
 }
 
-export const NON_TEXT_REPLY =
+const NON_TEXT_REPLY =
   'Grazie per il messaggio! Al momento posso leggere solo messaggi di testo: scrivimi pure qui cosa ti serve e ti rispondo subito.'
 
 function agentPrompt(platform: SocialPlatform) {
@@ -26,11 +28,6 @@ function agentPrompt(platform: SocialPlatform) {
 - Usa SOLO le informazioni ufficiali qui sotto per servizi, prezzi, tempi e dettagli. Se un'informazione non c'è, non inventarla: di' che un collega del team ricontatterà il cliente.
 - Se il cliente chiede un preventivo, un appuntamento o di parlare con una persona, raccogli in breve cosa gli serve e conferma che il team lo ricontatterà a breve.
 - Non chiedere mai password, dati di pagamento o documenti.`
-}
-
-/** Un solo token di sistema per tutti i canali Meta (nome storico: WHATSAPP_ACCESS_TOKEN). */
-export function getSystemToken(): string | undefined {
-  return (process.env.META_ACCESS_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN)?.trim() || undefined
 }
 
 export function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
@@ -45,60 +42,17 @@ export function verifyMetaSignature(rawBody: string, signatureHeader: string | n
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-export async function isAutoReplyEnabled(platform: SocialPlatform): Promise<boolean> {
+async function getChannelSettings(platform: SocialPlatform) {
   const { data } = await supabaseAdmin
     .from('social_channels')
-    .select('status')
+    .select('status, reply_mode')
     .eq('platform', platform)
     .maybeSingle()
-  return data?.status === 'connected'
-}
-
-/**
- * Salva il messaggio in arrivo. Ritorna false se era gia' stato registrato:
- * Meta ritenta i webhook e il vincolo UNIQUE su external_id evita doppie risposte.
- */
-export async function recordIncoming(input: {
-  platform: SocialPlatform
-  contactId: string
-  contactName: string | null
-  externalId: string
-  body: string
-}): Promise<boolean> {
-  const { error } = await supabaseAdmin.from('social_messages').insert({
-    platform: input.platform,
-    contact_id: input.contactId,
-    contact_name: input.contactName,
-    direction: 'in',
-    external_id: input.externalId,
-    body: input.body,
-  })
-  if (error) {
-    if (error.code !== '23505') console.error(`${input.platform} insert error:`, error)
-    return false
+  return {
+    enabled: data?.status === 'connected',
+    // Nel dubbio si chiede approvazione: e' il comportamento piu' prudente.
+    autoSend: data?.reply_mode === 'auto',
   }
-  return true
-}
-
-export async function recordOutgoing(input: {
-  platform: SocialPlatform
-  contactId: string
-  contactName: string | null
-  body: string
-  externalId?: string
-  error?: string
-}) {
-  await supabaseAdmin.from('social_messages').insert({
-    platform: input.platform,
-    contact_id: input.contactId,
-    contact_name: input.contactName,
-    direction: 'out',
-    external_id: input.externalId ?? null,
-    body: input.body,
-    status: input.error ? 'failed' : 'sent',
-    error_message: input.error ?? null,
-  })
-  if (input.error) console.error(`${input.platform} send error:`, input.error)
 }
 
 async function loadKnowledge(): Promise<string> {
@@ -114,30 +68,31 @@ async function loadKnowledge(): Promise<string> {
     .join('\n')
 }
 
+/** Solo messaggi privati gia' scambiati (non bozze scartate o in attesa). */
 async function loadHistory(platform: SocialPlatform, contactId: string) {
   const { data } = await supabaseAdmin
     .from('social_messages')
-    .select('direction, body')
+    .select('direction, body, status')
     .eq('platform', platform)
     .eq('contact_id', contactId)
+    .eq('kind', 'message')
     .order('created_at', { ascending: false })
     .limit(HISTORY_LIMIT)
 
   return (data || [])
     .reverse()
-    .filter((m) => m.body)
+    .filter((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
     .map((m) => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: m.body as string }))
 }
 
-/** Risposta dell'agente per l'ultimo messaggio del contatto; stringa vuota se non si deve rispondere. */
-export async function generateReply(
+async function generateReply(
   platform: SocialPlatform,
   contactId: string,
   contactName: string | null,
   publicComment?: string
 ): Promise<string> {
   if (!getGeminiApiKey()) {
-    console.error(`${platform} agent: GEMINI_API_KEY mancante, nessuna risposta inviata`)
+    console.error(`${platform} agent: GEMINI_API_KEY mancante, nessuna risposta generata`)
     return ''
   }
 
@@ -171,4 +126,119 @@ export async function generateReply(
     console.error(`${platform} agent: generazione risposta fallita`, error)
     return ''
   }
+}
+
+export type OutgoingTarget = {
+  platform: SocialPlatform
+  kind: MessageKind
+  contact_id: string
+  channel_account_id: string | null
+  reply_to: string | null
+}
+
+/** Invia davvero una risposta al canale giusto. Usato sia in automatico sia all'approvazione. */
+export async function deliver(target: OutgoingTarget, text: string): Promise<SendResult> {
+  if (target.kind === 'comment') {
+    if (target.platform === 'whatsapp' || !target.reply_to) return { error: 'Commento di origine mancante' }
+    return replyToComment(target.platform, target.reply_to, text)
+  }
+  if (target.platform === 'whatsapp') {
+    if (!target.channel_account_id) return { error: 'Numero WhatsApp di origine mancante' }
+    return sendWhatsAppText(target.channel_account_id, target.contact_id, text)
+  }
+  return sendMessengerText(target.contact_id, text)
+}
+
+/**
+ * Punto d'ingresso per ogni messaggio o commento in arrivo: lo salva, avvisa
+ * gli admin e, se il canale e' connesso, prepara la risposta AI (bozza da
+ * approvare o invio diretto a seconda della modalita' del canale).
+ */
+export async function handleIncoming(input: {
+  platform: SocialPlatform
+  kind: MessageKind
+  contactId: string
+  contactName: string | null
+  externalId: string
+  channelAccountId: string | null
+  text: string | null
+  fallbackLabel: string
+}) {
+  const body = input.text ? input.text.slice(0, 4000) : input.fallbackLabel
+
+  // Meta ritenta i webhook: il vincolo UNIQUE su external_id evita doppie risposte.
+  const { data: inserted, error } = await supabaseAdmin
+    .from('social_messages')
+    .insert({
+      platform: input.platform,
+      kind: input.kind,
+      contact_id: input.contactId,
+      contact_name: input.contactName,
+      direction: 'in',
+      external_id: input.externalId,
+      channel_account_id: input.channelAccountId,
+      body,
+    })
+    .select('id')
+    .single()
+
+  if (error || !inserted) {
+    if (error?.code !== '23505') console.error(`${input.platform} insert error:`, error)
+    return
+  }
+
+  const settings = await getChannelSettings(input.platform)
+
+  let reply = ''
+  if (settings.enabled) {
+    if (input.kind === 'comment') {
+      reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName, input.text) : ''
+    } else {
+      reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
+    }
+  }
+
+  const target: OutgoingTarget = {
+    platform: input.platform,
+    kind: input.kind,
+    contact_id: input.contactId,
+    channel_account_id: input.channelAccountId,
+    reply_to: input.kind === 'comment' ? input.externalId : null,
+  }
+
+  let pendingDraft = false
+  if (reply) {
+    if (settings.autoSend) {
+      const sent = await deliver(target, reply)
+      await supabaseAdmin.from('social_messages').insert({
+        ...target,
+        contact_name: input.contactName,
+        direction: 'out',
+        external_id: sent.id ?? null,
+        body: reply,
+        status: sent.error ? 'failed' : 'sent',
+        error_message: sent.error ?? null,
+      })
+      if (sent.error) console.error(`${input.platform} send error:`, sent.error)
+    } else {
+      await supabaseAdmin.from('social_messages').insert({
+        ...target,
+        contact_name: input.contactName,
+        direction: 'out',
+        body: reply,
+        status: 'pending',
+      })
+      pendingDraft = true
+    }
+  }
+
+  await notifyNewMessage({
+    platform: input.platform,
+    kind: input.kind,
+    contactId: input.contactId,
+    contactName: input.contactName,
+    body,
+    messageId: inserted.id,
+    hasPendingDraft: pendingDraft,
+  })
 }

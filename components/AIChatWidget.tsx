@@ -204,8 +204,8 @@ export default function AIChatWidget() {
     setShowMenu(false)
   }
 
-  // Non mostrare il widget nella pagina chat
-  if (isChatPage) {
+  // Niente widget pubblico nella chat interna né nell'area admin.
+  if (isChatPage || pathname?.startsWith('/admin')) {
     return null
   }
 
