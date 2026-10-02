@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
+import { loadIdentityMap } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
 
 const PLATFORMS = ['whatsapp', 'facebook', 'instagram']
-const SCAN_LIMIT = 2000
+const SCAN_LIMIT = 3000
 
 type Row = {
-  id: string
   platform: string
   kind: string
   contact_id: string
@@ -20,7 +20,30 @@ type Row = {
   created_at: string
 }
 
-/** Elenco conversazioni (una per contatto e canale), dalla piu' recente. */
+type Conversation = {
+  key: string
+  members: { platform: string; contactId: string; contactName: string | null }[]
+  platforms: string[]
+  contactName: string | null
+  lastMessage: string
+  lastDirection: string
+  lastStatus: string | null
+  lastPlatform: string
+  lastAt: string
+  unread: number
+  pending: number
+  hasComments: boolean
+  linked: boolean
+  suggestion?: { key: string; name: string; platforms: string[] }
+}
+
+const normalizeName = (name: string | null) =>
+  (name || '').toLowerCase().replace(/^@/, '').replace(/[^a-z0-9àèéìòù]+/g, ' ').trim()
+
+/**
+ * Elenco conversazioni dalla piu' recente. Gli account collegati alla stessa
+ * persona (es. Instagram + Messenger) diventano un'unica conversazione.
+ */
 export async function GET(req: NextRequest) {
   if (!(await getAdminEmail(req))) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
@@ -29,55 +52,53 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
   const platform = params.get('platform')
   const query = params.get('q')?.trim().toLowerCase() || ''
-  const onlyPending = params.get('filter') === 'pending'
-  const onlyUnread = params.get('filter') === 'unread'
+  const filter = params.get('filter')
 
-  const request = supabaseAdmin
-    .from('social_messages')
-    .select('id, platform, kind, contact_id, contact_name, direction, body, status, read_at, created_at')
-    .in('platform', platform && PLATFORMS.includes(platform) ? [platform] : PLATFORMS)
-    .order('created_at', { ascending: false })
-    .limit(SCAN_LIMIT)
-
-  const { data, error } = await request
+  const [{ data, error }, identities] = await Promise.all([
+    supabaseAdmin
+      .from('social_messages')
+      .select('platform, kind, contact_id, contact_name, direction, body, status, read_at, created_at')
+      .in('platform', PLATFORMS)
+      .order('created_at', { ascending: false })
+      .limit(SCAN_LIMIT),
+    loadIdentityMap(),
+  ])
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const conversations = new Map<
-    string,
-    {
-      platform: string
-      contactId: string
-      contactName: string | null
-      lastMessage: string
-      lastDirection: string
-      lastStatus: string | null
-      lastAt: string
-      unread: number
-      pending: number
-      hasComments: boolean
-      haystack: string
-    }
-  >()
+  const conversations = new Map<string, Conversation & { haystack: string }>()
 
   for (const row of (data || []) as Row[]) {
-    const key = `${row.platform}:${row.contact_id}`
+    const person = identities.get(`${row.platform}:${row.contact_id}`)
+    const key = person ? `person:${person}` : `${row.platform}:${row.contact_id}`
+
     let conv = conversations.get(key)
     if (!conv) {
       conv = {
-        platform: row.platform,
-        contactId: row.contact_id,
+        key,
+        members: [],
+        platforms: [],
         contactName: row.contact_name,
         lastMessage: row.body,
         lastDirection: row.direction,
         lastStatus: row.status,
+        lastPlatform: row.platform,
         lastAt: row.created_at,
         unread: 0,
         pending: 0,
         hasComments: false,
+        linked: Boolean(person),
         haystack: '',
       }
       conversations.set(key, conv)
     }
+
+    const member = conv.members.find((m) => m.platform === row.platform && m.contactId === row.contact_id)
+    if (!member) {
+      conv.members.push({ platform: row.platform, contactId: row.contact_id, contactName: row.contact_name })
+    } else if (!member.contactName && row.contact_name) {
+      member.contactName = row.contact_name
+    }
+    if (!conv.platforms.includes(row.platform)) conv.platforms.push(row.platform)
     if (!conv.contactName && row.contact_name) conv.contactName = row.contact_name
     if (row.direction === 'in' && !row.read_at) conv.unread++
     if (row.status === 'pending') conv.pending++
@@ -85,14 +106,32 @@ export async function GET(req: NextRequest) {
     if (query) conv.haystack += ` ${row.body.toLowerCase()}`
   }
 
-  const list = Array.from(conversations.values())
-    .filter((c) => !onlyPending || c.pending > 0)
-    .filter((c) => !onlyUnread || c.unread > 0)
+  const all = Array.from(conversations.values())
+
+  // Suggerimento: stesso nome su un altro canale, non ancora collegati.
+  for (const conv of all) {
+    const name = normalizeName(conv.contactName)
+    if (name.length < 3) continue
+    const match = all.find(
+      (other) =>
+        other.key !== conv.key &&
+        normalizeName(other.contactName) === name &&
+        !other.platforms.some((p) => conv.platforms.includes(p))
+    )
+    if (match) {
+      conv.suggestion = { key: match.key, name: match.contactName || '', platforms: match.platforms }
+    }
+  }
+
+  const list = all
+    .filter((c) => !platform || !PLATFORMS.includes(platform) || c.platforms.includes(platform))
+    .filter((c) => filter !== 'pending' || c.pending > 0)
+    .filter((c) => filter !== 'unread' || c.unread > 0)
     .filter(
       (c) =>
         !query ||
         (c.contactName || '').toLowerCase().includes(query) ||
-        c.contactId.includes(query) ||
+        c.members.some((m) => m.contactId.includes(query) || (m.contactName || '').toLowerCase().includes(query)) ||
         c.haystack.includes(query)
     )
     .map(({ haystack: _haystack, ...rest }) => rest)

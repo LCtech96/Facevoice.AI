@@ -5,7 +5,8 @@ import { deliver, type OutgoingTarget } from '@/lib/meta/agent'
 
 export const dynamic = 'force-dynamic'
 
-const SELECT = 'id, kind, direction, body, status, error_message, contact_name, reply_to, created_at'
+const SELECT =
+  'id, platform, contact_id, kind, direction, body, status, error_message, contact_name, reply_to, created_at'
 
 /**
  * Azioni su una bozza AI: { action: 'approve', text? } la invia (eventualmente
