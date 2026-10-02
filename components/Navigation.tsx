@@ -412,8 +412,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       )}
 
       {/* Mobile Navigation - Bottom */}
-      <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)]/95 backdrop-blur-xl border-t border-[var(--border-color)] safe-area-bottom ${isChatPage ? 'z-30' : ''}`}>
-        <div className="flex items-stretch justify-around px-0.5 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
+      <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--background)] border-t border-[var(--border-color)] safe-area-bottom ${isChatPage ? 'z-30' : ''}`}>
+        <div className="flex items-stretch justify-around px-1 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
           {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
@@ -424,14 +424,14 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 key={item.id}
                 whileTap={{ scale: 0.9 }}
                 onClick={(e) => handleItemClick(item, e)}
-                className={`flex flex-col items-center justify-center gap-0.5 px-1 py-1 rounded-xl transition-all min-w-0 flex-1 ${
+                className={`flex flex-col items-center justify-center gap-1 px-1 py-1.5 min-h-[52px] rounded-xl transition-all min-w-0 flex-1 ${
                   active
                     ? 'text-[var(--accent-blue)]'
                     : 'text-[var(--text-secondary)]'
                 }`}
               >
-                <Icon size={20} className="shrink-0" />
-                <span className="text-[9px] sm:text-[10px] font-medium text-center leading-tight w-full px-0.5">
+                <Icon size={24} className="shrink-0" />
+                <span className="text-[11px] sm:text-xs font-medium text-center leading-tight w-full px-0.5 truncate">
                   {displayLabel}
                 </span>
               </motion.button>
