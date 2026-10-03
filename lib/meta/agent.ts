@@ -2,9 +2,15 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
-import { replyToComment, sendMessengerText, sendWhatsAppText, type SendResult } from '@/lib/meta/graph'
+import {
+  replyToComment,
+  sendMessengerText,
+  sendPrivateReply,
+  sendWhatsAppText,
+  type SendResult,
+} from '@/lib/meta/graph'
 import { notifyNewMessage } from '@/lib/meta/notify'
-import { linkedMembers } from '@/lib/meta/identities'
+import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta/identities'
 import { sendThreadReply } from '@/lib/gmail'
 
 const HISTORY_LIMIT = 12
@@ -226,31 +232,53 @@ async function loadHistory(platform: SocialPlatform, contactId: string) {
     }))
 }
 
+type ReplyOptions = {
+  // Testo di un commento pubblico: la risposta va sotto il commento.
+  publicComment?: string
+  // Didascalia del post/reel commentato.
+  postCaption?: string | null
+  // Primo messaggio privato a chi ha commentato (Private Replies).
+  privateFollowUp?: boolean
+}
+
+const PUBLIC_COMMENT_RULES = `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un tuo post o reel
+- Massimo 1-2 frasi, tono cordiale e umano, un'emoji va bene se il commento ne ha.
+- Se il commento è un complimento o una reazione positiva, ringrazia in modo caloroso e breve.
+- Se fa una domanda, rispondi in breve usando il contenuto del post; per prezzi, preventivi o dettagli personali di' che gli scrivi in privato.
+- Non chiedere né citare dati personali o dettagli riservati in pubblico.
+- Se il commento è offensivo, spam o un semplice tag di amici, rispondi solo con: NESSUNA_RISPOSTA`
+
+const PRIVATE_FOLLOW_UP_RULES = `\n\n## Stai scrivendo il PRIMO MESSAGGIO PRIVATO a chi ha commentato un tuo post o reel
+- Scrivilo SOLO se il commento mostra un interesse concreto verso i servizi (chiede info, prezzi, come funziona, se lo fate anche per la sua attività, scrive "info", ecc.).
+- Per complimenti, emoji, tag di amici, battute o commenti negativi rispondi solo con: NESSUNA_RISPOSTA
+- Apri facendo riferimento al suo commento e al post (es. "Ciao! Ho visto il tuo commento sul reel del sito per il ristorante…").
+- Poi segui il metodo consulenziale: 1-2 domande mirate e la richiesta naturale di un numero WhatsApp.
+- 2-4 frasi, tono da chat, niente elenchi.`
+
 async function generateReply(
   platform: SocialPlatform,
   contactId: string,
   contactName: string | null,
-  publicComment?: string
+  options: ReplyOptions = {}
 ): Promise<string> {
   if (!getGeminiApiKey()) {
     console.error(`${platform} agent: GEMINI_API_KEY mancante, nessuna risposta generata`)
     return ''
   }
+  const { publicComment, postCaption, privateFollowUp } = options
+  const fromComment = Boolean(publicComment)
 
-  // Un commento pubblico si risponde da solo: lo storico privato non va mai citato in pubblico.
+  // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
   const [knowledge, history, styleExamples] = await Promise.all([
     loadKnowledge(),
-    publicComment
-      ? Promise.resolve([{ role: 'user', content: publicComment }])
-      : loadHistory(platform, contactId),
-    publicComment ? Promise.resolve('') : loadStyleExamples(platform),
+    fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
+    fromComment && !privateFollowUp ? Promise.resolve('') : loadStyleExamples(platform),
   ])
 
   const system = [
-    agentPrompt(platform, Boolean(publicComment)),
-    publicComment
-      ? `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un post\n- Massimo 1-2 frasi, tono cordiale.\n- Non chiedere né citare dati personali, prezzi o dettagli riservati: per quelli invita a scrivere in privato (messaggio diretto).\n- Se il commento è offensivo, spam o non richiede risposta, rispondi solo con: NESSUNA_RISPOSTA`
-      : '',
+    agentPrompt(platform, fromComment && !privateFollowUp),
+    fromComment ? (privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : '',
+    postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
@@ -295,7 +323,56 @@ export async function deliver(target: OutgoingTarget, text: string): Promise<Sen
     if (!target.channel_account_id) return { error: 'Numero WhatsApp di origine mancante' }
     return sendWhatsAppText(target.channel_account_id, target.contact_id, text)
   }
+  if (target.reply_to) {
+    // Messaggio privato nato da un commento: si invia tramite l'id del commento.
+    const sent = await sendPrivateReply(target.reply_to, text)
+    if (sent.recipientId && sent.recipientId !== target.contact_id) {
+      // Chi commenta e chi riceve il Direct hanno id diversi: sono la stessa persona.
+      const [a, b] = await Promise.all([
+        conversationKeyFor(target.platform, target.contact_id),
+        conversationKeyFor(target.platform, sent.recipientId),
+      ])
+      if (a !== b) await linkConversations(a, b)
+    }
+    return sent
+  }
   return sendMessengerText(target.contact_id, text)
+}
+
+/** Invia subito (modalita' automatica) o salva come bozza da approvare. true = bozza creata. */
+async function queueReply(
+  target: OutgoingTarget,
+  contactName: string | null,
+  text: string,
+  autoSend: boolean
+): Promise<boolean> {
+  if (autoSend) {
+    const sent = await deliver(target, text)
+    const { data: row } = await supabaseAdmin
+      .from('social_messages')
+      .insert({
+        ...target,
+        contact_name: contactName,
+        direction: 'out',
+        external_id: sent.id ?? null,
+        body: text,
+        status: sent.error ? 'failed' : 'sent',
+        error_message: sent.error ?? null,
+      })
+      .select('id')
+      .single()
+    if (row) await setOrigin(row.id, 'ai_auto')
+    if (sent.error) console.error(`${target.platform} send error:`, sent.error)
+    return false
+  }
+  await supabaseAdmin.from('social_messages').insert({
+    ...target,
+    contact_name: contactName,
+    direction: 'out',
+    body: text,
+    status: 'pending',
+  })
+  return true
 }
 
 /**
@@ -312,6 +389,7 @@ export async function handleIncoming(input: {
   channelAccountId: string | null
   text: string | null
   fallbackLabel: string
+  postCaption?: string | null
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -341,7 +419,12 @@ export async function handleIncoming(input: {
   let reply = ''
   if (settings.enabled) {
     if (input.kind === 'comment') {
-      reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName, input.text) : ''
+      reply = input.text
+        ? await generateReply(input.platform, input.contactId, input.contactName, {
+            publicComment: input.text,
+            postCaption: input.postCaption,
+          })
+        : ''
     } else {
       reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
     }
@@ -356,33 +439,18 @@ export async function handleIncoming(input: {
   }
 
   let pendingDraft = false
-  if (reply) {
-    if (settings.autoSend) {
-      const sent = await deliver(target, reply)
-      const { data: row } = await supabaseAdmin
-        .from('social_messages')
-        .insert({
-          ...target,
-          contact_name: input.contactName,
-          direction: 'out',
-          external_id: sent.id ?? null,
-          body: reply,
-          status: sent.error ? 'failed' : 'sent',
-          error_message: sent.error ?? null,
-        })
-        .select('id')
-        .single()
-      if (row) await setOrigin(row.id, 'ai_auto')
-      if (sent.error) console.error(`${input.platform} send error:`, sent.error)
-    } else {
-      await supabaseAdmin.from('social_messages').insert({
-        ...target,
-        contact_name: input.contactName,
-        direction: 'out',
-        body: reply,
-        status: 'pending',
-      })
-      pendingDraft = true
+  if (reply) pendingDraft = await queueReply(target, input.contactName, reply, settings.autoSend)
+
+  // Commento con un interesse concreto: oltre alla risposta pubblica, un messaggio privato.
+  if (settings.enabled && input.kind === 'comment' && input.text && input.platform !== 'whatsapp') {
+    const privateText = await generateReply(input.platform, input.contactId, input.contactName, {
+      publicComment: input.text,
+      postCaption: input.postCaption,
+      privateFollowUp: true,
+    })
+    if (privateText) {
+      const privateTarget: OutgoingTarget = { ...target, kind: 'message', reply_to: input.externalId }
+      pendingDraft = (await queueReply(privateTarget, input.contactName, privateText, settings.autoSend)) || pendingDraft
     }
   }
 

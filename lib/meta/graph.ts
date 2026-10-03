@@ -3,7 +3,8 @@
 export const GRAPH_VERSION = 'v25.0'
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`
 
-export type SendResult = { id?: string; error?: string }
+// recipientId: per le risposte private ai commenti, l'id Messenger/Direct del destinatario.
+export type SendResult = { id?: string; error?: string; recipientId?: string }
 
 /** Un solo token di sistema per tutti i canali Meta (nome storico: WHATSAPP_ACCESS_TOKEN). */
 export function getSystemToken(): string | undefined {
@@ -88,6 +89,41 @@ export async function replyToComment(
   const edge = platform === 'instagram' ? 'replies' : 'comments'
   const res = await post(`${GRAPH}/${commentId}/${edge}`, page.token, { message: text })
   return res.error ? res : { id: res.raw?.id }
+}
+
+/**
+ * Risposta privata a un commento (Private Replies): un solo messaggio per
+ * commento, entro 7 giorni. Vale per Pagina Facebook e Instagram.
+ */
+export async function sendPrivateReply(commentId: string, text: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'Token della Pagina non disponibile' }
+  const res = await post(`${GRAPH}/me/messages`, page.token, {
+    recipient: { comment_id: commentId },
+    message: { text },
+  })
+  return res.error ? res : { id: res.raw?.message_id, recipientId: res.raw?.recipient_id }
+}
+
+/** Didascalia del post o reel commentato, per dare contesto alla risposta. */
+export async function fetchPostCaption(
+  platform: 'facebook' | 'instagram',
+  postId: string
+): Promise<string | null> {
+  const page = await getPageToken()
+  if (!page) return null
+  const fields = platform === 'instagram' ? 'caption,media_product_type' : 'message'
+  try {
+    const response = await fetch(`${GRAPH}/${postId}?fields=${fields}&access_token=${encodeURIComponent(page.token)}`)
+    if (!response.ok) return null
+    const data = await response.json()
+    const text = (platform === 'instagram' ? data?.caption : data?.message) as string | undefined
+    if (!text) return null
+    const kind = data?.media_product_type === 'REELS' ? 'Reel' : 'Post'
+    return `${kind}: ${text.slice(0, 1500)}`
+  } catch {
+    return null
+  }
 }
 
 /** Nome visibile del contatto Messenger/Instagram, se Meta lo concede. */
