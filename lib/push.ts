@@ -49,12 +49,18 @@ export async function getVapidKeys(): Promise<VapidKeys> {
 
 export type PushPayload = { title: string; body: string; url: string; tag?: string }
 
-export async function sendPushToAdmins(payload: PushPayload) {
+/** Invia a tutti i dispositivi iscritti; restituisce quanti l'hanno ricevuta. */
+export async function sendPushToAdmins(payload: PushPayload): Promise<{ sent: number; failed: number }> {
   const { data: subs } = await supabaseAdmin
     .from('push_subscriptions')
     .select('id, endpoint, p256dh, auth')
 
-  if (!subs?.length) return
+  if (!subs?.length) {
+    console.warn('Push: nessun dispositivo iscritto, notifica non inviata:', payload.title)
+    return { sent: 0, failed: 0 }
+  }
+  let sent = 0
+  let failed = 0
 
   const keys = await getVapidKeys()
   webpush.setVapidDetails('mailto:info@facevoice.ai', keys.publicKey, keys.privateKey)
@@ -65,9 +71,11 @@ export async function sendPushToAdmins(payload: PushPayload) {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           JSON.stringify(payload),
-          { TTL: 60 * 60 * 24 }
+          { TTL: 60 * 60 * 24, urgency: 'high' }
         )
+        sent++
       } catch (error: any) {
+        failed++
         // 404/410: il dispositivo ha revocato l'iscrizione, la togliamo.
         if (error?.statusCode === 404 || error?.statusCode === 410) {
           await supabaseAdmin.from('push_subscriptions').delete().eq('id', sub.id)
@@ -77,4 +85,5 @@ export async function sendPushToAdmins(payload: PushPayload) {
       }
     })
   )
+  return { sent, failed }
 }

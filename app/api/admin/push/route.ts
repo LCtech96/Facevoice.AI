@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
   const keys = await getVapidKeys()
-  return NextResponse.json({ publicKey: keys.publicKey })
+  const { count } = await supabaseAdmin.from('push_subscriptions').select('id', { count: 'exact', head: true })
+  return NextResponse.json({ publicKey: keys.publicKey, devices: count ?? 0 })
 }
 
 /** Registra questo dispositivo; con { test: true } invia anche una notifica di prova. */
@@ -20,6 +21,17 @@ export async function POST(req: NextRequest) {
   if (!email) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
+
+  // Solo prova: { test: true } senza iscrizione -> notifica a tutti i dispositivi.
+  if (body?.test && !body?.subscription) {
+    const result = await sendPushToAdmins({
+      title: 'Notifica di prova',
+      body: 'Se leggi questo messaggio, le notifiche di Messaggi funzionano su questo dispositivo.',
+      url: '/admin/inbox',
+    })
+    return NextResponse.json(result)
+  }
+
   const sub = body?.subscription
   const endpoint = typeof sub?.endpoint === 'string' ? sub.endpoint : ''
   const p256dh = sub?.keys?.p256dh
@@ -37,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (body?.test) {
     await sendPushToAdmins({
       title: 'Notifiche attive',
-      body: 'Riceverai qui un avviso per ogni nuovo messaggio su WhatsApp, Messenger e Instagram.',
+      body: 'Riceverai qui un avviso per ogni nuovo messaggio su WhatsApp, Messenger, Instagram ed email.',
       url: '/admin/inbox',
     })
   }

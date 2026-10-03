@@ -31,7 +31,7 @@ export async function notifyNewMessage(input: {
       body: [preview, action].filter(Boolean).join('\n'),
       url,
       tag: key,
-    }),
+    }).then((result) => console.log(`push ${channel} da ${who}: ${result.sent} inviate, ${result.failed} fallite`)),
   ]
 
   const since = new Date(Date.now() - EMAIL_QUIET_MINUTES * 60_000).toISOString()

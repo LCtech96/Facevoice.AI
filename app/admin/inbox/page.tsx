@@ -92,6 +92,29 @@ async function authFetch(url: string, init: RequestInit = {}) {
 function PushToggle() {
   const [state, setState] = useState<'unsupported' | 'ios-install' | 'off' | 'on' | 'denied' | 'busy'>('busy')
   const [error, setError] = useState<string | null>(null)
+  const [devices, setDevices] = useState<number | null>(null)
+  const [testResult, setTestResult] = useState<string | null>(null)
+
+  useEffect(() => {
+    authFetch('/api/admin/push')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setDevices(typeof data?.devices === 'number' ? data.devices : null))
+      .catch(() => undefined)
+  }, [state])
+
+  const sendTest = async () => {
+    setTestResult('Invio…')
+    const res = await authFetch('/api/admin/push', { method: 'POST', body: JSON.stringify({ test: true }) })
+    const data = await res.json().catch(() => ({}))
+    setTestResult(
+      res.ok
+        ? `Prova inviata a ${data.sent} dispositiv${data.sent === 1 ? 'o' : 'i'}${data.failed ? `, ${data.failed} non raggiungibili` : ''}.`
+        : data.error || 'Prova non riuscita'
+    )
+  }
+
+  const devicesLabel =
+    devices === null ? null : devices === 0 ? 'Nessun dispositivo riceve le notifiche' : `${devices} dispositiv${devices === 1 ? 'o riceve' : 'i ricevono'} le notifiche`
 
   useEffect(() => {
     const check = async () => {
@@ -158,10 +181,13 @@ function PushToggle() {
 
   if (state === 'ios-install') {
     return (
-      <p className="text-xs text-[var(--text-secondary)] max-w-xs">
-        Per le notifiche su iPhone: in Safari tocca Condividi → «Aggiungi alla schermata Home», poi apri
-        l&apos;app dalla Home e torna qui.
-      </p>
+      <div className="max-w-xs text-right">
+        <p className="text-xs text-[#FF9500]">
+          Da Safari l&apos;iPhone non può ricevere notifiche. Tocca Condividi → «Aggiungi alla schermata Home», apri
+          l&apos;app Facevoice AI dalla Home e premi qui «Attiva notifiche».
+        </p>
+        {devicesLabel && <p className="text-xs text-[var(--text-secondary)] mt-1">{devicesLabel}</p>}
+      </div>
     )
   }
   if (state === 'unsupported') return <p className="text-xs text-[var(--text-secondary)]">Notifiche non supportate</p>
@@ -171,9 +197,14 @@ function PushToggle() {
   return (
     <div className="flex flex-col items-end gap-1">
       {state === 'on' ? (
-        <button onClick={disable} className={`${base} text-[var(--text-secondary)]`}>
-          <BellOff className="w-3.5 h-3.5" /> Disattiva notifiche
-        </button>
+        <div className="flex gap-2">
+          <button onClick={sendTest} className={`${base} text-[var(--text-primary)]`}>
+            <Bell className="w-3.5 h-3.5" /> Prova
+          </button>
+          <button onClick={disable} className={`${base} text-[var(--text-secondary)]`}>
+            <BellOff className="w-3.5 h-3.5" /> Disattiva notifiche
+          </button>
+        </div>
       ) : (
         <button
           onClick={enable}
@@ -183,6 +214,8 @@ function PushToggle() {
           <Bell className="w-3.5 h-3.5" /> Attiva notifiche su questo dispositivo
         </button>
       )}
+      {devicesLabel && <p className="text-xs text-[var(--text-secondary)]">{devicesLabel}</p>}
+      {testResult && <p className="text-xs text-[var(--text-secondary)]">{testResult}</p>}
       {error && <p className="text-xs text-[#FF3B30]">{error}</p>}
     </div>
   )
