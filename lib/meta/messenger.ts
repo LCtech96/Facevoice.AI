@@ -1,5 +1,5 @@
 import { handleIncoming } from '@/lib/meta/agent'
-import { fetchContactName, getPageToken } from '@/lib/meta/graph'
+import { fetchContactName, fetchPostCaption, getPageToken } from '@/lib/meta/graph'
 
 // Messenger e i Direct di Instagram arrivano con lo stesso formato ("messaging").
 // I commenti arrivano come "changes": "feed" su Facebook, "comments" su Instagram.
@@ -21,6 +21,9 @@ type CommentChange = {
     message?: string | MessagingEvent['message']
     text?: string
     from?: { id?: string; name?: string; username?: string }
+    // Instagram: media commentato; Facebook: post commentato.
+    media?: { id?: string; media_product_type?: string }
+    post_id?: string
   }
 }
 
@@ -67,9 +70,13 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
   const page = await getPageToken()
   if (authorId === accountId || authorId === page?.pageId) return
 
+  const postId = platform === 'instagram' ? value.media?.id : value.post_id
+  const postCaption = postId ? await fetchPostCaption(platform, postId) : null
+
   await handleIncoming({
     platform,
     kind: 'comment',
+    postCaption,
     contactId: authorId,
     contactName: value.from?.name || (value.from?.username ? `@${value.from.username}` : null),
     externalId: commentId,

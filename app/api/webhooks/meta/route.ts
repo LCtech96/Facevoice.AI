@@ -36,6 +36,11 @@ export async function POST(req: NextRequest) {
     return new NextResponse('Bad request', { status: 400 })
   }
 
+  // Traccia minima nei log Vercel: tipo di evento, senza contenuti personali.
+  const entries = (payload as { entry?: Array<{ messaging?: unknown[]; changes?: Array<{ field?: string }> }> }).entry || []
+  const kinds = entries.flatMap((e) => [...(e.messaging?.length ? ['messaging'] : []), ...(e.changes || []).map((c) => c.field)])
+  console.log(`meta webhook: ${payload.object} [${kinds.join(', ')}]`)
+
   // Meta vuole un 200 rapido; la risposta AI parte dopo, senza farlo aspettare.
   if (payload.object === 'whatsapp_business_account') {
     after(() => handleWhatsAppWebhook(payload as WhatsAppPayload))

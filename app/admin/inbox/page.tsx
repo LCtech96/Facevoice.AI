@@ -49,6 +49,7 @@ type Message = {
   body: string
   status: string | null
   error_message: string | null
+  reply_to?: string | null
   created_at: string
 }
 
@@ -818,8 +819,11 @@ function InboxPage() {
                           <PlatformBadge platform={m.platform} size="xs" />
                           {m.kind === 'comment' && (
                             <span className="text-[10px] text-[var(--text-secondary)]">
-                              {isIn ? 'commento pubblico' : 'risposta al commento'}
+                              {isIn ? 'commento pubblico' : 'risposta pubblica al commento'}
                             </span>
+                          )}
+                          {m.kind === 'message' && !isIn && m.reply_to && m.platform !== 'email' && (
+                            <span className="text-[10px] text-[var(--text-secondary)]">messaggio privato dal commento</span>
                           )}
                         </div>
                         <div
