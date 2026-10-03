@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
-import { deliver, type SocialPlatform } from '@/lib/meta/agent'
+import { deliver, setOrigin, type SocialPlatform } from '@/lib/meta/agent'
 import { resolveKey, type Member } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
@@ -108,6 +108,7 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!sent.error) await setOrigin(row.id, 'manual')
   if (sent.error) return NextResponse.json({ error: `Invio non riuscito: ${sent.error}`, message: row }, { status: 502 })
   return NextResponse.json({ message: row })
 }

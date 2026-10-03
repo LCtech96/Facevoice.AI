@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
-import { deliver, type OutgoingTarget } from '@/lib/meta/agent'
+import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,6 +76,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Bozza inviata cosi' com'era o corretta da Luca: diventa un esempio per le prossime risposte.
+  if (!sent.error) await setOrigin(id, text === String(draft.body).trim() ? 'ai_approved' : 'ai_edited')
   if (sent.error) return NextResponse.json({ error: `Invio non riuscito: ${sent.error}`, message: data }, { status: 502 })
   return NextResponse.json({ message: data })
 }
