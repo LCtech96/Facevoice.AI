@@ -89,6 +89,12 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
         text: [subject ? `Oggetto: ${subject}` : '', text].filter(Boolean).join('\n\n') || null,
         fallbackLabel: '[email senza testo]',
       })
+      // Un contatto della Ricerca clienti ha risposto: la scheda passa a "ha risposto".
+      await supabaseAdmin
+        .from('leads')
+        .update({ status: 'replied' })
+        .ilike('email', sender.email)
+        .eq('status', 'contacted')
       processed++
     }
   } catch (error) {

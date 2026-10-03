@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -93,6 +93,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const mainNavItems: NavItem[] = isAdmin
     ? [
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
+        { id: 'admin-leads', label: 'Clienti', icon: Target, href: '/admin/leads' },
         { id: 'admin-control', label: 'Canali e AI', icon: Bot, href: '/admin/control' },
         { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },

@@ -317,3 +317,28 @@ export async function sendThreadReply(threadId: string, to: string, text: string
     return { error: error instanceof Error ? error.message : 'Invio email non riuscito' }
   }
 }
+
+/** Nuova email (non una risposta): usata per il primo contatto della Ricerca clienti. */
+export async function sendNewEmail(to: string, subject: string, text: string): Promise<SendResult & { threadId?: string }> {
+  try {
+    const settings = await loadGmailSettings()
+    if (!settings) return { error: 'Casella Gmail non collegata' }
+    const mime = [
+      `From: Luca Corrao <${settings.email}>`,
+      `To: ${to}`,
+      `Subject: ${encodeHeader(subject)}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(text, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n'),
+    ].join('\r\n')
+    const sent = await gmail<{ id: string; threadId: string }>('/messages/send', {
+      method: 'POST',
+      body: JSON.stringify({ raw: Buffer.from(mime).toString('base64url') }),
+    })
+    return { id: `gmail:${sent.id}`, threadId: sent.threadId }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Invio email non riuscito' }
+  }
+}
