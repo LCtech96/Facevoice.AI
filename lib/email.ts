@@ -1,4 +1,6 @@
-const FROM = process.env.RESEND_FROM_EMAIL || 'FacevoiceAI <noreply@facevoice.ai>'
+// RESEND_FROM_EMAIL su Vercel e' solo l'indirizzo: senza nome Gmail mostra "noreply".
+const FROM_ADDRESS = process.env.RESEND_FROM_EMAIL?.trim() || 'noreply@facevoice.ai'
+const FROM = FROM_ADDRESS.includes('<') ? FROM_ADDRESS : `FacevoiceAI <${FROM_ADDRESS}>`
 
 export function escapeHtml(value: string): string {
   return value
