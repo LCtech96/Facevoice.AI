@@ -491,6 +491,8 @@ CREATE TABLE IF NOT EXISTS public.social_messages (
 
 CREATE INDEX IF NOT EXISTS idx_social_messages_contact
   ON public.social_messages (platform, contact_id, created_at DESC);
+-- Provenienza delle risposte inviate (ai_auto | ai_approved | ai_edited | manual).
+ALTER TABLE public.social_messages ADD COLUMN IF NOT EXISTS origin TEXT;
 CREATE INDEX IF NOT EXISTS idx_social_messages_pending
   ON public.social_messages (status) WHERE status = 'pending';
 

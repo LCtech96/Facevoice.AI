@@ -42,15 +42,106 @@ Deduci il settore e l'azienda da firma, dominio email, nome del profilo e conten
 5. Quando hai capito l'esigenza, proponi il passo successivo concreto: una breve chiamata o un incontro.
 
 ### Tono
-- Scrivi come una persona vera del team, linguaggio naturale e diretto, frasi brevi. Mai frasi da intelligenza artificiale ("Sono qui per aiutarti", "Certamente!", "Ottima domanda", elenchi puntati).
+- Scrivi come una persona vera del team, linguaggio naturale e diretto, frasi brevi. Mai frasi da intelligenza artificiale ("Sono qui per aiutarti", "Certamente!", "Ottima domanda"). Nelle chat niente elenchi; nelle email solo le domande numerate come negli esempi.
 - Rispondi SEMPRE nella stessa lingua in cui ti hanno scritto (inglese se scrivono in inglese, e così via).
 - Dai del tu se l'altra persona dà del tu o scrive in modo informale; altrimenti del lei.`
 
 const CHAT_STYLE = `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi, niente markdown.`
 
-const EMAIL_STYLE = `- Stai rispondendo a un'EMAIL ricevuta su luca@facevoice.ai. Email breve e personale: saluto con il nome se lo conosci, 2-6 frasi, chiusura con firma "Luca Corrao\nFacevoice AI" (preceduta da un saluto adatto alla lingua, es. "Un saluto," o "Best regards,").
-- Testo semplice: niente markdown, niente oggetto (lo aggiunge il sistema).
-- Se l'email non richiede una risposta (ricevute, conferme automatiche, pubblicità, newsletter, semplici ringraziamenti finali) rispondi solo con: NESSUNA_RISPOSTA`
+/**
+ * Risposte approvate, corrette o scritte a mano da Luca: l'AI le usa come
+ * riferimento di stile. Prima quelle corrette o scritte a mano, poi le approvate
+ * cosi' com'erano. Email e chat restano separate (registro diverso).
+ */
+async function loadStyleExamples(platform: SocialPlatform): Promise<string> {
+  let query = supabaseAdmin
+    .from('social_messages')
+    .select('platform, contact_id, body, origin, created_at')
+    .eq('direction', 'out')
+    .eq('status', 'sent')
+    .eq('kind', 'message')
+    .in('origin', ['ai_edited', 'manual', 'ai_approved'])
+  query = platform === 'email' ? query.eq('platform', 'email') : query.neq('platform', 'email')
+  // Senza la colonna origin (migrazione non ancora eseguita) la query fallisce: nessun esempio.
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(12)
+  if (error || !data?.length) return ''
+
+  const rank: Record<string, number> = { ai_edited: 0, manual: 0, ai_approved: 1 }
+  const picked = data.sort((a, b) => rank[a.origin] - rank[b.origin]).slice(0, 5)
+
+  const examples = await Promise.all(
+    picked.map(async (reply) => {
+      const { data: incoming } = await supabaseAdmin
+        .from('social_messages')
+        .select('body')
+        .eq('platform', reply.platform)
+        .eq('contact_id', reply.contact_id)
+        .eq('direction', 'in')
+        .lt('created_at', reply.created_at)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (!incoming?.body) return null
+      return `Messaggio ricevuto:\n${String(incoming.body).slice(0, 700)}\n\nRisposta inviata da Luca:\n${String(reply.body).slice(0, 1500)}`
+    })
+  )
+
+  const valid = examples.filter(Boolean)
+  if (!valid.length) return ''
+  return `\n\n## Risposte reali approvate da Luca (riferimento per stile, tono e domande; non copiarle)\n${valid
+    .map((example, i) => `### Esempio ${i + 1}\n${example}`)
+    .join('\n\n')}`
+}
+
+/** Da dove viene una risposta inviata: serve a scegliere gli esempi di stile. Mai bloccante. */
+export async function setOrigin(id: string, origin: 'ai_approved' | 'ai_edited' | 'manual' | 'ai_auto') {
+  const { error } = await supabaseAdmin.from('social_messages').update({ origin }).eq('id', id)
+  if (error && error.code !== '42703') console.error('origin update:', error.message)
+}
+
+const EMAIL_STYLE = `- Stai rispondendo a un'EMAIL ricevuta su luca@facevoice.ai, come Luca. Segui lo stile degli esempi qui sotto:
+  - saluto adatto all'ora ("Buongiorno Nome," / "Buon pomeriggio Nome,");
+  - una frase breve che riconosce la richiesta (es. "grazie mille per le informazioni, la tua lista di priorità è chiarissima");
+  - le domande come elenco numerato breve, ognuna con un'etichetta di una o due parole seguita da due punti (es. "1. Software attuali: ...");
+  - proposta del passo successivo senza pressione (es. "Una volta lette le risposte, se ti va possiamo fare una brevissima call di 10 minuti...");
+  - chiusura breve ("Buon lavoro e a presto," / "Fammi sapere e buon proseguimento di giornata!") e firma solo "Luca".
+- Testo semplice: niente markdown (niente asterischi o grassetti), niente oggetto (lo aggiunge il sistema).
+- Se l'email non richiede una risposta (ricevute, conferme automatiche, pubblicità, newsletter, semplici ringraziamenti finali) rispondi solo con: NESSUNA_RISPOSTA
+
+## Esempi di email scritte da Luca (stile da imitare, non contenuto da copiare)
+Esempio 1, a un'azienda che chiede un incontro per automatizzare i processi con l'AI:
+"Buongiorno [Nome],
+
+in vista del nostro incontro, vorrei portarmi avanti con il lavoro per arrivare all'appuntamento con delle idee già concrete.
+
+Se riesci a darmi qualche indicazione via email su due aspetti, ci aiuta molto:
+
+1. Software attuali: quali gestionali utilizzate oggi per prenotazioni, clienti e fatturazione?
+
+2. Priorità: qual è tra le varie mansioni quella che oggi vi porta via più tempo o vi crea più colli di bottiglia?
+
+Una volta lette le informazioni, se vi va possiamo anche fare una brevissima call di 10 minuti per definire gli ultimi dettagli prima di vederci di persona.
+
+Fammi sapere e buon proseguimento di giornata!
+
+Luca"
+
+Esempio 2, dopo che il cliente ha risposto con le sue priorità:
+"Buon pomeriggio [Nome],
+
+grazie mille per le informazioni, la tua lista di priorità è chiarissima. Ti confermo che l'integrazione è assolutamente fattibile.
+
+Per definire gli ultimi dettagli tecnici, avrei solo due brevi chiarimenti:
+
+1. Pagamenti: per i pagamenti dal vostro sito e per le caparre vi appoggiate a Stripe o a un altro sistema collegato al gestionale?
+
+2. Fatturazione: per fatture e ricevute usate il modulo interno del gestionale o un software esterno?
+
+Una volta lette le risposte, se ti va possiamo fare una brevissima call per allinearci prima di vederci in sede.
+
+Buon lavoro e a presto,
+
+Luca"`
 
 function agentPrompt(platform: SocialPlatform, publicComment: boolean) {
   const where = platform === 'email' ? 'via email' : `su ${PLATFORM_LABEL[platform]}`
@@ -147,11 +238,12 @@ async function generateReply(
   }
 
   // Un commento pubblico si risponde da solo: lo storico privato non va mai citato in pubblico.
-  const [knowledge, history] = await Promise.all([
+  const [knowledge, history, styleExamples] = await Promise.all([
     loadKnowledge(),
     publicComment
       ? Promise.resolve([{ role: 'user', content: publicComment }])
       : loadHistory(platform, contactId),
+    publicComment ? Promise.resolve('') : loadStyleExamples(platform),
   ])
 
   const system = [
@@ -160,6 +252,7 @@ async function generateReply(
       ? `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un post\n- Massimo 1-2 frasi, tono cordiale.\n- Non chiedere né citare dati personali, prezzi o dettagli riservati: per quelli invita a scrivere in privato (messaggio diretto).\n- Se il commento è offensivo, spam o non richiede risposta, rispondi solo con: NESSUNA_RISPOSTA`
       : '',
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+    styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
   ].join('')
@@ -266,15 +359,20 @@ export async function handleIncoming(input: {
   if (reply) {
     if (settings.autoSend) {
       const sent = await deliver(target, reply)
-      await supabaseAdmin.from('social_messages').insert({
-        ...target,
-        contact_name: input.contactName,
-        direction: 'out',
-        external_id: sent.id ?? null,
-        body: reply,
-        status: sent.error ? 'failed' : 'sent',
-        error_message: sent.error ?? null,
-      })
+      const { data: row } = await supabaseAdmin
+        .from('social_messages')
+        .insert({
+          ...target,
+          contact_name: input.contactName,
+          direction: 'out',
+          external_id: sent.id ?? null,
+          body: reply,
+          status: sent.error ? 'failed' : 'sent',
+          error_message: sent.error ?? null,
+        })
+        .select('id')
+        .single()
+      if (row) await setOrigin(row.id, 'ai_auto')
       if (sent.error) console.error(`${input.platform} send error:`, sent.error)
     } else {
       await supabaseAdmin.from('social_messages').insert({

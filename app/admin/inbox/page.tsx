@@ -59,7 +59,9 @@ const PLATFORM: Record<Platform, { label: string; icon: typeof Instagram; color:
   email: { label: 'Email', icon: Mail, color: '#EA4335' },
 }
 
-const POLL_MS = 15_000
+const POLL_MS = 5_000
+// Con la casella aperta le email si controllano piu' spesso del cron (1 minuto).
+const EMAIL_SYNC_MS = 20_000
 
 function formatTime(iso: string) {
   const d = new Date(iso)
@@ -375,6 +377,26 @@ function InboxPage() {
     }, POLL_MS)
     return () => clearInterval(id)
   }, [loadConversations, loadThread])
+
+  useEffect(() => {
+    let stopped = false
+    const sync = async () => {
+      if (document.visibilityState !== 'visible') return
+      const res = await authFetch('/api/admin/email', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'sync' }),
+      }).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      // Casella non collegata: inutile continuare a chiedere.
+      if (data?.error === 'Casella non collegata') stopped = true
+      if (data?.processed) loadConversations()
+    }
+    sync()
+    const id = setInterval(() => {
+      if (!stopped) sync()
+    }, EMAIL_SYNC_MS)
+    return () => clearInterval(id)
+  }, [loadConversations])
 
   // Scorre solo l'area messaggi: scrollIntoView spostava l'intera pagina su mobile.
   useEffect(() => {
