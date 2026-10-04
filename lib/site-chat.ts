@@ -129,6 +129,46 @@ export async function handleSiteMessage(
     return { handoff: true, stored }
   }
 
+  // Appena il visitatore lascia email o cellulare: passaggio all'operatore
+  // garantito (non dipende dall'AI) e avviso immediato a Luca, email + push.
+  if (EMAIL_RE.test(text) || PHONE_RE.test(text)) {
+    const body = `Perfetto${contactName ? `, ${contactName}` : ''}, grazie! Ti metto subito in contatto con un operatore del team: attendi qualche istante e non chiudere la chat.`
+    const { data: row } = stored
+      ? await supabaseAdmin
+          .from('social_messages')
+          .insert({
+            platform: WEB_PLATFORM,
+            kind: 'message',
+            contact_id: sessionId,
+            contact_name: contactName,
+            direction: 'out',
+            external_id: `web:${randomUUID()}`,
+            body,
+            status: 'sent',
+          })
+          .select('id, direction, body, created_at')
+          .single()
+      : { data: null }
+    if (stored) await markHandedOff(sessionId)
+    const transcript: SiteMessage[] = stored
+      ? await loadSession(sessionId)
+      : [
+          ...clientHistory.map((m, i) => ({
+            id: `c${i}`,
+            direction: (m.role === 'user' ? 'in' : 'out') as 'in' | 'out',
+            body: m.content,
+            created_at: '',
+          })),
+          { id: 'last', direction: 'in', body: text, created_at: '' },
+        ]
+    await notifyHandoff(sessionId, contactName, transcript)
+    return {
+      reply: (row as SiteMessage | null) ?? { id: `local-${Date.now()}`, direction: 'out', body, created_at: new Date().toISOString() },
+      handoff: true,
+      stored,
+    }
+  }
+
   if (!getGeminiApiKey()) return { handoff: false, stored }
 
   const history = stored
@@ -204,8 +244,8 @@ export async function handleSiteMessage(
 }
 
 /** Email all'admin con tutta la conversazione e il link per rispondere dalla casella. */
-async function notifyHandoff(sessionId: string, contactName: string | null) {
-  const messages = await loadSession(sessionId)
+async function notifyHandoff(sessionId: string, contactName: string | null, transcript?: SiteMessage[]) {
+  const messages = transcript ?? (await loadSession(sessionId))
   const userText = messages.filter((m) => m.direction === 'in').map((m) => m.body).join('\n')
   const email = userText.match(EMAIL_RE)?.[0] || null
   const phone = userText.match(PHONE_RE)?.[0]?.trim() || null
@@ -224,7 +264,7 @@ async function notifyHandoff(sessionId: string, contactName: string | null) {
     )
     .join('')
 
-  await Promise.allSettled([
+  const [emailResult, pushResult] = await Promise.allSettled([
     sendEmail({
       to: [...ADMIN_EMAILS],
       replyTo: email || undefined,
@@ -245,4 +285,8 @@ Telefono: ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>
       tag: `web:${sessionId}`,
     }),
   ])
+  console.log('chat sito, passaggio all\'operatore:', {
+    email: emailResult.status === 'fulfilled' ? emailResult.value : 'errore',
+    push: pushResult.status === 'fulfilled' ? pushResult.value : 'errore',
+  })
 }
