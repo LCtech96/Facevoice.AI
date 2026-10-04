@@ -1,9 +1,11 @@
 'use client'
 
+import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight, BrainCircuit, Code2, LayoutDashboard, MapPin, Megaphone } from 'lucide-react'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { brands } from '@/components/BrandBanner'
+import ContactModal from './ContactModal'
 import styles from './EmberHero.module.css'
 
 // Hero pubblico in stile "ember". I contenuti sono quelli reali del sito:
@@ -11,7 +13,6 @@ import styles from './EmberHero.module.css'
 // clienti presi dall'elenco di BrandBanner. Nessun numero inventato.
 
 const serviceIcons = [Megaphone, Code2, BrainCircuit, LayoutDashboard]
-const WHATSAPP = 'https://wa.me/393514206353'
 
 // Colori dei pallini con le iniziali dei clienti.
 const tints = [
@@ -53,6 +54,8 @@ export default function EmberHero() {
   const subtitle = hero?.subtitleParts?.length ? hero.subtitleParts : FALLBACK_SUBTITLE
   const services = hero?.services?.length ? hero.services : FALLBACK_SERVICES
   const featured = brands.slice(0, 4)
+  const [contactOpen, setContactOpen] = useState(false)
+  const closeContact = useCallback(() => setContactOpen(false), [])
 
   return (
     <section className={styles.hero} aria-labelledby="hero-title">
@@ -92,12 +95,12 @@ export default function EmberHero() {
           </p>
 
           <div className={styles.cta}>
-            <a className={styles.go} href={WHATSAPP} target="_blank" rel="noreferrer">
+            <button type="button" className={styles.go} onClick={() => setContactOpen(true)}>
               Parliamo del tuo progetto
               <span className={styles.goDot} aria-hidden="true">
                 <ArrowRight />
               </span>
-            </a>
+            </button>
             <Link className={styles.ghostBtn} href="/services">
               Scopri i servizi
             </Link>
@@ -115,7 +118,7 @@ export default function EmberHero() {
               </div>
               <span className={styles.proofText}>
                 <strong>{brands.length} attività ci hanno scelto</strong>
-                Risposte rapide anche su WhatsApp
+                Ti ricontattiamo in tempi brevi
               </span>
             </div>
           </div>
@@ -177,6 +180,7 @@ export default function EmberHero() {
           </ul>
         </div>
       </div>
+      <ContactModal open={contactOpen} onClose={closeContact} />
     </section>
   )
 }

@@ -138,6 +138,9 @@
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
   box-shadow: 0 14px 40px rgba(255, 61, 0, 0.38);
   transition: transform 0.35s var(--ember-ease), box-shadow 0.35s var(--ember-ease);
 }
