@@ -108,8 +108,6 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const dropdownMenuItems: NavItem[] = isAdmin
     ? [
         { id: 'chat', label: 'Assistente AI interno', icon: MessageSquare, href: '/ai-chat' },
-        { id: 'bookings', label: t('nav.bookings'), icon: Calendar, href: '/bookings' },
-        { id: 'payments', label: t('nav.payments'), icon: Wallet, href: '/payments' },
       ]
     : [
         { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/lavora-con-noi' },
