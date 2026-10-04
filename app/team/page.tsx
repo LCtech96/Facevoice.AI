@@ -32,14 +32,14 @@ export default function TeamPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">Caricamento...</div>
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title="Il Nostro Team | Facevoice AI"
         description="Conosci il team di Facevoice AI: le persone che guidano e costruiscono innovazione ogni giorno."

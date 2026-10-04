@@ -91,7 +91,7 @@ Le strategie di marketing digitale che implementiamo per le ottiche di ${data.di
 Il CRM integrato per le ottiche di ${data.displayName} gestisce tutte le interazioni con i clienti, dalle prime visite ai follow-up, permettendo di programmare richiami automatici per controlli periodici e di mantenere una comunicazione costante con la propria clientela.`
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title={title}
         description={description}

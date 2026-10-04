@@ -48,14 +48,14 @@ export default function ServicesPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">{t('common.loading')}</div>
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title="Servizi Facevoice AI | Automazione Aziendale, AI E-commerce, SEO e Chatbot a Palermo"
         description="Servizi di sviluppo software su misura per automazione aziendale a Palermo. Integrazione AI per e-commerce, consulenza SEO Shopify/WooCommerce, chatbot personalizzati h24, ottimizzazione performance, soluzioni cloud per digitalizzazione imprese siciliane."

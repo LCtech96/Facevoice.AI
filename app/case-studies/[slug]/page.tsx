@@ -41,7 +41,7 @@ export default async function Page({ params }: Params) {
   const url = `${SITE_URL}/case-studies/${project.slug}`
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       {/* Il progetto dichiarato come opera di Facevoice AI, con gli
           articoli che ne hanno parlato: e' cio' che collega una fonte
           indipendente a chi il lavoro l'ha fatto. */}

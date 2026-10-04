@@ -210,7 +210,7 @@ export default function AIChatWidget() {
   }
 
   return (
-    <>
+    <div className="ember-vars">
       {/* Floating Button */}
       <motion.button
         initial={{ scale: 0 }}
@@ -402,6 +402,6 @@ export default function AIChatWidget() {
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </div>
   )
 }

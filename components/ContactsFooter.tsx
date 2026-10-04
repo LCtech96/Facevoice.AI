@@ -13,13 +13,16 @@ export default function ContactsFooter() {
     return null
   }
 
+  // Stile pubblico "ember" ovunque tranne nell'area admin.
+  const ember = !pathname?.startsWith('/admin')
+
   const phone = '+39 3513671340'
   const whatsapp = '+39 3514206353'
   const whatsappLink = `https://wa.me/${whatsapp.replace(/[^0-9]/g, '')}`
   const email = 'info@facevoice.ai'
 
   return (
-    <footer className="mt-16 border-t border-[var(--border-color)] bg-[var(--background)]">
+    <footer className={`${ember ? 'theme-ember ' : ''}mt-16 border-t border-[var(--border-color)] bg-[var(--background)]`}>
       <div className="container mx-auto max-w-6xl px-6 py-10">
         <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-6">
           Contatti

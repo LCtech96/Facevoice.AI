@@ -91,7 +91,7 @@ Il sistema POS integrato per i negozi di abbigliamento di ${data.displayName} ge
 Il CRM integrato per i negozi di abbigliamento di ${data.displayName} gestisce tutte le interazioni con i clienti, dalle prime visite agli acquisti ricorrenti, permettendo di programmare promozioni personalizzate, ricordare compleanni e occasioni speciali, e mantenere una comunicazione costante con la propria clientela per aumentare le vendite.`
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title={title}
         description={description}
