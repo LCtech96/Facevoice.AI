@@ -6,7 +6,7 @@ import { resolveKey, type Member } from '@/lib/meta/identities'
 
 export const dynamic = 'force-dynamic'
 
-const PLATFORMS = ['whatsapp', 'facebook', 'instagram', 'email']
+const PLATFORMS = ['whatsapp', 'facebook', 'instagram', 'email', 'web']
 const SELECT =
   'id, platform, contact_id, kind, direction, body, status, error_message, contact_name, reply_to, created_at'
 

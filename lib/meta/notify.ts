@@ -5,7 +5,7 @@ import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { conversationKeyFor } from '@/lib/meta/identities'
 
-const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', email: 'Email' } as const
+const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', email: 'Email', web: 'Chat sito' } as const
 const EMAIL_QUIET_MINUTES = 10
 
 /** Avvisa gli admin di un nuovo messaggio: push sempre, email al massimo una ogni 10 minuti per contatto. */
