@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 
-const brands = [
+export const brands = [
   { name: 'Nomadiqe', logo: '/nomadiqe.png', alt: 'Nomadiqe - startup affitti brevi' },
   { name: 'Ottica Focus', logo: '/Otticafocus.png', alt: 'Ottica Focus - ottica Palermo' },
   { name: 'Barinello', logo: '/Barinello.png', alt: 'Barinello' },

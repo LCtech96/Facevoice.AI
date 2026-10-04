@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function SettoriPage() {
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <Navigation />
       <div className="max-w-3xl mx-auto px-5 pt-28 pb-20">
         <h1 className="text-3xl md:text-4xl font-bold text-[var(--text-primary)]">

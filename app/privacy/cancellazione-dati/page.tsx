@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function DataDeletionPage() {
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <Navigation />
 
       <div className="max-w-3xl mx-auto px-5 pt-28 pb-24">

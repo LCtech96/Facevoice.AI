@@ -32,7 +32,7 @@ export default function SectorPage({
   const projects = projectsForSector(sector.slug)
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <ServiceJsonLd
         name={heading}
         description={sector.intro}

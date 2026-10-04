@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Navigation from '@/components/Navigation'
-import Hero from '@/components/Hero'
+import EmberHero from '@/components/landing/EmberHero'
 import BrandBanner from '@/components/BrandBanner'
 import Feed from '@/components/Feed'
 import AIToolsFeed from '@/components/AIToolsFeed'
@@ -61,14 +61,14 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">Caricamento...</div>
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title="Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale"
         description="Sviluppo software su misura per automazione aziendale a Palermo. Integrazione intelligenza artificiale per gestione magazzino e-commerce, consulenza SEO per Shopify e WooCommerce, chatbot AI personalizzati per assistenza clienti h24. Ottimizzazione velocità siti e-commerce professionali."
@@ -102,7 +102,7 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       
       {/* Hero Section */}
       <div id="hero" className="scroll-mt-14">
-        <Hero />
+        <EmberHero />
       </div>
 
       {/* Brand Banner */}
@@ -173,7 +173,7 @@ export default function HomePage() {
 
   return (
     <Suspense fallback={
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">Caricamento...</div>
       </main>
     }>

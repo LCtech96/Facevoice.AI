@@ -26,7 +26,7 @@ const SECTIONS = [
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{

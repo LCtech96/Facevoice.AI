@@ -21,14 +21,14 @@ export default function LavoraConNoiPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
+      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">Caricamento...</div>
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title="Lavora con noi | Facevoice AI"
         description="Candidati a Facevoice AI o con uno dei nostri partner: Nomadiqe, Trattoria da Piero Mondello e Lucas Appartaments. Invia la tua candidatura online."

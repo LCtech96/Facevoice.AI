@@ -90,7 +90,7 @@ La gestione del magazzino automatizzata aiuta i ristoranti di ${data.displayName
 Infine, le strategie di marketing digitale che implementiamo per i ristoranti di ${data.displayName} includono campagne social media automatizzate, email marketing personalizzate e promozioni mirate basate sul comportamento dei clienti.`
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
         title={title}
         description={description}

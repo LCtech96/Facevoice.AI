@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Montserrat } from 'next/font/google'
+import { Montserrat, Inter, Inter_Tight, Instrument_Serif } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
@@ -18,6 +18,16 @@ const montserrat = Montserrat({
   subsets: ['latin'],
   weight: ['300', '400', '500', '600', '700', '800', '900'],
   variable: '--font-montserrat',
+})
+
+// Font dello stile pubblico "ember" (classe .theme-ember): l'area admin resta in Montserrat.
+const interTight = Inter_Tight({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-inter-tight' })
+const inter = Inter({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--font-inter' })
+const instrumentSerif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  style: 'italic',
+  variable: '--font-instrument-serif',
 })
 
 export const metadata: Metadata = {
@@ -97,7 +107,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="it" className="dark">
+    <html lang="it" className={`dark ${interTight.variable} ${inter.variable} ${instrumentSerif.variable}`}>
       <body className={montserrat.className}>
         <OrganizationJsonLd />
         <WebSiteJsonLd />

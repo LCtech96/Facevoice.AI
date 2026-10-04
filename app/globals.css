@@ -252,3 +252,60 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--text-400);
 }
+
+/* ---------------------------------------------------------------------
+   Stile pubblico "ember": nero lava che sfuma in arancio e ambra.
+   Si applica con la classe .theme-ember sul <main> delle pagine pubbliche:
+   ridefinisce le stesse variabili usate dai componenti, cosi' l'area
+   admin e la chat interna non cambiano.
+   --------------------------------------------------------------------- */
+.theme-ember,
+.ember-vars {
+  --background: #120400;
+  --background-secondary: #1f0902;
+  --card-background: rgba(56, 20, 6, 0.42);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --accent-blue: #ff6a1a;
+  --accent-blue-light: #ff8a1f;
+  --border-color: rgba(255, 255, 255, 0.14);
+  --shadow: rgba(0, 0, 0, 0.45);
+
+  --ember-ground: #2a0b02;
+  --ember-ground-deep: #120400;
+  --ember-flame: #ff3d00;
+  --ember-flame-lit: #ff8a1f;
+  --ember-glass: rgba(56, 20, 6, 0.42);
+  --ember-hair: rgba(255, 255, 255, 0.14);
+  --ember-hair-soft: rgba(255, 255, 255, 0.08);
+  --ember-ink-soft: rgba(255, 255, 255, 0.72);
+  --ember-ink-faint: rgba(255, 255, 255, 0.46);
+  --ember-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-display: var(--font-inter-tight), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-body: var(--font-inter), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-italic: var(--font-instrument-serif), Georgia, serif;
+}
+
+/* .ember-vars: solo i colori (es. il widget chat flottante), senza sfondo. */
+.theme-ember {
+  overflow-x: clip;
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  letter-spacing: normal;
+}
+
+.theme-ember h1,
+.theme-ember h2,
+.theme-ember h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.theme-ember ::selection { background: rgba(255, 106, 26, 0.35); }
+
+.theme-ember :focus-visible {
+  outline: 2px solid var(--ember-flame-lit);
+  outline-offset: 3px;
+}

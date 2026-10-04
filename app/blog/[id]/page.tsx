@@ -89,7 +89,7 @@ export default function BlogPostPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--background)]">
+      <main className="theme-ember min-h-screen bg-[var(--background)]">
         <Navigation />
         <div className="container mx-auto px-4 py-12 max-w-4xl">
           <div className="text-center text-[var(--text-secondary)] py-20">
@@ -103,7 +103,7 @@ export default function BlogPostPage() {
 
   if (error || !post) {
     return (
-      <main className="min-h-screen bg-[var(--background)]">
+      <main className="theme-ember min-h-screen bg-[var(--background)]">
         <Navigation />
         <div className="container mx-auto px-4 py-12 max-w-4xl">
           <div className="text-center py-20">
@@ -124,7 +124,7 @@ export default function BlogPostPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--background)]">
+    <main className="theme-ember min-h-screen bg-[var(--background)]">
       <Navigation />
       
       {/* Spacing per desktop navigation */}
