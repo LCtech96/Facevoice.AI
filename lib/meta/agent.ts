@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto'
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
@@ -15,7 +15,7 @@ import { sendThreadReply } from '@/lib/gmail'
 
 const HISTORY_LIMIT = 12
 
-export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram' | 'email'
+export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram' | 'email' | 'web'
 export type MessageKind = 'message' | 'comment'
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
@@ -23,6 +23,7 @@ const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   facebook: 'Messenger',
   instagram: 'Instagram',
   email: 'Email',
+  web: 'Chat sito',
 }
 
 const NON_TEXT_REPLY =
@@ -188,7 +189,7 @@ async function getChannelSettings(platform: SocialPlatform) {
   }
 }
 
-async function loadKnowledge(): Promise<string> {
+export async function loadKnowledge(): Promise<string> {
   const { data } = await supabaseAdmin
     .from('ai_knowledge')
     .select('title, content, category')
@@ -310,10 +311,20 @@ export type OutgoingTarget = {
 /** Invia davvero una risposta al canale giusto. Usato sia in automatico sia all'approvazione. */
 export async function deliver(target: OutgoingTarget, text: string): Promise<SendResult> {
   if (target.kind === 'comment') {
-    if (target.platform === 'whatsapp' || target.platform === 'email' || !target.reply_to) {
+    if (target.platform === 'whatsapp' || target.platform === 'email' || target.platform === 'web' || !target.reply_to) {
       return { error: 'Commento di origine mancante' }
     }
     return replyToComment(target.platform, target.reply_to, text)
+  }
+  if (target.platform === 'web') {
+    // Chat del sito: il messaggio salvato lo legge il widget del visitatore.
+    // Chi risponde a mano prende in carico la conversazione: l'AI si ferma.
+    await supabaseAdmin.from('app_settings').upsert({
+      key: `web_handoff:${target.contact_id}`,
+      value: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    return { id: `web:${randomUUID()}` }
   }
   if (target.platform === 'email') {
     if (!target.channel_account_id) return { error: 'Conversazione email di origine mancante' }
