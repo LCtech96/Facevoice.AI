@@ -13,7 +13,6 @@ export const brands: { name: string; logo: string | null; alt: string }[] = [
   { name: 'Seatour Palermo', logo: '/clients/seatourpalermo.png', alt: 'Seatour Palermo - luxury boat experience' },
   { name: 'Trattoria da Piero', logo: '/clients/trattoria-piero.png', alt: 'Trattoria da Piero - ristorante Mondello' },
   { name: 'Bird Garden', logo: '/clients/bird-terrasini.png', alt: 'Bird Garden Terrasini - ristorante e pizzeria' },
-  { name: 'Ristorante Le Grazie', logo: null, alt: 'Ristorante Le Grazie - Castellammare del Golfo' },
   { name: 'Solemar Sicilia', logo: null, alt: 'Solemar Sicilia' },
   { name: 'Impastato Traslochi', logo: null, alt: 'Impastato Traslochi - traslochi Sicilia' },
   { name: 'Sicily by Car', logo: '/clients/sicilybycar.svg', alt: 'Sicily by Car - noleggio auto' },
