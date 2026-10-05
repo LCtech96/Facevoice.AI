@@ -11,6 +11,7 @@ import {
   type Lead,
 } from '@/lib/leads'
 import { prepareOutreachReply } from '@/lib/meta/agent'
+import { pollGmail } from '@/lib/gmail-poll'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -297,6 +298,74 @@ async function readConversation(lead: Lead) {
   }
 }
 
+/**
+ * Situazione aggiornata di chi ci ha risposto: letta dal database a ogni richiesta,
+ * cosi' l'assistente vede sempre le ultime risposte e le controrisposte (in attesa o gia' inviate).
+ */
+async function repliesOverview() {
+  const { data: leads } = await supabaseAdmin
+    .from('leads')
+    .select('id, name, email')
+    .in('status', ['replied', 'client'])
+    .not('email', 'is', null)
+    .limit(40)
+  if (!leads?.length) return []
+  const emails = leads.map((l) => String(l.email).toLowerCase())
+  const { data: messages } = await supabaseAdmin
+    .from('social_messages')
+    .select('contact_id, direction, status, body, created_at')
+    .eq('platform', 'email')
+    .in('contact_id', emails)
+    .order('created_at', { ascending: false })
+    .limit(400)
+
+  return leads.map((lead) => {
+    const email = String(lead.email).toLowerCase()
+    const thread = (messages || []).filter((m) => m.contact_id === email)
+    const lastIn = thread.find((m) => m.direction === 'in')
+    const pending = thread.find((m) => m.direction === 'out' && m.status === 'pending')
+    const sentAfter = lastIn && thread.find((m) => m.direction === 'out' && m.status === 'sent' && m.created_at > lastIn.created_at)
+    return {
+      leadId: lead.id,
+      nome: lead.name,
+      ultima_risposta_il: lastIn?.created_at ?? null,
+      ultima_risposta: lastIn ? String(lastIn.body || '').slice(0, 300) : null,
+      controrisposta: pending ? 'in attesa di approvazione in Messaggi' : sentAfter ? 'già inviata' : lastIn ? 'da preparare' : 'nessuna risposta registrata',
+      bozza_attuale: pending ? String(pending.body || '').slice(0, 400) : undefined,
+    }
+  })
+}
+
+/** Prepara (o rifa', tenendo conto della versione attuale) la controrisposta per un contatto. */
+async function replyFor(lead: Lead, instructions?: string) {
+  const email = lead.email!.toLowerCase()
+  const extra = instructions?.trim()
+  const { data: pending } = await supabaseAdmin
+    .from('social_messages')
+    .select('body')
+    .eq('platform', 'email')
+    .eq('contact_id', email)
+    .eq('direction', 'out')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const notes = [
+    lead.notes,
+    extra ? `Indicazioni di Luca per questa risposta: ${extra}` : '',
+    extra && pending?.body ? `Versione attuale della controrisposta, da modificare secondo le indicazioni:\n${pending.body}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return prepareOutreachReply(email, {
+    leadId: lead.id,
+    name: lead.name,
+    analysis: lead.analysis,
+    notes: notes || null,
+    firstEmail: lead.email_body ? `Oggetto: ${lead.email_subject || ''}\n\n${lead.email_body}` : null,
+  })
+}
+
 // ---------------------------------------------------------------------
 // Agente
 // ---------------------------------------------------------------------
@@ -319,7 +388,10 @@ Strumenti:
 - "remove_drafts": {"leadIds": [...]} → toglie bozze dalla lista.
 - "update_leads": {"ids": [...], "status": "...", "notes": "...", "email": "..."} → aggiorna schede (stato, note, email corretta).
 - "read_conversation": {"leadId": "..."} → legge la conversazione email con quel contatto (prima email, sue risposte, bozze in attesa). Usalo quando Luca chiede cosa ha risposto qualcuno o quali leve usare: poi rispondi tu con un'analisi breve (cosa chiede, tono, leve concrete).
-- "prepare_reply": {"leadId": "...", "instructions": "indicazioni di Luca, opzionali"} → prepara la controrisposta a chi ci ha risposto e la mette da approvare in Messaggi (non parte da sola). Nella risposta finale riassumi in breve cosa dice e ricorda che è da approvare in Messaggi.
+- "prepare_reply": {"leadId": "...", "instructions": "indicazioni di Luca, opzionali"} → prepara la controrisposta a chi ci ha risposto e la mette da approvare in Messaggi (non parte da sola), al posto di quella vecchia. Se Luca chiede una modifica a una controrisposta già pronta, usalo con le sue indicazioni: si parte dalla versione attuale. Nella risposta finale riassumi in breve cosa dice e ricorda che è da approvare in Messaggi.
+- "prepare_replies": {"instructions": "opzionali", "redo": false} → prepara le controrisposte per TUTTI quelli che hanno risposto e sono "da preparare" (con redo=true rifà anche quelle in attesa).
+
+La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la casella è appena stata controllata): fidati di questa e non della conversazione precedente quando le cose sono cambiate.
 
 Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
 
@@ -349,8 +421,14 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   let refresh = false
   let more = false
 
+  // Prima di tutto la casella: le risposte arrivate in questo momento devono essere gia' note.
+  reportStatus('Controllo la casella per nuove risposte…')
+  await pollGmail().catch((error) => console.error('lead assistant poll:', error))
+  const replies = await repliesOverview().catch(() => [])
+
   const context = [
     `Riepilogo: ${JSON.stringify(await stats())}`,
+    replies.length ? `Risposte ricevute (aggiornate ora):\n${JSON.stringify(replies)}` : 'Risposte ricevute: nessuna.',
     drafts.size
       ? `Bozze aperte (non ancora inviate):\n${[...drafts.values()]
           .map((d) => `- leadId ${d.leadId} · ${d.name} · ${d.kind === 'first' ? 'primo contatto' : 'follow-up'} · oggetto "${d.subject}"\n  ${d.body.slice(0, 300).replace(/\n/g, ' ')}`)
@@ -532,17 +610,31 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             break
           }
           reportStatus(`Scrivo la controrisposta per ${lead.name}…`)
-          const extra = asText(args.instructions)?.trim()
-          const out = await prepareOutreachReply(lead.email.toLowerCase(), {
-            leadId: lead.id,
-            name: lead.name,
-            analysis: lead.analysis,
-            notes: [lead.notes, extra ? `Indicazioni di Luca per questa risposta: ${extra}` : ''].filter(Boolean).join('\n') || null,
-            firstEmail: lead.email_body ? `Oggetto: ${lead.email_subject || ''}\n\n${lead.email_body}` : null,
-          })
+          const out = await replyFor(lead, asText(args.instructions))
           result = out.ok
             ? { preparata: true, dove: 'Messaggi, da approvare', testo: out.text }
             : { preparata: false, motivo: out.reason }
+          refresh = true
+          break
+        }
+        case 'prepare_replies': {
+          const redo = Boolean(args.redo)
+          const todoIds = (await repliesOverview())
+            .filter((r) => r.controrisposta === 'da preparare' || (redo && r.controrisposta.startsWith('in attesa')))
+            .map((r) => r.leadId)
+          const leads = todoIds.length ? await loadLeads(todoIds) : []
+          const { out, unfinished } = await inBatches(
+            leads,
+            async (lead, position) => {
+              reportStatus(`Scrivo la controrisposta per ${lead.name} (${position})…`)
+              const res = await replyFor(lead, asText(args.instructions))
+              return { nome: lead.name, preparata: res.ok, testo: res.text?.slice(0, 500), motivo: res.reason }
+            },
+            2
+          )
+          if (unfinished) more = true
+          result = { controrisposte: out, rimaste: unfinished, nota: todoIds.length ? undefined : 'nessuna risposta da preparare' }
+          refresh = true
           break
         }
         default:
