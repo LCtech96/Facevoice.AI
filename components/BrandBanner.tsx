@@ -3,7 +3,8 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 
-export const brands = [
+// logo null = nome scritto al posto del logo (finche' non carichiamo l'immagine).
+export const brands: { name: string; logo: string | null; alt: string }[] = [
   { name: 'Nomadiqe', logo: '/nomadiqe.png', alt: 'Nomadiqe - startup affitti brevi' },
   { name: 'Ottica Focus', logo: '/Otticafocus.png', alt: 'Ottica Focus - ottica Palermo' },
   { name: 'Barinello', logo: '/Barinello.png', alt: 'Barinello' },
@@ -11,7 +12,10 @@ export const brands = [
   { name: 'Revera', logo: '/clients/revera.png', alt: 'Revera Estetica Avanzata - centro estetico Carini' },
   { name: 'Seatour Palermo', logo: '/clients/seatourpalermo.png', alt: 'Seatour Palermo - luxury boat experience' },
   { name: 'Trattoria da Piero', logo: '/clients/trattoria-piero.png', alt: 'Trattoria da Piero - ristorante Mondello' },
-  { name: 'Bird Terrasini', logo: '/clients/bird-terrasini.png', alt: 'Bird Terrasini - ristorante e pizzeria' },
+  { name: 'Bird Garden', logo: '/clients/bird-terrasini.png', alt: 'Bird Garden Terrasini - ristorante e pizzeria' },
+  { name: 'Ristorante Le Grazie', logo: null, alt: 'Ristorante Le Grazie - Castellammare del Golfo' },
+  { name: 'Solemar Sicilia', logo: null, alt: 'Solemar Sicilia' },
+  { name: 'Impastato Traslochi', logo: null, alt: 'Impastato Traslochi - traslochi Sicilia' },
   { name: 'Sicily by Car', logo: '/clients/sicilybycar.svg', alt: 'Sicily by Car - noleggio auto' },
   { name: 'KrainAI', logo: '/clients/krainai.svg', alt: 'KrainAI - infrastruttura per l\'economia AI' },
 ]
@@ -19,6 +23,13 @@ export const brands = [
 const logoClassName = 'h-10 md:h-12 w-auto object-contain max-w-[120px] md:max-w-[140px]'
 
 function BrandLogo({ brand }: { brand: (typeof brands)[number] }) {
+  if (!brand.logo) {
+    return (
+      <span className="text-base md:text-lg font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap" title={brand.alt}>
+        {brand.name}
+      </span>
+    )
+  }
   if (brand.logo.endsWith('.svg')) {
     return (
       <img

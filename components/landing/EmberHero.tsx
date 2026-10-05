@@ -174,7 +174,7 @@ export default function EmberHero() {
         <div className={styles.clients}>
           <span className={styles.clientsLabel}>Hanno scelto di collaborare con noi</span>
           <ul>
-            {brands.slice(0, 6).map((brand) => (
+            {brands.map((brand) => (
               <li key={brand.name}>{brand.name}</li>
             ))}
           </ul>
