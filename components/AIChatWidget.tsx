@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send, X, Bot, Trash2, UserRound } from 'lucide-react'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // Chat pubblica del sito. Ogni visitatore ha una sessione (id casuale in
 // localStorage): i messaggi finiscono nella casella Messaggi dell'admin
@@ -13,6 +14,11 @@ import { Send, X, Bot, Trash2, UserRound } from 'lucide-react'
 type ChatMessage = { id: string; direction: 'in' | 'out'; body: string; created_at: string }
 
 const TEASER_KEY = 'fv_chat_teaser_closed'
+// Testo del fumetto nella lingua scelta sul sito (inglese per le altre lingue).
+const TEASER_TEXT: Record<string, { question: string; cta: string }> = {
+  it: { question: 'Vuoi sapere in breve di cosa ci occupiamo e come possiamo aiutarti?', cta: 'Scrivici qui' },
+  en: { question: 'Want to know in short what we do and how we can help you?', cta: 'Write to us here' },
+}
 const SESSION_KEY = 'fv_site_chat_session'
 const POLL_OPEN_MS = 4000
 const POLL_HANDOFF_MS = 3000
@@ -68,6 +74,8 @@ export default function AIChatWidget() {
   // Fumetto che invita a scrivere: compare dopo un attimo, sparisce quando si apre
   // la chat o si chiude con la X (e non torna per tutta la visita).
   const [teaser, setTeaser] = useState(false)
+  const { language } = useTranslation()
+  const teaserText = TEASER_TEXT[language] || TEASER_TEXT.en
   useEffect(() => {
     let closed = false
     try {
@@ -236,8 +244,8 @@ export default function AIChatWidget() {
                 onClick={() => setIsOpen(true)}
                 className="text-left text-sm leading-snug text-white/85"
               >
-                Vuoi sapere in breve di cosa ci occupiamo e come possiamo aiutarti?
-                <span className="block mt-1 font-semibold text-[#ff8a1f]">Scrivici qui</span>
+                {teaserText.question}
+                <span className="block mt-1 font-semibold text-[#ff8a1f]">{teaserText.cta}</span>
               </button>
               <button
                 type="button"
