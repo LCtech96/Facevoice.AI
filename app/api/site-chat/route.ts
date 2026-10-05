@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { handleSiteMessage, isHandedOff, isValidSession, loadSession } from '@/lib/site-chat'
+import { asSiteLanguage } from '@/lib/site-languages'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -47,6 +48,6 @@ export async function POST(req: NextRequest) {
         .map((m: { role: string; content: string }) => ({ role: m.role, content: m.content.slice(0, 1000) }))
     : []
 
-  const result = await handleSiteMessage(session, text, history)
+  const result = await handleSiteMessage(session, text, history, asSiteLanguage(body?.language))
   return NextResponse.json(result)
 }

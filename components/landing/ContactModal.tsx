@@ -1,5 +1,6 @@
 'use client'
 
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
@@ -25,6 +26,7 @@ const EMPTY = { firstName: '', lastName: '', email: '', phone: '', message: '', 
 
 export default function ContactModal({ open, onClose }: Props) {
   const [form, setForm] = useState(EMPTY)
+  const { language } = useTranslation()
   const [privacy, setPrivacy] = useState(false)
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -101,7 +103,7 @@ export default function ContactModal({ open, onClose }: Props) {
       const res = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, privacy }),
+        body: JSON.stringify({ ...form, privacy, language }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Invio non riuscito')

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { HANDOFF_MESSAGES, LANGUAGE_NAMES, type SiteLanguage } from '@/lib/site-languages'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
@@ -93,7 +94,8 @@ type HandleResult = { reply?: SiteMessage; handoff: boolean; stored: boolean }
 export async function handleSiteMessage(
   sessionId: string,
   text: string,
-  clientHistory: { role: string; content: string }[]
+  clientHistory: { role: string; content: string }[],
+  language: SiteLanguage = 'it'
 ): Promise<HandleResult> {
   const { data: last } = await supabaseAdmin
     .from('social_messages')
@@ -132,7 +134,7 @@ export async function handleSiteMessage(
   // Appena il visitatore lascia email o cellulare: passaggio all'operatore
   // garantito (non dipende dall'AI) e avviso immediato a Luca, email + push.
   if (EMAIL_RE.test(text) || PHONE_RE.test(text)) {
-    const body = `Perfetto${contactName ? `, ${contactName}` : ''}, grazie! Ti metto subito in contatto con un operatore del team: attendi qualche istante e non chiudere la chat.`
+    const body = HANDOFF_MESSAGES[language].replace('{name}', contactName ? `, ${contactName}` : '')
     const { data: row } = stored
       ? await supabaseAdmin
           .from('social_messages')
@@ -183,6 +185,9 @@ export async function handleSiteMessage(
     SITE_PROMPT,
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
+    language !== 'it'
+      ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
+      : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
   ].join('')
 

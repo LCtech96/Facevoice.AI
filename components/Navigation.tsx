@@ -151,6 +151,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               onClick={() => router.push(isAdmin ? '/admin/inbox' : '/ai-chat')}
+              translate="no"
               className="text-xl font-semibold text-[var(--text-primary)] cursor-pointer"
             >
               FacevoiceAI
@@ -302,7 +303,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             onClick={() => router.push(isAdmin ? '/admin/inbox' : '/home')}
-            className="text-base font-semibold text-[var(--text-primary)] cursor-pointer truncate min-w-0 flex-1"
+            translate="no"
+              className="text-base font-semibold text-[var(--text-primary)] cursor-pointer truncate min-w-0 flex-1"
           >
             FacevoiceAI
           </motion.div>

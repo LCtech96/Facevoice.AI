@@ -182,7 +182,7 @@ export default function AIChatWidget() {
       const res = await fetch('/api/site-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session: id, text, history }),
+        body: JSON.stringify({ session: id, text, history, language }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Invio non riuscito')
@@ -286,7 +286,7 @@ export default function AIChatWidget() {
         className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 w-16 h-16 rounded-full bg-[var(--accent-blue)] text-white shadow-lg hover:shadow-xl transition-all flex items-center justify-center font-semibold text-lg"
         aria-label={isOpen ? 'Chiudi chat' : 'Apri chat'}
       >
-        {isOpen ? <X size={24} /> : 'AI'}
+        {isOpen ? <X size={24} /> : <span translate="no">AI</span>}
         {!isOpen && unread > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-white text-[#c2410c] text-xs font-bold flex items-center justify-center">
             {unread}
@@ -382,7 +382,14 @@ export default function AIChatWidget() {
                         mine ? 'bg-gradient-to-r from-[#ff3d00] to-[#ff8a1f] text-white' : 'bg-white/10 text-white'
                       }`}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.body}</p>
+                      {/* Quello che scrive il visitatore resta com'e'; i nostri messaggi (anche le
+                          risposte a mano dell'operatore) seguono la lingua scelta sul sito. */}
+                      <p
+                        className="text-sm leading-relaxed whitespace-pre-wrap"
+                        {...(mine ? { 'data-no-translate': '' } : {})}
+                      >
+                        {msg.body}
+                      </p>
                       {msg.created_at && (
                         <p className="text-[10px] opacity-60 mt-1">
                           {new Date(msg.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
