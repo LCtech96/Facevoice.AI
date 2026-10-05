@@ -110,6 +110,7 @@ async function stats() {
 
 async function generate(system: string, user: string): Promise<{ subject: string; body: string } | null> {
   const result = await callAIPaced([{ role: 'user', content: user }], system, {
+    feature: 'email_clienti',
     temperature: 0.7,
     maxOutputTokens: 1200,
   })
@@ -466,6 +467,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     }
     reportStatus(step === 0 ? 'Leggo la richiesta e decido da dove partire…' : 'Valuto il risultato e decido il passo successivo…')
     const response = await callAIPaced(transcript, AGENT_PROMPT, {
+      feature: 'assistente_clienti',
       temperature: 0.2,
       maxOutputTokens: 800,
     })

@@ -321,6 +321,7 @@ async function generateReply(
 
   try {
     const result = await callAI(history, system, {
+      feature: outreach ? 'controrisposte_clienti' : platform === 'email' ? 'risposte_email' : 'risposte_social',
       temperature: 0.5,
       maxOutputTokens: platform === 'email' ? 2048 : 1024,
     })
