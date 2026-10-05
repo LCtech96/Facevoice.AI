@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { callAIPaced, hasAIProvider } from '@/lib/ai'
+import { callAIPaced, hasAIProvider, reportStatus, timeIsUp } from '@/lib/ai'
 import {
   DAILY_EMAIL_LIMIT,
   FIRST_EMAIL_RULES,
@@ -36,6 +36,8 @@ export type AssistantResult = {
   removeDrafts?: string[]
   refresh?: boolean
   confirmSend?: boolean
+  /** Tempo finito prima di completare: il browser rilancia da solo per continuare. */
+  more?: boolean
 }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
@@ -51,13 +53,21 @@ function matchesFilter(lead: Lead, filter?: string) {
   return words.every((w) => haystack.includes(w))
 }
 
-async function inBatches<T, R>(items: T[], fn: (item: T) => Promise<R | null>, size = 4): Promise<R[]> {
+/** Lavora a gruppi; si ferma prima della scadenza della richiesta. fn riceve "n/totale" per i messaggi di stato. */
+async function inBatches<T, R>(
+  items: T[],
+  fn: (item: T, position: string) => Promise<R | null>,
+  size = 4
+): Promise<{ out: R[]; unfinished: number }> {
   const out: R[] = []
   for (let i = 0; i < items.length; i += size) {
-    const results = await Promise.all(items.slice(i, i + size).map((item) => fn(item).catch(() => null)))
+    if (timeIsUp()) return { out, unfinished: items.length - i }
+    const results = await Promise.all(
+      items.slice(i, i + size).map((item, j) => fn(item, `${i + j + 1}/${items.length}`).catch(() => null))
+    )
     for (const r of results) if (r) out.push(r)
   }
-  return out
+  return { out, unfinished: 0 }
 }
 
 async function loadLeads(ids?: string[]): Promise<Lead[]> {
@@ -139,37 +149,47 @@ Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
 }
 
 /** Prima email: analizza chi non e' ancora analizzato (cosi' si trova anche l'email), poi scrive. */
-async function prepareFirst(args: { ids?: string[]; filter?: string; instructions?: string; limit?: number }) {
+async function prepareFirst(args: { ids?: string[]; filter?: string; instructions?: string; limit?: number; skip: Set<string> }) {
   const limit = Math.min(BATCH_LIMIT, Math.max(1, args.limit || BATCH_LIMIT))
+  // Chi ha gia' una bozza aperta non si rifa' (salvo richiesta esplicita per id).
   const pool = (await loadLeads(args.ids)).filter(
-    (l) => l.status === 'new' && !l.contacted_at && (args.ids?.length ? true : matchesFilter(l, args.filter))
+    (l) =>
+      l.status === 'new' &&
+      !l.contacted_at &&
+      (args.ids?.length ? true : matchesFilter(l, args.filter) && !args.skip.has(l.id))
   )
   const targets = pool.slice(0, limit)
   const extra = args.instructions?.trim()
   const noEmail: string[] = []
 
-  const drafts = await inBatches(targets, async (lead) => {
+  const { out: drafts, unfinished } = await inBatches(targets, async (lead, position) => {
     let ready = lead
-    if (!ready.analyzed_at || !ready.email) {
+    let justAnalyzed = false
+    if (!ready.analyzed_at) {
       // Leggere il sito serve a trovare l'email e i dettagli veri per complimento e punto debole.
-      if (!ready.analyzed_at) ready = await analyzeLead(lead)
-      if (!ready.email) {
-        noEmail.push(ready.name)
-        return null
-      }
-      if (!extra && ready.email_body) {
-        return { leadId: ready.id, name: ready.name, email: ready.email, kind: 'first' as const, subject: ready.email_subject || '', body: ready.email_body }
-      }
+      reportStatus(`Leggo il sito di ${lead.name} (${position})…`)
+      ready = await analyzeLead(lead)
+      justAnalyzed = true
     }
+    if (!ready.email) {
+      noEmail.push(ready.name)
+      return null
+    }
+    // L'analisi appena fatta ha gia' scritto la bozza con le regole attuali.
+    if (justAnalyzed && !extra && ready.email_body) {
+      return { leadId: ready.id, name: ready.name, email: ready.email, kind: 'first' as const, subject: ready.email_subject || '', body: ready.email_body }
+    }
+    reportStatus(`Scrivo l’email per ${ready.name} (${position})…`)
     return firstEmail(ready, extra)
   })
 
   return {
     drafts,
+    unfinished: unfinished + Math.max(0, pool.length - targets.length),
     result: {
       bozze_preparate: drafts.length,
       senza_email_trovata: noEmail,
-      rimasti_da_fare: Math.max(0, pool.length - targets.length),
+      rimasti_da_fare: unfinished + Math.max(0, pool.length - targets.length),
     },
   }
 }
@@ -184,7 +204,7 @@ const FOLLOWUP_RULES = `Scrivi una breve email di FOLLOW-UP, come la scriverebbe
 - Niente P.S. e nessuna frase tipo "se non ti interessa…".
 - Oggetto: lo stesso della prima email preceduto da "Re: ".`
 
-async function prepareFollowups(args: { ids?: string[]; filter?: string; instructions?: string; days?: number; limit?: number }) {
+async function prepareFollowups(args: { ids?: string[]; filter?: string; instructions?: string; days?: number; limit?: number; skip: Set<string> }) {
   const days = Math.max(0, args.days ?? DEFAULT_FOLLOWUP_DAYS)
   const before = Date.now() - days * 86_400_000
   const limit = Math.min(BATCH_LIMIT, Math.max(1, args.limit || BATCH_LIMIT))
@@ -194,11 +214,12 @@ async function prepareFollowups(args: { ids?: string[]; filter?: string; instruc
       l.email &&
       l.contacted_at &&
       new Date(l.contacted_at).getTime() <= before &&
-      (args.ids?.length ? true : matchesFilter(l, args.filter))
+      (args.ids?.length ? true : matchesFilter(l, args.filter) && !args.skip.has(l.id))
   )
   const extra = args.instructions?.trim()
 
-  const drafts = await inBatches(pool.slice(0, limit), async (lead) => {
+  const { out: drafts, unfinished } = await inBatches(pool.slice(0, limit), async (lead, position) => {
+    reportStatus(`Scrivo il follow-up per ${lead.name} (${position})…`)
     const email = lead.email!.toLowerCase()
     const { data: last } = await supabaseAdmin
       .from('social_messages')
@@ -229,7 +250,12 @@ Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
     }
   })
 
-  return { drafts, result: { bozze_preparate: drafts.length, giorni_minimi: days, in_attesa_totali: pool.length } }
+  const left = unfinished + Math.max(0, pool.length - limit)
+  return {
+    drafts,
+    unfinished: left,
+    result: { bozze_preparate: drafts.length, giorni_minimi: days, in_attesa_totali: pool.length, rimasti_da_fare: left },
+  }
 }
 
 async function reviseDraft(draft: Draft, instructions: string): Promise<Draft | null> {
@@ -295,6 +321,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const changed = new Map<string, Draft>()
   const removed = new Set<string>()
   let refresh = false
+  let more = false
 
   const context = [
     `Riepilogo: ${JSON.stringify(await stats())}`,
@@ -311,6 +338,11 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const transcript: { role: string; content: string }[] = [{ role: 'user', content: `${context}\n\nRichiesta di Luca: ${message}` }]
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    if (timeIsUp()) {
+      more = true
+      return finish(`Ho preparato ${changed.size} bozze finora, continuo con il resto…`)
+    }
+    reportStatus(step === 0 ? 'Leggo la richiesta e decido da dove partire…' : 'Valuto il risultato e decido il passo successivo…')
     const response = await callAIPaced(transcript, AGENT_PROMPT, {
       temperature: 0.2,
       maxOutputTokens: 800,
@@ -345,6 +377,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             result = { errore: 'query mancante' }
             break
           }
+          reportStatus(`Cerco su Google Maps: “${query}”…`)
           result = await searchPlaces(query, Math.max(1, Math.min(MAX_RESULTS, asNumber(args.max) || 20)))
           refresh = true
           break
@@ -353,8 +386,13 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           const ids = asIds(args.ids)
           const limit = Math.min(BATCH_LIMIT, asNumber(args.limit) || BATCH_LIMIT)
           const todo = (await loadLeads(ids)).filter((l) => (ids?.length ? true : l.status === 'new' && !l.analyzed_at)).slice(0, limit)
-          const done = await inBatches(todo, (lead) => analyzeLead(lead))
+          const { out: done, unfinished } = await inBatches(todo, (lead, position) => {
+            reportStatus(`Leggo il sito di ${lead.name} (${position})…`)
+            return analyzeLead(lead)
+          })
+          if (unfinished) more = true
           result = {
+            rimasti_da_analizzare: unfinished,
             analizzati: done.length,
             con_email: done.filter((l) => l.email).length,
             senza_email: done.filter((l) => !l.email).map((l) => l.name),
@@ -368,11 +406,13 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             filter: asText(args.filter),
             instructions: asText(args.instructions),
             limit: asNumber(args.limit),
+            skip: new Set(drafts.keys()),
           })
           for (const d of out.drafts) {
             drafts.set(d.leadId, d)
             changed.set(d.leadId, d)
           }
+          if (out.unfinished && timeIsUp()) more = true
           result = out.result
           refresh = true
           break
@@ -384,11 +424,13 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             instructions: asText(args.instructions),
             days: asNumber(args.days),
             limit: asNumber(args.limit),
+            skip: new Set(drafts.keys()),
           })
           for (const d of out.drafts) {
             drafts.set(d.leadId, d)
             changed.set(d.leadId, d)
           }
+          if (out.unfinished && timeIsUp()) more = true
           result = out.result
           break
         }
@@ -398,6 +440,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             result = { errore: 'bozza non trovata: usa un leadId dell’elenco delle bozze aperte' }
             break
           }
+          reportStatus(`Riscrivo la bozza per ${draft.name}…`)
           const revised = await reviseDraft(draft, asText(args.instructions) || '')
           if (revised) {
             drafts.set(revised.leadId, revised)
@@ -408,12 +451,16 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
         }
         case 'revise_all': {
           const instructions = asText(args.instructions) || ''
-          const revised = await inBatches([...drafts.values()], (d) => reviseDraft(d, instructions))
+          const { out: revised, unfinished } = await inBatches([...drafts.values()], (d, position) => {
+            reportStatus(`Riscrivo la bozza per ${d.name} (${position})…`)
+            return reviseDraft(d, instructions)
+          })
+          if (unfinished) result = { nota: `tempo finito, ${unfinished} bozze non riscritte` }
           for (const d of revised) {
             drafts.set(d.leadId, d)
             changed.set(d.leadId, d)
           }
-          result = { riscritte: revised.length }
+          result = { riscritte: revised.length, ...(result as object) }
           break
         }
         case 'remove_drafts': {
@@ -436,6 +483,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             result = { errore: 'servono ids e almeno un campo' }
             break
           }
+          reportStatus('Aggiorno le schede…')
           const { error } = await supabaseAdmin.from('leads').update(updates).in('id', ids)
           result = error ? { errore: error.message } : { aggiornate: ids.length }
           refresh = true
@@ -461,6 +509,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
       removeDrafts: [...removed],
       refresh,
       confirmSend: confirmSend && drafts.size > 0,
+      more,
     }
   }
 }

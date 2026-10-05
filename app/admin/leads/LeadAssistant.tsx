@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Loader2, Send, Sparkles, X } from 'lucide-react'
 
 // Barra di chat dell'assistente: si scrive cosa fare ("scrivi a chi non abbiamo
@@ -40,23 +40,68 @@ export default function LeadAssistant({ authFetch, onRefresh }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [sending, setSending] = useState<string | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [, setTick] = useState(0)
+
+  // Contatore dei secondi: si vede che sta lavorando anche tra un aggiornamento e l'altro.
+  useEffect(() => {
+    if (!startedAt) return
+    const timer = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [startedAt])
 
   const say = (role: Turn['role'], text: string) => setTurns((t) => [...t, { role, text }].slice(-8))
 
-  const ask = async (message: string) => {
+  /** Legge la risposta in streaming: righe di stato mentre lavora, poi il risultato. */
+  const readStream = async (res: Response) => {
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(
+        data.error || (res.status === 504 ? 'Il lavoro ha richiesto troppo tempo: riprova, riparto da dove mi sono fermato.' : 'Errore dell’assistente')
+      )
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let final: Record<string, any> | null = null
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const event = JSON.parse(line)
+        if (event.type === 'status') setStatus(event.text)
+        else final = event
+      }
+    }
+    if (!final) throw new Error('Connessione interrotta: riprova, riparto da dove mi sono fermato.')
+    if (final.type === 'error') throw new Error(final.error || 'Errore dell’assistente')
+    return final
+  }
+
+  const draftsNow = useRef<Draft[]>([])
+  draftsNow.current = drafts
+
+  const ask = async (message: string, round = 0, original = message) => {
     const text = message.trim()
-    if (!text || busy) return
+    if (!text || (busy && round === 0)) return
     setInput('')
     const history = turns
-    say('user', text)
+    if (round === 0) say('user', text)
     setBusy(true)
+    setStatus(round === 0 ? 'Avvio…' : 'Continuo con i rimanenti…')
+    setStartedAt((t) => (round === 0 || !t ? Date.now() : t))
+    let again = false
     try {
       const res = await authFetch('/api/admin/leads/assistant', {
         method: 'POST',
-        body: JSON.stringify({ message: text, history, drafts }),
+        body: JSON.stringify({ message: text, history, drafts: draftsNow.current }),
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || 'Errore dell’assistente')
+      const data = await readStream(res)
       say('assistant', data.reply)
       const incoming: Draft[] = data.drafts || []
       const removed: string[] = data.removeDrafts || []
@@ -75,12 +120,20 @@ export default function LeadAssistant({ authFetch, onRefresh }: Props) {
         })
       }
       if (data.refresh) await onRefresh()
-      if (data.confirmSend) await sendAll()
+      // Tempo della richiesta finito: si riparte da soli (al massimo qualche giro).
+      again = Boolean(data.more) && round < 5
+      if (data.confirmSend && !again) await sendAll()
     } catch (err) {
       say('assistant', err instanceof Error ? err.message : 'Qualcosa è andato storto, riprova.')
-    } finally {
-      setBusy(false)
     }
+    if (again) {
+      // Le bozze appena arrivate devono finire nella richiesta successiva.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      return ask(`Continua il lavoro richiesto prima (“${original.trim()}”) con i contatti rimasti.`, round + 1, original)
+    }
+    setBusy(false)
+    setStatus(null)
+    setStartedAt(null)
   }
 
   const update = (leadId: string, fields: Partial<Draft>) =>
@@ -150,7 +203,9 @@ export default function LeadAssistant({ authFetch, onRefresh }: Props) {
           ))}
           {busy && (
             <p className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ci sto lavorando… se devo leggere molti siti può volerci un paio di minuti.
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span>{status || 'Ci sto lavorando…'}</span>
+              {startedAt && <span className="ml-auto tabular-nums opacity-70">{Math.floor((Date.now() - startedAt) / 1000)}s</span>}
             </p>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import Anthropic from '@anthropic-ai/sdk'
 import {
   GEMINI_DEFAULT_MODEL,
@@ -30,6 +31,29 @@ let lastPacedCall = 0
 let claudeClient: Anthropic | null = null
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// Stato del lavoro in corso: chi avvia un lavoro lungo (es. l'assistente della
+// Ricerca clienti) riceve brevi messaggi di avanzamento e una scadenza oltre la
+// quale non conviene iniziare altro (Vercel chiude la richiesta a 300s).
+type WorkContext = { status: (text: string) => void; deadline?: number }
+const work = new AsyncLocalStorage<WorkContext>()
+
+export function runWithStatus<T>(context: WorkContext, fn: () => Promise<T>): Promise<T> {
+  return work.run(context, fn)
+}
+
+export function reportStatus(text: string) {
+  try {
+    work.getStore()?.status(text)
+  } catch {
+    // Il client puo' essersi scollegato: il lavoro continua comunque.
+  }
+}
+
+export function timeIsUp(): boolean {
+  const deadline = work.getStore()?.deadline
+  return Boolean(deadline && Date.now() > deadline)
+}
 
 export function hasAIProvider(): boolean {
   return Boolean(getGeminiApiKey() || getAnthropicApiKey())
@@ -96,6 +120,7 @@ function noteGeminiFailure(error: unknown): string {
   if (isLimitError(message)) {
     geminiCoolingUntil = Date.now() + GEMINI_COOLDOWN_MS
     console.warn(`Gemini al limite, passo a Claude per ${GEMINI_COOLDOWN_MS / 1000}s: ${message}`)
+    if (getAnthropicApiKey()) reportStatus('Gemini ha raggiunto il limite: continuo con Claude…')
   } else {
     console.warn(`Gemini non disponibile, passo a Claude: ${message}`)
   }
@@ -130,6 +155,8 @@ export function callAIPaced(
   system?: string,
   options?: AIOptions
 ): Promise<AIResult> {
+  // Con Gemini a riposo si va dritti su Claude, senza fila: regge piu' richieste insieme.
+  if (!geminiUsable() && getAnthropicApiKey()) return callClaudeText(messages, system, options)
   const run = async (): Promise<AIResult> => {
     const claudeReady = Boolean(getAnthropicApiKey())
     for (let attempt = 0; ; attempt++) {
@@ -144,6 +171,7 @@ export function callAIPaced(
         if (claudeReady) return callClaudeText(messages, system, options)
         if (!isLimitError(message) || attempt >= RATE_LIMIT_WAITS_MS.length) throw error
         geminiCoolingUntil = 0
+        reportStatus(`Gemini ha raggiunto il limite: attendo ${RATE_LIMIT_WAITS_MS[attempt] / 1000}s e riprovo…`)
         await sleep(RATE_LIMIT_WAITS_MS[attempt])
       }
     }
