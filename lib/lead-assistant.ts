@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiPaced, getGeminiApiKey } from '@/lib/gemini'
+import { callAIPaced, hasAIProvider } from '@/lib/ai'
 import {
   DAILY_EMAIL_LIMIT,
   FIRST_EMAIL_RULES,
@@ -97,7 +97,7 @@ async function stats() {
 }
 
 async function generate(system: string, user: string): Promise<{ subject: string; body: string } | null> {
-  const result = await callGeminiPaced([{ role: 'user', content: user }], GEMINI_DEFAULT_MODEL, system, {
+  const result = await callAIPaced([{ role: 'user', content: user }], system, {
     temperature: 0.7,
     maxOutputTokens: 1200,
   })
@@ -289,7 +289,7 @@ const asText = (value: unknown) => (typeof value === 'string' ? value : undefine
 const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
 export async function runAssistant(message: string, history: Turn[], openDrafts: Draft[]): Promise<AssistantResult> {
-  if (!getGeminiApiKey()) return { reply: 'Manca GEMINI_API_KEY: l’assistente non può lavorare.' }
+  if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
   const drafts = new Map(openDrafts.map((d) => [d.leadId, d]))
   const changed = new Map<string, Draft>()
@@ -311,7 +311,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const transcript: { role: string; content: string }[] = [{ role: 'user', content: `${context}\n\nRichiesta di Luca: ${message}` }]
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await callGeminiPaced(transcript, GEMINI_DEFAULT_MODEL, AGENT_PROMPT, {
+    const response = await callAIPaced(transcript, AGENT_PROMPT, {
       temperature: 0.2,
       maxOutputTokens: 800,
     })

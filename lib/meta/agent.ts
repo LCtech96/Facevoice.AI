@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import {
   replyToComment,
@@ -262,8 +262,8 @@ async function generateReply(
   contactName: string | null,
   options: ReplyOptions = {}
 ): Promise<string> {
-  if (!getGeminiApiKey()) {
-    console.error(`${platform} agent: GEMINI_API_KEY mancante, nessuna risposta generata`)
+  if (!hasAIProvider()) {
+    console.error(`${platform} agent: nessuna chiave AI (Gemini o Claude), nessuna risposta generata`)
     return ''
   }
   const { publicComment, postCaption, privateFollowUp } = options
@@ -287,7 +287,7 @@ async function generateReply(
   ].join('')
 
   try {
-    const result = await callGeminiWithFallback(history, GEMINI_DEFAULT_MODEL, system, {
+    const result = await callAI(history, system, {
       temperature: 0.5,
       maxOutputTokens: platform === 'email' ? 2048 : 1024,
     })

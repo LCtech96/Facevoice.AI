@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiPaced, getGeminiApiKey } from '@/lib/gemini'
+import { callAIPaced, hasAIProvider } from '@/lib/ai'
 
 // Ricerca clienti: Google Places (API ufficiale, niente scraping di Google),
 // poi lettura del sito di ogni attivita' per email e social, poi analisi AI
@@ -255,7 +255,7 @@ function parseAnalysis(raw: string): Analysis | null {
 
 /** Legge il sito, trova email e social, chiede all'AI analisi e bozze. Aggiorna il lead. */
 export async function analyzeLead(lead: Lead): Promise<Lead> {
-  if (!getGeminiApiKey()) throw new Error('GEMINI_API_KEY mancante')
+  if (!hasAIProvider()) throw new Error('Nessuna chiave AI configurata (Gemini o Claude)')
 
   const site = lead.website ? await readWebsite(lead.website) : null
   const facts = [
@@ -271,7 +271,7 @@ export async function analyzeLead(lead: Lead): Promise<Lead> {
     .filter(Boolean)
     .join('\n')
 
-  const result = await callGeminiPaced([{ role: 'user', content: facts }], GEMINI_DEFAULT_MODEL, ANALYSIS_PROMPT, {
+  const result = await callAIPaced([{ role: 'user', content: facts }], ANALYSIS_PROMPT, {
     temperature: 0.6,
     maxOutputTokens: 2048,
   })
