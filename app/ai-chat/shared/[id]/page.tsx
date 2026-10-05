@@ -181,7 +181,8 @@ export default function SharedChatPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             role: 'user',
-            content: lastMessage.content,
+            // Solo immagine, senza testo: si salva un segnaposto (le immagini non vengono archiviate).
+            content: lastMessage.content?.trim() || '📷',
             userId: 'user',
             userName: 'User',
           }),
@@ -208,55 +209,27 @@ export default function SharedChatPage() {
           }
         })
 
-        // Prepara i messaggi per l'AI (solo user e assistant, escludi system)
-        const messagesForAI = updatedChat.messages
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({
-            role: m.role,
-            content: m.content,
-          }))
-
-        // Invia il messaggio all'AI
-        console.log('Sending to AI, messages count:', messagesForAI.length)
+        // La risposta la genera il server (solo Gemini gratuito, con limiti):
+        // arriva a tutti via Realtime, qui la aggiungiamo subito anche in locale.
         try {
-          const aiResponse = await fetch('/api/chat/public', {
+          const aiResponse = await fetch(`/api/chat/shared/${chatId}/reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messages: messagesForAI,
-              model: selectedModel,
-            }),
+            body: JSON.stringify({ attachments: lastMessage.attachments || [] }),
           })
-
-          if (!aiResponse.ok) {
-            const errorData = await aiResponse.json().catch(() => ({}))
-            console.error('Error getting AI response:', errorData)
-            isProcessingRef.current = false
-            return
-          }
-
-          const aiData = await aiResponse.json()
-          console.log('AI response received:', aiData.message.substring(0, 50) + '...')
-          
-          // Salva la risposta dell'AI nel database
-          // Questo triggerà Realtime e tutti vedranno il messaggio
-          const aiMessageResponse = await fetch(`/api/chat/shared/${chatId}/message`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              role: 'assistant',
-              content: aiData.message,
-              userId: null,
-              userName: 'AI',
-            }),
-          })
-
-          if (aiMessageResponse.ok) {
-            const aiMessageData = await aiMessageResponse.json()
-            console.log('AI response saved to database:', aiMessageData.message.id)
-          } else {
-            const errorData = await aiMessageResponse.json().catch(() => ({}))
-            console.error('Error saving AI response:', errorData)
+          const aiData = await aiResponse.json().catch(() => ({}))
+          const saved = aiData?.message
+          if (saved?.id) {
+            setChat((prev) => {
+              if (!prev || prev.messages.some((m) => m.id === saved.id)) return prev
+              return {
+                ...prev,
+                messages: [
+                  ...prev.messages,
+                  { id: saved.id, role: 'assistant', content: saved.content, timestamp: new Date(saved.created_at) },
+                ],
+              }
+            })
           }
         } catch (error) {
           console.error('Error getting AI response:', error)
@@ -298,6 +271,8 @@ export default function SharedChatPage() {
           isModelSelectorOpen={isModelSelectorOpen}
           onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
           onModelSelect={(model) => {
+            // Nelle chat condivise si usa solo Gemini (gratuito).
+            if (!model.startsWith('gemini')) return
             setSelectedModel(model)
             if (chat) {
               updateChat({ ...chat, model })
@@ -312,6 +287,7 @@ export default function SharedChatPage() {
           <ModelSelector
             selectedModel={selectedModel}
             onSelect={(model) => {
+              if (!model.startsWith('gemini')) return
               setSelectedModel(model)
               setIsModelSelectorOpen(false)
               if (chat) {
