@@ -34,6 +34,17 @@ function generateSlug(title: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+// Come generava gli slug una versione vecchia: toglieva le maiuscole prima di
+// convertire in minuscolo ("Sviluppo" → "viluppo"). Serve solo a non rompere i
+// link gia' pubblicati con quegli indirizzi.
+function legacySlug(title: string): string {
+  return title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -111,6 +122,11 @@ export async function GET(
 
     if (post) {
       return NextResponse.json({ post })
+    }
+
+    const legacy = allPosts.find((p: any) => legacySlug(p.title || '') === normalizedId)
+    if (legacy) {
+      return NextResponse.json({ post: legacy })
     }
 
     // Log dettagliato per debug
