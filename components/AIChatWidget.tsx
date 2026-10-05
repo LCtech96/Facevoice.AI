@@ -12,6 +12,7 @@ import { Send, X, Bot, Trash2, UserRound } from 'lucide-react'
 
 type ChatMessage = { id: string; direction: 'in' | 'out'; body: string; created_at: string }
 
+const TEASER_KEY = 'fv_chat_teaser_closed'
 const SESSION_KEY = 'fv_site_chat_session'
 const POLL_OPEN_MS = 4000
 const POLL_HANDOFF_MS = 3000
@@ -63,6 +64,28 @@ export default function AIChatWidget() {
     openRef.current = isOpen
     if (isOpen) setUnread(0)
   }, [isOpen])
+
+  // Fumetto che invita a scrivere: compare dopo un attimo, sparisce quando si apre
+  // la chat o si chiude con la X (e non torna per tutta la visita).
+  const [teaser, setTeaser] = useState(false)
+  useEffect(() => {
+    let closed = false
+    try {
+      closed = sessionStorage.getItem(TEASER_KEY) === '1'
+    } catch {}
+    if (closed) return
+    const timer = setTimeout(() => setTeaser(true), 1500)
+    return () => clearTimeout(timer)
+  }, [])
+  const hideTeaser = useCallback(() => {
+    setTeaser(false)
+    try {
+      sessionStorage.setItem(TEASER_KEY, '1')
+    } catch {}
+  }, [])
+  useEffect(() => {
+    if (isOpen) hideTeaser()
+  }, [isOpen, hideTeaser])
 
   const merge = useCallback((incoming: ChatMessage[]) => {
     if (!incoming.length) return
@@ -197,6 +220,54 @@ export default function AIChatWidget() {
 
   return (
     <div className="ember-vars">
+      {/* Invito a scrivere, con freccia verso il pulsante */}
+      <AnimatePresence>
+        {teaser && !isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.3 }}
+            className="fixed z-50 right-4 bottom-[188px] md:right-6 md:bottom-[132px] w-[min(280px,calc(100vw-2rem))]"
+          >
+            <div className="relative rounded-2xl border border-white/15 bg-[#24100a]/95 backdrop-blur px-4 py-3 pr-9 shadow-2xl">
+              <button
+                type="button"
+                onClick={() => setIsOpen(true)}
+                className="text-left text-sm leading-snug text-white/85"
+              >
+                Vuoi sapere in breve di cosa ci occupiamo e come possiamo aiutarti?
+                <span className="block mt-1 font-semibold text-[#ff8a1f]">Scrivici qui</span>
+              </button>
+              <button
+                type="button"
+                onClick={hideTeaser}
+                className="absolute top-2 right-2 p-1 rounded-md text-white/50 hover:text-white hover:bg-white/10"
+                aria-label="Chiudi suggerimento"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {/* Freccia che punta al pulsante AI */}
+            <motion.svg
+              animate={{ y: [0, 6, 0] }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+              className="absolute -bottom-[46px] right-[14px] w-9 h-11 text-[#ff8a1f]"
+              viewBox="0 0 36 44"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3 C 6 18, 12 30, 20 38" />
+              <path d="M11 36 L 20 38 L 21 29" />
+            </motion.svg>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Pulsante flottante */}
       <motion.button
         initial={{ scale: 0 }}
