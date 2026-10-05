@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import { GEMINI_DEFAULT_MODEL, callGeminiPaced, getGeminiApiKey } from '@/lib/gemini'
 
 // Ricerca clienti: Google Places (API ufficiale, niente scraping di Google),
 // poi lettura del sito di ogni attivita' per email e social, poi analisi AI
@@ -271,7 +271,7 @@ export async function analyzeLead(lead: Lead): Promise<Lead> {
     .filter(Boolean)
     .join('\n')
 
-  const result = await callGeminiWithFallback([{ role: 'user', content: facts }], GEMINI_DEFAULT_MODEL, ANALYSIS_PROMPT, {
+  const result = await callGeminiPaced([{ role: 'user', content: facts }], GEMINI_DEFAULT_MODEL, ANALYSIS_PROMPT, {
     temperature: 0.6,
     maxOutputTokens: 2048,
   })
