@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Check, Loader2, Send, Sparkles, X } from 'lucide-react'
 
 // Barra di chat dell'assistente: si scrive cosa fare ("scrivi a chi non abbiamo
@@ -23,16 +23,16 @@ type Turn = { role: 'user' | 'assistant'; text: string }
 type Props = {
   authFetch: (url: string, init?: RequestInit) => Promise<Response>
   onRefresh: () => Promise<void> | void
-  onAnalyze: (ids: string[]) => Promise<void>
 }
 
 const EXAMPLES = [
   'Scrivi un’email a tutti quelli che non abbiamo ancora contattato',
-  'Follow-up a chi non ha risposto da almeno 3 giorni',
-  'Trovami 20 ditte di traslochi a Palermo',
+  'Follow-up a chi non ha risposto, a tutti',
+  'Trovami 20 ditte di traslochi a Palermo e preparagli la prima email',
+  'Nella bozza per La Canonica cita la carbonara e accorcia',
 ]
 
-export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props) {
+export default function LeadAssistant({ authFetch, onRefresh }: Props) {
   const [input, setInput] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -47,23 +47,35 @@ export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props
     const text = message.trim()
     if (!text || busy) return
     setInput('')
+    const history = turns
     say('user', text)
     setBusy(true)
     try {
-      const res = await authFetch('/api/admin/leads/assistant', { method: 'POST', body: JSON.stringify({ message: text }) })
+      const res = await authFetch('/api/admin/leads/assistant', {
+        method: 'POST',
+        body: JSON.stringify({ message: text, history, drafts }),
+      })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Errore dell’assistente')
       say('assistant', data.reply)
-      if (data.drafts?.length) {
-        setDrafts(data.drafts)
-        setSelected(Object.fromEntries(data.drafts.map((d: Draft) => [d.leadId, true])))
-        setExpanded(null)
+      const incoming: Draft[] = data.drafts || []
+      const removed: string[] = data.removeDrafts || []
+      if (incoming.length || removed.length) {
+        setDrafts((list) => {
+          const map = new Map(list.map((d) => [d.leadId, d]))
+          for (const id of removed) map.delete(id)
+          for (const d of incoming) map.set(d.leadId, d)
+          return [...map.values()]
+        })
+        setSelected((s) => {
+          const next = { ...s }
+          for (const id of removed) delete next[id]
+          for (const d of incoming) next[d.leadId] = true
+          return next
+        })
       }
       if (data.refresh) await onRefresh()
-      if (data.analyzeIds?.length) {
-        await onAnalyze(data.analyzeIds)
-        say('assistant', 'Analisi finita: ora puoi chiedermi di scrivere ai nuovi contatti.')
-      }
+      if (data.confirmSend) await sendAll()
     } catch (err) {
       say('assistant', err instanceof Error ? err.message : 'Qualcosa è andato storto, riprova.')
     } finally {
@@ -74,8 +86,14 @@ export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props
   const update = (leadId: string, fields: Partial<Draft>) =>
     setDrafts((list) => list.map((d) => (d.leadId === leadId ? { ...d, ...fields } : d)))
 
+  const draftsRef = useRef<Draft[]>([])
+  draftsRef.current = drafts
+  const selectedRef = useRef<Record<string, boolean>>({})
+  selectedRef.current = selected
+
   const sendAll = async () => {
-    const queue = drafts.filter((d) => selected[d.leadId])
+    // Legge lo stato piu' recente: puo' essere chiamata subito dopo un aggiornamento delle bozze.
+    const queue = draftsRef.current.filter((d) => selectedRef.current[d.leadId] !== false)
     if (!queue.length) return
     if (!window.confirm(`Inviare ${queue.length} email? Partono una alla volta da luca@facevoice.ai.`)) return
     let ok = 0
@@ -106,7 +124,8 @@ export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props
     await onRefresh()
   }
 
-  const chosen = drafts.filter((d) => selected[d.leadId]).length
+  const isOn = (id: string) => selected[id] !== false
+  const chosen = drafts.filter((d) => isOn(d.leadId)).length
 
   return (
     <section className="mb-5 rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-3 sm:p-4">
@@ -131,7 +150,7 @@ export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props
           ))}
           {busy && (
             <p className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ci sto lavorando… con molte email può volerci un minuto.
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ci sto lavorando… se devo leggere molti siti può volerci un paio di minuti.
             </p>
           )}
         </div>
@@ -206,13 +225,13 @@ export default function LeadAssistant({ authFetch, onRefresh, onAnalyze }: Props
                 <div key={draft.leadId} className="rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)]">
                   <div className="flex items-center gap-2 p-2.5">
                     <button
-                      onClick={() => setSelected((s) => ({ ...s, [draft.leadId]: !s[draft.leadId] }))}
+                      onClick={() => setSelected((s) => ({ ...s, [draft.leadId]: s[draft.leadId] === false }))}
                       className={`w-5 h-5 shrink-0 rounded border flex items-center justify-center ${
-                        selected[draft.leadId] ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)]' : 'border-[var(--border-color)]'
+                        isOn(draft.leadId) ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)]' : 'border-[var(--border-color)]'
                       }`}
-                      aria-label={selected[draft.leadId] ? 'Escludi' : 'Includi'}
+                      aria-label={isOn(draft.leadId) ? 'Escludi' : 'Includi'}
                     >
-                      {selected[draft.leadId] && <Check className="w-3.5 h-3.5 text-white" />}
+                      {isOn(draft.leadId) && <Check className="w-3.5 h-3.5 text-white" />}
                     </button>
                     <button onClick={() => setExpanded(open ? null : draft.leadId)} className="min-w-0 flex-1 text-left">
                       <p className="text-sm font-medium text-[var(--text-primary)] truncate">

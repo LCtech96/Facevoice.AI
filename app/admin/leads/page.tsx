@@ -273,11 +273,7 @@ export default function LeadsPage() {
             </p>
           )}
 
-          <LeadAssistant
-            authFetch={authFetch}
-            onRefresh={load}
-            onAnalyze={(ids) => analyzeList(ids.map((id) => ({ id })))}
-          />
+          <LeadAssistant authFetch={authFetch} onRefresh={load} />
 
           <form onSubmit={runSearch} className="flex flex-col sm:flex-row gap-2 mb-4">
             <input

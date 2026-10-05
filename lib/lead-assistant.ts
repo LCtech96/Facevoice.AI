@@ -1,12 +1,23 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
-import { DAILY_EMAIL_LIMIT, FIRST_EMAIL_RULES, MAX_RESULTS, WHATSAPP_DISPLAY, analyzeLead, searchPlaces, type Lead } from '@/lib/leads'
+import {
+  DAILY_EMAIL_LIMIT,
+  FIRST_EMAIL_RULES,
+  LEAD_STATUSES,
+  MAX_RESULTS,
+  WHATSAPP_DISPLAY,
+  analyzeLead,
+  searchPlaces,
+  type Lead,
+} from '@/lib/leads'
 
-// Assistente della Ricerca clienti: capisce una richiesta in linguaggio
-// naturale e la trasforma in un'azione precisa. Le email non partono mai da
-// sole: l'assistente prepara le bozze, Luca le controlla e preme "Invia".
+// Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
+// la porta a termine usando degli strumenti (cercare, analizzare, preparare
+// email, riscrivere una bozza, aggiornare schede), anche in piu' passaggi.
+// Le email vere partono solo dal browser, dopo conferma di Luca.
 
-export const BATCH_LIMIT = 20
+export const BATCH_LIMIT = 25
+const MAX_STEPS = 6
 const DEFAULT_FOLLOWUP_DAYS = 3
 
 export type Draft = {
@@ -22,56 +33,66 @@ export type Draft = {
 export type AssistantResult = {
   reply: string
   drafts?: Draft[]
-  analyzeIds?: string[]
+  removeDrafts?: string[]
   refresh?: boolean
+  confirmSend?: boolean
 }
 
-type Plan = {
-  action: 'draft_first' | 'draft_followup' | 'search' | 'analyze' | 'answer'
-  instructions?: string
-  query?: string
-  max?: number
-  days?: number
-  limit?: number
-  filter?: string
-  answer?: string
+type Turn = { role: 'user' | 'assistant'; text: string }
+
+// ---------------------------------------------------------------------
+// Strumenti
+// ---------------------------------------------------------------------
+
+function matchesFilter(lead: Lead, filter?: string) {
+  const words = (filter || '').toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+  if (!words.length) return true
+  const haystack = `${lead.name} ${lead.search_query || ''} ${lead.address || ''}`.toLowerCase()
+  return words.every((w) => haystack.includes(w))
 }
 
-const PLANNER_PROMPT = `Sei l'assistente della pagina "Ricerca clienti" di Facevoice AI. Luca ti scrive cosa vuole fare con i contatti (attività trovate su Google Maps). Trasforma la richiesta in UNA azione, rispondendo SOLO con JSON valido:
+async function inBatches<T, R>(items: T[], fn: (item: T) => Promise<R | null>, size = 4): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < items.length; i += size) {
+    const results = await Promise.all(items.slice(i, i + size).map((item) => fn(item).catch(() => null)))
+    for (const r of results) if (r) out.push(r)
+  }
+  return out
+}
 
-{"action": "...", "instructions": "...", "query": "...", "max": 20, "days": 3, "limit": 20, "filter": "...", "answer": "..."}
+async function loadLeads(ids?: string[]): Promise<Lead[]> {
+  let query = supabaseAdmin.from('leads').select('*')
+  if (ids?.length) query = query.in('id', ids)
+  const { data } = await query.order('score', { ascending: false, nullsFirst: false }).limit(500)
+  return (data || []) as Lead[]
+}
 
-Azioni possibili:
-- "draft_first": preparare la PRIMA email per i contatti mai contattati che hanno un'email (es. "scrivi a tutti quelli a cui non abbiamo ancora scritto"). "instructions": eventuali indicazioni di Luca su tono o contenuto (stringa vuota se nessuna). "filter": parola per restringere a una ricerca/categoria/città se Luca la indica (es. "ristoranti roma"), altrimenti "".
-- "draft_followup": preparare una email di FOLLOW-UP per chi ha già ricevuto la prima email e non ha risposto (es. "scrivi un follow-up a chi non ha risposto"). "days": dopo quanti giorni dal primo contatto (default 3; se Luca dice "a tutti" usa 0). "instructions" e "filter" come sopra.
-- "search": cercare nuove attività su Google Maps (es. "trovami 40 dentisti a Palermo"). "query": testo da cercare, "max": numero (20, 40 o 60).
-- "analyze": analizzare i siti dei contatti nuovi non ancora analizzati.
-- "answer": domande o richieste che non richiedono azioni (statistiche, consigli). "answer": la risposta breve in italiano, usando i dati del riepilogo.
-
-"limit": quanti contatti al massimo (default 20, massimo 20). Rispondi solo con il JSON.`
-
-function parsePlan(raw: string): Plan | null {
-  try {
-    const json = raw.match(/\{[\s\S]*\}/)?.[0]
-    const plan = json ? (JSON.parse(json) as Plan) : null
-    return plan?.action ? plan : null
-  } catch {
-    return null
+function compact(lead: Lead) {
+  return {
+    id: lead.id,
+    nome: lead.name,
+    stato: lead.status,
+    email: lead.email,
+    punteggio: lead.score,
+    analizzato: Boolean(lead.analyzed_at),
+    contattato_il: lead.contacted_at?.slice(0, 10) ?? null,
+    ricerca: lead.search_query,
+    sito: Boolean(lead.website),
   }
 }
 
-async function summary() {
-  const { data } = await supabaseAdmin.from('leads').select('status, email, analyzed_at, contacted_at')
-  const leads = data || []
-  const count = (fn: (l: (typeof leads)[number]) => boolean) => leads.filter(fn).length
+async function stats() {
+  const leads = await loadLeads()
+  const n = (fn: (l: Lead) => boolean) => leads.filter(fn).length
   return {
     totale: leads.length,
-    da_contattare_con_email: count((l) => l.status === 'new' && !l.contacted_at && Boolean(l.email)),
-    da_contattare_senza_email: count((l) => l.status === 'new' && !l.email),
-    non_analizzati: count((l) => !l.analyzed_at && l.status === 'new'),
-    contattati_senza_risposta: count((l) => l.status === 'contacted'),
-    hanno_risposto: count((l) => l.status === 'replied'),
-    clienti: count((l) => l.status === 'client'),
+    da_contattare: n((l) => l.status === 'new'),
+    da_contattare_con_email: n((l) => l.status === 'new' && Boolean(l.email)),
+    da_contattare_non_analizzati: n((l) => l.status === 'new' && !l.analyzed_at),
+    contattati_senza_risposta: n((l) => l.status === 'contacted'),
+    hanno_risposto: n((l) => l.status === 'replied'),
+    clienti: n((l) => l.status === 'client'),
+    limite_primi_contatti_al_giorno: DAILY_EMAIL_LIMIT,
   }
 }
 
@@ -104,59 +125,52 @@ function leadFacts(lead: Lead) {
     .join('\n')
 }
 
-/** Esegue a gruppi di 4 per non far scadere la richiesta. */
-async function inBatches<T, R>(items: T[], fn: (item: T) => Promise<R | null>): Promise<R[]> {
-  const out: R[] = []
-  for (let i = 0; i < items.length; i += 4) {
-    const results = await Promise.all(items.slice(i, i + 4).map((item) => fn(item).catch(() => null)))
-    for (const r of results) if (r) out.push(r)
-  }
-  return out
-}
-
-function matchesFilter(lead: Lead, filter?: string) {
-  const words = (filter || '').toLowerCase().split(/\s+/).filter((w) => w.length > 2)
-  if (!words.length) return true
-  const haystack = `${lead.name} ${lead.search_query || ''} ${lead.address || ''}`.toLowerCase()
-  return words.every((w) => haystack.includes(w))
-}
-
-async function draftFirst(plan: Plan): Promise<AssistantResult> {
-  const { data } = await supabaseAdmin
-    .from('leads')
-    .select('*')
-    .eq('status', 'new')
-    .is('contacted_at', null)
-    .not('email', 'is', null)
-    .order('score', { ascending: false, nullsFirst: false })
-    .limit(200)
-  const limit = Math.min(BATCH_LIMIT, Math.max(1, plan.limit || BATCH_LIMIT))
-  const targets = ((data || []) as Lead[]).filter((l) => matchesFilter(l, plan.filter)).slice(0, limit)
-  if (!targets.length) return { reply: 'Non ci sono contatti da scrivere: nessuno ha un’email e non è ancora stato contattato.' }
-
-  const extra = plan.instructions?.trim()
-  const drafts = await inBatches(targets, async (lead) => {
-    // Mai analizzato: prima si legge il sito, cosi' complimento e punto debole sono veri.
-    const ready = lead.analyzed_at ? lead : await analyzeLead(lead)
-    if (!extra && ready.email_body && ready !== lead) {
-      return { leadId: ready.id, name: ready.name, email: ready.email!, kind: 'first' as const, subject: ready.email_subject || '', body: ready.email_body }
-    }
-    const generated = await generate(
-      `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Scrivi la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
-${extra ? `\nIndicazioni aggiuntive di Luca (hanno la precedenza sullo stile, non sulle regole di onestà): ${extra}` : ''}
+async function firstEmail(lead: Lead, extra?: string): Promise<Draft | null> {
+  const generated = await generate(
+    `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Scrivi la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
+${extra ? `\nIndicazioni aggiuntive di Luca (valgono sullo stile, mai sull'onestà dei fatti): ${extra}` : ''}
 
 Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
-      leadFacts(ready)
-    )
-    if (!generated) return null
-    await supabaseAdmin.from('leads').update({ email_subject: generated.subject, email_body: generated.body }).eq('id', ready.id)
-    return { leadId: ready.id, name: ready.name, email: ready.email!, kind: 'first' as const, ...generated }
+    leadFacts(lead)
+  )
+  if (!generated) return null
+  await supabaseAdmin.from('leads').update({ email_subject: generated.subject, email_body: generated.body }).eq('id', lead.id)
+  return { leadId: lead.id, name: lead.name, email: lead.email!, kind: 'first', ...generated }
+}
+
+/** Prima email: analizza chi non e' ancora analizzato (cosi' si trova anche l'email), poi scrive. */
+async function prepareFirst(args: { ids?: string[]; filter?: string; instructions?: string; limit?: number }) {
+  const limit = Math.min(BATCH_LIMIT, Math.max(1, args.limit || BATCH_LIMIT))
+  const pool = (await loadLeads(args.ids)).filter(
+    (l) => l.status === 'new' && !l.contacted_at && (args.ids?.length ? true : matchesFilter(l, args.filter))
+  )
+  const targets = pool.slice(0, limit)
+  const extra = args.instructions?.trim()
+  const noEmail: string[] = []
+
+  const drafts = await inBatches(targets, async (lead) => {
+    let ready = lead
+    if (!ready.analyzed_at || !ready.email) {
+      // Leggere il sito serve a trovare l'email e i dettagli veri per complimento e punto debole.
+      if (!ready.analyzed_at) ready = await analyzeLead(lead)
+      if (!ready.email) {
+        noEmail.push(ready.name)
+        return null
+      }
+      if (!extra && ready.email_body) {
+        return { leadId: ready.id, name: ready.name, email: ready.email, kind: 'first' as const, subject: ready.email_subject || '', body: ready.email_body }
+      }
+    }
+    return firstEmail(ready, extra)
   })
 
   return {
-    reply: `Ho preparato ${drafts.length} email di primo contatto. Controllale qui sotto: puoi modificarle, toglierne alcune e poi inviarle.${targets.length === limit ? ` (Massimo ${BATCH_LIMIT} alla volta.)` : ''}`,
     drafts,
-    refresh: true,
+    result: {
+      bozze_preparate: drafts.length,
+      senza_email_trovata: noEmail,
+      rimasti_da_fare: Math.max(0, pool.length - targets.length),
+    },
   }
 }
 
@@ -170,31 +184,22 @@ const FOLLOWUP_RULES = `Scrivi una breve email di FOLLOW-UP, come la scriverebbe
 - Niente P.S. e nessuna frase tipo "se non ti interessa…".
 - Oggetto: lo stesso della prima email preceduto da "Re: ".`
 
-async function draftFollowup(plan: Plan): Promise<AssistantResult> {
-  const days = Math.max(0, plan.days ?? DEFAULT_FOLLOWUP_DAYS)
-  const before = new Date(Date.now() - days * 86_400_000).toISOString()
-  const { data } = await supabaseAdmin
-    .from('leads')
-    .select('*')
-    .eq('status', 'contacted')
-    .not('email', 'is', null)
-    .lte('contacted_at', before)
-    .order('contacted_at', { ascending: true })
-    .limit(200)
-  const limit = Math.min(BATCH_LIMIT, Math.max(1, plan.limit || BATCH_LIMIT))
-  const candidates = ((data || []) as Lead[]).filter((l) => matchesFilter(l, plan.filter))
-  if (!candidates.length) {
-    return {
-      reply: days
-        ? `Nessun contatto senza risposta da almeno ${days} giorni. Se vuoi scrivere comunque a tutti, dimmi "follow-up a tutti anche se scritti oggi".`
-        : 'Nessun contatto in attesa di risposta.',
-    }
-  }
+async function prepareFollowups(args: { ids?: string[]; filter?: string; instructions?: string; days?: number; limit?: number }) {
+  const days = Math.max(0, args.days ?? DEFAULT_FOLLOWUP_DAYS)
+  const before = Date.now() - days * 86_400_000
+  const limit = Math.min(BATCH_LIMIT, Math.max(1, args.limit || BATCH_LIMIT))
+  const pool = (await loadLeads(args.ids)).filter(
+    (l) =>
+      l.status === 'contacted' &&
+      l.email &&
+      l.contacted_at &&
+      new Date(l.contacted_at).getTime() <= before &&
+      (args.ids?.length ? true : matchesFilter(l, args.filter))
+  )
+  const extra = args.instructions?.trim()
 
-  const extra = plan.instructions?.trim()
-  const drafts = await inBatches(candidates.slice(0, limit), async (lead) => {
+  const drafts = await inBatches(pool.slice(0, limit), async (lead) => {
     const email = lead.email!.toLowerCase()
-    // Ultima email inviata a quel contatto: serve il thread Gmail per rispondere nello stesso filo.
     const { data: last } = await supabaseAdmin
       .from('social_messages')
       .select('body, channel_account_id')
@@ -224,58 +229,238 @@ Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
     }
   })
 
-  return {
-    reply: `Ho preparato ${drafts.length} follow-up per chi non ha ancora risposto${days ? ` (primo contatto da almeno ${days} giorni)` : ''}. Partono come risposta nella stessa conversazione email.`,
-    drafts,
+  return { drafts, result: { bozze_preparate: drafts.length, giorni_minimi: days, in_attesa_totali: pool.length } }
+}
+
+async function reviseDraft(draft: Draft, instructions: string): Promise<Draft | null> {
+  const lead = (await loadLeads([draft.leadId]))[0]
+  const generated = await generate(
+    `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Riscrivi questa email seguendo ESATTAMENTE le indicazioni di Luca, mantenendo tutto il resto (stile amichevole, del tu, firma, chiusura sulla chiamata WhatsApp, niente P.S.) salvo che Luca chieda diversamente. Non inventare fatti sull'attività.
+
+Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
+    `${lead ? leadFacts(lead) : `Attività: ${draft.name}`}\n\nEmail attuale:\nOggetto: ${draft.subject}\n${draft.body}\n\nIndicazioni di Luca: ${instructions}`
+  )
+  if (!generated) return null
+  if (draft.kind === 'first') {
+    await supabaseAdmin.from('leads').update({ email_subject: generated.subject, email_body: generated.body }).eq('id', draft.leadId)
+  }
+  return { ...draft, subject: generated.subject || draft.subject, body: generated.body }
+}
+
+// ---------------------------------------------------------------------
+// Agente
+// ---------------------------------------------------------------------
+
+const AGENT_PROMPT = `Sei l'assistente operativo di Luca nella pagina "Ricerca clienti" di Facevoice AI. Luca ti chiede cose in linguaggio naturale e tu le porti a termine usando gli strumenti, anche in più passaggi. Sii proattivo: se per fare una cosa serve prima un'altra (es. analizzare i siti per trovare le email), falla senza chiedere.
+
+A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
+{"tool": "nome_strumento", "args": {...}}
+{"reply": "risposta finale breve per Luca, in italiano", "confirm_send": false}
+
+Strumenti:
+- "stats": {} → numeri della lista.
+- "list_leads": {"status": "new|contacted|replied|client|discarded|do_not_contact|all", "filter": "testo opzionale", "only_with_email": false, "limit": 30} → elenco schede (id, nome, stato, email...).
+- "search_places": {"query": "ristoranti Catania", "max": 20} → cerca su Google Maps e aggiunge alla lista (max 20, 40 o 60).
+- "analyze": {"ids": [...] oppure omesso, "limit": 25} → legge i siti delle schede nuove non analizzate: trova email e social, dà il punteggio.
+- "prepare_first_emails": {"ids": [...] opzionale, "filter": "testo opzionale", "instructions": "indicazioni di Luca", "limit": 25} → prepara le PRIME email per chi non è ancora stato contattato (analizza da solo chi non è analizzato). Le bozze compaiono a Luca per il controllo.
+- "prepare_followups": {"ids": [...] opzionale, "filter": "", "days": 3, "instructions": "", "limit": 25} → prepara follow-up per chi è stato contattato e non ha risposto (days = giorni minimi dal primo contatto; usa 0 se Luca dice "a tutti" o "anche di oggi").
+- "revise_draft": {"leadId": "...", "instructions": "cosa cambiare"} → riscrive una bozza già preparata (vedi l'elenco delle bozze aperte). Per riscriverne più di una, chiamalo più volte o usa "revise_all".
+- "revise_all": {"instructions": "cosa cambiare"} → riscrive tutte le bozze aperte con la stessa indicazione.
+- "remove_drafts": {"leadIds": [...]} → toglie bozze dalla lista.
+- "update_leads": {"ids": [...], "status": "...", "notes": "...", "email": "..."} → aggiorna schede (stato, note, email corretta).
+
+Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
+
+Regole: non inventare id (usa list_leads), al massimo ${MAX_STEPS} passi, risposta finale breve con cosa hai fatto e cosa resta (es. contatti senza email: suggerisci di scrivergli sui social o chiamarli).`
+
+type ToolCall = { tool?: string; args?: Record<string, unknown>; reply?: string; confirm_send?: boolean }
+
+function parseStep(raw: string): ToolCall | null {
+  try {
+    const json = raw.match(/\{[\s\S]*\}/)?.[0]
+    return json ? (JSON.parse(json) as ToolCall) : null
+  } catch {
+    return null
   }
 }
 
-export async function runAssistant(message: string): Promise<AssistantResult> {
+const asIds = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined)
+const asText = (value: unknown) => (typeof value === 'string' ? value : undefined)
+const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+
+export async function runAssistant(message: string, history: Turn[], openDrafts: Draft[]): Promise<AssistantResult> {
   if (!getGeminiApiKey()) return { reply: 'Manca GEMINI_API_KEY: l’assistente non può lavorare.' }
 
-  const stats = await summary()
-  const planned = await callGeminiWithFallback(
-    [{ role: 'user', content: `Riepilogo attuale: ${JSON.stringify(stats)}\n\nRichiesta di Luca: ${message}` }],
-    GEMINI_DEFAULT_MODEL,
-    PLANNER_PROMPT,
-    { temperature: 0.1, maxOutputTokens: 600 }
-  )
-  const plan = parsePlan(planned.message || '')
-  if (!plan) return { reply: 'Non ho capito bene cosa fare: puoi riformulare la richiesta?' }
+  const drafts = new Map(openDrafts.map((d) => [d.leadId, d]))
+  const changed = new Map<string, Draft>()
+  const removed = new Set<string>()
+  let refresh = false
 
-  switch (plan.action) {
-    case 'draft_first':
-      return draftFirst(plan)
-    case 'draft_followup':
-      return draftFollowup(plan)
-    case 'search': {
-      const query = (plan.query || '').trim()
-      if (query.length < 3) return { reply: 'Dimmi cosa cercare, es. "ristoranti Catania".' }
-      const max = Math.max(1, Math.min(MAX_RESULTS, plan.max || 20))
-      const result = await searchPlaces(query, max)
-      return {
-        reply: `Cercato "${query}": ${result.found} attività trovate, ${result.added} nuove aggiunte alla lista. Vuoi che le analizzi?`,
-        refresh: true,
+  const context = [
+    `Riepilogo: ${JSON.stringify(await stats())}`,
+    drafts.size
+      ? `Bozze aperte (non ancora inviate):\n${[...drafts.values()]
+          .map((d) => `- leadId ${d.leadId} · ${d.name} · ${d.kind === 'first' ? 'primo contatto' : 'follow-up'} · oggetto "${d.subject}"\n  ${d.body.slice(0, 300).replace(/\n/g, ' ')}`)
+          .join('\n')}`
+      : 'Nessuna bozza aperta.',
+    history.length ? `Conversazione recente:\n${history.slice(-6).map((t) => `${t.role === 'user' ? 'Luca' : 'Assistente'}: ${t.text}`).join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
+  const transcript: { role: string; content: string }[] = [{ role: 'user', content: `${context}\n\nRichiesta di Luca: ${message}` }]
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const response = await callGeminiWithFallback(transcript, GEMINI_DEFAULT_MODEL, AGENT_PROMPT, {
+      temperature: 0.2,
+      maxOutputTokens: 800,
+    })
+    const raw = response.message || ''
+    const call = parseStep(raw)
+    if (!call) return finish(raw.trim() || 'Non ho capito, puoi riformulare?')
+    if (call.reply !== undefined && !call.tool) return finish(call.reply, Boolean(call.confirm_send))
+
+    const args = call.args || {}
+    let result: unknown
+    try {
+      switch (call.tool) {
+        case 'stats':
+          result = await stats()
+          break
+        case 'list_leads': {
+          const status = asText(args.status) || 'all'
+          const limit = Math.min(60, asNumber(args.limit) || 30)
+          const list = (await loadLeads()).filter(
+            (l) =>
+              (status === 'all' || l.status === status) &&
+              matchesFilter(l, asText(args.filter)) &&
+              (!args.only_with_email || Boolean(l.email))
+          )
+          result = { totale: list.length, schede: list.slice(0, limit).map(compact) }
+          break
+        }
+        case 'search_places': {
+          const query = asText(args.query)?.trim() || ''
+          if (query.length < 3) {
+            result = { errore: 'query mancante' }
+            break
+          }
+          result = await searchPlaces(query, Math.max(1, Math.min(MAX_RESULTS, asNumber(args.max) || 20)))
+          refresh = true
+          break
+        }
+        case 'analyze': {
+          const ids = asIds(args.ids)
+          const limit = Math.min(BATCH_LIMIT, asNumber(args.limit) || BATCH_LIMIT)
+          const todo = (await loadLeads(ids)).filter((l) => (ids?.length ? true : l.status === 'new' && !l.analyzed_at)).slice(0, limit)
+          const done = await inBatches(todo, (lead) => analyzeLead(lead))
+          result = {
+            analizzati: done.length,
+            con_email: done.filter((l) => l.email).length,
+            senza_email: done.filter((l) => !l.email).map((l) => l.name),
+          }
+          refresh = true
+          break
+        }
+        case 'prepare_first_emails': {
+          const out = await prepareFirst({
+            ids: asIds(args.ids),
+            filter: asText(args.filter),
+            instructions: asText(args.instructions),
+            limit: asNumber(args.limit),
+          })
+          for (const d of out.drafts) {
+            drafts.set(d.leadId, d)
+            changed.set(d.leadId, d)
+          }
+          result = out.result
+          refresh = true
+          break
+        }
+        case 'prepare_followups': {
+          const out = await prepareFollowups({
+            ids: asIds(args.ids),
+            filter: asText(args.filter),
+            instructions: asText(args.instructions),
+            days: asNumber(args.days),
+            limit: asNumber(args.limit),
+          })
+          for (const d of out.drafts) {
+            drafts.set(d.leadId, d)
+            changed.set(d.leadId, d)
+          }
+          result = out.result
+          break
+        }
+        case 'revise_draft': {
+          const draft = drafts.get(asText(args.leadId) || '')
+          if (!draft) {
+            result = { errore: 'bozza non trovata: usa un leadId dell’elenco delle bozze aperte' }
+            break
+          }
+          const revised = await reviseDraft(draft, asText(args.instructions) || '')
+          if (revised) {
+            drafts.set(revised.leadId, revised)
+            changed.set(revised.leadId, revised)
+          }
+          result = { riscritta: Boolean(revised), nome: draft.name }
+          break
+        }
+        case 'revise_all': {
+          const instructions = asText(args.instructions) || ''
+          const revised = await inBatches([...drafts.values()], (d) => reviseDraft(d, instructions))
+          for (const d of revised) {
+            drafts.set(d.leadId, d)
+            changed.set(d.leadId, d)
+          }
+          result = { riscritte: revised.length }
+          break
+        }
+        case 'remove_drafts': {
+          for (const id of asIds(args.leadIds) || []) {
+            drafts.delete(id)
+            changed.delete(id)
+            removed.add(id)
+          }
+          result = { rimaste: drafts.size }
+          break
+        }
+        case 'update_leads': {
+          const ids = asIds(args.ids) || []
+          const updates: Record<string, unknown> = {}
+          const status = asText(args.status)
+          if (status && (LEAD_STATUSES as readonly string[]).includes(status)) updates.status = status
+          if (asText(args.notes) !== undefined) updates.notes = asText(args.notes)
+          if (asText(args.email)) updates.email = asText(args.email)!.trim().toLowerCase()
+          if (!ids.length || !Object.keys(updates).length) {
+            result = { errore: 'servono ids e almeno un campo' }
+            break
+          }
+          const { error } = await supabaseAdmin.from('leads').update(updates).in('id', ids)
+          result = error ? { errore: error.message } : { aggiornate: ids.length }
+          refresh = true
+          break
+        }
+        default:
+          result = { errore: `strumento sconosciuto: ${call.tool}` }
       }
+    } catch (error) {
+      result = { errore: error instanceof Error ? error.message : 'errore' }
     }
-    case 'analyze': {
-      const { data } = await supabaseAdmin
-        .from('leads')
-        .select('id')
-        .eq('status', 'new')
-        .is('analyzed_at', null)
-        .limit(60)
-      const ids = (data || []).map((l) => l.id)
-      return {
-        reply: ids.length ? `Analizzo ${ids.length} contatti nuovi: ci vuole qualche minuto.` : 'Sono già tutti analizzati.',
-        analyzeIds: ids,
-      }
+
+    transcript.push({ role: 'assistant', content: JSON.stringify({ tool: call.tool, args }) })
+    transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 6000)}` })
+  }
+
+  return finish('Ho fatto quello che potevo in questo giro: dimmi se continuo.')
+
+  function finish(reply: string, confirmSend = false): AssistantResult {
+    return {
+      reply,
+      drafts: [...changed.values()],
+      removeDrafts: [...removed],
+      refresh,
+      confirmSend: confirmSend && drafts.size > 0,
     }
-    default:
-      return {
-        reply:
-          plan.answer?.trim() ||
-          `Ecco la situazione: ${stats.da_contattare_con_email} da contattare con email, ${stats.contattati_senza_risposta} in attesa di risposta, ${stats.hanno_risposto} hanno risposto. Limite primi contatti: ${DAILY_EMAIL_LIMIT} al giorno.`,
-      }
   }
 }
