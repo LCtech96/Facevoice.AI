@@ -43,6 +43,7 @@ type Lead = {
   notes: string | null
   analyzed_at: string | null
   contacted_at: string | null
+  created_at: string
 }
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -62,6 +63,9 @@ async function authFetch(url: string, init: RequestInit = {}) {
   })
 }
 
+// Per quanto tempo una scheda appena generata resta in evidenza in cima alla lista.
+const RECENT_MS = 6 * 60 * 60_000
+
 function scoreColor(score: number | null) {
   if (score === null) return '#8E8E93'
   if (score >= 7) return '#34C759'
@@ -75,6 +79,8 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
   const [filterText, setFilterText] = useState('')
+  // Schede mostrate su richiesta (ultima ricerca su Maps o indicate dall'assistente).
+  const [focus, setFocus] = useState<{ label: string; ids: string[] } | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [max, setMax] = useState(20)
@@ -91,6 +97,7 @@ export default function LeadsPage() {
     setAuthorized(true)
     setConfigured(data.configured)
     setLeads(data.leads)
+    return data.leads as Lead[]
   }, [])
 
   useEffect(() => {
@@ -127,11 +134,61 @@ export default function LeadsPage() {
     return c
   }, [leads])
 
-  const visible = leads.filter(
-    (l) =>
-      (statusFilter === 'all' || l.status === statusFilter) &&
-      (!filterText.trim() ||
-        `${l.name} ${l.search_query || ''} ${l.address || ''}`.toLowerCase().includes(filterText.trim().toLowerCase()))
+  // Le schede generate da poco restano sempre visibili, qualunque filtro sia attivo.
+  const isRecent = (l: Lead) => Date.now() - new Date(l.created_at).getTime() < RECENT_MS
+  const recent = focus ? [] : leads.filter(isRecent)
+  const visible = focus
+    ? leads.filter((l) => focus.ids.includes(l.id))
+    : leads.filter(
+        (l) =>
+          !isRecent(l) &&
+          (statusFilter === 'all' || l.status === statusFilter) &&
+          (!filterText.trim() ||
+            `${l.name} ${l.search_query || ''} ${l.address || ''}`.toLowerCase().includes(filterText.trim().toLowerCase()))
+      )
+  const filtersOn = statusFilter !== 'all' || Boolean(filterText.trim())
+  const resetFilters = () => {
+    setFocus(null)
+    setStatusFilter('all')
+    setFilterText('')
+  }
+
+  const renderLead = (lead: Lead) => (
+    <button
+      key={lead.id}
+      onClick={() => setSelectedId(lead.id)}
+      className={`w-full text-left p-3 rounded-xl border transition-colors ${
+        lead.id === selectedId
+          ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5'
+          : 'border-[var(--border-color)] bg-[var(--card-background)]'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-sm font-bold text-white"
+          style={{ backgroundColor: scoreColor(lead.score) }}
+          title="Punteggio di priorità"
+        >
+          {lead.score ?? '–'}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-[var(--text-primary)] truncate">{lead.name}</p>
+          <p className="text-xs text-[var(--text-secondary)] truncate">{lead.address}</p>
+          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-[var(--text-secondary)]">
+            <span style={{ color: STATUS[lead.status]?.color }}>{STATUS[lead.status]?.label}</span>
+            {lead.rating !== null && (
+              <span className="inline-flex items-center gap-0.5">
+                <Star className="w-3 h-3" /> {lead.rating} ({lead.reviews_count})
+              </span>
+            )}
+            {lead.email && <Mail className="w-3 h-3" />}
+            {lead.instagram && <Instagram className="w-3 h-3" />}
+            {lead.facebook && <Facebook className="w-3 h-3" />}
+            {!lead.website && <span className="text-[#FF9500]">senza sito</span>}
+          </div>
+        </div>
+      </div>
+    </button>
   )
 
   const replaceLead = (lead: Lead) => setLeads((list) => list.map((l) => (l.id === lead.id ? lead : l)))
@@ -145,9 +202,10 @@ export default function LeadsPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setNotice(`Trovate ${data.found} attività, ${data.added} nuove aggiunte alla lista.`)
-      setFilterText(query)
       setStatusFilter('all')
+      setFilterText('')
       await load()
+      if (data.ids?.length) setFocus({ label: `Ricerca “${query.trim()}”`, ids: data.ids })
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Ricerca non riuscita')
     } finally {
@@ -176,7 +234,7 @@ export default function LeadsPage() {
 
   // Analisi in blocco: 3 alla volta, per non far scadere le richieste.
   const analyzeAll = async () => {
-    const todo = visible.filter((l) => !l.analyzed_at && l.status === 'new')
+    const todo = [...recent, ...visible].filter((l) => !l.analyzed_at && l.status === 'new')
     if (!todo.length) return setNotice('Nessuna scheda da analizzare in questa lista.')
     await analyzeList(todo)
   }
@@ -281,7 +339,7 @@ export default function LeadsPage() {
             </p>
           )}
 
-          <LeadAssistant authFetch={authFetch} onRefresh={load} />
+          <LeadAssistant authFetch={authFetch} onRefresh={load} onFocus={setFocus} />
 
           <form onSubmit={runSearch} className="flex flex-col sm:flex-row gap-2 mb-4">
             <input
@@ -323,7 +381,7 @@ export default function LeadsPage() {
           <section className={`min-w-0 ${selectedId ? 'hidden md:block' : ''}`}>
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2">
               {['all', ...Object.keys(STATUS)].map((s) => (
-                <button key={s} onClick={() => setStatusFilter(s)} className={chip(statusFilter === s)}>
+                <button key={s} onClick={() => { setFocus(null); setStatusFilter(s) }} className={chip(statusFilter === s)}>
                   {s === 'all' ? 'Tutti' : STATUS[s].label} {counts[s] ? `(${counts[s]})` : ''}
                 </button>
               ))}
@@ -331,7 +389,10 @@ export default function LeadsPage() {
             <div className="flex gap-2 mb-3">
               <input
                 value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
+                onChange={(e) => {
+                  setFocus(null)
+                  setFilterText(e.target.value)
+                }}
                 placeholder="Filtra per nome o ricerca…"
                 className={input}
               />
@@ -347,48 +408,43 @@ export default function LeadsPage() {
 
             <div className="space-y-2">
               {authorized === null && <p className="text-sm text-[var(--text-secondary)] p-4">Caricamento…</p>}
-              {authorized && visible.length === 0 && (
+              {focus && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[var(--accent-blue)]/10 text-xs text-[var(--text-primary)]">
+                  <span className="truncate">
+                    {focus.label} · {visible.length}
+                  </span>
+                  <button onClick={resetFilters} className="shrink-0 text-[var(--accent-blue)] font-medium">
+                    Mostra tutti
+                  </button>
+                </div>
+              )}
+              {recent.length > 0 && (
+                <>
+                  <p className="px-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-secondary)]">
+                    Appena generati · {recent.length}
+                  </p>
+                  {recent.map(renderLead)}
+                  {(visible.length > 0 || filtersOn) && (
+                    <p className="px-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-[var(--text-secondary)]">
+                      {filtersOn ? 'Con i filtri scelti' : 'Tutti gli altri'} · {visible.length}
+                    </p>
+                  )}
+                </>
+              )}
+              {authorized && visible.length === 0 && recent.length === 0 && leads.length === 0 && (
                 <p className="text-sm text-[var(--text-secondary)] p-4 text-center">
                   Nessuna attività. Fai una ricerca qui sopra.
                 </p>
               )}
-              {visible.map((lead) => (
-                <button
-                  key={lead.id}
-                  onClick={() => setSelectedId(lead.id)}
-                  className={`w-full text-left p-3 rounded-xl border transition-colors ${
-                    lead.id === selectedId
-                      ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5'
-                      : 'border-[var(--border-color)] bg-[var(--card-background)]'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-sm font-bold text-white"
-                      style={{ backgroundColor: scoreColor(lead.score) }}
-                      title="Punteggio di priorità"
-                    >
-                      {lead.score ?? '–'}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-[var(--text-primary)] truncate">{lead.name}</p>
-                      <p className="text-xs text-[var(--text-secondary)] truncate">{lead.address}</p>
-                      <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-[var(--text-secondary)]">
-                        <span style={{ color: STATUS[lead.status]?.color }}>{STATUS[lead.status]?.label}</span>
-                        {lead.rating !== null && (
-                          <span className="inline-flex items-center gap-0.5">
-                            <Star className="w-3 h-3" /> {lead.rating} ({lead.reviews_count})
-                          </span>
-                        )}
-                        {lead.email && <Mail className="w-3 h-3" />}
-                        {lead.instagram && <Instagram className="w-3 h-3" />}
-                        {lead.facebook && <Facebook className="w-3 h-3" />}
-                        {!lead.website && <span className="text-[#FF9500]">senza sito</span>}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              ))}
+              {authorized && visible.length === 0 && leads.length > 0 && (filtersOn || focus) && (
+                <p className="text-sm text-[var(--text-secondary)] p-4 text-center">
+                  Nessuna scheda con questi filtri.{' '}
+                  <button onClick={resetFilters} className="text-[var(--accent-blue)] font-medium">
+                    Mostra tutti
+                  </button>
+                </p>
+              )}
+              {visible.map(renderLead)}
             </div>
           </section>
 

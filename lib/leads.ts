@@ -57,7 +57,7 @@ type PlacesResponse = {
 }
 
 /** Cerca su Google Maps e salva le attivita' nuove. Restituisce quante ne ha trovate e aggiunte. */
-export async function searchPlaces(query: string, max: number): Promise<{ found: number; added: number }> {
+export async function searchPlaces(query: string, max: number): Promise<{ found: number; added: number; ids: string[] }> {
   const key = placesKey()
   if (!key) throw new Error('Manca GOOGLE_PLACES_API_KEY nelle variabili di Vercel')
 
@@ -102,7 +102,7 @@ export async function searchPlaces(query: string, max: number): Promise<{ found:
   }
 
   const limited = rows.slice(0, max)
-  if (!limited.length) return { found: 0, added: 0 }
+  if (!limited.length) return { found: 0, added: 0, ids: [] }
 
   // Le attivita' gia' in lista (stesso place_id) non vengono toccate: stato e note restano.
   const { data: inserted, error } = await supabaseAdmin
@@ -110,7 +110,10 @@ export async function searchPlaces(query: string, max: number): Promise<{ found:
     .upsert(limited, { onConflict: 'place_id', ignoreDuplicates: true })
     .select('id')
   if (error) throw new Error(error.message)
-  return { found: limited.length, added: inserted?.length ?? 0 }
+  // Tutte le schede di questa ricerca (nuove e gia' presenti), per mostrarle nella lista.
+  const placeIds = limited.map((r) => r.place_id).filter((id): id is string => Boolean(id))
+  const { data: all } = await supabaseAdmin.from('leads').select('id').in('place_id', placeIds)
+  return { found: limited.length, added: inserted?.length ?? 0, ids: (all || []).map((r) => r.id) }
 }
 
 // ---------------------------------------------------------------------
