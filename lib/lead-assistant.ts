@@ -337,19 +337,36 @@ async function repliesOverview() {
 }
 
 /** Prepara (o rifa', tenendo conto della versione attuale) la controrisposta per un contatto. */
-async function replyFor(lead: Lead, instructions?: string) {
+async function replyFor(
+  lead: Lead,
+  instructions?: string,
+  options: { force?: boolean; redoPending?: boolean } = {}
+): Promise<{ ok: boolean; reason?: string; text?: string }> {
   const email = lead.email!.toLowerCase()
   const extra = instructions?.trim()
-  const { data: pending } = await supabaseAdmin
+  const { data: thread } = await supabaseAdmin
     .from('social_messages')
-    .select('body')
+    .select('direction, status, body, created_at')
     .eq('platform', 'email')
     .eq('contact_id', email)
-    .eq('direction', 'out')
-    .eq('status', 'pending')
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(30)
+  const lastIn = (thread || []).find((m) => m.direction === 'in')
+  const pending = (thread || []).find((m) => m.direction === 'out' && m.status === 'pending')
+  const sentAfter =
+    lastIn && (thread || []).find((m) => m.direction === 'out' && m.status === 'sent' && m.created_at > lastIn.created_at)
+
+  // Alla sua ultima risposta abbiamo gia' risposto: niente seconda controrisposta, salvo richiesta esplicita.
+  if (sentAfter && !options.force) {
+    return {
+      ok: false,
+      reason: `controrisposta già inviata il ${new Date(sentAfter.created_at).toLocaleString('it-IT', { timeZone: 'Europe/Rome' })}: non ne preparo un'altra finché non risponde di nuovo (o se Luca lo chiede esplicitamente)`,
+    }
+  }
+  // Una controrisposta e' gia' pronta in Messaggi: si tiene quella, salvo modifiche o richiesta di rifarla.
+  if (pending && !extra && !options.force && !options.redoPending) {
+    return { ok: false, reason: 'c’è già una controrisposta in attesa di approvazione in Messaggi', text: String(pending.body || '') }
+  }
   const notes = [
     lead.notes,
     extra ? `Indicazioni di Luca per questa risposta: ${extra}` : '',
@@ -388,8 +405,9 @@ Strumenti:
 - "remove_drafts": {"leadIds": [...]} → toglie bozze dalla lista.
 - "update_leads": {"ids": [...], "status": "...", "notes": "...", "email": "..."} → aggiorna schede (stato, note, email corretta).
 - "read_conversation": {"leadId": "..."} → legge la conversazione email con quel contatto (prima email, sue risposte, bozze in attesa). Usalo quando Luca chiede cosa ha risposto qualcuno o quali leve usare: poi rispondi tu con un'analisi breve (cosa chiede, tono, leve concrete).
-- "prepare_reply": {"leadId": "...", "instructions": "indicazioni di Luca, opzionali"} → prepara la controrisposta a chi ci ha risposto e la mette da approvare in Messaggi (non parte da sola), al posto di quella vecchia. Se Luca chiede una modifica a una controrisposta già pronta, usalo con le sue indicazioni: si parte dalla versione attuale. Nella risposta finale riassumi in breve cosa dice e ricorda che è da approvare in Messaggi.
-- "prepare_replies": {"instructions": "opzionali", "redo": false} → prepara le controrisposte per TUTTI quelli che hanno risposto e sono "da preparare" (con redo=true rifà anche quelle in attesa).
+- "prepare_reply": {"leadId": "...", "instructions": "indicazioni di Luca, opzionali", "force": false} → prepara la controrisposta a chi ci ha risposto e la mette da approvare in Messaggi (non parte da sola), al posto di quella vecchia. Se Luca chiede una modifica a una controrisposta già pronta, usalo con le sue indicazioni: si parte dalla versione attuale. Nella risposta finale riassumi in breve cosa dice e ricorda che è da approvare in Messaggi.
+- "prepare_replies": {"instructions": "opzionali", "redo": false} → prepara le controrisposte per TUTTI quelli che hanno risposto e sono "da preparare" (con redo=true rifà anche quelle in attesa). Non tocca mai quelle "già inviata".
+Regola sulle controrisposte: se la controrisposta è "già inviata" non se ne prepara un'altra (aspettiamo che il cliente risponda di nuovo). Usa "force": true SOLO se Luca chiede esplicitamente di scrivergli di nuovo / una seconda email nonostante l'invio. Se c'è già una controrisposta "in attesa", non rifarla da zero: mostrala o modificala con le indicazioni di Luca.
 
 La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la casella è appena stata controllata): fidati di questa e non della conversazione precedente quando le cose sono cambiate.
 
@@ -610,10 +628,10 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             break
           }
           reportStatus(`Scrivo la controrisposta per ${lead.name}…`)
-          const out = await replyFor(lead, asText(args.instructions))
+          const out = await replyFor(lead, asText(args.instructions), { force: args.force === true })
           result = out.ok
             ? { preparata: true, dove: 'Messaggi, da approvare', testo: out.text }
-            : { preparata: false, motivo: out.reason }
+            : { preparata: false, motivo: out.reason, testo_esistente: out.text }
           refresh = true
           break
         }
@@ -627,7 +645,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             leads,
             async (lead, position) => {
               reportStatus(`Scrivo la controrisposta per ${lead.name} (${position})…`)
-              const res = await replyFor(lead, asText(args.instructions))
+              const res = await replyFor(lead, asText(args.instructions), { redoPending: redo })
               return { nome: lead.name, preparata: res.ok, testo: res.text?.slice(0, 500), motivo: res.reason }
             },
             2
