@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { LEAD_STATUSES, MAX_RESULTS, placesKey, searchPlaces } from '@/lib/leads'
+import { syncLeadStatuses } from '@/lib/lead-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -12,6 +13,9 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
   const status = params.get('status') || 'all'
   const q = params.get('q')?.trim()
+
+  // Stati allineati alla conversazione vera prima di rispondere.
+  await syncLeadStatuses().catch((error) => console.error('lead status sync:', error))
 
   let query = supabaseAdmin.from('leads').select('*')
   if (status !== 'all' && (LEAD_STATUSES as readonly string[]).includes(status)) query = query.eq('status', status)

@@ -97,6 +97,14 @@ export default function LeadsPage() {
     load().catch(() => setAuthorized(false))
   }, [load])
 
+  // Gli stati (Contattato, Ha risposto…) seguono le email in tempo reale.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load().catch(() => {})
+    }, 10_000)
+    return () => clearInterval(timer)
+  }, [load])
+
   const selected = leads.find((l) => l.id === selectedId) || null
 
   useEffect(() => {
