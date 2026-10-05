@@ -12,6 +12,7 @@ import {
 import { notifyNewMessage } from '@/lib/meta/notify'
 import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta/identities'
 import { sendThreadReply } from '@/lib/gmail'
+import { WHATSAPP_DISPLAY } from '@/lib/leads'
 
 const HISTORY_LIMIT = 12
 
@@ -240,6 +241,37 @@ type ReplyOptions = {
   postCaption?: string | null
   // Primo messaggio privato a chi ha commentato (Private Replies).
   privateFollowUp?: boolean
+  // Risposta di un contatto della Ricerca clienti: abbiamo scritto noi per primi.
+  outreach?: OutreachContext | null
+}
+
+/** Scheda della Ricerca clienti di chi sta rispondendo alla nostra email di primo contatto. */
+export type OutreachContext = {
+  leadId: string
+  name: string
+  analysis: string | null
+  notes: string | null
+  firstEmail: string | null
+}
+
+const OUTREACH_REPLY_RULES = `\n\n## Questa persona sta RISPONDENDO a una nostra email di primo contatto
+Siamo stati noi a scrivere per primi (Ricerca clienti): Luca le ha presentato Facevoice AI. Prepara la controrisposta, che Luca controllerà prima dell'invio.
+- Leggi con attenzione cosa scrive e rispondi nel merito, seguendo il filo della conversazione. Dai del TU, tono amichevole e rispettoso come nella prima email, frasi brevi.
+- Interesse o domande: rispondi in breve e concretamente, poi porta alla chiamata: chiedi il suo numero e quando preferisce essere chiamato, oppure invitalo a scrivere su WhatsApp al ${WHATSAPP_DISPLAY}.
+- Obiezione (costi, tempo, "abbiamo già qualcuno", "non ci serve"): riconoscila con rispetto e usa come leva UN punto debole concreto emerso dall'analisi (senza ripetere la prima email), poi proponi dieci minuti di chiamata senza impegno.
+- No chiaro o richiesta di non essere ricontattato: ringrazia con gentilezza in 1-2 frasi, nessuna insistenza.
+- Niente prezzi, niente promesse che non puoi mantenere, niente P.S.
+- Firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp ${WHATSAPP_DISPLAY}"`
+
+function outreachFacts(outreach: OutreachContext): string {
+  return [
+    `\n\n## Scheda dell'attività (Ricerca clienti)\nNome: ${outreach.name}`,
+    outreach.analysis ? `Analisi (punti deboli da usare come leva):\n${outreach.analysis}` : '',
+    outreach.notes ? `Note di Luca: ${outreach.notes}` : '',
+    outreach.firstEmail ? `Prima email che Luca ha inviato:\n${outreach.firstEmail}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 const PUBLIC_COMMENT_RULES = `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un tuo post o reel
@@ -266,7 +298,7 @@ async function generateReply(
     console.error(`${platform} agent: nessuna chiave AI (Gemini o Claude), nessuna risposta generata`)
     return ''
   }
-  const { publicComment, postCaption, privateFollowUp } = options
+  const { publicComment, postCaption, privateFollowUp, outreach } = options
   const fromComment = Boolean(publicComment)
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
@@ -280,6 +312,7 @@ async function generateReply(
     agentPrompt(platform, fromComment && !privateFollowUp),
     fromComment ? (privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : '',
     postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
+    outreach ? OUTREACH_REPLY_RULES + outreachFacts(outreach) : '',
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
@@ -387,6 +420,46 @@ async function queueReply(
 }
 
 /**
+ * Controrisposta a richiesta (assistente della Ricerca clienti): la prepara come
+ * bozza nella casella Messaggi, al posto di eventuali bozze vecchie dello stesso contatto.
+ */
+export async function prepareOutreachReply(
+  contactEmail: string,
+  outreach: OutreachContext
+): Promise<{ ok: boolean; reason?: string; text?: string }> {
+  const { data: last } = await supabaseAdmin
+    .from('social_messages')
+    .select('channel_account_id, contact_name')
+    .eq('platform', 'email')
+    .eq('contact_id', contactEmail)
+    .eq('direction', 'in')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!last) return { ok: false, reason: 'nessuna risposta ricevuta da questo indirizzo' }
+
+  const text = await generateReply('email', contactEmail, last.contact_name, { outreach })
+  if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
+
+  await supabaseAdmin
+    .from('social_messages')
+    .delete()
+    .eq('platform', 'email')
+    .eq('contact_id', contactEmail)
+    .eq('direction', 'out')
+    .eq('status', 'pending')
+  const target: OutgoingTarget = {
+    platform: 'email',
+    kind: 'message',
+    contact_id: contactEmail,
+    channel_account_id: last.channel_account_id,
+    reply_to: null,
+  }
+  await queueReply(target, last.contact_name, text, false)
+  return { ok: true, text }
+}
+
+/**
  * Punto d'ingresso per ogni messaggio o commento in arrivo: lo salva, avvisa
  * gli admin e, se il canale e' connesso, prepara la risposta AI (bozza da
  * approvare o invio diretto a seconda della modalita' del canale).
@@ -401,6 +474,8 @@ export async function handleIncoming(input: {
   text: string | null
   fallbackLabel: string
   postCaption?: string | null
+  /** Risponde a una nostra email della Ricerca clienti: controrisposta sempre da approvare. */
+  outreach?: OutreachContext | null
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -426,9 +501,13 @@ export async function handleIncoming(input: {
   }
 
   const settings = await getChannelSettings(input.platform)
+  const outreach = input.kind === 'message' ? input.outreach ?? null : null
 
   let reply = ''
-  if (settings.enabled) {
+  if (outreach) {
+    // Con i contatti cercati da noi la controrisposta si prepara sempre, ma non parte mai da sola.
+    reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName, { outreach }) : ''
+  } else if (settings.enabled) {
     if (input.kind === 'comment') {
       reply = input.text
         ? await generateReply(input.platform, input.contactId, input.contactName, {
@@ -450,7 +529,7 @@ export async function handleIncoming(input: {
   }
 
   let pendingDraft = false
-  if (reply) pendingDraft = await queueReply(target, input.contactName, reply, settings.autoSend)
+  if (reply) pendingDraft = await queueReply(target, input.contactName, reply, settings.autoSend && !outreach)
 
   // Commento con un interesse concreto: oltre alla risposta pubblica, un messaggio privato.
   if (settings.enabled && input.kind === 'comment' && input.text && input.platform !== 'whatsapp') {
@@ -473,5 +552,6 @@ export async function handleIncoming(input: {
     body,
     messageId: inserted.id,
     hasPendingDraft: pendingDraft,
+    outreachName: outreach?.name ?? null,
   })
 }

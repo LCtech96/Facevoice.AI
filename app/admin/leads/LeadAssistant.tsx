@@ -30,6 +30,7 @@ const EXAMPLES = [
   'Follow-up a chi non ha risposto, a tutti',
   'Trovami 20 ditte di traslochi a Palermo e preparagli la prima email',
   'Nella bozza per La Canonica cita la carbonara e accorcia',
+  'Chi ha risposto? Leggi le risposte e prepara le controrisposte',
 ]
 
 export default function LeadAssistant({ authFetch, onRefresh }: Props) {

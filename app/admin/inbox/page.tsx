@@ -310,6 +310,11 @@ function AutoReplyToggles() {
           </button>
         )
       })}
+      {channels.some((c) => c.platform === 'email') && (
+        <span className="text-[11px] text-[var(--text-secondary)] w-full">
+          Email: in automatico solo per chi ci scrive per primo. Le risposte dei contatti della Ricerca clienti hanno sempre la controrisposta da approvare.
+        </span>
+      )}
       {error && <span className="text-xs text-[#FF3B30]">{error}</span>}
     </div>
   )
