@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { loadKnowledge } from '@/lib/meta/agent'
 import { ADMIN_EMAILS } from '@/lib/admin-auth'
@@ -169,7 +169,7 @@ export async function handleSiteMessage(
     }
   }
 
-  if (!getGeminiApiKey()) return { handoff: false, stored }
+  if (!hasAIProvider()) return { handoff: false, stored }
 
   const history = stored
     ? (await loadSession(sessionId)).slice(-HISTORY_LIMIT).map((m) => ({
@@ -188,7 +188,7 @@ export async function handleSiteMessage(
 
   let raw = ''
   try {
-    const result = await callGeminiWithFallback(history, GEMINI_DEFAULT_MODEL, system, {
+    const result = await callAI(history, system, {
       temperature: 0.5,
       maxOutputTokens: 512,
     })
