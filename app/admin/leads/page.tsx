@@ -18,6 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import LeadAssistant from './LeadAssistant'
 import { getAccessToken } from '@/lib/session-token'
 
 type Lead = {
@@ -169,6 +170,10 @@ export default function LeadsPage() {
   const analyzeAll = async () => {
     const todo = visible.filter((l) => !l.analyzed_at && l.status === 'new')
     if (!todo.length) return setNotice('Nessuna scheda da analizzare in questa lista.')
+    await analyzeList(todo)
+  }
+
+  const analyzeList = async (todo: { id: string }[]) => {
     setBusy('analyze-all')
     let done = 0
     let failed = 0
@@ -258,8 +263,8 @@ export default function LeadsPage() {
         <div className={selectedId ? 'hidden md:block' : ''}>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Ricerca clienti</h1>
           <p className="text-sm text-[var(--text-secondary)] mb-4">
-            Trova attività su Google Maps, l&apos;AI legge il loro sito e prepara un primo contatto personalizzato. Invii
-            tu, uno alla volta.
+            Trova attività su Google Maps, l&apos;AI legge il loro sito e prepara un primo contatto personalizzato. Le
+            email partono solo dopo che le hai controllate.
           </p>
 
           {!configured && (
@@ -267,6 +272,12 @@ export default function LeadsPage() {
               Manca GOOGLE_PLACES_API_KEY nelle variabili di Vercel: la ricerca non funziona finché non la aggiungi.
             </p>
           )}
+
+          <LeadAssistant
+            authFetch={authFetch}
+            onRefresh={load}
+            onAnalyze={(ids) => analyzeList(ids.map((id) => ({ id })))}
+          />
 
           <form onSubmit={runSearch} className="flex flex-col sm:flex-row gap-2 mb-4">
             <input

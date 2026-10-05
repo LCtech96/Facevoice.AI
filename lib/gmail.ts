@@ -290,10 +290,12 @@ export async function sendThreadReply(threadId: string, to: string, text: string
     const incoming = (thread.messages || [])
       .filter((m) => !parseAddress(header(m, 'From')).email.includes(settings.email))
       .pop()
-    const subjectRaw = incoming ? header(incoming, 'Subject') : ''
+    // Follow-up senza risposte: ci si aggancia all'ultima email inviata da noi.
+    const ref = incoming || (thread.messages || []).slice(-1)[0]
+    const subjectRaw = ref ? header(ref, 'Subject') : ''
     const subject = /^re:/i.test(subjectRaw) ? subjectRaw : `Re: ${subjectRaw || 'Facevoice AI'}`
-    const messageId = incoming ? header(incoming, 'Message-ID') : ''
-    const references = [incoming ? header(incoming, 'References') : '', messageId].filter(Boolean).join(' ')
+    const messageId = ref ? header(ref, 'Message-ID') : ''
+    const references = [ref ? header(ref, 'References') : '', messageId].filter(Boolean).join(' ')
     const recipient = incoming ? parseAddress(header(incoming, 'Reply-To') || header(incoming, 'From')).email : to
 
     const mime = [

@@ -208,12 +208,8 @@ export async function readWebsite(website: string): Promise<SiteInfo> {
 // Analisi AI e bozze
 // ---------------------------------------------------------------------
 
-const ANALYSIS_PROMPT = `Sei l'assistente commerciale di Luca Corrao, fondatore di Facevoice AI: azienda siciliana di sviluppo software su misura, siti web, integrazione AI e automazioni, digitalizzazione e social media management per imprese.
-
-Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo sito (se esiste). Devi:
-1. Valutare quanto è promettente come cliente per Facevoice AI: punteggio da 1 a 10. Alto se ci sono problemi concreti che Facevoice risolve (niente sito, sito datato o lento, niente prenotazione/ordine online, niente social o social trascurati, processi manuali evidenti) e l'attività sembra sana (recensioni, presenza). Basso per catene, franchising, enti pubblici, attività chiuse.
-2. Scrivere l'analisi: 2-4 punti deboli concreti e verificabili dai dati, in italiano, una riga ciascuno.
-3. Scrivere la PRIMA email di contatto a freddo, come la scriverebbe Luca a mano a un altro imprenditore: linguaggio per niente formale, amichevole e diretto, ma sempre rispettoso; mai finto, mai "da AI", mai da ufficio marketing. Dai del TU. 90-150 parole, paragrafi brevi separati da una riga vuota, niente elenchi, niente prezzi, niente parole gonfiate ("straordinario", "eccezionale", "rivoluzionario", "soluzioni innovative"). Struttura obbligatoria, in quest'ordine:
+// Regole della prima email: condivise con l'assistente della Ricerca clienti.
+export const FIRST_EMAIL_RULES = `come la scriverebbe Luca a mano a un altro imprenditore: linguaggio per niente formale, amichevole e diretto, ma sempre rispettoso; mai finto, mai "da AI", mai da ufficio marketing. Dai del TU. 90-150 parole, paragrafi brevi separati da una riga vuota, niente elenchi, niente prezzi, niente parole gonfiate ("straordinario", "eccezionale", "rivoluzionario", "soluzioni innovative"). Struttura obbligatoria, in quest'ordine:
    a) Saluto amichevole: "Ciao!" (o "Ciao [nome]!" solo se il nome del titolare compare nei dati).
    b) IL COMPLIMENTO: una cosa SPECIFICA e vera notata nei dati (un dettaglio del sito, delle recensioni, del menù, della storia dell'attività), detta in modo spontaneo, es. "ho visto le foto delle vostre pastaie al lavoro sul sito: si sente tutta la cura che c'è dietro, complimenti davvero!" Mai complimenti generici.
    c) CHI SIAMO, 1-2 frasi, senza promettere risultati e senza spiegare un singolo servizio: "Sono Luca di Facevoice AI, una software house siciliana: ci prendiamo cura di tutto il lato digitale di [il loro settore, es. ristoranti e locali], dalla creazione di contenuti alla gestione dei profili social, fino a siti web, e-commerce e software su misura." Adatta l'elenco al settore (es. per un negozio metti l'e-commerce, per un'attività di servizi i gestionali), restando breve.
@@ -221,7 +217,16 @@ Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo s
    e) LA DOMANDA + LA CHIAMATA: una domanda breve legata al punto debole (es. "Come gestite oggi le richieste di chi vi cerca online?") e poi porta TUTTO verso una chiamata su WhatsApp, es. "Ti va se ci sentiamo dieci minuti con una chiamata su WhatsApp? Scrivimi pure al +39 351 420 6353 e ti chiamo io." NON proporre preventivi, proposte su misura, documenti o incontri: solo la chiamata WhatsApp.
    f) Saluto e firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp +39 351 420 6353"
    g) NIENTE dopo la firma: nessun P.S., nessuna frase tipo "se non ti interessa…" o "non ti disturbo più".
-   Oggetto: breve e naturale, max 7 parole, legato alla loro attività (es. "Un'idea per Osteria da Fortunata"), niente maiuscole urlate o emoji.
+   Oggetto: breve e naturale, max 7 parole, legato alla loro attività (es. "Un'idea per Osteria da Fortunata"), niente maiuscole urlate o emoji.`
+
+export const WHATSAPP_DISPLAY = '+39 351 420 6353'
+
+const ANALYSIS_PROMPT = `Sei l'assistente commerciale di Luca Corrao, fondatore di Facevoice AI: azienda siciliana di sviluppo software su misura, siti web, integrazione AI e automazioni, digitalizzazione e social media management per imprese.
+
+Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo sito (se esiste). Devi:
+1. Valutare quanto è promettente come cliente per Facevoice AI: punteggio da 1 a 10. Alto se ci sono problemi concreti che Facevoice risolve (niente sito, sito datato o lento, niente prenotazione/ordine online, niente social o social trascurati, processi manuali evidenti) e l'attività sembra sana (recensioni, presenza). Basso per catene, franchising, enti pubblici, attività chiuse.
+2. Scrivere l'analisi: 2-4 punti deboli concreti e verificabili dai dati, in italiano, una riga ciascuno.
+3. Scrivere la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
 4. Scrivere un messaggio Direct per Instagram/Facebook: 2-4 frasi, dai del tu, stesso tono amichevole e stesso schema in breve (complimento specifico, chi siamo in mezza frase, il punto debole, invito a sentirsi su WhatsApp), niente link.
 
 Rispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
