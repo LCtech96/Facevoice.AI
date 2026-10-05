@@ -252,6 +252,7 @@ export default function AIChatWidget() {
                 </div>
               </div>
 
+              <div className="flex items-center gap-1">
               {messages.length > 0 && (
                 <div className="relative">
                   <button
@@ -276,6 +277,19 @@ export default function AIChatWidget() {
                   )}
                 </div>
               )}
+                {/* Chiude la finestra: la conversazione resta e si riprende riaprendo la chat. */}
+                <button
+                  onClick={() => {
+                    setShowMenu(false)
+                    setIsOpen(false)
+                  }}
+                  className="p-2 -mr-1 hover:bg-white/10 rounded-lg transition-colors"
+                  aria-label="Chiudi chat"
+                  title="Chiudi"
+                >
+                  <X className="w-5 h-5 text-white/80" />
+                </button>
+              </div>
             </div>
 
             {/* Messaggi */}

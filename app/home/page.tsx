@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Navigation from '@/components/Navigation'
 import EmberHero from '@/components/landing/EmberHero'
+import EmberGuides from '@/components/landing/EmberGuides'
 import BrandBanner from '@/components/BrandBanner'
 import Feed from '@/components/Feed'
 import AIToolsFeed from '@/components/AIToolsFeed'
@@ -103,6 +104,11 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
       {/* Hero Section */}
       <div id="hero" className="scroll-mt-14">
         <EmberHero />
+      </div>
+
+      {/* Guide: cosa facciamo, dai caroselli Instagram */}
+      <div id="guide" className="scroll-mt-14">
+        <EmberGuides />
       </div>
 
       {/* Brand Banner */}
