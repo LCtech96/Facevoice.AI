@@ -2,6 +2,10 @@ import type { MetadataRoute } from 'next'
 import { SITE_URL, SICILY_CITIES } from '@/lib/seo/site'
 import { SECTORS } from '@/lib/seo/sectors'
 import { PROJECTS } from '@/lib/seo/projects'
+import { blogPath, listBlogPosts } from '@/lib/blog'
+
+// Rigenerata ogni ora: i nuovi articoli del blog entrano da soli.
+export const revalidate = 3600
 
 /**
  * Generata dalle stesse strutture dati che generano le pagine, cosi' non
@@ -28,8 +32,9 @@ const STATIC_PAGES: Array<{
 const LEGACY_SECTORS = ['ristorazione', 'ottica', 'abbigliamento']
 const LEGACY_CITIES = ['palermo', 'catania', 'trapani']
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const lastModified = new Date()
+  const posts = await listBlogPosts()
 
   return [
     ...STATIC_PAGES.map((page) => ({
@@ -57,6 +62,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified,
       changeFrequency: 'monthly' as const,
       priority: 0.8,
+    })),
+    ...posts.map((post) => ({
+      url: `${SITE_URL}${blogPath(post)}`,
+      lastModified: new Date(post.created_at),
+      changeFrequency: 'monthly' as const,
+      priority: 0.65,
     })),
     ...LEGACY_SECTORS.flatMap((sector) =>
       LEGACY_CITIES.map((city) => ({
