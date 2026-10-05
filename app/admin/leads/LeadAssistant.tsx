@@ -22,7 +22,9 @@ type Turn = { role: 'user' | 'assistant'; text: string }
 
 type Props = {
   authFetch: (url: string, init?: RequestInit) => Promise<Response>
-  onRefresh: () => Promise<void> | void
+  onRefresh: () => Promise<unknown> | void
+  /** Mostra nella lista le schede indicate dall'assistente. */
+  onFocus?: (focus: { label: string; ids: string[] }) => void
 }
 
 const EXAMPLES = [
@@ -33,7 +35,7 @@ const EXAMPLES = [
   'Chi ha risposto? Leggi le risposte e prepara le controrisposte',
 ]
 
-export default function LeadAssistant({ authFetch, onRefresh }: Props) {
+export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) {
   const [input, setInput] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -103,7 +105,7 @@ export default function LeadAssistant({ authFetch, onRefresh }: Props) {
         body: JSON.stringify({ message: text, history, drafts: draftsNow.current }),
       })
       const data = await readStream(res)
-      say('assistant', data.reply)
+      say('assistant', String(data.reply || '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^\s*\*\s+/gm, '- '))
       const incoming: Draft[] = data.drafts || []
       const removed: string[] = data.removeDrafts || []
       if (incoming.length || removed.length) {
@@ -121,6 +123,7 @@ export default function LeadAssistant({ authFetch, onRefresh }: Props) {
         })
       }
       if (data.refresh) await onRefresh()
+      if (data.focus?.ids?.length) onFocus?.(data.focus)
       // Tempo della richiesta finito: si riparte da soli (al massimo qualche giro).
       again = Boolean(data.more) && round < 5
       if (data.confirmSend && !again) await sendAll()

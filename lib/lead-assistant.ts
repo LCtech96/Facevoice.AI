@@ -38,6 +38,8 @@ export type AssistantResult = {
   removeDrafts?: string[]
   refresh?: boolean
   confirmSend?: boolean
+  /** Schede da mostrare nella lista della pagina (es. "mostrami i contatti di poco fa"). */
+  focus?: { label: string; ids: string[] }
   /** Tempo finito prima di completare: il browser rilancia da solo per continuare. */
   more?: boolean
 }
@@ -396,7 +398,7 @@ A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
 
 Strumenti:
 - "stats": {} → numeri della lista.
-- "list_leads": {"status": "new|contacted|replied|client|discarded|do_not_contact|all", "filter": "testo opzionale", "only_with_email": false, "limit": 30} → elenco schede (id, nome, stato, email...).
+- "list_leads": {"status": "new|contacted|replied|client|discarded|do_not_contact|all", "filter": "testo opzionale", "only_with_email": false, "recent_minutes": 120, "limit": 30, "label": "titolo breve"} → elenco schede (id, nome, stato, email...). Le schede trovate vengono anche MOSTRATE a Luca nella lista della pagina: usalo quando chiede di vedere/mostrare contatti (es. "mostrami quelli generati poco fa" → recent_minutes 180, label "Generati poco fa").
 - "search_places": {"query": "ristoranti Catania", "max": 20} → cerca su Google Maps e aggiunge alla lista (max 20, 40 o 60).
 - "analyze": {"ids": [...] oppure omesso, "limit": 25} → legge i siti delle schede nuove non analizzate: trova email e social, dà il punteggio.
 - "prepare_first_emails": {"ids": [...] opzionale, "filter": "testo opzionale", "instructions": "indicazioni di Luca", "limit": 25} → prepara le PRIME email per chi non è ancora stato contattato (analizza da solo chi non è analizzato). Le bozze compaiono a Luca per il controllo.
@@ -414,7 +416,7 @@ La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la case
 
 Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
 
-Regole: non inventare id (usa list_leads), al massimo ${MAX_STEPS} passi, risposta finale breve con cosa hai fatto e cosa resta (es. contatti senza email: suggerisci di scrivergli sui social o chiamarli).`
+Scrivi le risposte finali in testo semplice: niente markdown, niente asterischi. Regole: non inventare id (usa list_leads), al massimo ${MAX_STEPS} passi, risposta finale breve con cosa hai fatto e cosa resta (es. contatti senza email: suggerisci di scrivergli sui social o chiamarli).`
 
 type ToolCall = { tool?: string; args?: Record<string, unknown>; reply?: string; confirm_send?: boolean }
 
@@ -439,6 +441,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const removed = new Set<string>()
   let refresh = false
   let more = false
+  let focus: AssistantResult['focus']
 
   // Prima di tutto la casella: le risposte arrivate in questo momento devono essere gia' note.
   reportStatus('Controllo la casella per nuove risposte…')
@@ -486,13 +489,19 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
         case 'list_leads': {
           const status = asText(args.status) || 'all'
           const limit = Math.min(60, asNumber(args.limit) || 30)
-          const list = (await loadLeads()).filter(
-            (l) =>
-              (status === 'all' || l.status === status) &&
-              matchesFilter(l, asText(args.filter)) &&
-              (!args.only_with_email || Boolean(l.email))
-          )
+          const recentMinutes = asNumber(args.recent_minutes)
+          const since = recentMinutes ? Date.now() - recentMinutes * 60_000 : 0
+          const list = (await loadLeads())
+            .filter(
+              (l) =>
+                (status === 'all' || l.status === status) &&
+                matchesFilter(l, asText(args.filter)) &&
+                (!args.only_with_email || Boolean(l.email)) &&
+                (!since || new Date(l.created_at).getTime() >= since)
+            )
+            .sort((a, b) => (since ? b.created_at.localeCompare(a.created_at) : 0))
           result = { totale: list.length, schede: list.slice(0, limit).map(compact) }
+          if (list.length) focus = { label: asText(args.label) || 'Contatti indicati dall’assistente', ids: list.slice(0, 60).map((l) => l.id) }
           break
         }
         case 'search_places': {
@@ -502,7 +511,9 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
             break
           }
           reportStatus(`Cerco su Google Maps: “${query}”…`)
-          result = await searchPlaces(query, Math.max(1, Math.min(MAX_RESULTS, asNumber(args.max) || 20)))
+          const found = await searchPlaces(query, Math.max(1, Math.min(MAX_RESULTS, asNumber(args.max) || 20)))
+          result = { trovate: found.found, nuove_aggiunte: found.added }
+          if (found.ids.length) focus = { label: `Ricerca “${query}”`, ids: found.ids }
           refresh = true
           break
         }
@@ -678,6 +689,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
       refresh,
       confirmSend: confirmSend && drafts.size > 0,
       more,
+      focus,
     }
   }
 }
