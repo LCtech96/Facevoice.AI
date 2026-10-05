@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { handleIncoming } from '@/lib/meta/agent'
+import { handleIncoming, type OutreachContext } from '@/lib/meta/agent'
 import {
   getMessage,
   header,
@@ -30,6 +30,52 @@ function skipReason(message: GmailMessage, ownEmail: string): string | null {
   if (/^(bulk|list|junk)$/i.test(header(message, 'Precedence').trim())) return 'invio massivo'
   if (header(message, 'X-Autoreply') || header(message, 'X-Autorespond')) return 'risposta automatica'
   return null
+}
+
+const LEAD_FIELDS = 'id, name, analysis, notes, email_subject, email_body, status'
+
+/**
+ * Chi risponde e' un contatto della Ricerca clienti a cui abbiamo scritto noi?
+ * Si riconosce dall'indirizzo o, se risponde da un altro indirizzo, dal thread della nostra email.
+ */
+async function findOutreachLead(email: string, threadId: string): Promise<(OutreachContext & { status: string }) | null> {
+  let { data: lead } = await supabaseAdmin
+    .from('leads')
+    .select(LEAD_FIELDS)
+    .ilike('email', email)
+    .not('contacted_at', 'is', null)
+    .limit(1)
+    .maybeSingle()
+
+  if (!lead && threadId) {
+    const { data: sent } = await supabaseAdmin
+      .from('social_messages')
+      .select('contact_id')
+      .eq('platform', 'email')
+      .eq('direction', 'out')
+      .eq('channel_account_id', threadId)
+      .eq('origin', 'outreach')
+      .limit(1)
+      .maybeSingle()
+    if (sent?.contact_id) {
+      ;({ data: lead } = await supabaseAdmin
+        .from('leads')
+        .select(LEAD_FIELDS)
+        .ilike('email', sent.contact_id)
+        .limit(1)
+        .maybeSingle())
+    }
+  }
+  if (!lead) return null
+
+  return {
+    leadId: lead.id,
+    name: lead.name,
+    analysis: lead.analysis,
+    notes: lead.notes,
+    firstEmail: lead.email_body ? `Oggetto: ${lead.email_subject || ''}\n\n${lead.email_body}` : null,
+    status: lead.status,
+  }
 }
 
 async function readCursor(fallback: number) {
@@ -78,6 +124,7 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
       const sender = parseAddress(header(message, 'Reply-To') || header(message, 'From'))
       const subject = header(message, 'Subject').trim()
       const text = messageText(message)
+      const lead = await findOutreachLead(sender.email, message.threadId).catch(() => null)
 
       await handleIncoming({
         platform: 'email',
@@ -88,13 +135,12 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
         channelAccountId: message.threadId,
         text: [subject ? `Oggetto: ${subject}` : '', text].filter(Boolean).join('\n\n') || null,
         fallbackLabel: '[email senza testo]',
+        outreach: lead,
       })
       // Un contatto della Ricerca clienti ha risposto: la scheda passa a "ha risposto".
-      await supabaseAdmin
-        .from('leads')
-        .update({ status: 'replied' })
-        .ilike('email', sender.email)
-        .eq('status', 'contacted')
+      if (lead?.status === 'contacted') {
+        await supabaseAdmin.from('leads').update({ status: 'replied' }).eq('id', lead.leadId)
+      }
       processed++
     }
   } catch (error) {

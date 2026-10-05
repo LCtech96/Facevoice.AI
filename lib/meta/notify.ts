@@ -17,13 +17,25 @@ export async function notifyNewMessage(input: {
   body: string
   messageId: string
   hasPendingDraft: boolean
+  /** Nome della scheda se risponde a una nostra email della Ricerca clienti. */
+  outreachName?: string | null
 }) {
-  const channel = input.kind === 'comment' ? `commento ${LABEL[input.platform]}` : LABEL[input.platform]
-  const who = input.contactName || 'Nuovo contatto'
+  const channel = input.outreachName
+    ? 'ha risposto alla tua email'
+    : input.kind === 'comment'
+      ? `commento ${LABEL[input.platform]}`
+      : LABEL[input.platform]
+  const who = input.outreachName || input.contactName || 'Nuovo contatto'
   const key = await conversationKeyFor(input.platform, input.contactId)
   const url = `${SITE_URL}/admin/inbox?c=${encodeURIComponent(key)}`
   const preview = input.body.length > 140 ? `${input.body.slice(0, 140)}…` : input.body
-  const action = input.hasPendingDraft ? 'Risposta AI pronta da approvare.' : ''
+  const action = input.outreachName
+    ? input.hasPendingDraft
+      ? 'Controrisposta pronta: controllala e approvala.'
+      : 'Rispondi tu dalla casella.'
+    : input.hasPendingDraft
+      ? 'Risposta AI pronta da approvare.'
+      : ''
 
   const tasks: Promise<unknown>[] = [
     sendPushToAdmins({

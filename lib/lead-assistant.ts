@@ -10,6 +10,7 @@ import {
   searchPlaces,
   type Lead,
 } from '@/lib/leads'
+import { prepareOutreachReply } from '@/lib/meta/agent'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -273,6 +274,29 @@ Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
   return { ...draft, subject: generated.subject || draft.subject, body: generated.body }
 }
 
+/** Conversazione email con un contatto (prima email, risposte, bozze in attesa). */
+async function readConversation(lead: Lead) {
+  if (!lead.email) return { errore: 'la scheda non ha un’email' }
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('direction, body, status, created_at')
+    .eq('platform', 'email')
+    .ilike('contact_id', lead.email)
+    .order('created_at', { ascending: false })
+    .limit(10)
+  const messages = (data || []).reverse()
+  if (!messages.length) return { nome: lead.name, messaggi: [], nota: 'nessun messaggio registrato' }
+  return {
+    nome: lead.name,
+    analisi: lead.analysis,
+    messaggi: messages.map((m) => ({
+      da: m.direction === 'in' ? 'cliente' : m.status === 'pending' ? 'bozza in attesa di Luca' : 'Luca',
+      data: m.created_at,
+      testo: String(m.body || '').slice(0, 2000),
+    })),
+  }
+}
+
 // ---------------------------------------------------------------------
 // Agente
 // ---------------------------------------------------------------------
@@ -294,6 +318,8 @@ Strumenti:
 - "revise_all": {"instructions": "cosa cambiare"} → riscrive tutte le bozze aperte con la stessa indicazione.
 - "remove_drafts": {"leadIds": [...]} → toglie bozze dalla lista.
 - "update_leads": {"ids": [...], "status": "...", "notes": "...", "email": "..."} → aggiorna schede (stato, note, email corretta).
+- "read_conversation": {"leadId": "..."} → legge la conversazione email con quel contatto (prima email, sue risposte, bozze in attesa). Usalo quando Luca chiede cosa ha risposto qualcuno o quali leve usare: poi rispondi tu con un'analisi breve (cosa chiede, tono, leve concrete).
+- "prepare_reply": {"leadId": "...", "instructions": "indicazioni di Luca, opzionali"} → prepara la controrisposta a chi ci ha risposto e la mette da approvare in Messaggi (non parte da sola). Nella risposta finale riassumi in breve cosa dice e ricorda che è da approvare in Messaggi.
 
 Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
 
@@ -487,6 +513,36 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           const { error } = await supabaseAdmin.from('leads').update(updates).in('id', ids)
           result = error ? { errore: error.message } : { aggiornate: ids.length }
           refresh = true
+          break
+        }
+        case 'read_conversation': {
+          const lead = (await loadLeads([asText(args.leadId) || '']))[0]
+          if (!lead) {
+            result = { errore: 'scheda non trovata: usa list_leads per l’id' }
+            break
+          }
+          reportStatus(`Leggo la conversazione con ${lead.name}…`)
+          result = await readConversation(lead)
+          break
+        }
+        case 'prepare_reply': {
+          const lead = (await loadLeads([asText(args.leadId) || '']))[0]
+          if (!lead?.email) {
+            result = { errore: lead ? 'la scheda non ha un’email' : 'scheda non trovata: usa list_leads per l’id' }
+            break
+          }
+          reportStatus(`Scrivo la controrisposta per ${lead.name}…`)
+          const extra = asText(args.instructions)?.trim()
+          const out = await prepareOutreachReply(lead.email.toLowerCase(), {
+            leadId: lead.id,
+            name: lead.name,
+            analysis: lead.analysis,
+            notes: [lead.notes, extra ? `Indicazioni di Luca per questa risposta: ${extra}` : ''].filter(Boolean).join('\n') || null,
+            firstEmail: lead.email_body ? `Oggetto: ${lead.email_subject || ''}\n\n${lead.email_body}` : null,
+          })
+          result = out.ok
+            ? { preparata: true, dove: 'Messaggi, da approvare', testo: out.text }
+            : { preparata: false, motivo: out.reason }
           break
         }
         default:
