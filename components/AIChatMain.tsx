@@ -141,11 +141,10 @@ export default function AIChatMain({
     }
 
     const pastedText = data.pastedContent.map((item) => item.content).join('\n\n')
-    const messageContent =
-      [data.message.trim(), pastedText].filter(Boolean).join('\n\n') ||
-      (attachments.length > 0 ? 'Analizza questa immagine.' : '')
+    // Solo immagine e nessun testo: il messaggio resta vuoto (si vede solo la foto).
+    const messageContent = [data.message.trim(), pastedText].filter(Boolean).join('\n\n')
 
-    if (!messageContent || isLoading) return
+    if ((!messageContent && attachments.length === 0) || isLoading) return
 
     const userMessage: Message = {
       id: isSharedChat ? `temp-${Date.now()}` : Date.now().toString(),
@@ -172,7 +171,7 @@ export default function AIChatMain({
       updatedChat = {
         // Bozza: il server le assegna un id vero al primo messaggio.
         id: `draft-${Date.now()}`,
-        title: userMessage.content.slice(0, 50),
+        title: userMessage.content.slice(0, 50) || 'Immagine',
         messages: [userMessage],
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -184,7 +183,7 @@ export default function AIChatMain({
       updatedChat = {
         ...chat,
         messages: updatedMessages,
-        title: chat.title === 'New Chat' ? userMessage.content.slice(0, 50) : chat.title,
+        title: chat.title === 'New Chat' ? userMessage.content.slice(0, 50) || 'Immagine' : chat.title,
         updatedAt: new Date(),
         model: modelToUse,
       }

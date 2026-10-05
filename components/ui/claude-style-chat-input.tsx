@@ -391,16 +391,6 @@ export const ClaudeChatInput: React.FC<ClaudeChatInputProps> = ({
 
         setFiles(prev => [...prev, ...newFiles]);
 
-        setMessage(prev => {
-            if (prev) return prev;
-            if (newFiles.length === 1) {
-                const f = newFiles[0];
-                if (f.type.startsWith('image/')) return "Analyzed image...";
-                return "Analyzed document...";
-            }
-            return `Analyzed ${newFiles.length} files...`;
-        });
-
         newFiles.forEach(f => {
             setTimeout(() => {
                 setFiles(prev => prev.map(p => p.id === f.id ? { ...p, uploadStatus: 'complete' } : p));
