@@ -33,6 +33,7 @@ const FEATURES: Record<string, string> = {
   assistente_clienti: 'Assistente Ricerca clienti',
   email_clienti: 'Email e follow-up ai clienti',
   analisi_clienti: 'Analisi dei siti dei clienti',
+  traduzioni_sito: 'Traduzioni del sito',
   altro: 'Altro',
 }
 

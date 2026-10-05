@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
+import AutoTranslate from '@/components/AutoTranslate'
 import ContactsFooter from '@/components/ContactsFooter'
 import RecoveryRedirect from '@/components/RecoveryRedirect'
 import {
@@ -117,6 +118,7 @@ export default function RootLayout({
           {children}
           <ContactsFooter />
           <AIChatWidget />
+          <AutoTranslate />
           <Analytics />
           <SpeedInsights />
         </LanguageProvider>

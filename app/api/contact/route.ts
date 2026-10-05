@@ -3,6 +3,8 @@ import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
+import { asSiteLanguage } from '@/lib/site-languages'
+import { translateTexts } from '@/lib/translate'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +52,24 @@ export async function POST(req: NextRequest) {
   const fullName = `${firstName} ${lastName}`
   const waLink = `https://wa.me/${phone.replace(/[^\d]/g, '').replace(/^(?!39)(3\d{8,9})$/, '39$1')}`
 
+  // Conferma nella lingua scelta sul sito (testi base in italiano, tradotti se serve).
+  const language = asSiteLanguage(body?.language)
+  const [cSubject, cHello, cIntro, cYouWrote, cBye, cTeam] = await translateTexts(language, [
+    'Abbiamo ricevuto il tuo messaggio · Facevoice AI',
+    'Ciao',
+    `il tuo messaggio è stato recapitato al team di Facevoice AI: ti ricontatteremo a breve al numero ${phone} o a questa email.`,
+    'Ecco cosa ci hai scritto:',
+    'A presto,',
+    'Il team di Facevoice AI',
+  ]).catch(() => [
+    'Abbiamo ricevuto il tuo messaggio · Facevoice AI',
+    'Ciao',
+    `il tuo messaggio è stato recapitato al team di Facevoice AI: ti ricontatteremo a breve al numero ${phone} o a questa email.`,
+    'Ecco cosa ci hai scritto:',
+    'A presto,',
+    'Il team di Facevoice AI',
+  ])
+
   const [adminSent] = await Promise.all([
     sendEmail({
       to: [...ADMIN_EMAILS],
@@ -66,14 +86,14 @@ Cellulare: <a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a> · <a hre
     }),
     sendEmail({
       to: email,
-      subject: 'Abbiamo ricevuto il tuo messaggio · Facevoice AI',
-      text: `Ciao ${firstName},\n\nil tuo messaggio è stato recapitato al team di Facevoice AI: ti ricontatteremo a breve al numero ${phone} o a questa email.\n\nEcco cosa ci hai scritto:\n${message}\n\nA presto,\nIl team di Facevoice AI\n${SITE_URL}`,
+      subject: cSubject,
+      text: `${cHello} ${firstName},\n\n${cIntro}\n\n${cYouWrote}\n${message}\n\n${cBye}\n${cTeam}\n${SITE_URL}`,
       html: emailLayout(`
-<p>Ciao ${escapeHtml(firstName)},</p>
-<p>il tuo messaggio è stato <strong>recapitato al team di Facevoice AI</strong>: ti ricontatteremo a breve al numero ${escapeHtml(phone)} o a questa email.</p>
-<p>Ecco cosa ci hai scritto:</p>
+<p>${escapeHtml(cHello)} ${escapeHtml(firstName)},</p>
+<p>${escapeHtml(cIntro)}</p>
+<p>${escapeHtml(cYouWrote)}</p>
 <div style="background: #f5f5f5; border-left: 4px solid #ff6a1a; padding: 12px 16px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(message)}</div>
-<p>A presto,<br />Il team di Facevoice AI</p>`),
+<p>${escapeHtml(cBye)}<br />${escapeHtml(cTeam)}</p>`),
     }),
     sendPushToAdmins({
       title: `Nuova richiesta dal sito · ${fullName}`,
