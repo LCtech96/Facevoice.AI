@@ -529,6 +529,16 @@ export async function handleIncoming(input: {
   }
 
   let pendingDraft = false
+  if (reply && outreach) {
+    // Ha scritto di nuovo: la controrisposta ancora in attesa e' superata da quella nuova.
+    await supabaseAdmin
+      .from('social_messages')
+      .delete()
+      .eq('platform', input.platform)
+      .eq('contact_id', input.contactId)
+      .eq('direction', 'out')
+      .eq('status', 'pending')
+  }
   if (reply) pendingDraft = await queueReply(target, input.contactName, reply, settings.autoSend && !outreach)
 
   // Commento con un interesse concreto: oltre alla risposta pubblica, un messaggio privato.
