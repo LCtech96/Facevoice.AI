@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { GEMINI_DEFAULT_MODEL, callGeminiWithFallback, getGeminiApiKey } from '@/lib/gemini'
+import { GEMINI_DEFAULT_MODEL, callGeminiPaced, getGeminiApiKey } from '@/lib/gemini'
 import {
   DAILY_EMAIL_LIMIT,
   FIRST_EMAIL_RULES,
@@ -97,7 +97,7 @@ async function stats() {
 }
 
 async function generate(system: string, user: string): Promise<{ subject: string; body: string } | null> {
-  const result = await callGeminiWithFallback([{ role: 'user', content: user }], GEMINI_DEFAULT_MODEL, system, {
+  const result = await callGeminiPaced([{ role: 'user', content: user }], GEMINI_DEFAULT_MODEL, system, {
     temperature: 0.7,
     maxOutputTokens: 1200,
   })
@@ -311,7 +311,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const transcript: { role: string; content: string }[] = [{ role: 'user', content: `${context}\n\nRichiesta di Luca: ${message}` }]
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await callGeminiWithFallback(transcript, GEMINI_DEFAULT_MODEL, AGENT_PROMPT, {
+    const response = await callGeminiPaced(transcript, GEMINI_DEFAULT_MODEL, AGENT_PROMPT, {
       temperature: 0.2,
       maxOutputTokens: 800,
     })
