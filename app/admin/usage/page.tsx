@@ -6,6 +6,7 @@ import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { getChatModelName } from '@/lib/chat-models'
+import AutomationUsage from './AutomationUsage'
 
 type ModelTotals = {
   model: string
@@ -176,12 +177,14 @@ export default function AdminUsagePage() {
       <div className="max-w-5xl mx-auto px-4 pt-24 pb-16">
         <header className="mb-8">
           <h1 className="text-2xl font-semibold text-[var(--text-primary)]">
-            Consumo AI del team
+            Consumo AI
           </h1>
           <p className="text-[var(--text-secondary)] mt-1">
-            Periodo: {period} · Totale speso {formatUsd(totalCostUsd)}
+            Periodo: {period} · Chat interna del team {formatUsd(totalCostUsd)}
           </p>
         </header>
+
+        <AutomationUsage />
 
         <section className="mb-8 p-4 bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl">
           <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-2">

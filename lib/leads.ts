@@ -272,6 +272,7 @@ export async function analyzeLead(lead: Lead): Promise<Lead> {
     .join('\n')
 
   const result = await callAIPaced([{ role: 'user', content: facts }], ANALYSIS_PROMPT, {
+    feature: 'analisi_clienti',
     temperature: 0.6,
     maxOutputTokens: 2048,
   })

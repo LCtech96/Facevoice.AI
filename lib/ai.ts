@@ -7,6 +7,7 @@ import {
   type GeminiChatMessage,
 } from '@/lib/gemini'
 import { getAnthropicApiKey } from '@/lib/claude'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 // ---------------------------------------------------------------------
 // Gemini + Claude combinati: si lavora con Gemini (gratuito) finché regge;
@@ -22,7 +23,44 @@ const GEMINI_COOLDOWN_MS = 60_000
 const PACE_MS = 4500
 const RATE_LIMIT_WAITS_MS = [15_000, 30_000, 45_000]
 
-type AIOptions = { temperature?: number; maxOutputTokens?: number }
+type AIOptions = {
+  temperature?: number
+  maxOutputTokens?: number
+  /** Funzione che usa l'AI, per la pagina Consumi (es. "chat_sito", "assistente_clienti"). */
+  feature?: string
+}
+
+// Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
+const CLAUDE_PRICE = { input: 4, output: 20 }
+
+/** Registra la chiamata per la pagina Consumi. Non blocca e non fa mai fallire la risposta. */
+function recordUsage(row: {
+  feature?: string
+  provider: 'gemini' | 'claude'
+  model: string
+  outcome?: 'ok' | 'limit' | 'error'
+  input?: number
+  output?: number
+}) {
+  const input = row.input || 0
+  const output = row.output || 0
+  const cost = row.provider === 'claude' ? (input * CLAUDE_PRICE.input + output * CLAUDE_PRICE.output) / 1_000_000 : 0
+  void Promise.resolve(
+    supabaseAdmin.from('ai_usage').insert({
+      feature: row.feature || 'altro',
+      provider: row.provider,
+      model: row.model,
+      outcome: row.outcome || 'ok',
+      input_tokens: input,
+      output_tokens: output,
+      cost_usd: cost,
+    })
+  )
+    .then(({ error }) => {
+      if (error) console.warn('ai_usage:', error.message)
+    })
+    .catch(() => undefined)
+}
 export type AIResult = { message: string; provider: 'gemini' | 'claude'; model: string }
 
 let geminiCoolingUntil = 0
@@ -102,6 +140,14 @@ async function callClaudeText(
     .map((block) => block.text)
     .join('\n')
     .trim()
+  recordUsage({
+    feature: options?.feature,
+    provider: 'claude',
+    model: response.model,
+    outcome: text && response.stop_reason !== 'refusal' ? 'ok' : 'error',
+    input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0) + (response.usage.cache_read_input_tokens || 0),
+    output: response.usage.output_tokens || 0,
+  })
   if (response.stop_reason === 'refusal' || !text) throw new Error('Claude non ha restituito una risposta')
   return { message: text, provider: 'claude', model: response.model }
 }
@@ -112,11 +158,19 @@ async function tryGemini(
   options?: AIOptions
 ): Promise<AIResult> {
   const result = await callGeminiWithFallback(messages, GEMINI_DEFAULT_MODEL, system, options)
+  recordUsage({
+    feature: options?.feature,
+    provider: 'gemini',
+    model: GEMINI_DEFAULT_MODEL,
+    input: result.usage?.prompt_tokens,
+    output: result.usage?.completion_tokens,
+  })
   return { message: result.message || '', provider: 'gemini', model: GEMINI_DEFAULT_MODEL }
 }
 
-function noteGeminiFailure(error: unknown): string {
+function noteGeminiFailure(error: unknown, feature?: string): string {
   const message = error instanceof Error ? error.message : String(error)
+  recordUsage({ feature, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: isLimitError(message) ? 'limit' : 'error' })
   if (isLimitError(message)) {
     geminiCoolingUntil = Date.now() + GEMINI_COOLDOWN_MS
     console.warn(`Gemini al limite, passo a Claude per ${GEMINI_COOLDOWN_MS / 1000}s: ${message}`)
@@ -138,7 +192,7 @@ export async function callAI(
     try {
       return await tryGemini(messages, system, options)
     } catch (error) {
-      noteGeminiFailure(error)
+      noteGeminiFailure(error, options?.feature)
       if (!claudeReady) throw error
     }
   }
@@ -167,7 +221,7 @@ export function callAIPaced(
       try {
         return await tryGemini(messages, system, options)
       } catch (error) {
-        const message = noteGeminiFailure(error)
+        const message = noteGeminiFailure(error, options?.feature)
         if (claudeReady) return callClaudeText(messages, system, options)
         if (!isLimitError(message) || attempt >= RATE_LIMIT_WAITS_MS.length) throw error
         geminiCoolingUntil = 0

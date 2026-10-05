@@ -189,6 +189,7 @@ export async function handleSiteMessage(
   let raw = ''
   try {
     const result = await callAI(history, system, {
+      feature: 'chat_sito',
       temperature: 0.5,
       maxOutputTokens: 512,
     })
