@@ -123,7 +123,7 @@ export async function searchPlaces(query: string, max: number): Promise<{ found:
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
 const IGNORED_EMAIL = /\.(png|jpe?g|gif|webp|svg)$|sentry|wixpress|example\.|domain\.|@2x|u00/i
 
-async function fetchPage(url: string): Promise<string> {
+export async function fetchPage(url: string): Promise<string> {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(8000),
@@ -137,7 +137,7 @@ async function fetchPage(url: string): Promise<string> {
   }
 }
 
-function visibleText(html: string) {
+export function visibleText(html: string) {
   return html
     .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -166,6 +166,11 @@ function pickSocial(html: string, host: 'instagram.com' | 'facebook.com'): strin
   return links[0]?.replace(/\/+$/, '') || null
 }
 
+/** Solo siti pubblici http(s): niente indirizzi interni o IP privati. */
+export function isPublicUrl(url: URL): boolean {
+  return /^https?:$/.test(url.protocol) && !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[)/i.test(url.hostname)
+}
+
 export type SiteInfo = { email: string | null; instagram: string | null; facebook: string | null; text: string; reachable: boolean }
 
 export async function readWebsite(website: string): Promise<SiteInfo> {
@@ -176,7 +181,7 @@ export async function readWebsite(website: string): Promise<SiteInfo> {
     return { email: null, instagram: null, facebook: null, text: '', reachable: false }
   }
   // Solo siti pubblici: niente indirizzi interni o IP privati.
-  if (!/^https?:$/.test(base.protocol) || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|\[)/i.test(base.hostname)) {
+  if (!isPublicUrl(base)) {
     return { email: null, instagram: null, facebook: null, text: '', reachable: false }
   }
   const domain = base.hostname.replace(/^www\./, '')
