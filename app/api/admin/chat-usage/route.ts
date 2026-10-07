@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ChatAuthError, currentPeriodStart, requireChatAdmin } from '@/lib/chat-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
-import { SITE_URL } from '@/lib/seo/site'
+import { sendWelcomeEmail } from '@/lib/chat-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -192,37 +192,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     return fail(error)
   }
-}
-
-async function sendWelcomeEmail(email: string, displayName: string | null) {
-  const greeting = displayName ? `Ciao ${displayName},` : 'Ciao,'
-  const chatUrl = `${SITE_URL}/ai-chat`
-
-  return sendEmail({
-    to: email,
-    subject: 'Sei stato abilitato alla chat AI di Facevoice',
-    text: [
-      greeting,
-      '',
-      'il tuo account è stato abilitato alla chat AI interna di Facevoice AI.',
-      `Puoi iniziare subito da qui: ${chatUrl}`,
-      '',
-      'Accedi con questo indirizzo email e la password del tuo account.',
-      '',
-      "Importante: le informazioni che condividi nella chat potranno essere utilizzate per migliorare il modello e perfezionare l'AI aziendale. Evita di inserire dati personali sensibili non necessari.",
-      '',
-      'Se trovi un problema o vuoi proporre una modifica, usa il pulsante "Segnala un problema" dentro la chat.',
-    ].join('\n'),
-    html: emailLayout(`
-<p>${escapeHtml(greeting)}</p>
-<p>il tuo account è stato abilitato alla <strong>chat AI interna di Facevoice AI</strong>.</p>
-<p><a href="${chatUrl}" style="display: inline-block; background: #0b1f3a; color: #ffffff; padding: 10px 18px; border-radius: 8px; text-decoration: none;">Apri la chat</a></p>
-<p>Accedi con questo indirizzo email e la password del tuo account.</p>
-<div style="background: #fff8e1; border-left: 4px solid #f2b705; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
-  <strong>Importante:</strong> le informazioni che condividi nella chat potranno essere utilizzate per migliorare il modello e perfezionare l'AI aziendale. Evita di inserire dati personali sensibili non necessari.
-</div>
-<p>Se trovi un problema o vuoi proporre una modifica, usa il pulsante <em>Segnala un problema</em> dentro la chat.</p>`),
-  })
 }
 
 /** Modifica limite, ruolo o stato di un dipendente. */

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getDisabledModels } from '@/lib/chat-access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refusalNotice, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
 import {
@@ -67,6 +68,11 @@ export async function POST(req: NextRequest) {
 
     const model = resolveChatModel(body?.model)
     const provider = getModelProvider(model)
+
+    // Modelli disattivati dall'admin per questo utente.
+    if ((await getDisabledModels(member.user_id)).includes(model)) {
+      return NextResponse.json({ error: 'Questo modello non è abilitato per il tuo account. Scegline un altro.' }, { status: 403 })
+    }
 
     // Gemini gira sulla chiave gratuita: non intacca il budget, quindi
     // resta usabile anche a tetto Claude esaurito.

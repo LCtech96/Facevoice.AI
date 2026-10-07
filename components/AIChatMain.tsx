@@ -46,6 +46,8 @@ interface AIChatMainProps {
   onCreateProject?: () => void // Callback per creare progetti
   onShowProjects?: () => void // Callback per mostrare progetti
   onToggleSidebar?: () => void
+  /** Modelli disattivati dall'admin per questo utente: non compaiono nella scelta. */
+  disabledModels?: string[]
 }
 
 export default function AIChatMain({
@@ -61,6 +63,7 @@ export default function AIChatMain({
   onCreateGroupChat,
   onDeleteChat,
   isSharedChat = false,
+  disabledModels,
   onCreateProject,
   onShowProjects,
   onToggleSidebar,
@@ -823,7 +826,7 @@ export default function AIChatMain({
             <ClaudeChatInput
               onSendMessage={handleSendFromClaudeInput}
               selectedModel={selectedModel}
-              models={[...CHAT_MODELS]}
+              models={CHAT_MODELS.filter((m) => !disabledModels?.includes(m.id))}
               onModelSelect={(modelId) => onModelSelect(modelId)}
               onOpenImageDialog={() => setShowImageDialog(true)}
               compact
@@ -927,7 +930,7 @@ export default function AIChatMain({
           <ClaudeChatInput
             onSendMessage={handleSendFromClaudeInput}
             selectedModel={selectedModel}
-            models={[...CHAT_MODELS]}
+            models={CHAT_MODELS.filter((m) => !disabledModels?.includes(m.id))}
             onModelSelect={(modelId) => onModelSelect(modelId)}
             onOpenImageDialog={() => setShowImageDialog(true)}
             compact

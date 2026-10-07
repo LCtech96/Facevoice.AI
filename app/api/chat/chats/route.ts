@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getDisabledModels } from '@/lib/chat-access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ChatAuthError, getUsageSummary, requireChatMember } from '@/lib/chat-auth'
 
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
         display_name: member.display_name,
       },
       usage,
+      disabled_models: await getDisabledModels(member.user_id).catch(() => []),
     })
   } catch (error) {
     return fail(error)

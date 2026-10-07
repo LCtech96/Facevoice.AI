@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Shield, MessageCircle, RefreshCw, Plus, Trash2, Users } from 'lucide-react'
+import { Shield, MessageCircle, RefreshCw, Plus, Trash2, Users, ChevronDown } from 'lucide-react'
+import { CHAT_MODELS } from '@/lib/chat-models'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
@@ -23,6 +24,10 @@ interface UserSummary {
   email: string
   created_at: string
   last_sign_in_at: string | null
+  /** Chat interna: abilitato, richiesta in attesa, rifiutata, nulla. */
+  chat_status?: 'member' | 'pending' | 'rejected' | null
+  /** Modelli AI disattivati dall'admin per questo utente. */
+  disabled_models?: string[]
 }
 
 export default function AdminPage() {
@@ -174,6 +179,53 @@ export default function AdminPage() {
       console.error('Users load error:', error)
     } finally {
       setLoadingUsers(false)
+    }
+  }
+
+  // Approva / rifiuta l'accesso alla chat interna (stessa azione dei link nell'email).
+  const [accessBusy, setAccessBusy] = useState<string | null>(null)
+  const setChatAccess = async (userId: string, action: 'approve' | 'reject') => {
+    setAccessBusy(userId)
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+      const response = await fetch('/api/admin/chat-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, action }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Operazione non riuscita')
+      setUsers((list) => list.map((u) => (u.id === userId ? { ...u, chat_status: data.status } : u)))
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Operazione non riuscita')
+    } finally {
+      setAccessBusy(null)
+    }
+  }
+
+  // Modelli AI per utente: menu a tendina con un interruttore per modello.
+  const [modelsOpen, setModelsOpen] = useState<string | null>(null)
+  const toggleModel = async (userId: string, modelId: string) => {
+    const target = users.find((u) => u.id === userId)
+    if (!target) return
+    const current = target.disabled_models || []
+    const disabled = current.includes(modelId) ? current.filter((m) => m !== modelId) : [...current, modelId]
+    // Aggiorna subito l'interruttore, poi salva; se fallisce torna com'era.
+    setUsers((list) => list.map((u) => (u.id === userId ? { ...u, disabled_models: disabled } : u)))
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error('Sessione scaduta')
+      const response = await fetch('/api/admin/chat-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, action: 'models', disabled }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Salvataggio non riuscito')
+    } catch (error) {
+      setUsers((list) => list.map((u) => (u.id === userId ? { ...u, disabled_models: current } : u)))
+      alert(error instanceof Error ? error.message : 'Salvataggio non riuscito')
     }
   }
 
@@ -337,11 +389,84 @@ export default function AdminPage() {
                     key={item.id}
                     className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg p-4"
                   >
-                    <p className="text-[var(--text-primary)] font-medium">{item.email}</p>
-                    <p className="text-xs text-[var(--text-secondary)]">
-                      {t('admin.created')}: {new Date(item.created_at).toLocaleString('it-IT')} · {t('admin.lastAccess')}:{' '}
-                      {item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('it-IT') : t('admin.never')}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[var(--text-primary)] font-medium break-all">{item.email}</p>
+                        <p className="text-xs text-[var(--text-secondary)]">
+                          {t('admin.created')}: {new Date(item.created_at).toLocaleString('it-IT')} · {t('admin.lastAccess')}:{' '}
+                          {item.last_sign_in_at ? new Date(item.last_sign_in_at).toLocaleString('it-IT') : t('admin.never')}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {item.chat_status === 'member' && (
+                          <>
+                            <span className="px-2.5 py-1 rounded-full text-xs bg-[#34C759]/15 text-[#34C759]">Chat attiva</span>
+                            <button
+                              onClick={() => setModelsOpen(modelsOpen === item.id ? null : item.id)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
+                            >
+                              Modelli AI ({CHAT_MODELS.filter((m) => !item.disabled_models?.includes(m.id)).length}/{CHAT_MODELS.length})
+                              <ChevronDown className={`w-4 h-4 transition-transform ${modelsOpen === item.id ? 'rotate-180' : ''}`} />
+                            </button>
+                          </>
+                        )}
+                        {item.chat_status === 'pending' && (
+                          <>
+                            <span className="px-2.5 py-1 rounded-full text-xs bg-[#FF9500]/15 text-[#FF9500]">Richiesta accesso chat</span>
+                            <button
+                              onClick={() => setChatAccess(item.id, 'approve')}
+                              disabled={accessBusy === item.id}
+                              className="px-3 py-1.5 rounded-lg bg-[#34C759] text-white text-sm font-medium disabled:opacity-50"
+                            >
+                              Approva
+                            </button>
+                            <button
+                              onClick={() => setChatAccess(item.id, 'reject')}
+                              disabled={accessBusy === item.id}
+                              className="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-sm text-[var(--text-secondary)] disabled:opacity-50"
+                            >
+                              Rifiuta
+                            </button>
+                          </>
+                        )}
+                        {(item.chat_status === 'rejected' || !item.chat_status) && (
+                          <>
+                            {item.chat_status === 'rejected' && <span className="text-xs text-[var(--text-secondary)]">Rifiutata</span>}
+                            <button
+                              onClick={() => setChatAccess(item.id, 'approve')}
+                              disabled={accessBusy === item.id}
+                              className="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-sm text-[var(--text-primary)] disabled:opacity-50"
+                            >
+                              Abilita chat
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {item.chat_status === 'member' && modelsOpen === item.id && (
+                      <div className="mt-3 border-t border-[var(--border-color)] pt-3 space-y-1">
+                        {CHAT_MODELS.map((model) => {
+                          const enabled = !item.disabled_models?.includes(model.id)
+                          return (
+                            <label key={model.id} className="flex items-center justify-between gap-3 py-1.5 cursor-pointer">
+                              <span className="min-w-0">
+                                <span className="block text-sm text-[var(--text-primary)]">{model.name}</span>
+                                <span className="block text-xs text-[var(--text-secondary)] truncate">{model.description}</span>
+                              </span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={enabled}
+                                onClick={() => toggleModel(item.id, model.id)}
+                                className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${enabled ? 'bg-[#34C759]' : 'bg-[var(--border-color)]'}`}
+                              >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+                              </button>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
