@@ -403,6 +403,79 @@ async function replyFor(
   })
 }
 
+const ORIGIN_LABEL: Record<string, string> = {
+  outreach: 'email della Ricerca clienti',
+  ai_auto: 'risposta automatica AI',
+  ai_approved: 'risposta AI approvata',
+  ai_edited: 'risposta AI modificata e approvata',
+  manual: 'scritta a mano',
+}
+
+/**
+ * Attività di un periodo: messaggi inviati e ricevuti per canale e tipo, con
+ * l'elenco dei più recenti (ora italiana). Risponde a "quante email sono partite
+ * nell'ultima ora", "chi ci ha scritto oggi", ecc.
+ */
+async function activityReport(args: { hours?: number; from?: string; to?: string; platform?: string }) {
+  const until = args.to ? new Date(args.to) : new Date()
+  const since = args.from ? new Date(args.from) : new Date(until.getTime() - Math.max(0.05, args.hours ?? 1) * 3600_000)
+  if (Number.isNaN(since.getTime()) || Number.isNaN(until.getTime())) return { errore: 'date non valide' }
+  const platform = args.platform && args.platform !== 'all' ? args.platform : null
+
+  const query = (fields: string) => {
+    let q = supabaseAdmin
+      .from('social_messages')
+      .select(fields)
+      .gte('created_at', since.toISOString())
+      .lte('created_at', until.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(2000)
+    if (platform) q = q.eq('platform', platform)
+    return q
+  }
+  let { data, error } = await query('platform, direction, status, origin, kind, contact_name, contact_id, body, created_at')
+  // Senza la colonna origin (migrazione non lanciata) si lavora lo stesso.
+  if (error) ({ data, error } = await query('platform, direction, status, kind, contact_name, contact_id, body, created_at'))
+  if (error) return { errore: error.message }
+  const rows = (data || []) as unknown as {
+    platform: string; direction: string; status: string | null; origin?: string | null; kind: string
+    contact_name: string | null; contact_id: string; body: string | null; created_at: string
+  }[]
+
+  const time = (iso: string) =>
+    new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const count = (fn: (r: (typeof rows)[number]) => boolean) => rows.filter(fn).length
+  const byPlatform: Record<string, { inviati: number; ricevuti: number; falliti: number; in_attesa: number }> = {}
+  const byOrigin: Record<string, number> = {}
+  for (const r of rows) {
+    const p = (byPlatform[r.platform] ||= { inviati: 0, ricevuti: 0, falliti: 0, in_attesa: 0 })
+    if (r.direction === 'in') p.ricevuti++
+    else if (r.status === 'sent') {
+      p.inviati++
+      const label = ORIGIN_LABEL[r.origin || ''] || 'altro'
+      byOrigin[label] = (byOrigin[label] || 0) + 1
+    } else if (r.status === 'failed') p.falliti++
+    else if (r.status === 'pending') p.in_attesa++
+  }
+
+  return {
+    periodo: `dal ${time(since.toISOString())} al ${time(until.toISOString())} (ora italiana)`,
+    inviati: count((r) => r.direction === 'out' && r.status === 'sent'),
+    ricevuti: count((r) => r.direction === 'in'),
+    invii_falliti: count((r) => r.direction === 'out' && r.status === 'failed'),
+    bozze_in_attesa: count((r) => r.direction === 'out' && r.status === 'pending'),
+    per_canale: byPlatform,
+    inviati_per_tipo: byOrigin,
+    ultimi: rows.slice(0, 30).map((r) => ({
+      ora: time(r.created_at),
+      canale: r.platform,
+      verso: r.direction === 'in' ? 'ricevuto da' : r.status === 'sent' ? 'inviato a' : `${r.status || 'non inviato'} per`,
+      contatto: r.contact_name || r.contact_id,
+      testo: String(r.body || '').replace(/\s+/g, ' ').slice(0, 90),
+    })),
+  }
+}
+
 /** Conversazioni Instagram/Facebook della casella (chi ci ha scritto). */
 async function listConversations(platform: string | undefined, filter: string | undefined, limit: number) {
   const platforms = platform === 'instagram' || platform === 'facebook' ? [platform] : ['instagram', 'facebook']
@@ -460,6 +533,11 @@ Regola sulle controrisposte: se la controrisposta è "già inviata" non se ne pr
 
 La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la casella è appena stata controllata): fidati di questa e non della conversazione precedente quando le cose sono cambiate.
 
+Strumenti per domande sull'attività (rispondi con numeri precisi, senza fare altro):
+- "activity_report": {"hours": 1} oppure {"from": "ISO", "to": "ISO"}, "platform": "email|instagram|facebook|whatsapp|web|all" → quanti messaggi sono stati inviati e ricevuti nel periodo, per canale e per tipo (email della Ricerca clienti, risposte automatiche, approvate, scritte a mano), invii falliti, bozze in attesa, e gli ultimi 30 con ora, contatto e inizio del testo. Usalo per domande tipo "quante email sono partite nell'ultima ora", "chi ci ha scritto oggi" (calcola le ore da mezzanotte con la data e ora qui sotto), "quanti messaggi Instagram ieri".
+- Per numeri sulla lista clienti usa "stats" o "list_leads".
+Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, inspect_website, instagram_profile).
+
 Strumenti di ricerca e social:
 - "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
 - "instagram_profile": {"username": "nomeprofilo"} oppure {"leadId": "..."} → profilo Instagram pubblico (solo account business/creator): follower, seguiti, numero di post, bio, sito, ultimi 6 post con data, like e commenti (per capire se pubblicano e quanto spesso).
@@ -505,6 +583,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   const replies = await repliesOverview().catch(() => [])
 
   const context = [
+    `Data e ora attuali: ${new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} (ora italiana; ISO ${new Date().toISOString()})`,
     `Riepilogo: ${JSON.stringify(await stats())}`,
     replies.length ? `Risposte ricevute (aggiornate ora):\n${JSON.stringify(replies)}` : 'Risposte ricevute: nessuna.',
     drafts.size
@@ -727,6 +806,16 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           if (unfinished) more = true
           result = { controrisposte: out, rimaste: unfinished, nota: todoIds.length ? undefined : 'nessuna risposta da preparare' }
           refresh = true
+          break
+        }
+        case 'activity_report': {
+          reportStatus('Controllo l’attività del periodo…')
+          result = await activityReport({
+            hours: asNumber(args.hours),
+            from: asText(args.from),
+            to: asText(args.to),
+            platform: asText(args.platform),
+          })
           break
         }
         case 'inspect_website': {
