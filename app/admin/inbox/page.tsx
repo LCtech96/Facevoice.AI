@@ -133,6 +133,13 @@ function PushToggle() {
       const reg = await navigator.serviceWorker.getRegistration('/sw.js')
       const sub = await reg?.pushManager.getSubscription()
       setState(sub ? 'on' : 'off')
+      // Aggiorna in silenzio i dati di questo dispositivo (browser, ultimo accesso).
+      if (sub) {
+        authFetch('/api/admin/push', {
+          method: 'POST',
+          body: JSON.stringify({ subscription: sub.toJSON(), installed: standalone }),
+        }).catch(() => undefined)
+      }
     }
     check().catch(() => setState('unsupported'))
   }, [])
@@ -158,7 +165,11 @@ function PushToggle() {
         }))
       const res = await authFetch('/api/admin/push', {
         method: 'POST',
-        body: JSON.stringify({ subscription: sub.toJSON(), test: true }),
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          test: true,
+          installed: window.matchMedia('(display-mode: standalone)').matches,
+        }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Registrazione non riuscita')
       setState('on')
