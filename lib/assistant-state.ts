@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { runWithStatus } from '@/lib/ai'
+import { emptyTally, runWithStatus, type AIModelChoice, type UsageTally } from '@/lib/ai'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
 
 // Conversazioni dell'assistente salvate sul server (una per pagina: "leads" e
@@ -9,7 +9,7 @@ import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistan
 export const SCOPES = ['leads', 'super'] as const
 export type Scope = (typeof SCOPES)[number]
 
-export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[] }
+export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: UsageTally }
 
 export type Job = {
   id: string
@@ -23,6 +23,10 @@ export type Job = {
   result?: { refresh?: boolean; confirmSend?: boolean; focus?: { label: string; ids: string[] } }
   /** La pagina ha gia' gestito conferma invio / filtro di questo lavoro. */
   handled?: boolean
+  /** Modello scelto per questa richiesta. */
+  model?: AIModelChoice
+  /** Token e costi usati finora da questa richiesta (si aggiorna mentre lavora). */
+  usage?: UsageTally
 }
 
 export type AssistantState = { turns: Turn[]; drafts: Draft[]; job: Job | null }
@@ -71,6 +75,12 @@ export const isRunning = (job: Job | null) =>
  * Esegue il lavoro (chiamato dentro after(): prosegue anche a pagina chiusa).
  * Se il tempo finisce prima del termine, chiama `continueJob` per un nuovo giro.
  */
+function addTally(a: UsageTally, b: UsageTally): UsageTally {
+  const models = { ...a.models }
+  for (const [m, n] of Object.entries(b.models)) models[m] = (models[m] || 0) + n
+  return { calls: a.calls + b.calls, input: a.input + b.input, output: a.output + b.output, cost: a.cost + b.cost, models }
+}
+
 export async function runJob(scope: Scope, jobId: string, message: string, continueJob: (original: string, round: number) => Promise<void>) {
   let lastWrite = 0
   let pendingText = ''
@@ -81,6 +91,7 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
     await updateState(scope, (s) => {
       if (s.job?.id !== jobId) return
       s.job.statusText = pendingText
+      s.job.usage = total()
       s.job.updatedAt = new Date().toISOString()
     }).catch(() => undefined)
   }
@@ -88,10 +99,14 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
   const start = await loadState(scope)
   const history = start.turns.slice(-9, -1).map((t) => ({ role: t.role, text: t.text.slice(0, 1500) }))
   const job = start.job
+  // Token di questo giro; il totale della richiesta somma anche i giri precedenti.
+  const tally: UsageTally = emptyTally()
+  const base: UsageTally = job?.usage && (job.round ?? 0) > 0 ? job.usage : emptyTally()
+  const total = () => addTally(base, tally)
 
   try {
     const result = await runWithStatus(
-      { status: (text) => void writeStatus(text), deadline: Date.now() + WORK_BUDGET_MS },
+      { status: (text) => void writeStatus(text), deadline: Date.now() + WORK_BUDGET_MS, model: job?.model, usage: tally, onUsage: () => void writeStatus(pendingText || job?.statusText || '') },
       () => runAssistant(message, history, start.drafts)
     )
     const again = Boolean(result.more) && (job?.round ?? 0) < MAX_ROUNDS
@@ -100,11 +115,18 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
       for (const id of result.removeDrafts || []) drafts.delete(id)
       for (const d of result.drafts || []) drafts.set(d.leadId, d)
       s.drafts = [...drafts.values()]
-      s.turns.push({ id: newId(), role: 'assistant', text: clean(result.reply || ''), actions: result.actions?.length ? result.actions : undefined })
+      s.turns.push({
+        id: newId(),
+        role: 'assistant',
+        text: clean(result.reply || ''),
+        actions: result.actions?.length ? result.actions : undefined,
+        usage: { ...tally, models: { ...tally.models } },
+      })
       if (s.job?.id === jobId) {
         s.job.status = again ? 'running' : 'done'
         s.job.statusText = again ? 'Continuo con il resto…' : ''
         s.job.updatedAt = new Date().toISOString()
+        s.job.usage = total()
         s.job.result = { refresh: result.refresh, confirmSend: result.confirmSend, focus: result.focus }
       }
     })

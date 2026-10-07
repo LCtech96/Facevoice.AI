@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Plus, Send, Sparkles, X } from 'lucide-react'
-import { authFetch, useAssistantChat, type Job, type SocialAction } from '@/components/useAssistantChat'
+import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
+import { AI_MODEL_CHOICES, modelLabel } from '@/lib/ai-models'
+
+const MODEL_KEY = 'fv_superchat_model'
+const fmtTokens = (n: number) => n.toLocaleString('it-IT')
+const fmtCost = (cost: number) => (cost <= 0 ? 'gratis' : `$${cost.toFixed(cost < 0.01 ? 4 : 3)}`)
+const usedModels = (u: Usage) => Object.keys(u.models).map(modelLabel).filter((v, i, a) => a.indexOf(v) === i).join(' + ')
+
+/** Riga "Gemini Flash · 4.210 token · gratis" sotto le risposte e durante il lavoro. */
+function usageLine(u?: Usage) {
+  if (!u || !u.calls) return null
+  return `${usedModels(u)} · ${fmtTokens(u.input + u.output)} token · ${fmtCost(u.cost)}`
+}
 
 // Super chat dell'admin: una sola conversazione a tutto schermo, come una chat
 // con Claude. Dietro c'e' l'assistente della Ricerca clienti con tutti i suoi
@@ -21,6 +33,21 @@ const EXAMPLES = [
 export default function SuperChat() {
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
+  const [model, setModel] = useState<string>('auto')
+
+  // Il modello scelto resta per le prossime volte.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MODEL_KEY)
+      if (saved && AI_MODEL_CHOICES.some((m) => m.id === saved)) setModel(saved)
+    } catch {}
+  }, [])
+  const chooseModel = (id: string) => {
+    setModel(id)
+    try {
+      localStorage.setItem(MODEL_KEY, id)
+    } catch {}
+  }
   const [, setTick] = useState(0)
   const [sending, setSending] = useState<string | null>(null)
   const [draftsOpen, setDraftsOpen] = useState(false)
@@ -100,7 +127,7 @@ export default function SuperChat() {
   const ask = async (message: string) => {
     if (!message.trim() || busy) return
     setInput('')
-    await askServer(message)
+    await askServer(message, model)
   }
 
   const updateAction = (turnId: string, index: number, patch: Partial<SocialAction>) => {
@@ -127,6 +154,18 @@ export default function SuperChat() {
   }
 
   const chosen = drafts.filter((d) => selected[d.leadId] !== false).length
+
+  // Totale della conversazione: risposte gia' date + lavoro in corso.
+  const totalUsage = turns.reduce<Usage>(
+    (sum, t) => (t.usage ? { calls: sum.calls + t.usage.calls, input: sum.input + t.usage.input, output: sum.output + t.usage.output, cost: sum.cost + t.usage.cost, models: sum.models } : sum),
+    { calls: 0, input: 0, output: 0, cost: 0, models: {} }
+  )
+  if (busy && job?.usage) {
+    totalUsage.calls += job.usage.calls
+    totalUsage.input += job.usage.input
+    totalUsage.output += job.usage.output
+    totalUsage.cost += job.usage.cost
+  }
 
   return (
     <div className="fixed inset-x-0 top-14 md:top-16 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col bg-[var(--background)]">
@@ -174,6 +213,9 @@ export default function SuperChat() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--text-primary)] break-words">{turn.text}</p>
+                      {usageLine(turn.usage) && (
+                        <p className="mt-1 text-[11px] text-[var(--text-secondary)] opacity-80">{usageLine(turn.usage)}</p>
+                      )}
                       {turn.actions?.map((action, i) => (
                         <ActionCard
                           key={i}
@@ -191,7 +233,10 @@ export default function SuperChat() {
                   <div className="shrink-0 w-7 h-7 rounded-full bg-[var(--accent-blue)]/15 flex items-center justify-center">
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent-blue)]" />
                   </div>
-                  <span className="min-w-0 truncate">{status || 'Ci sto lavorando…'}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{status || 'Ci sto lavorando…'}</span>
+                    {usageLine(job?.usage) && <span className="block text-[11px] opacity-80 tabular-nums">{usageLine(job?.usage)}</span>}
+                  </span>
                   {startedAt && <span className="ml-auto tabular-nums opacity-70">{Math.floor((Date.now() - startedAt) / 1000)}s</span>}
                 </div>
               )}
@@ -274,6 +319,30 @@ export default function SuperChat() {
 
       {/* Campo di scrittura */}
       <div className="max-w-3xl w-full mx-auto px-4 pt-2 pb-3">
+        <div className="mb-1.5 px-1 flex items-center justify-between gap-3 text-[11px] text-[var(--text-secondary)]">
+          <label className="relative flex items-center gap-1 min-w-0 flex-1">
+            <Sparkles className="w-3 h-3 shrink-0" />
+            <select
+              value={model}
+              onChange={(e) => chooseModel(e.target.value)}
+              disabled={busy}
+              className="appearance-none w-full min-w-0 bg-transparent pr-4 font-medium text-[var(--text-primary)] focus:outline-none disabled:opacity-60 overflow-hidden text-ellipsis whitespace-nowrap"
+              aria-label="Modello AI"
+            >
+              {AI_MODEL_CHOICES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} · {m.hint}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-0" aria-hidden="true">▾</span>
+          </label>
+          {totalUsage.calls > 0 && (
+            <span className="shrink-0 tabular-nums">
+              Chat: {fmtTokens(totalUsage.input + totalUsage.output)} token · {fmtCost(totalUsage.cost)}
+            </span>
+          )}
+        </div>
         {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
         <form
           onSubmit={(e) => {

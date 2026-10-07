@@ -28,7 +28,9 @@ export type SocialAction = {
   error?: string
 }
 
-export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[] }
+export type Usage = { calls: number; input: number; output: number; cost: number; models: Record<string, number> }
+
+export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: Usage }
 
 export type Job = {
   id: string
@@ -38,6 +40,8 @@ export type Job = {
   updatedAt: string
   result?: { refresh?: boolean; confirmSend?: boolean; focus?: { label: string; ids: string[] } }
   handled?: boolean
+  model?: string
+  usage?: Usage
 }
 
 type ServerState = { turns: Turn[]; drafts: Draft[]; job: Job | null; running: boolean }
@@ -119,14 +123,14 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
   )
 
   const ask = useCallback(
-    async (message: string) => {
+    async (message: string, model?: string) => {
       const text = message.trim()
       if (!text || running) return false
       setError(null)
       // Mostra subito il messaggio, poi lo stato vero arriva dal server.
       setTurns((t) => [...t, { id: `local-${Date.now()}`, role: 'user', text }])
       setRunning(true)
-      const res = await authFetch(API, { method: 'POST', body: JSON.stringify({ scope, message: text }) }).catch(() => null)
+      const res = await authFetch(API, { method: 'POST', body: JSON.stringify({ scope, message: text, model }) }).catch(() => null)
       const data = res ? await res.json().catch(() => ({})) : {}
       if (!res?.ok) {
         setError(data.error || 'Invio non riuscito, riprova.')

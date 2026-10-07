@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
+      updatedAt: new Date().toISOString(),
       periodStart: periodStart.toISOString(),
       month,
       today,
