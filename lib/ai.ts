@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import Anthropic from '@anthropic-ai/sdk'
 import {
   GEMINI_DEFAULT_MODEL,
-  callGeminiWithFallback,
+  callGeminiAPI,
   getGeminiApiKey,
   type GeminiChatMessage,
 } from '@/lib/gemini'
@@ -17,7 +17,16 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 // senza attese.
 // ---------------------------------------------------------------------
 
-export const CLAUDE_FALLBACK_MODEL = 'claude-opus-5-5'
+// Riserva quando tutti i modelli Gemini gratuiti sono al limite: Haiku 4.5 e' il
+// Claude piu' economico ($1/$5 per milione di token), adatto a testi brevi,
+// analisi e traduzioni.
+export const CLAUDE_FALLBACK_MODEL = 'claude-haiku-4-5'
+
+// Il piano gratuito di Gemini ha limiti separati per ogni modello: prima di
+// passare a Claude si provano tutti, dal migliore al piu' leggero.
+const GEMINI_ROTATION = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest']
+const DAILY_QUOTA_COOLDOWN_MS = 60 * 60_000
+const MISSING_MODEL_COOLDOWN_MS = 6 * 60 * 60_000
 
 const GEMINI_COOLDOWN_MS = 60_000
 const PACE_MS = 4500
@@ -31,7 +40,7 @@ type AIOptions = {
 }
 
 // Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
-const CLAUDE_PRICE = { input: 4, output: 20 }
+const CLAUDE_PRICE = { input: 1, output: 5 }
 
 /** Registra la chiamata per la pagina Consumi. Non blocca e non fa mai fallire la risposta. */
 function recordUsage(row: {
@@ -63,7 +72,8 @@ function recordUsage(row: {
 }
 export type AIResult = { message: string; provider: 'gemini' | 'claude'; model: string }
 
-let geminiCoolingUntil = 0
+// Modello Gemini → istante fino a cui resta a riposo.
+const geminiCooling = new Map<string, number>()
 let paceQueue: Promise<unknown> = Promise.resolve()
 let lastPacedCall = 0
 let claudeClient: Anthropic | null = null
@@ -101,8 +111,10 @@ function isLimitError(message: string): boolean {
   return /rate limit|quota|prepayment|credits are depleted|RESOURCE_EXHAUSTED|429/i.test(message)
 }
 
+const availableGeminiModels = () => GEMINI_ROTATION.filter((m) => Date.now() >= (geminiCooling.get(m) || 0))
+
 function geminiUsable(): boolean {
-  return Boolean(getGeminiApiKey()) && Date.now() >= geminiCoolingUntil
+  return Boolean(getGeminiApiKey()) && availableGeminiModels().length > 0
 }
 
 /** Converte la cronologia nel formato Claude: ruoli alternati, si apre e si chiude con l'utente. */
@@ -129,11 +141,10 @@ async function callClaudeText(
   if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
   const response = await claudeClient.messages.create({
     model: CLAUDE_FALLBACK_MODEL,
-    max_tokens: Math.max(2048, (options?.maxOutputTokens || 2048) * 2),
+    max_tokens: Math.min(8192, Math.max(1024, options?.maxOutputTokens || 2048)),
     ...(system ? { system } : {}),
     messages: toClaudeMessages(messages),
-    // Testi brevi e lavori in blocco: poco ragionamento, risposta rapida.
-    output_config: { effort: 'low' },
+    ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
   })
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
@@ -152,30 +163,53 @@ async function callClaudeText(
   return { message: text, provider: 'claude', model: response.model }
 }
 
+const isMissingModel = (message: string) => /not found|NOT_FOUND|is not supported|no longer available/i.test(message)
+
+/** Prova i modelli Gemini gratuiti uno dopo l'altro; quello al limite resta a riposo. */
 async function tryGemini(
   messages: GeminiChatMessage[],
   system: string | undefined,
   options?: AIOptions
 ): Promise<AIResult> {
-  const result = await callGeminiWithFallback(messages, GEMINI_DEFAULT_MODEL, system, options)
-  recordUsage({
-    feature: options?.feature,
-    provider: 'gemini',
-    model: GEMINI_DEFAULT_MODEL,
-    input: result.usage?.prompt_tokens,
-    output: result.usage?.completion_tokens,
-  })
-  return { message: result.message || '', provider: 'gemini', model: GEMINI_DEFAULT_MODEL }
+  let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
+  for (const model of availableGeminiModels()) {
+    try {
+      const result = await callGeminiAPI(messages, model, system, options)
+      recordUsage({
+        feature: options?.feature,
+        provider: 'gemini',
+        model,
+        input: result.usage?.prompt_tokens,
+        output: result.usage?.completion_tokens,
+      })
+      return { message: result.message || '', provider: 'gemini', model }
+    } catch (error) {
+      lastError = error
+      const message = error instanceof Error ? error.message : String(error)
+      if (isLimitError(message)) {
+        const cooldown = /giornalier|daily|per day/i.test(message) ? DAILY_QUOTA_COOLDOWN_MS : GEMINI_COOLDOWN_MS
+        geminiCooling.set(model, Date.now() + cooldown)
+        recordUsage({ feature: options?.feature, provider: 'gemini', model, outcome: 'limit' })
+        console.warn(`Gemini ${model} al limite, provo il modello successivo`)
+        continue
+      }
+      if (isMissingModel(message)) {
+        geminiCooling.set(model, Date.now() + MISSING_MODEL_COOLDOWN_MS)
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastError
 }
 
 function noteGeminiFailure(error: unknown, feature?: string): string {
   const message = error instanceof Error ? error.message : String(error)
-  recordUsage({ feature, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: isLimitError(message) ? 'limit' : 'error' })
   if (isLimitError(message)) {
-    geminiCoolingUntil = Date.now() + GEMINI_COOLDOWN_MS
-    console.warn(`Gemini al limite, passo a Claude per ${GEMINI_COOLDOWN_MS / 1000}s: ${message}`)
+    console.warn(`Tutti i modelli Gemini sono al limite, passo a Claude: ${message}`)
     if (getAnthropicApiKey()) reportStatus('Gemini ha raggiunto il limite: continuo con Claude…')
   } else {
+    recordUsage({ feature, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
     console.warn(`Gemini non disponibile, passo a Claude: ${message}`)
   }
   return message
@@ -224,7 +258,7 @@ export function callAIPaced(
         const message = noteGeminiFailure(error, options?.feature)
         if (claudeReady) return callClaudeText(messages, system, options)
         if (!isLimitError(message) || attempt >= RATE_LIMIT_WAITS_MS.length) throw error
-        geminiCoolingUntil = 0
+        geminiCooling.clear()
         reportStatus(`Gemini ha raggiunto il limite: attendo ${RATE_LIMIT_WAITS_MS[attempt] / 1000}s e riprovo…`)
         await sleep(RATE_LIMIT_WAITS_MS[attempt])
       }

@@ -141,8 +141,8 @@ export default function AutomationUsage() {
 }
 
 function StatusLine({ data }: { data: Data }) {
-  // Gemini resta a riposo circa un minuto dopo un limite: in quel tempo lavora Claude.
-  const limitedNow = data.lastLimitAt && Date.now() - new Date(data.lastLimitAt).getTime() < 2 * 60_000
+  // Claude entra solo quando tutti i modelli Gemini gratuiti sono al limite.
+  const limitedNow = data.lastClaudeAt && Date.now() - new Date(data.lastClaudeAt).getTime() < 2 * 60_000
   return (
     <p className="flex items-center gap-2 text-xs mb-3 text-[var(--text-secondary)]">
       <span className={`inline-block w-2 h-2 rounded-full ${limitedNow ? 'bg-[#FF9500]' : 'bg-[#34C759]'}`} />
