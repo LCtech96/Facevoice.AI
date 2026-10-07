@@ -1,57 +1,97 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { getAdminEmail } from '@/lib/admin-request'
-import { runWithStatus } from '@/lib/ai'
-import { runAssistant } from '@/lib/lead-assistant'
+import { asScope, isRunning, loadState, newId, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
 
 export const dynamic = 'force-dynamic'
-// Preparare 20 bozze (con eventuale lettura dei siti) richiede tempo.
+// Il lavoro continua dopo la risposta (after): serve il tempo massimo.
 export const maxDuration = 300
-// Oltre questo tempo non si inizia altro lavoro: si consegna e il browser rilancia per continuare.
-const WORK_BUDGET_MS = 210_000
 
-/** Richiesta in linguaggio naturale all'assistente della Ricerca clienti. body: { message } */
+const internalKey = () => (process.env.CRON_SECRET || '').trim()
+
+async function authorized(req: NextRequest) {
+  const key = internalKey()
+  if (key && req.headers.get('x-internal-key') === key) return true
+  return Boolean(await getAdminEmail(req))
+}
+
+/** Avvia un lavoro e lo esegue dopo aver risposto: prosegue anche se la pagina si chiude. */
+function startJob(req: NextRequest, scope: Scope, message: string, original: string, round: number) {
+  const origin = req.nextUrl.origin
+  const continueJob = async (orig: string, nextRound: number) => {
+    const key = internalKey()
+    if (!key) throw new Error('CRON_SECRET mancante: niente continuazione automatica')
+    const res = await fetch(`${origin}/api/admin/leads/assistant`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
+      body: JSON.stringify({ scope, continueOriginal: orig, round: nextRound }),
+    })
+    if (!res.ok) throw new Error(`continuazione rifiutata: ${res.status}`)
+  }
+  return { run: (jobId: string) => runJob(scope, jobId, message, continueJob), original, round }
+}
+
+/** Stato della conversazione: ?scope=leads|super */
+export async function GET(req: NextRequest) {
+  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const state = await loadState(asScope(req.nextUrl.searchParams.get('scope')))
+  return NextResponse.json({ ...state, running: isRunning(state.job) })
+}
+
+/**
+ * Nuova richiesta. body: { scope, message }
+ * Continuazione interna: { scope, continueOriginal, round } con x-internal-key.
+ */
 export async function POST(req: NextRequest) {
+  if (!(await authorized(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const body = await req.json().catch(() => ({}))
+  const scope = asScope(body?.scope)
+  const continuing = typeof body?.continueOriginal === 'string' && req.headers.get('x-internal-key') === internalKey()
+
+  const original = String(continuing ? body.continueOriginal : body?.message || '').trim().slice(0, 2000)
+  if (!original) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
+  const round = continuing ? Math.max(1, Number(body.round) || 1) : 0
+  const message = continuing ? `Continua il lavoro richiesto prima (“${original}”) con quello che resta.` : original
+
+  const current = await loadState(scope)
+  if (!continuing && isRunning(current.job)) {
+    return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta che finisca.' }, { status: 409 })
+  }
+
+  const jobId = newId()
+  const now = new Date().toISOString()
+  const state = await updateState(scope, (s) => {
+    if (!continuing) s.turns.push({ id: newId(), role: 'user', text: original })
+    s.job = { id: jobId, status: 'running', statusText: continuing ? 'Continuo con il resto…' : 'Ci penso…', startedAt: continuing && s.job ? s.job.startedAt : now, updatedAt: now, original, round }
+  })
+
+  const job = startJob(req, scope, message, original, round)
+  after(() => job.run(jobId))
+  return NextResponse.json({ ...state, running: true })
+}
+
+/**
+ * Modifiche dalla pagina. body: { scope, drafts?, appendTurns?, updateTurn?: { id, actions }, handled?: jobId, clearTurns? }
+ */
+export async function PUT(req: NextRequest) {
   if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
-  const message = String(body?.message || '').trim().slice(0, 2000)
-  if (!message) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
-  const history = (Array.isArray(body?.history) ? body.history : [])
-    .filter((t: { role?: unknown; text?: unknown }) => (t?.role === 'user' || t?.role === 'assistant') && typeof t?.text === 'string')
-    .slice(-8)
-    .map((t: { role: 'user' | 'assistant'; text: string }) => ({ role: t.role, text: t.text.slice(0, 1500) }))
-  const drafts = (Array.isArray(body?.drafts) ? body.drafts : [])
-    .filter((d: Record<string, unknown>) => typeof d?.leadId === 'string' && typeof d?.body === 'string')
-    .slice(0, 60)
-  // Risposta in streaming, una riga JSON per evento: {"type":"status"} mentre lavora,
-  // poi {"type":"result"} o {"type":"error"}. Cosi' Luca vede a che punto e'.
-  const encoder = new TextEncoder()
-  const stream = new ReadableStream({
-    async start(controller) {
-      let open = true
-      const send = (event: Record<string, unknown>) => {
-        if (!open) return
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
-        } catch {
-          open = false // browser chiuso: il lavoro (gia' salvato sulle schede) continua
-        }
+  const scope = asScope(body?.scope)
+  const state = await updateState(scope, (s) => {
+    if (Array.isArray(body?.drafts)) s.drafts = body.drafts.filter((d: { leadId?: unknown }) => typeof d?.leadId === 'string').slice(0, 80)
+    if (Array.isArray(body?.appendTurns)) {
+      for (const t of body.appendTurns as Turn[]) {
+        if ((t?.role === 'user' || t?.role === 'assistant') && typeof t?.text === 'string') s.turns.push({ id: newId(), role: t.role, text: t.text.slice(0, 4000) })
       }
-      try {
-        const result = await runWithStatus(
-          { status: (text) => send({ type: 'status', text }), deadline: Date.now() + WORK_BUDGET_MS },
-          () => runAssistant(message, history, drafts)
-        )
-        send({ type: 'result', ...result })
-      } catch (error) {
-        console.error('lead assistant:', error)
-        send({ type: 'error', error: error instanceof Error ? error.message : 'Errore dell’assistente' })
-      } finally {
-        if (open) controller.close()
-        open = false
-      }
-    },
+    }
+    if (body?.updateTurn?.id) {
+      const turn = s.turns.find((t) => t.id === body.updateTurn.id)
+      if (turn && Array.isArray(body.updateTurn.actions)) turn.actions = body.updateTurn.actions
+    }
+    if (body?.handled && s.job && s.job.id === body.handled) s.job.handled = true
+    if (body?.clearTurns && !isRunning(s.job)) {
+      s.turns = []
+      s.job = null
+    }
   })
-  return new Response(stream, {
-    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' },
-  })
+  return NextResponse.json({ ...state, running: isRunning(state.job) })
 }
