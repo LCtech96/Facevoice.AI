@@ -5,6 +5,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
 import AutoTranslate from '@/components/AutoTranslate'
+import ChunkReload from '@/components/ChunkReload'
 import ContactsFooter from '@/components/ContactsFooter'
 import RecoveryRedirect from '@/components/RecoveryRedirect'
 import {
@@ -109,6 +110,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="it" className={`dark ${interTight.variable} ${inter.variable} ${instrumentSerif.variable}`}>
+      <head>
+        <ChunkReload />
+      </head>
       <body className={montserrat.className}>
         <OrganizationJsonLd />
         <WebSiteJsonLd />
