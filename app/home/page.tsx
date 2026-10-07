@@ -71,9 +71,13 @@ function HomeContent({ user, loading }: { user: User | null; loading: boolean })
   return (
     <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
-        title="Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale"
-        description="Sviluppo software su misura per automazione aziendale a Palermo. Integrazione intelligenza artificiale per gestione magazzino e-commerce, consulenza SEO per Shopify e WooCommerce, chatbot AI personalizzati per assistenza clienti h24. Ottimizzazione velocità siti e-commerce professionali."
+        title="Facevoice AI | Agenzia digitale e software house a Palermo: siti web, social, software e AI"
+        description="Facevoice AI è un'agenzia digitale e software house a Palermo: gestione social e contenuti, siti web ed e-commerce, software e gestionali su misura, integrazione dell'intelligenza artificiale. Per aziende in tutta la Sicilia e in Italia."
         keywords={[
+          'agenzia digitale Palermo',
+          'software house Palermo',
+          'gestione social Palermo',
+          'realizzazione siti web Palermo',
           'sviluppo software su misura Palermo',
           'automazione aziendale Palermo',
           'intelligenza artificiale e-commerce',

@@ -1,8 +1,12 @@
 # Facevoice AI
 
-> Facevoice AI è una software house con sede a Terrasini, in provincia di
-> Palermo, che sviluppa software su misura, agenti AI e automazioni per le
-> imprese in tutta la Sicilia e in Italia.
+> Facevoice AI è un'agenzia digitale e software house con sede a Terrasini,
+> in provincia di Palermo. Si prende cura di tutto il lato digitale delle
+> imprese in tutta la Sicilia e in Italia: creazione di contenuti e gestione
+> dei social, siti web ed e-commerce, software e gestionali su misura,
+> agenti AI e automazioni.
+
+Domande frequenti: https://www.facevoice.ai/faq
 
 Fondatore: Luca Corrao.
 Sede legale: Terrasini (Palermo), Sicilia, Italia.

@@ -70,6 +70,12 @@ export default function ContactsFooter() {
 
         <div className="mt-8 pt-6 border-t border-[var(--border-color)]">
           <Link
+            href="/faq"
+            className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors mr-5"
+          >
+            Domande frequenti
+          </Link>
+          <Link
             href="/privacy"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
           >

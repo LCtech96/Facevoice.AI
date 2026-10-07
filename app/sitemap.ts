@@ -24,6 +24,7 @@ const STATIC_PAGES: Array<{
   { path: '/team', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/bookings', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/blog', priority: 0.7, changeFrequency: 'weekly' },
+  { path: '/faq', priority: 0.8, changeFrequency: 'monthly' },
   { path: '/lavora-con-noi', priority: 0.5, changeFrequency: 'yearly' },
   { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/privacy/cancellazione-dati', priority: 0.2, changeFrequency: 'yearly' },

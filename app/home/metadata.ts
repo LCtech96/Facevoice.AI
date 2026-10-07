@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Facevoice AI | Sviluppo Software e Integrazione AI a Palermo | Automazione Aziendale',
-  description: 'Sviluppo software su misura per automazione aziendale a Palermo. Integrazione intelligenza artificiale per gestione magazzino e-commerce, consulenza SEO per Shopify e WooCommerce, chatbot AI personalizzati per assistenza clienti h24. Ottimizzazione velocità siti e-commerce professionali.',
+  title: "Facevoice AI | Agenzia digitale e software house a Palermo: siti web, social, software e AI",
+  description: "Facevoice AI è un'agenzia digitale e software house a Palermo: gestione social e contenuti, siti web ed e-commerce, software e gestionali su misura, integrazione dell'intelligenza artificiale. Per aziende in tutta la Sicilia e in Italia.",
   keywords: [
     'sviluppo software su misura Palermo',
     'automazione aziendale Palermo',
@@ -24,8 +24,8 @@ export const metadata: Metadata = {
     'software gestionale PMI'
   ],
   openGraph: {
-    title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
-    description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica per imprese siciliane',
+    title: "Facevoice AI | Agenzia digitale e software house a Palermo",
+    description: "Social e contenuti, siti web ed e-commerce, software su misura e intelligenza artificiale per le aziende siciliane.",
     url: 'https://www.facevoice.ai',
     siteName: 'Facevoice AI',
     locale: 'it_IT',
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Facevoice AI | Sviluppo Software e AI a Palermo',
+    title: "Facevoice AI | Agenzia digitale e software house a Palermo",
     description: 'Sviluppo software su misura, integrazione AI e consulenza tecnologica',
     images: ['https://www.facevoice.ai/Facevoice.png'],
   },
