@@ -2,38 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Plus, Send, Sparkles, X } from 'lucide-react'
-import { getAccessToken } from '@/lib/session-token'
+import { authFetch, useAssistantChat, type Job, type SocialAction } from '@/components/useAssistantChat'
 
 // Super chat dell'admin: una sola conversazione a tutto schermo, come una chat
 // con Claude. Dietro c'e' l'assistente della Ricerca clienti con tutti i suoi
-// strumenti (clienti, email, siti, Instagram, messaggi social). Niente parte da
-// solo: email e messaggi social si inviano con un tocco su "Invia".
-
-type Draft = {
-  leadId: string
-  name: string
-  email: string
-  kind: 'first' | 'followup'
-  subject: string
-  body: string
-  threadId?: string | null
-}
-
-type SocialAction = {
-  kind: 'social_message'
-  platform: 'instagram' | 'facebook'
-  key: string
-  name: string
-  text: string
-  lastIncomingAt: string | null
-  state?: 'sending' | 'sent' | 'error'
-  error?: string
-}
-
-type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[] }
-
-const STORAGE_KEY = 'fv_superchat_v1'
-const MAX_TURNS = 80
+// strumenti (clienti, email, siti, Instagram, messaggi social). Il lavoro gira
+// sul server: si puo' chiudere o cambiare pagina e ritrovare tutto com'era.
+// Niente parte da solo: email e messaggi social si inviano con un tocco su "Invia".
 
 const EXAMPLES = [
   'Quali aziende della lista hanno Instagram e quanti follower hanno?',
@@ -43,65 +18,39 @@ const EXAMPLES = [
   'Trovami 20 ristoranti a Palermo e preparagli la prima email',
 ]
 
-async function authFetch(url: string, init: RequestInit = {}) {
-  const token = await getAccessToken()
-  return fetch(url, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers || {}) },
-  })
-}
-
-const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-const clean = (text: string) => text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/^\s*\*\s+/gm, '- ')
-
 export default function SuperChat() {
-  const [turns, setTurns] = useState<Turn[]>([])
-  const [drafts, setDrafts] = useState<Draft[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
-  const [startedAt, setStartedAt] = useState<number | null>(null)
   const [, setTick] = useState(0)
   const [sending, setSending] = useState<string | null>(null)
   const [draftsOpen, setDraftsOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const loaded = useRef(false)
+  const sendAllRef = useRef<() => Promise<void>>(async () => {})
 
-  const draftsRef = useRef<Draft[]>([])
+  const onJobDone = useCallback((job: Job) => {
+    if (job.result?.confirmSend) sendAllRef.current()
+  }, [])
+  const { turns, drafts, job, running: busy, loaded, error, ask: askServer, setDrafts, appendTurn, updateActions, clearTurns } =
+    useAssistantChat('super', onJobDone)
+
+  const draftsRef = useRef(drafts)
   draftsRef.current = drafts
   const selectedRef = useRef<Record<string, boolean>>({})
   selectedRef.current = selected
-  const turnsRef = useRef<Turn[]>([])
-  turnsRef.current = turns
-
-  // Conversazione e bozze restano dopo un ricaricamento della pagina.
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
-      if (saved?.turns) setTurns(saved.turns)
-      if (saved?.drafts) setDrafts(saved.drafts)
-    } catch {}
-    loaded.current = true
-  }, [])
-  useEffect(() => {
-    if (!loaded.current) return
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ turns: turns.slice(-MAX_TURNS), drafts }))
-    } catch {}
-  }, [turns, drafts])
+  const startedAt = busy && job ? new Date(job.startedAt).getTime() : null
+  const status = busy ? job?.statusText : null
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [turns, busy, status])
+  }, [turns.length, busy, status])
 
   useEffect(() => {
-    if (!startedAt) return
+    if (!busy) return
     const timer = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(timer)
-  }, [startedAt])
+  }, [busy])
 
   // Campo che cresce con il testo, come nelle chat.
   useEffect(() => {
@@ -110,35 +59,6 @@ export default function SuperChat() {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [input])
-
-  const say = (turn: Omit<Turn, 'id'>) => setTurns((t) => [...t, { ...turn, id: newId() }].slice(-MAX_TURNS))
-
-  const readStream = async (res: Response) => {
-    if (!res.ok || !res.body) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || (res.status === 504 ? 'Ci ho messo troppo: riprova, riparto da dove mi sono fermato.' : 'Errore dell’assistente'))
-    }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let final: Record<string, any> | null = null
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        const event = JSON.parse(line)
-        if (event.type === 'status') setStatus(event.text)
-        else final = event
-      }
-    }
-    if (!final) throw new Error('Connessione interrotta: riprova.')
-    if (final.type === 'error') throw new Error(final.error || 'Errore dell’assistente')
-    return final
-  }
 
   const sendAll = useCallback(async () => {
     const queue = draftsRef.current.filter((d) => selectedRef.current[d.leadId] !== false)
@@ -163,66 +83,31 @@ export default function SuperChat() {
       }
     }
     setSending(null)
-    say({
-      role: 'assistant',
-      text: `Inviate ${ok} email.${failures.length ? ` Non inviate: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}` : ''} Le risposte arriveranno in Messaggi.`,
-    })
-  }, [])
+    await appendTurn(
+      'assistant',
+      `Inviate ${ok} email.${failures.length ? ` Non inviate: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}` : ''} Le risposte arriveranno in Messaggi.`
+    )
+  }, [setDrafts, appendTurn])
+  sendAllRef.current = sendAll
 
-  const ask = async (message: string, round = 0, original = message) => {
-    const text = message.trim()
-    if (!text || (busy && round === 0)) return
+  // Le nuove bozze compaiono aperte.
+  const draftCount = useRef(0)
+  useEffect(() => {
+    if (drafts.length > draftCount.current) setDraftsOpen(true)
+    draftCount.current = drafts.length
+  }, [drafts.length])
+
+  const ask = async (message: string) => {
+    if (!message.trim() || busy) return
     setInput('')
-    const history = turnsRef.current.slice(-8).map((t) => ({ role: t.role, text: t.text }))
-    if (round === 0) say({ role: 'user', text })
-    setBusy(true)
-    setStatus(round === 0 ? 'Ci penso…' : 'Continuo con il resto…')
-    setStartedAt((t) => (round === 0 || !t ? Date.now() : t))
-    let again = false
-    try {
-      const res = await authFetch('/api/admin/leads/assistant', {
-        method: 'POST',
-        body: JSON.stringify({ message: text, history, drafts: draftsRef.current }),
-      })
-      const data = await readStream(res)
-      say({ role: 'assistant', text: clean(String(data.reply || '')), actions: data.actions?.length ? data.actions : undefined })
-      const incoming: Draft[] = data.drafts || []
-      const removed: string[] = data.removeDrafts || []
-      if (incoming.length || removed.length) {
-        setDrafts((list) => {
-          const map = new Map(list.map((d) => [d.leadId, d]))
-          for (const id of removed) map.delete(id)
-          for (const d of incoming) map.set(d.leadId, d)
-          return [...map.values()]
-        })
-        setSelected((s) => {
-          const next = { ...s }
-          for (const id of removed) delete next[id]
-          for (const d of incoming) next[d.leadId] = true
-          return next
-        })
-        if (incoming.length) setDraftsOpen(true)
-      }
-      again = Boolean(data.more) && round < 5
-      if (data.confirmSend && !again) await sendAll()
-    } catch (err) {
-      say({ role: 'assistant', text: err instanceof Error ? err.message : 'Qualcosa è andato storto, riprova.' })
-    }
-    if (again) {
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      return ask(`Continua il lavoro richiesto prima (“${original.trim()}”) con quello che resta.`, round + 1, original)
-    }
-    setBusy(false)
-    setStatus(null)
-    setStartedAt(null)
+    await askServer(message)
   }
 
-  const updateAction = (turnId: string, index: number, patch: Partial<SocialAction>) =>
-    setTurns((list) =>
-      list.map((t) =>
-        t.id === turnId && t.actions ? { ...t, actions: t.actions.map((a, i) => (i === index ? { ...a, ...patch } : a)) } : t
-      )
-    )
+  const updateAction = (turnId: string, index: number, patch: Partial<SocialAction>) => {
+    const turn = turns.find((t) => t.id === turnId)
+    if (!turn?.actions) return
+    updateActions(turnId, turn.actions.map((a, i) => (i === index ? { ...a, ...patch } : a)))
+  }
 
   const sendAction = async (turnId: string, index: number, action: SocialAction) => {
     updateAction(turnId, index, { state: 'sending', error: undefined })
@@ -238,7 +123,7 @@ export default function SuperChat() {
   const newChat = () => {
     if (busy) return
     if (turns.length && !window.confirm('Iniziare una nuova conversazione? Le bozze non inviate restano.')) return
-    setTurns([])
+    clearTurns()
   }
 
   const chosen = drafts.filter((d) => selected[d.leadId] !== false).length
@@ -248,7 +133,11 @@ export default function SuperChat() {
       {/* Messaggi */}
       <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto px-4 pt-6 pb-4">
-          {turns.length === 0 ? (
+          {!loaded ? (
+            <div className="pt-[20vh] flex justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-[var(--text-secondary)]" />
+            </div>
+          ) : turns.length === 0 ? (
             <div className="pt-[8vh] text-center">
               <div className="mx-auto w-12 h-12 rounded-2xl bg-[var(--accent-blue)]/15 flex items-center justify-center">
                 <Sparkles className="w-6 h-6 text-[var(--accent-blue)]" />
@@ -385,6 +274,7 @@ export default function SuperChat() {
 
       {/* Campo di scrittura */}
       <div className="max-w-3xl w-full mx-auto px-4 pt-2 pb-3">
+        {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
         <form
           onSubmit={(e) => {
             e.preventDefault()

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAssistantChat, type Draft, type Job } from '@/components/useAssistantChat'
 import { Check, Loader2, Send, Sparkles, X } from 'lucide-react'
 
 // Barra di chat dell'assistente: si scrive cosa fare ("scrivi a chi non abbiamo
@@ -8,17 +9,7 @@ import { Check, Loader2, Send, Sparkles, X } from 'lucide-react'
 // Palermo") e l'assistente prepara il lavoro. Le email partono solo dopo
 // che Luca le ha controllate e ha premuto "Invia".
 
-type Draft = {
-  leadId: string
-  name: string
-  email: string
-  kind: 'first' | 'followup'
-  subject: string
-  body: string
-  threadId?: string | null
-}
 
-type Turn = { role: 'user' | 'assistant'; text: string }
 
 type Props = {
   authFetch: (url: string, init?: RequestInit) => Promise<Response>
@@ -37,107 +28,45 @@ const EXAMPLES = [
 
 export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) {
   const [input, setInput] = useState('')
-  const [turns, setTurns] = useState<Turn[]>([])
-  const [drafts, setDrafts] = useState<Draft[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [sending, setSending] = useState<string | null>(null)
-  const [status, setStatus] = useState<string | null>(null)
-  const [startedAt, setStartedAt] = useState<number | null>(null)
   const [, setTick] = useState(0)
+  const sendAllRef = useRef<() => Promise<void>>(async () => {})
+
+  // Il lavoro gira sul server: chiudendo o cambiando pagina continua, e qui si
+  // ritrova la conversazione com'era. A lavoro finito: lista, filtro e conferma invio.
+  const onJobDone = useCallback(
+    async (job: Job) => {
+      if (job.result?.refresh) await onRefresh()
+      if (job.result?.focus?.ids?.length) onFocus?.(job.result.focus)
+      if (job.result?.confirmSend) await sendAllRef.current()
+    },
+    [onRefresh, onFocus]
+  )
+  const { turns: allTurns, drafts, job, running: busy, error, ask: askServer, setDrafts, appendTurn } = useAssistantChat('leads', onJobDone)
+  const turns = allTurns.slice(-8)
+  const status = busy ? job?.statusText : null
+  const startedAt = busy && job ? new Date(job.startedAt).getTime() : null
 
   // Contatore dei secondi: si vede che sta lavorando anche tra un aggiornamento e l'altro.
   useEffect(() => {
-    if (!startedAt) return
+    if (!busy) return
     const timer = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(timer)
-  }, [startedAt])
+  }, [busy])
 
-  const say = (role: Turn['role'], text: string) => setTurns((t) => [...t, { role, text }].slice(-8))
+  // Mentre lavora la lista dei clienti si aggiorna (nuove schede, stati).
+  useEffect(() => {
+    if (!busy) return
+    const timer = setInterval(() => onRefresh(), 10000)
+    return () => clearInterval(timer)
+  }, [busy, onRefresh])
 
-  /** Legge la risposta in streaming: righe di stato mentre lavora, poi il risultato. */
-  const readStream = async (res: Response) => {
-    if (!res.ok || !res.body) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(
-        data.error || (res.status === 504 ? 'Il lavoro ha richiesto troppo tempo: riprova, riparto da dove mi sono fermato.' : 'Errore dell’assistente')
-      )
-    }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let final: Record<string, any> | null = null
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        const event = JSON.parse(line)
-        if (event.type === 'status') setStatus(event.text)
-        else final = event
-      }
-    }
-    if (!final) throw new Error('Connessione interrotta: riprova, riparto da dove mi sono fermato.')
-    if (final.type === 'error') throw new Error(final.error || 'Errore dell’assistente')
-    return final
-  }
-
-  const draftsNow = useRef<Draft[]>([])
-  draftsNow.current = drafts
-
-  const ask = async (message: string, round = 0, original = message) => {
-    const text = message.trim()
-    if (!text || (busy && round === 0)) return
+  const ask = async (message: string) => {
+    if (!message.trim() || busy) return
     setInput('')
-    const history = turns
-    if (round === 0) say('user', text)
-    setBusy(true)
-    setStatus(round === 0 ? 'Avvio…' : 'Continuo con i rimanenti…')
-    setStartedAt((t) => (round === 0 || !t ? Date.now() : t))
-    let again = false
-    try {
-      const res = await authFetch('/api/admin/leads/assistant', {
-        method: 'POST',
-        body: JSON.stringify({ message: text, history, drafts: draftsNow.current }),
-      })
-      const data = await readStream(res)
-      say('assistant', String(data.reply || '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^\s*\*\s+/gm, '- '))
-      const incoming: Draft[] = data.drafts || []
-      const removed: string[] = data.removeDrafts || []
-      if (incoming.length || removed.length) {
-        setDrafts((list) => {
-          const map = new Map(list.map((d) => [d.leadId, d]))
-          for (const id of removed) map.delete(id)
-          for (const d of incoming) map.set(d.leadId, d)
-          return [...map.values()]
-        })
-        setSelected((s) => {
-          const next = { ...s }
-          for (const id of removed) delete next[id]
-          for (const d of incoming) next[d.leadId] = true
-          return next
-        })
-      }
-      if (data.refresh) await onRefresh()
-      if (data.focus?.ids?.length) onFocus?.(data.focus)
-      // Tempo della richiesta finito: si riparte da soli (al massimo qualche giro).
-      again = Boolean(data.more) && round < 5
-      if (data.confirmSend && !again) await sendAll()
-    } catch (err) {
-      say('assistant', err instanceof Error ? err.message : 'Qualcosa è andato storto, riprova.')
-    }
-    if (again) {
-      // Le bozze appena arrivate devono finire nella richiesta successiva.
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      return ask(`Continua il lavoro richiesto prima (“${original.trim()}”) con i contatti rimasti.`, round + 1, original)
-    }
-    setBusy(false)
-    setStatus(null)
-    setStartedAt(null)
+    await askServer(message)
   }
 
   const update = (leadId: string, fields: Partial<Draft>) =>
@@ -174,12 +103,13 @@ export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) 
       }
     }
     setSending(null)
-    say(
+    await appendTurn(
       'assistant',
       `Inviate ${ok} email.${failures.length ? ` Non inviate: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}` : ''} Le risposte arriveranno in Messaggi.`
     )
     await onRefresh()
   }
+  sendAllRef.current = sendAll
 
   const isOn = (id: string) => selected[id] !== false
   const chosen = drafts.filter((d) => isOn(d.leadId)).length
@@ -252,6 +182,8 @@ export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) 
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>
       </form>
+
+      {error && <p className="mt-2 text-xs text-[#FF3B30]">{error}</p>}
 
       {drafts.length > 0 && (
         <div className="mt-4 border-t border-[var(--border-color)] pt-3">
