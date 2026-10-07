@@ -15,6 +15,7 @@ import { pollGmail } from '@/lib/gmail-poll'
 import { inspectWebsite } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { conversationKeyFor } from '@/lib/meta/identities'
+import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -536,7 +537,7 @@ La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la case
 Strumenti per domande sull'attività (rispondi con numeri precisi, senza fare altro):
 - "activity_report": {"hours": 1} oppure {"from": "ISO", "to": "ISO"}, "platform": "email|instagram|facebook|whatsapp|web|all" → quanti messaggi sono stati inviati e ricevuti nel periodo, per canale e per tipo (email della Ricerca clienti, risposte automatiche, approvate, scritte a mano), invii falliti, bozze in attesa, e gli ultimi 30 con ora, contatto e inizio del testo. Usalo per domande tipo "quante email sono partite nell'ultima ora", "chi ci ha scritto oggi" (calcola le ore da mezzanotte con la data e ora qui sotto), "quanti messaggi Instagram ieri".
 - Per numeri sulla lista clienti usa "stats" o "list_leads".
-Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, inspect_website, instagram_profile).
+Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, inspect_website, instagram_profile, list_push_devices).
 
 Strumenti di ricerca e social:
 - "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
@@ -544,6 +545,13 @@ Strumenti di ricerca e social:
 - "instagram_profiles": {"ids": [...] opzionale, "filter": "", "limit": 15} → lo stesso per più schede che hanno un Instagram (per domande tipo "quali hanno Instagram e quanti follower").
 - "list_conversations": {"platform": "instagram|facebook|all", "filter": "nome opzionale", "limit": 20} → persone che ci hanno scritto su Instagram o Facebook (contactId, nome, ultimo messaggio e data).
 - "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
+
+Strumenti per le notifiche push (i dispositivi su cui arrivano gli avvisi di Messaggi, richieste di accesso, ecc.):
+- "list_push_devices": {} → tutti i dispositivi che ricevono le notifiche: id, nome, browser e sistema (es. "Chrome su Windows", "Safari su iPhone"), se è l'app installata, email dell'account, data di registrazione, ultima apertura di Messaggi, ultima notifica consegnata, ultimo errore. Se "knownDetails" è false il dispositivo è stato registrato prima che salvassimo il browser: il tipo è dedotto dal servizio push; si completa da solo quando Luca apre Messaggi da quel dispositivo. Usalo per domande tipo "quali dispositivi ricevono le notifiche".
+- "test_push": {"deviceIds": [...] opzionale, "text": "testo opzionale"} → invia una notifica di prova a quei dispositivi (o a tutti) e dice quanti l'hanno ricevuta. Utile per capire quale dispositivo è quale.
+- "rename_push_device": {"deviceId": "...", "name": "iPhone di Luca"} → dà un nome a un dispositivo.
+- "remove_push_device": {"deviceIds": [...]} → smette di inviare notifiche a quei dispositivi. Usalo SOLO se Luca chiede esplicitamente di togliere/disattivare un dispositivo.
+Nella risposta descrivi i dispositivi in modo semplice (nome, tipo, da quando, ultima notifica ricevuta), con date e ore in italiano; non mostrare gli id se non servono.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
@@ -891,6 +899,47 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           }
           actions.push(action)
           result = { preparato: true, nota: 'compare a Luca con il pulsante Invia', entro_24_ore: Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000 }
+          break
+        }
+        case 'list_push_devices': {
+          reportStatus('Controllo i dispositivi che ricevono le notifiche…')
+          result = { dispositivi: await listPushDevices() }
+          break
+        }
+        case 'test_push': {
+          const known = new Set((await listPushDevices()).map((d) => d.id))
+          const ids = asIds(args.deviceIds)?.filter((id) => known.has(id))
+          if (asIds(args.deviceIds)?.length && !ids?.length) {
+            result = { errore: 'nessun dispositivo con questi id: usa list_push_devices' }
+            break
+          }
+          reportStatus('Invio una notifica di prova…')
+          result = await sendPushToAdmins(
+            { title: 'Notifica di prova', body: asText(args.text)?.slice(0, 200) || 'Prova dalla super chat: questo dispositivo riceve le notifiche.', url: '/admin/assistant' },
+            ids
+          )
+          break
+        }
+        case 'rename_push_device': {
+          const id = asText(args.deviceId)
+          const name = asText(args.name)?.trim().slice(0, 60)
+          if (!id || !name || !(await listPushDevices()).some((d) => d.id === id)) {
+            result = { errore: 'servono deviceId valido (da list_push_devices) e name' }
+            break
+          }
+          await updateDeviceInfo(id, { name })
+          result = { rinominato: true, name }
+          break
+        }
+        case 'remove_push_device': {
+          const known = new Map((await listPushDevices()).map((d) => [d.id, d.name]))
+          const ids = (asIds(args.deviceIds) || []).filter((id) => known.has(id))
+          if (!ids.length) {
+            result = { errore: 'nessun dispositivo con questi id: usa list_push_devices' }
+            break
+          }
+          for (const id of ids) await removePushDevice(id)
+          result = { rimossi: ids.map((id) => known.get(id)), nota: 'per riattivarlo, apri Messaggi da quel dispositivo e attiva le notifiche' }
           break
         }
         default:

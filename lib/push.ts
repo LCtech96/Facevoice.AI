@@ -49,11 +49,11 @@ export async function getVapidKeys(): Promise<VapidKeys> {
 
 export type PushPayload = { title: string; body: string; url: string; tag?: string }
 
-/** Invia a tutti i dispositivi iscritti; restituisce quanti l'hanno ricevuta. */
-export async function sendPushToAdmins(payload: PushPayload): Promise<{ sent: number; failed: number }> {
-  const { data: subs } = await supabaseAdmin
-    .from('push_subscriptions')
-    .select('id, endpoint, p256dh, auth')
+/** Invia a tutti i dispositivi iscritti (o solo a `only`); restituisce quanti l'hanno ricevuta. */
+export async function sendPushToAdmins(payload: PushPayload, only?: string[]): Promise<{ sent: number; failed: number }> {
+  let query = supabaseAdmin.from('push_subscriptions').select('id, endpoint, p256dh, auth')
+  if (only?.length) query = query.in('id', only)
+  const { data: subs } = await query
 
   if (!subs?.length) {
     console.warn('Push: nessun dispositivo iscritto, notifica non inviata:', payload.title)
@@ -74,16 +74,154 @@ export async function sendPushToAdmins(payload: PushPayload): Promise<{ sent: nu
           { TTL: 60 * 60 * 24, urgency: 'high' }
         )
         sent++
+        await updateDeviceInfo(sub.id, { lastDeliveredAt: new Date().toISOString(), lastError: undefined })
       } catch (error: any) {
         failed++
         // 404/410: il dispositivo ha revocato l'iscrizione, la togliamo.
         if (error?.statusCode === 404 || error?.statusCode === 410) {
-          await supabaseAdmin.from('push_subscriptions').delete().eq('id', sub.id)
+          await removePushDevice(sub.id)
         } else {
           console.error('Push error:', error?.statusCode, error?.body || error?.message)
+          await updateDeviceInfo(sub.id, { lastError: `${error?.statusCode || ''} ${error?.message || 'errore'}`.trim().slice(0, 200) })
         }
       }
     })
   )
   return { sent, failed }
+}
+
+// ---------------------------------------------------------------------
+// Dispositivi: chi riceve le notifiche (per Messaggi e la super chat)
+// ---------------------------------------------------------------------
+
+/** Informazioni sul dispositivo, salvate in app_settings (push_device:<id>). */
+export type DeviceInfo = {
+  name?: string
+  userAgent?: string
+  installed?: boolean
+  registeredAt?: string
+  lastSeenAt?: string
+  lastDeliveredAt?: string
+  lastError?: string
+}
+
+const deviceKey = (id: string) => `push_device:${id}`
+
+async function readDeviceInfo(id: string): Promise<DeviceInfo> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', deviceKey(id)).maybeSingle()
+  try {
+    return data?.value ? (JSON.parse(data.value) as DeviceInfo) : {}
+  } catch {
+    return {}
+  }
+}
+
+export async function updateDeviceInfo(id: string, patch: Partial<DeviceInfo>) {
+  const info = { ...(await readDeviceInfo(id)), ...patch }
+  for (const k of Object.keys(info) as (keyof DeviceInfo)[]) if (info[k] === undefined) delete info[k]
+  await supabaseAdmin
+    .from('app_settings')
+    .upsert({ key: deviceKey(id), value: JSON.stringify(info), updated_at: new Date().toISOString() })
+    .then(undefined, () => undefined)
+}
+
+export async function removePushDevice(id: string) {
+  await supabaseAdmin.from('push_subscriptions').delete().eq('id', id)
+  await supabaseAdmin.from('app_settings').delete().eq('key', deviceKey(id))
+}
+
+/** "Chrome su Windows", "Safari su iPhone"… dal browser che si e' iscritto. */
+export function describeUserAgent(ua: string): string {
+  const os = /iPhone/.test(ua)
+    ? 'iPhone'
+    : /iPad/.test(ua)
+      ? 'iPad'
+      : /Android/.test(ua)
+        ? /Mobile/.test(ua)
+          ? 'telefono Android'
+          : 'tablet Android'
+        : /Windows/.test(ua)
+          ? 'Windows'
+          : /Mac OS X|Macintosh/.test(ua)
+            ? 'Mac'
+            : /CrOS/.test(ua)
+              ? 'Chromebook'
+              : /Linux/.test(ua)
+                ? 'Linux'
+                : 'dispositivo sconosciuto'
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /OPR\/|Opera/.test(ua)
+      ? 'Opera'
+      : /SamsungBrowser/.test(ua)
+        ? 'Samsung Internet'
+        : /Firefox|FxiOS/.test(ua)
+          ? 'Firefox'
+          : /CriOS|Chrome/.test(ua)
+            ? 'Chrome'
+            : /Safari/.test(ua)
+              ? 'Safari'
+              : 'browser'
+  return `${browser} su ${os}`
+}
+
+/** Per i dispositivi registrati prima che salvassimo il browser: si deduce dal servizio push. */
+function describeEndpoint(endpoint: string): string {
+  const host = (() => {
+    try {
+      return new URL(endpoint).hostname
+    } catch {
+      return ''
+    }
+  })()
+  if (host.endsWith('push.apple.com')) return 'Safari / app su iPhone, iPad o Mac'
+  if (host.endsWith('mozilla.com')) return 'Firefox'
+  if (host.endsWith('notify.windows.com')) return 'Edge su Windows'
+  if (host.endsWith('googleapis.com')) return 'Chrome (computer o Android)'
+  return 'browser sconosciuto'
+}
+
+export type PushDevice = {
+  id: string
+  name: string
+  device: string
+  installedApp: boolean | null
+  email: string | null
+  registeredAt: string
+  lastSeenAt: string | null
+  lastDeliveredAt: string | null
+  lastError: string | null
+  knownDetails: boolean
+}
+
+export async function listPushDevices(): Promise<PushDevice[]> {
+  const { data: subs } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('id, endpoint, user_email, created_at')
+    .order('created_at', { ascending: true })
+  if (!subs?.length) return []
+  const { data: infos } = await supabaseAdmin
+    .from('app_settings')
+    .select('key, value')
+    .in('key', subs.map((s) => deviceKey(s.id)))
+  const byKey = new Map((infos || []).map((r) => [r.key, r.value as string]))
+  return subs.map((s) => {
+    let info: DeviceInfo = {}
+    try {
+      info = JSON.parse(byKey.get(deviceKey(s.id)) || '{}')
+    } catch {}
+    const device = info.userAgent ? describeUserAgent(info.userAgent) : describeEndpoint(s.endpoint)
+    return {
+      id: s.id,
+      name: info.name || device,
+      device,
+      installedApp: info.installed ?? null,
+      email: s.user_email,
+      registeredAt: info.registeredAt || s.created_at,
+      lastSeenAt: info.lastSeenAt || null,
+      lastDeliveredAt: info.lastDeliveredAt || null,
+      lastError: info.lastError || null,
+      knownDetails: Boolean(info.userAgent),
+    }
+  })
 }

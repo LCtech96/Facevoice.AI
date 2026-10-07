@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
-import { getVapidKeys, sendPushToAdmins } from '@/lib/push'
+import { getVapidKeys, listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,8 +11,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
   const keys = await getVapidKeys()
-  const { count } = await supabaseAdmin.from('push_subscriptions').select('id', { count: 'exact', head: true })
-  return NextResponse.json({ publicKey: keys.publicKey, devices: count ?? 0 })
+  const list = await listPushDevices()
+  return NextResponse.json({ publicKey: keys.publicKey, devices: list.length, list })
 }
 
 /** Registra questo dispositivo; con { test: true } invia anche una notifica di prova. */
@@ -41,10 +41,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Iscrizione non valida' }, { status: 400 })
   }
 
-  const { error } = await supabaseAdmin
+  const { data: saved, error } = await supabaseAdmin
     .from('push_subscriptions')
     .upsert({ endpoint, p256dh, auth, user_email: email }, { onConflict: 'endpoint' })
+    .select('id, created_at')
+    .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Browser e sistema del dispositivo: servono per sapere quali dispositivi ricevono le notifiche.
+  await updateDeviceInfo(saved.id, {
+    userAgent: (req.headers.get('user-agent') || '').slice(0, 400) || undefined,
+    installed: typeof body?.installed === 'boolean' ? body.installed : undefined,
+    registeredAt: saved.created_at,
+    lastSeenAt: new Date().toISOString(),
+  })
 
   if (body?.test) {
     await sendPushToAdmins({
@@ -63,7 +73,8 @@ export async function DELETE(req: NextRequest) {
   }
   const body = await req.json().catch(() => ({}))
   if (typeof body?.endpoint === 'string') {
-    await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', body.endpoint)
+    const { data: sub } = await supabaseAdmin.from('push_subscriptions').select('id').eq('endpoint', body.endpoint).maybeSingle()
+    if (sub) await removePushDevice(sub.id)
   }
   return NextResponse.json({ success: true })
 }
