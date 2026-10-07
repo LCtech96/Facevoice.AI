@@ -76,13 +76,15 @@ export default function EmberHero() {
           <p className={styles.note}>
             <MapPin className={styles.noteIcon} aria-hidden="true" />
             <span>
-              Software house siciliana
+              Sede a Terrasini (Palermo)
               <br />
-              Palermo, tutta la Sicilia e l&apos;Italia
+              Clienti in tutta la Sicilia e in Italia
             </span>
           </p>
 
           <h1 id="hero-title" className={styles.title}>
+            {/* Cosa siamo, in parole che le persone (e le AI) cercano davvero. */}
+            <span className={styles.titleKicker}>Agenzia digitale e software house a Palermo</span>
             Tecnologia
             <br />
             per le persone,
