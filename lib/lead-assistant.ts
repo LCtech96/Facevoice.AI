@@ -217,8 +217,8 @@ async function prepareFirst(args: { ids?: string[]; filter?: string; instruction
 }
 
 const FOLLOWUP_RULES = `Scrivi una breve email di FOLLOW-UP, come la scriverebbe Luca a mano, che risponde nello stesso thread alla prima email (te la passo sotto). Regole:
-- Dai del TU, tono amichevole, naturale e rispettoso; mai insistente, mai colpevolizzante ("non hai risposto…"), mai frasi da marketing.
-- 40-80 parole, paragrafi brevi, niente elenchi, niente prezzi.
+- Dai del TU, italiano parlato di tutti i giorni, parole semplici, frasi corte; mai insistente, mai colpevolizzante ("non hai risposto…"), mai frasi da marketing.
+- 30-60 parole (firma esclusa), paragrafi di 1-2 frasi, niente elenchi, niente prezzi.
 - Apri con un saluto leggero e un richiamo naturale alla mail precedente (es. "Ciao! Ti riscrivo al volo perché immagino che tra mille cose la mia mail ti sia sfuggita").
 - Aggiungi UN elemento nuovo e utile legato al loro punto debole (un'idea concreta, un esempio), non ripetere la prima email.
 - Chiudi portando alla chiamata su WhatsApp, es. "Se ti va, ci sentiamo dieci minuti su WhatsApp: scrivimi al ${WHATSAPP_DISPLAY} e ti chiamo io."
@@ -519,6 +519,11 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
 
   const transcript: { role: string; content: string }[] = [{ role: 'user', content: `${context}\n\nRichiesta di Luca: ${message}` }]
 
+  // Le parole di Luca arrivano sempre a chi scrive le email: tono e indicazioni
+  // non devono perdersi nel riassunto dell'agente.
+  const withLuca = (instructions?: string) =>
+    [instructions?.trim(), `Richiesta di Luca, da rispettare per tono e contenuto: ${message}`].filter(Boolean).join('\n')
+
   for (let step = 0; step < MAX_STEPS; step++) {
     if (timeIsUp()) {
       more = true
@@ -595,7 +600,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           const out = await prepareFirst({
             ids: asIds(args.ids),
             filter: asText(args.filter),
-            instructions: asText(args.instructions),
+            instructions: withLuca(asText(args.instructions)),
             limit: asNumber(args.limit),
             skip: new Set(drafts.keys()),
           })
@@ -612,7 +617,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           const out = await prepareFollowups({
             ids: asIds(args.ids),
             filter: asText(args.filter),
-            instructions: asText(args.instructions),
+            instructions: withLuca(asText(args.instructions)),
             days: asNumber(args.days),
             limit: asNumber(args.limit),
             skip: new Set(drafts.keys()),

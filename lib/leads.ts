@@ -122,6 +122,8 @@ export async function searchPlaces(query: string, max: number): Promise<{ found:
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
 const IGNORED_EMAIL = /\.(png|jpe?g|gif|webp|svg)$|sentry|wixpress|example\.|domain\.|@2x|u00/i
+// Indirizzi del servizio che ospita il sito o di sistema: non sono dell'attivita'.
+const SYSTEM_EMAIL = /^(abuse|postmaster|hostmaster|webmaster|noreply|no-reply|donotreply|mailer-daemon|dmca|legal|privacy|gdpr|dpo)[@._-]|@(altervista\.(org|it)|aruba\.it|register\.it|wix\.com|godaddy\.com|siteground\.\w+|ovh\.\w+|netsons\.\w+|tophost\.it|serverplan\.com)$/i
 
 export async function fetchPage(url: string): Promise<string> {
   try {
@@ -151,7 +153,7 @@ function pickEmail(html: string, domain: string): string | null {
   const fromMailto = [...html.matchAll(/mailto:([^"'?\s>]+)/gi)].map((m) => decodeURIComponent(m[1]))
   const found = [...fromMailto, ...(html.match(EMAIL_RE) || [])]
     .map((e) => e.trim().toLowerCase())
-    .filter((e) => !IGNORED_EMAIL.test(e))
+    .filter((e) => !IGNORED_EMAIL.test(e) && !SYSTEM_EMAIL.test(e))
   if (!found.length) return null
   // Preferisce un indirizzo dello stesso dominio del sito, poi info@/contatti@.
   const sameDomain = found.find((e) => domain && e.endsWith(`@${domain}`))
@@ -217,15 +219,37 @@ export async function readWebsite(website: string): Promise<SiteInfo> {
 // ---------------------------------------------------------------------
 
 // Regole della prima email: condivise con l'assistente della Ricerca clienti.
-export const FIRST_EMAIL_RULES = `come la scriverebbe Luca a mano a un altro imprenditore: linguaggio per niente formale, amichevole e diretto, ma sempre rispettoso; mai finto, mai "da AI", mai da ufficio marketing. Dai del TU. 90-150 parole, paragrafi brevi separati da una riga vuota, niente elenchi, niente prezzi, niente parole gonfiate ("straordinario", "eccezionale", "rivoluzionario", "soluzioni innovative"). Struttura obbligatoria, in quest'ordine:
-   a) Saluto amichevole: "Ciao!" (o "Ciao [nome]!" solo se il nome del titolare compare nei dati).
-   b) IL COMPLIMENTO: una cosa SPECIFICA e vera notata nei dati (un dettaglio del sito, delle recensioni, del menù, della storia dell'attività), detta in modo spontaneo, es. "ho visto le foto delle vostre pastaie al lavoro sul sito: si sente tutta la cura che c'è dietro, complimenti davvero!" Mai complimenti generici.
-   c) CHI SIAMO, 1-2 frasi, senza promettere risultati e senza spiegare un singolo servizio: "Sono Luca di Facevoice AI, una software house siciliana: ci prendiamo cura di tutto il lato digitale di [il loro settore, es. ristoranti e locali], dalla creazione di contenuti alla gestione dei profili social, fino a siti web, e-commerce e software su misura." Adatta l'elenco al settore (es. per un negozio metti l'e-commerce, per un'attività di servizi i gestionali), restando breve.
-   d) IL PUNTO DEBOLE: UNA cosa concreta che manca o che potrebbero fare meglio, presa SOLO dai dati (mai inventata), detta in modo diretto ma gentile, da persona che se n'è accorta, es. "Cercandovi online però non ho trovato un sito vostro", "Ho notato che per prenotare bisogna per forza chiamare: non c'è un modo per farlo online", "Il vostro Instagram è fermo da un po'", "Dal telefono il sito si apre a fatica". Se non emerge niente di certo, fai notare qualcosa che potrebbero sfruttare meglio (es. le tante recensioni positive non valorizzate sul sito).
-   e) LA DOMANDA + LA CHIAMATA: una domanda breve legata al punto debole (es. "Come gestite oggi le richieste di chi vi cerca online?") e poi porta TUTTO verso una chiamata su WhatsApp, es. "Ti va se ci sentiamo dieci minuti con una chiamata su WhatsApp? Scrivimi pure al +39 351 420 6353 e ti chiamo io." NON proporre preventivi, proposte su misura, documenti o incontri: solo la chiamata WhatsApp.
-   f) Saluto e firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp +39 351 420 6353"
-   g) NIENTE dopo la firma: nessun P.S., nessuna frase tipo "se non ti interessa…" o "non ti disturbo più".
-   Oggetto: breve e naturale, max 7 parole, legato alla loro attività (es. "Un'idea per Osteria da Fortunata"), niente maiuscole urlate o emoji.`
+export const FIRST_EMAIL_RULES = `come se Luca la scrivesse al volo dal telefono a una persona del posto: italiano parlato di tutti i giorni, parole semplici e comuni, frasi corte, del TU. Deve sembrare scritta da una persona, non da un'agenzia.
+LUNGHEZZA: 50-80 parole in tutto (firma esclusa). Se superi le 80 parole, taglia. Paragrafi di 1-2 frasi separati da una riga vuota, niente elenchi, niente prezzi.
+PAROLE VIETATE (sanno di marketing): soluzioni, valorizzare, ottimizzare, potenziare, incrementare, presenza online, presenza digitale, strategia, esperienza utente, fidelizzare, eccellenza, straordinario, eccezionale, innovativo, rivoluzionario, a 360 gradi, realtà (per dire azienda), "mi permetto di".
+Struttura, in quest'ordine:
+   a) "Ciao!" (o "Ciao [nome]!" solo se il nome del titolare è nei dati).
+   b) Complimento in UNA frase, specifico e vero, preso dai dati (recensioni, foto, storia, un dettaglio del sito), detto in modo spontaneo. Mai generico.
+   c) Chi siamo in UNA frase corta: "Sono Luca di Facevoice AI, ci occupiamo del digitale per [il loro settore] qui in Sicilia."
+   d) L'idea, in 1-2 frasi, proposta in modo velato (una curiosità o una domanda, non una vendita), scelta in base al settore:
+      - B&B, case vacanza, affittacamere, hotel e strutture ricettive SENZA un sito proprio (o con un sito su piattaforme gratuite o vecchio): l'idea principale è un sito tutto loro da cui ricevere prenotazioni dirette, così non pagano le commissioni a Booking o Airbnb, si fanno trovare e raccontano la struttura come vogliono. Esempio: "Mi è venuta una curiosità: le prenotazioni vi arrivano tutte da Booking o Airbnb? Con un sito vostro potreste riceverne anche di dirette, senza commissioni." I social al massimo con mezza frase, o per niente.
+      - Strutture ricettive CON un sito ma senza prenotazione diretta: prenotazioni dirette dal loro sito, senza commissioni.
+      - Ristoranti, pizzerie, bar e locali: un sito con il menù online, per farsi trovare meglio su Google, e i social curati. Esempio: "Ho notato che il menù online non si trova: con un sito semplice col menù vi trovano molto più facilmente su Google."
+      - Altre attività: un sito per farsi trovare su Google e i social, scegliendo quello che manca davvero.
+      Usa SOLO quello che risulta dai dati: se non sai se hanno un sito, non dire che non ce l'hanno.
+   e) Chiusura verso la chiamata: "Se ti va ne parliamo dieci minuti su WhatsApp: scrivimi al +39 351 420 6353 e ti chiamo io." Niente preventivi, proposte su misura, documenti o incontri.
+   f) Firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp +39 351 420 6353"
+   g) NIENTE dopo la firma: nessun P.S., nessun "se non ti interessa…".
+Esempio di tono (B&B senza sito), da non copiare parola per parola:
+"Ciao!
+
+Ho visto le vostre recensioni su Google, 4,9 con più di 40 commenti: complimenti davvero.
+
+Sono Luca di Facevoice AI, ci occupiamo del digitale per B&B e strutture qui in Sicilia.
+
+Mi è venuta una curiosità: le prenotazioni vi arrivano tutte da Booking o Airbnb? Con un sito vostro potreste riceverne anche di dirette, senza pagare commissioni.
+
+Se ti va ne parliamo dieci minuti su WhatsApp: scrivimi al +39 351 420 6353 e ti chiamo io.
+
+A presto,
+Luca Corrao"
+Oggetto: corto e parlato, max 6 parole, legato a loro (es. "Una curiosità sul vostro B&B", "Il menù di Osteria da Fortunata"), niente maiuscole urlate o emoji.
+Se Luca dà indicazioni sullo stile o sul contenuto, seguile alla lettera: valgono più di queste regole (tranne non inventare fatti).`
 
 export const WHATSAPP_DISPLAY = '+39 351 420 6353'
 
@@ -235,7 +259,7 @@ Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo s
 1. Valutare quanto è promettente come cliente per Facevoice AI: punteggio da 1 a 10. Alto se ci sono problemi concreti che Facevoice risolve (niente sito, sito datato o lento, niente prenotazione/ordine online, niente social o social trascurati, processi manuali evidenti) e l'attività sembra sana (recensioni, presenza). Basso per catene, franchising, enti pubblici, attività chiuse.
 2. Scrivere l'analisi: 2-4 punti deboli concreti e verificabili dai dati, in italiano, una riga ciascuno.
 3. Scrivere la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
-4. Scrivere un messaggio Direct per Instagram/Facebook: 2-4 frasi, dai del tu, stesso tono amichevole e stesso schema in breve (complimento specifico, chi siamo in mezza frase, il punto debole, invito a sentirsi su WhatsApp), niente link.
+4. Scrivere un messaggio Direct per Instagram/Facebook: 2-3 frasi brevissime, dai del tu, stesso tono parlato e stessa idea per settore (complimento specifico, chi siamo in mezza frase, l'idea, invito a sentirsi su WhatsApp), niente link.
 
 Rispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
 {"score": 7, "analysis": "- punto 1\\n- punto 2", "email_subject": "...", "email_body": "...", "dm_text": "..."}`
