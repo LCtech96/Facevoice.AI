@@ -1,13 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Navigation from '@/components/Navigation'
-import { FAQ } from '@/lib/faq'
+import { FAQ, PRICES, PRICES_NOTE, formatEuro } from '@/lib/faq'
 import { ORG, SITE_URL } from '@/lib/seo/site'
 
 export const metadata: Metadata = {
   title: `Domande frequenti | ${ORG.name} – Agenzia digitale a Palermo`,
   description:
-    'Cosa fa Facevoice AI, dove lavoriamo, con che attività, come funzionano preventivi, social, siti, software e intelligenza artificiale, e come contattarci.',
+    'Cosa fa Facevoice AI e quanto costa: prezzi indicativi per sito vetrina, e-commerce, gestione social, chat AI e software gestionale su misura. Dove lavoriamo e come contattarci.',
   alternates: { canonical: `${SITE_URL}/faq` },
 }
 
@@ -32,6 +32,24 @@ export default function FaqPage() {
         <p className="mt-5 text-lg text-[var(--text-secondary)] leading-relaxed">
           Le risposte alle domande che ci fanno più spesso. Se non trovi quello che cerchi, scrivici.
         </p>
+
+        {/* Prezzi indicativi, sempre visibili */}
+        <section className="mt-10 rounded-xl border border-[var(--border-color)] p-5" aria-labelledby="prezzi">
+          <h2 id="prezzi" className="text-xl font-semibold text-[var(--text-primary)]">
+            Prezzi indicativi
+          </h2>
+          <ul className="mt-4 divide-y divide-[var(--border-color)]">
+            {PRICES.map((p) => (
+              <li key={p.service} className="flex items-baseline justify-between gap-4 py-3">
+                <span className="text-[var(--text-primary)]">{p.service}</span>
+                <span className="shrink-0 text-[var(--text-secondary)]">
+                  a partire da <strong className="text-[var(--text-primary)]">{formatEuro(p.from)}</strong>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-sm text-[var(--text-secondary)] leading-relaxed">{PRICES_NOTE}</p>
+        </section>
 
         <div className="mt-10 space-y-3">
           {FAQ.map((item) => (
