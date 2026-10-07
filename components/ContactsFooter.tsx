@@ -9,7 +9,7 @@ export default function ContactsFooter() {
 
   // La chat occupa lo schermo intero: un footer sotto costringerebbe a
   // scorrere la pagina per tornare ai messaggi.
-  if (pathname?.startsWith('/ai-chat')) {
+  if (pathname?.startsWith('/ai-chat') || pathname?.startsWith('/admin/assistant')) {
     return null
   }
 

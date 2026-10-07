@@ -12,6 +12,9 @@ import {
 } from '@/lib/leads'
 import { prepareOutreachReply } from '@/lib/meta/agent'
 import { pollGmail } from '@/lib/gmail-poll'
+import { inspectWebsite } from '@/lib/site-inspect'
+import { fetchInstagramProfile } from '@/lib/meta/graph'
+import { conversationKeyFor } from '@/lib/meta/identities'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -19,7 +22,7 @@ import { pollGmail } from '@/lib/gmail-poll'
 // Le email vere partono solo dal browser, dopo conferma di Luca.
 
 export const BATCH_LIMIT = 25
-const MAX_STEPS = 6
+const MAX_STEPS = 10
 const DEFAULT_FOLLOWUP_DAYS = 3
 
 export type Draft = {
@@ -42,6 +45,18 @@ export type AssistantResult = {
   focus?: { label: string; ids: string[] }
   /** Tempo finito prima di completare: il browser rilancia da solo per continuare. */
   more?: boolean
+  /** Messaggi social preparati: partono solo quando Luca preme Invia. */
+  actions?: SocialAction[]
+}
+
+export type SocialAction = {
+  kind: 'social_message'
+  platform: 'instagram' | 'facebook'
+  key: string
+  name: string
+  text: string
+  /** Ultimo messaggio ricevuto da quella persona: Meta permette risposte libere entro 24 ore. */
+  lastIncomingAt: string | null
 }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
@@ -91,7 +106,9 @@ function compact(lead: Lead) {
     analizzato: Boolean(lead.analyzed_at),
     contattato_il: lead.contacted_at?.slice(0, 10) ?? null,
     ricerca: lead.search_query,
-    sito: Boolean(lead.website),
+    sito: lead.website || null,
+    instagram: lead.instagram || null,
+    facebook: lead.facebook || null,
   }
 }
 
@@ -386,6 +403,35 @@ async function replyFor(
   })
 }
 
+/** Conversazioni Instagram/Facebook della casella (chi ci ha scritto). */
+async function listConversations(platform: string | undefined, filter: string | undefined, limit: number) {
+  const platforms = platform === 'instagram' || platform === 'facebook' ? [platform] : ['instagram', 'facebook']
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('platform, contact_id, contact_name, body, created_at')
+    .in('platform', platforms)
+    .eq('direction', 'in')
+    .eq('kind', 'message')
+    .order('created_at', { ascending: false })
+    .limit(500)
+  const seen = new Map<string, { platform: string; contactId: string; nome: string | null; ultimo_messaggio: string; ricevuto_il: string }>()
+  for (const m of data || []) {
+    const id = `${m.platform}:${m.contact_id}`
+    if (seen.has(id)) continue
+    seen.set(id, {
+      platform: m.platform,
+      contactId: m.contact_id,
+      nome: m.contact_name,
+      ultimo_messaggio: String(m.body || '').slice(0, 160),
+      ricevuto_il: m.created_at,
+    })
+  }
+  const words = (filter || '').toLowerCase().split(/\s+/).filter(Boolean)
+  return [...seen.values()]
+    .filter((c) => !words.length || words.every((w) => `${c.nome || ''} ${c.contactId}`.toLowerCase().includes(w)))
+    .slice(0, limit)
+}
+
 // ---------------------------------------------------------------------
 // Agente
 // ---------------------------------------------------------------------
@@ -413,6 +459,15 @@ Strumenti:
 Regola sulle controrisposte: se la controrisposta è "già inviata" non se ne prepara un'altra (aspettiamo che il cliente risponda di nuovo). Usa "force": true SOLO se Luca chiede esplicitamente di scrivergli di nuovo / una seconda email nonostante l'invio. Se c'è già una controrisposta "in attesa", non rifarla da zero: mostrala o modificala con le indicazioni di Luca.
 
 La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la casella è appena stata controllata): fidati di questa e non della conversazione precedente quando le cose sono cambiate.
+
+Strumenti di ricerca e social:
+- "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
+- "instagram_profile": {"username": "nomeprofilo"} oppure {"leadId": "..."} → profilo Instagram pubblico (solo account business/creator): follower, seguiti, numero di post, bio, sito, ultimi 6 post con data, like e commenti (per capire se pubblicano e quanto spesso).
+- "instagram_profiles": {"ids": [...] opzionale, "filter": "", "limit": 15} → lo stesso per più schede che hanno un Instagram (per domande tipo "quali hanno Instagram e quanti follower").
+- "list_conversations": {"platform": "instagram|facebook|all", "filter": "nome opzionale", "limit": 20} → persone che ci hanno scritto su Instagram o Facebook (contactId, nome, ultimo messaggio e data).
+- "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
+
+Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
 Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
 
@@ -442,6 +497,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
   let refresh = false
   let more = false
   let focus: AssistantResult['focus']
+  const actions: SocialAction[] = []
 
   // Prima di tutto la casella: le risposte arrivate in questo momento devono essere gia' note.
   reportStatus('Controllo la casella per nuove risposte…')
@@ -472,7 +528,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     const response = await callAIPaced(transcript, AGENT_PROMPT, {
       feature: 'assistente_clienti',
       temperature: 0.2,
-      maxOutputTokens: 800,
+      maxOutputTokens: 2000,
     })
     const raw = response.message || ''
     const call = parseStep(raw)
@@ -668,6 +724,81 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           refresh = true
           break
         }
+        case 'inspect_website': {
+          let url = asText(args.url)
+          const leadId = asText(args.leadId)
+          if (!url && leadId) url = (await loadLeads([leadId]))[0]?.website || undefined
+          if (!url) {
+            result = { errore: 'sito non indicato o la scheda non ha un sito' }
+            break
+          }
+          reportStatus(`Leggo le pagine di ${url.replace(/^https?:\/\//, '')}…`)
+          result = await inspectWebsite(url)
+          break
+        }
+        case 'instagram_profile': {
+          let username = asText(args.username)
+          const leadId = asText(args.leadId)
+          if (!username && leadId) username = (await loadLeads([leadId]))[0]?.instagram || undefined
+          if (!username) {
+            result = { errore: 'profilo Instagram non indicato o assente nella scheda' }
+            break
+          }
+          reportStatus(`Guardo il profilo Instagram ${username.replace(/^https?:\/\/(www\.)?instagram\.com\//, '@')}…`)
+          result = await fetchInstagramProfile(username)
+          break
+        }
+        case 'instagram_profiles': {
+          const ids = asIds(args.ids)
+          const limit = Math.min(25, asNumber(args.limit) || 15)
+          const leads = (await loadLeads(ids))
+            .filter((l) => l.instagram && (ids?.length ? true : matchesFilter(l, asText(args.filter))))
+            .slice(0, limit)
+          const { out } = await inBatches(leads, async (lead, position) => {
+            reportStatus(`Guardo Instagram di ${lead.name} (${position})…`)
+            const p = await fetchInstagramProfile(lead.instagram!)
+            return { nome: lead.name, leadId: lead.id, ...p, recentPosts: p.recentPosts?.slice(0, 3) }
+          }, 3)
+          result = { profili: out, schede_senza_instagram: (await loadLeads(ids)).filter((l) => !l.instagram).length }
+          break
+        }
+        case 'list_conversations': {
+          result = { conversazioni: await listConversations(asText(args.platform), asText(args.filter), Math.min(50, asNumber(args.limit) || 20)) }
+          break
+        }
+        case 'send_social_message': {
+          const platform = asText(args.platform)
+          const contactId = asText(args.contactId)
+          const text = asText(args.text)?.trim()
+          if ((platform !== 'instagram' && platform !== 'facebook') || !contactId || !text) {
+            result = { errore: 'servono platform (instagram|facebook), contactId e text' }
+            break
+          }
+          const { data: last } = await supabaseAdmin
+            .from('social_messages')
+            .select('contact_name, created_at')
+            .eq('platform', platform)
+            .eq('contact_id', contactId)
+            .eq('direction', 'in')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (!last) {
+            result = { errore: 'questa persona non ci ha mai scritto su questo canale: non si può scriverle in privato tramite API' }
+            break
+          }
+          const action: SocialAction = {
+            kind: 'social_message',
+            platform,
+            key: await conversationKeyFor(platform, contactId),
+            name: last.contact_name || contactId,
+            text: text.slice(0, 1900),
+            lastIncomingAt: last.created_at,
+          }
+          actions.push(action)
+          result = { preparato: true, nota: 'compare a Luca con il pulsante Invia', entro_24_ore: Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000 }
+          break
+        }
         default:
           result = { errore: `strumento sconosciuto: ${call.tool}` }
       }
@@ -676,7 +807,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     }
 
     transcript.push({ role: 'assistant', content: JSON.stringify({ tool: call.tool, args }) })
-    transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 6000)}` })
+    transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 12000)}` })
   }
 
   return finish('Ho fatto quello che potevo in questo giro: dimmi se continuo.')
@@ -690,6 +821,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
       confirmSend: confirmSend && drafts.size > 0,
       more,
       focus,
+      actions,
     }
   }
 }

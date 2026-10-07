@@ -145,3 +145,63 @@ export async function fetchContactName(
     return null
   }
 }
+
+let cachedIgUserId: string | null = null
+
+/** Account Instagram aziendale collegato alla Pagina (serve per leggere profili altrui). */
+async function getInstagramUserId(page: { pageId: string; token: string }): Promise<string | null> {
+  if (cachedIgUserId) return cachedIgUserId
+  const response = await fetch(`${GRAPH}/${page.pageId}?fields=instagram_business_account&access_token=${encodeURIComponent(page.token)}`)
+  const data = await response.json().catch(() => ({}))
+  cachedIgUserId = data?.instagram_business_account?.id || null
+  return cachedIgUserId
+}
+
+export type InstagramProfile = {
+  username: string
+  name?: string
+  followers?: number
+  following?: number
+  posts?: number
+  biography?: string
+  website?: string
+  recentPosts?: { date: string; caption: string; likes?: number; comments?: number; url?: string }[]
+  error?: string
+}
+
+/**
+ * Profilo pubblico di un account Instagram business o creator (Business Discovery):
+ * follower, numero di post, bio, sito e ultimi post. Gli account personali non sono leggibili.
+ */
+export async function fetchInstagramProfile(username: string): Promise<InstagramProfile> {
+  const clean = username.replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').split(/[/?#]/)[0].trim()
+  if (!clean) return { username, error: 'username mancante' }
+  const page = await getPageToken()
+  if (!page) return { username: clean, error: 'collegamento Meta non configurato' }
+  const igId = await getInstagramUserId(page)
+  if (!igId) return { username: clean, error: 'nessun account Instagram aziendale collegato alla Pagina' }
+
+  const fields = `business_discovery.username(${clean}){username,name,followers_count,follows_count,media_count,biography,website,media.limit(6){caption,timestamp,like_count,comments_count,permalink}}`
+  const response = await fetch(`${GRAPH}/${igId}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(page.token)}`)
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    return { username: clean, error: data?.error?.error_user_msg || data?.error?.message || `HTTP ${response.status}` }
+  }
+  const bd = data?.business_discovery || {}
+  return {
+    username: bd.username || clean,
+    name: bd.name,
+    followers: bd.followers_count,
+    following: bd.follows_count,
+    posts: bd.media_count,
+    biography: bd.biography,
+    website: bd.website,
+    recentPosts: (bd.media?.data || []).map((m: any) => ({
+      date: m.timestamp,
+      caption: String(m.caption || '').slice(0, 200),
+      likes: m.like_count,
+      comments: m.comments_count,
+      url: m.permalink,
+    })),
+  }
+}
