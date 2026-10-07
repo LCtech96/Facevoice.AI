@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
-import { LEAD_STATUSES, MAX_RESULTS, placesKey, searchPlaces } from '@/lib/leads'
+import { LEAD_STATUSES, MAX_RESULTS, SYSTEM_EMAIL, placesKey, searchPlaces } from '@/lib/leads'
 import { syncLeadStatuses } from '@/lib/lead-status'
 
 export const dynamic = 'force-dynamic'
@@ -28,6 +28,14 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Email del servizio che ospita il sito (abuse@, altervista…) salvate in passato: si tolgono.
+  const wrong = (data || []).filter((l) => l.email && SYSTEM_EMAIL.test(l.email))
+  if (wrong.length) {
+    await supabaseAdmin.from('leads').update({ email: null }).in('id', wrong.map((l) => l.id))
+    for (const l of wrong) l.email = null
+  }
+
   return NextResponse.json({ leads: data || [], configured: Boolean(placesKey()) })
 }
 

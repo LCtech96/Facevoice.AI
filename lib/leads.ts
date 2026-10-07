@@ -123,7 +123,7 @@ export async function searchPlaces(query: string, max: number): Promise<{ found:
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
 const IGNORED_EMAIL = /\.(png|jpe?g|gif|webp|svg)$|sentry|wixpress|example\.|domain\.|@2x|u00/i
 // Indirizzi del servizio che ospita il sito o di sistema: non sono dell'attivita'.
-const SYSTEM_EMAIL = /^(abuse|postmaster|hostmaster|webmaster|noreply|no-reply|donotreply|mailer-daemon|dmca|legal|privacy|gdpr|dpo)[@._-]|@(altervista\.(org|it)|aruba\.it|register\.it|wix\.com|godaddy\.com|siteground\.\w+|ovh\.\w+|netsons\.\w+|tophost\.it|serverplan\.com)$/i
+export const SYSTEM_EMAIL = /^(abuse|postmaster|hostmaster|webmaster|noreply|no-reply|donotreply|mailer-daemon|dmca|legal|privacy|gdpr|dpo)[@._-]|@(altervista\.(org|it)|aruba\.it|register\.it|wix\.com|godaddy\.com|siteground\.\w+|ovh\.\w+|netsons\.\w+|tophost\.it|serverplan\.com)$/i
 
 export async function fetchPage(url: string): Promise<string> {
   try {
