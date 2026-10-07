@@ -37,7 +37,7 @@ const FEATURES: Record<string, string> = {
   altro: 'Altro',
 }
 
-const REFRESH_MS = 30_000
+const REFRESH_MS = 2_000
 const usd = (v: number) => `$${v.toFixed(v > 0 && v < 1 ? 3 : 2)}`
 const num = (v: number) => v.toLocaleString('it-IT')
 const time = (iso: string) =>
@@ -83,7 +83,7 @@ export default function AutomationUsage() {
     <section className="mb-8 p-4 bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
         <h2 className="text-sm font-semibold text-[var(--text-primary)]">AI automatiche del sito</h2>
-        <p className="text-[11px] text-[var(--text-secondary)]">Chat del sito, risposte e Ricerca clienti · si aggiorna da sola</p>
+        <p className="text-[11px] text-[var(--text-secondary)]">Chat del sito, risposte, Ricerca clienti e Super chat · aggiornato ogni 2 secondi</p>
       </div>
 
       {error && <p className="text-sm text-[#FF3B30]">{error}</p>}

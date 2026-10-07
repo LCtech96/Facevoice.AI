@@ -40,7 +40,20 @@ type AIOptions = {
 }
 
 // Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
-const CLAUDE_PRICE = { input: 1, output: 5 }
+const CLAUDE_PRICES: Record<string, { input: number; output: number }> = {
+  'claude-haiku-4-5': { input: 1, output: 5 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-opus-5-5': { input: 4, output: 20 },
+}
+const priceOf = (model: string) =>
+  CLAUDE_PRICES[Object.keys(CLAUDE_PRICES).find((id) => model.startsWith(id)) || 'claude-haiku-4-5']
+
+export { AI_MODEL_CHOICES, asModelChoice, type AIModelChoice } from '@/lib/ai-models'
+import type { AIModelChoice } from '@/lib/ai-models'
+
+/** Token e costi accumulati durante un lavoro (mostrati in tempo reale nella Super chat). */
+export type UsageTally = { calls: number; input: number; output: number; cost: number; models: Record<string, number> }
+export const emptyTally = (): UsageTally => ({ calls: 0, input: 0, output: 0, cost: 0, models: {} })
 
 /** Registra la chiamata per la pagina Consumi. Non blocca e non fa mai fallire la risposta. */
 function recordUsage(row: {
@@ -53,7 +66,19 @@ function recordUsage(row: {
 }) {
   const input = row.input || 0
   const output = row.output || 0
-  const cost = row.provider === 'claude' ? (input * CLAUDE_PRICE.input + output * CLAUDE_PRICE.output) / 1_000_000 : 0
+  const price = priceOf(row.model)
+  const cost = row.provider === 'claude' ? (input * price.input + output * price.output) / 1_000_000 : 0
+  const tally = work.getStore()?.usage
+  if (tally && (row.outcome || 'ok') === 'ok') {
+    tally.calls++
+    tally.input += input
+    tally.output += output
+    tally.cost += cost
+    tally.models[row.model] = (tally.models[row.model] || 0) + 1
+    try {
+      work.getStore()?.onUsage?.()
+    } catch {}
+  }
   void Promise.resolve(
     supabaseAdmin.from('ai_usage').insert({
       feature: row.feature || 'altro',
@@ -83,7 +108,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // Stato del lavoro in corso: chi avvia un lavoro lungo (es. l'assistente della
 // Ricerca clienti) riceve brevi messaggi di avanzamento e una scadenza oltre la
 // quale non conviene iniziare altro (Vercel chiude la richiesta a 300s).
-type WorkContext = { status: (text: string) => void; deadline?: number }
+type WorkContext = {
+  status: (text: string) => void
+  deadline?: number
+  /** Modello scelto per questo lavoro (Super chat). */
+  model?: AIModelChoice
+  /** Contatore dei token, aggiornato a ogni chiamata. */
+  usage?: UsageTally
+  /** Avvisato dopo ogni chiamata conteggiata (per salvare i token in tempo reale). */
+  onUsage?: () => void
+}
 const work = new AsyncLocalStorage<WorkContext>()
 
 export function runWithStatus<T>(context: WorkContext, fn: () => Promise<T>): Promise<T> {
@@ -133,18 +167,28 @@ function toClaudeMessages(messages: GeminiChatMessage[]): Anthropic.MessageParam
   return out
 }
 
+const preferredModel = (): AIModelChoice => work.getStore()?.model || 'auto'
+
 async function callClaudeText(
   messages: GeminiChatMessage[],
   system: string | undefined,
-  options?: AIOptions
+  options?: AIOptions,
+  model: string = CLAUDE_FALLBACK_MODEL
 ): Promise<AIResult> {
   if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
+  const isHaiku = model.startsWith('claude-haiku')
   const response = await claudeClient.messages.create({
-    model: CLAUDE_FALLBACK_MODEL,
-    max_tokens: Math.min(8192, Math.max(1024, options?.maxOutputTokens || 2048)),
+    model,
+    // Sonnet e Opus ragionano prima di rispondere: serve piu' spazio per il pensiero.
+    max_tokens: isHaiku ? Math.min(8192, Math.max(1024, options?.maxOutputTokens || 2048)) : 16000,
     ...(system ? { system } : {}),
     messages: toClaudeMessages(messages),
-    ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+    // Haiku accetta la temperatura; Sonnet/Opus 5.5 no, e con effort basso costano meno.
+    ...(isHaiku
+      ? options?.temperature !== undefined
+        ? { temperature: options.temperature }
+        : {}
+      : { output_config: { effort: 'low' as const } }),
   })
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
@@ -221,16 +265,25 @@ export async function callAI(
   system?: string,
   options?: AIOptions
 ): Promise<AIResult> {
-  const claudeReady = Boolean(getAnthropicApiKey())
+  const pref = preferredModel()
+  const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
+  if (pref.startsWith('claude') && claudeReady) return callClaudeText(messages, system, options, pref)
   if (geminiUsable() || !claudeReady) {
     try {
       return await tryGemini(messages, system, options)
     } catch (error) {
       noteGeminiFailure(error, options?.feature)
-      if (!claudeReady) throw error
+      if (!claudeReady) throw geminiOnlyError(pref, error)
     }
   }
   return callClaudeText(messages, system, options)
+}
+
+function geminiOnlyError(pref: AIModelChoice, error: unknown) {
+  if (pref === 'gemini' && isLimitError(error instanceof Error ? error.message : '')) {
+    return new Error('Gemini gratuito è al limite in questo momento: scegli "Automatico" o un modello Claude per continuare.')
+  }
+  return error
 }
 
 /**
@@ -243,10 +296,13 @@ export function callAIPaced(
   system?: string,
   options?: AIOptions
 ): Promise<AIResult> {
+  const pref = preferredModel()
+  // Modello Claude scelto: niente fila, si va dritti.
+  if (pref.startsWith('claude') && getAnthropicApiKey()) return callClaudeText(messages, system, options, pref)
   // Con Gemini a riposo si va dritti su Claude, senza fila: regge piu' richieste insieme.
-  if (!geminiUsable() && getAnthropicApiKey()) return callClaudeText(messages, system, options)
+  if (!geminiUsable() && getAnthropicApiKey() && pref !== 'gemini') return callClaudeText(messages, system, options)
   const run = async (): Promise<AIResult> => {
-    const claudeReady = Boolean(getAnthropicApiKey())
+    const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
     for (let attempt = 0; ; attempt++) {
       if (!geminiUsable() && claudeReady) return callClaudeText(messages, system, options)
       const wait = lastPacedCall + PACE_MS - Date.now()

@@ -89,6 +89,14 @@ export default function AdminUsagePage() {
     check()
   }, [router, supabase, load])
 
+  // Consumo del team sempre aggiornato mentre la pagina è aperta.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [load])
+
   const patchMember = async (userId: string, updates: Record<string, unknown>) => {
     const token = await getAccessToken()
     if (!token) return

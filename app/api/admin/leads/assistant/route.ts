@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { getAdminEmail } from '@/lib/admin-request'
+import { asModelChoice } from '@/lib/ai'
 import { asScope, isRunning, loadState, newId, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
 
 export const dynamic = 'force-dynamic'
@@ -61,7 +62,19 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString()
   const state = await updateState(scope, (s) => {
     if (!continuing) s.turns.push({ id: newId(), role: 'user', text: original })
-    s.job = { id: jobId, status: 'running', statusText: continuing ? 'Continuo con il resto…' : 'Ci penso…', startedAt: continuing && s.job ? s.job.startedAt : now, updatedAt: now, original, round }
+    const previous = s.job
+    s.job = {
+      id: jobId,
+      status: 'running',
+      statusText: continuing ? 'Continuo con il resto…' : 'Ci penso…',
+      startedAt: continuing && previous ? previous.startedAt : now,
+      updatedAt: now,
+      original,
+      round,
+      // La continuazione tiene modello e conteggio della richiesta originale.
+      model: continuing ? previous?.model : asModelChoice(body?.model),
+      usage: continuing ? previous?.usage : undefined,
+    }
   })
 
   const job = startJob(req, scope, message, original, round)
