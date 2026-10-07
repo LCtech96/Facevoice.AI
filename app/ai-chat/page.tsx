@@ -8,7 +8,7 @@ import AIChatMain from '@/components/AIChatMain'
 import ModelSelector from '@/components/ModelSelector'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
-import { DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL, resolveChatModel } from '@/lib/chat-models'
 import type { User } from '@supabase/supabase-js'
 
 export interface Message {
@@ -74,10 +74,20 @@ export default function AIChatPage() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [accessError, setAccessError] = useState<string | null>(null)
+  const [disabledModels, setDisabledModels] = useState<string[]>([])
+  // Richiesta di accesso alla chat interna: null, 'pending', 'rejected', 'sending'.
+  const [accessRequest, setAccessRequest] = useState<string | null>(null)
   const [chats, setChats] = useState<Chat[]>([])
   const [projectRecords, setProjectRecords] = useState<ProjectRecord[]>([])
   const [currentChatId, setCurrentChatId] = useState<string | null>(null)
   const [selectedModel, setSelectedModel] = useState(DEFAULT_CHAT_MODEL)
+
+  // Modello disattivato dall'admin: passa al primo ancora abilitato.
+  useEffect(() => {
+    if (!disabledModels.includes(selectedModel)) return
+    const allowed = CHAT_MODELS.find((m) => !disabledModels.includes(m.id))
+    if (allowed) setSelectedModel(allowed.id)
+  }, [disabledModels, selectedModel])
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -156,6 +166,12 @@ export default function AIChatPage() {
       if (!response.ok) {
         // 403 = registrato ma non abilitato alla chat interna.
         setAccessError(data.error || 'Accesso non consentito.')
+        if (response.status === 403) {
+          const status = await fetch('/api/chat/access-request', { headers: { Authorization: `Bearer ${token}` } })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+          setAccessRequest(status?.status ?? null)
+        }
         return
       }
 
@@ -179,6 +195,7 @@ export default function AIChatPage() {
       )
       setProjectRecords(data.projects || [])
       if (data.usage) setUsage(data.usage)
+      if (Array.isArray(data.disabled_models)) setDisabledModels(data.disabled_models)
     } catch (error) {
       console.error('Workspace load error:', error)
       setAccessError('Impossibile caricare le conversazioni.')
@@ -374,7 +391,33 @@ export default function AIChatPage() {
             <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-3">
               Accesso non abilitato
             </h1>
-            <p className="text-[var(--text-secondary)]">{accessError}</p>
+            <p className="text-[var(--text-secondary)]">
+              {accessRequest === 'pending'
+                ? 'Richiesta inviata: riceverai un’email appena un amministratore la approva.'
+                : accessRequest === 'rejected'
+                  ? 'La tua richiesta non è stata approvata. Se pensi sia un errore, contattaci.'
+                  : accessError}
+            </p>
+            {(accessRequest === null || accessRequest === 'sending') && !/sospeso/i.test(accessError) && (
+              <button
+                onClick={async () => {
+                  setAccessRequest('sending')
+                  const { data } = await supabase.auth.getSession()
+                  const token = data.session?.access_token
+                  const res = await fetch('/api/chat/access-request', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${token}` },
+                  }).catch(() => null)
+                  const json = res ? await res.json().catch(() => ({})) : {}
+                  if (json.status === 'member') window.location.reload()
+                  else setAccessRequest(res?.ok ? 'pending' : null)
+                }}
+                disabled={accessRequest === 'sending'}
+                className="mt-6 px-5 py-2.5 rounded-full bg-[var(--accent-blue)] text-white font-medium disabled:opacity-60"
+              >
+                {accessRequest === 'sending' ? 'Invio…' : 'Richiedi accesso'}
+              </button>
+            )}
           </div>
         </div>
       </main>
@@ -417,6 +460,7 @@ export default function AIChatPage() {
           initialMessage={pendingInitialMessage}
           onInitialMessageSent={() => setPendingInitialMessage(null)}
           onUsageUpdate={setUsage}
+          disabledModels={disabledModels}
           onModelSelectorToggle={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           onModelSelect={(model) => {
@@ -463,6 +507,7 @@ export default function AIChatPage() {
               if (currentChat) updateChat({ ...currentChat, model })
             }}
             onClose={() => setIsModelSelectorOpen(false)}
+            disabledModels={disabledModels}
           />
         )}
       </div>

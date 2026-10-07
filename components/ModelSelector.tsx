@@ -8,14 +8,17 @@ interface ModelSelectorProps {
   selectedModel: string
   onSelect: (model: string) => void
   onClose: () => void
+  /** Modelli disattivati dall'admin per questo utente: non compaiono. */
+  disabledModels?: string[]
 }
 
 export default function ModelSelector({
   selectedModel,
   onSelect,
   onClose,
+  disabledModels,
 }: ModelSelectorProps) {
-  const models = CHAT_MODELS.map((model) => ({
+  const models = CHAT_MODELS.filter((model) => !disabledModels?.includes(model.id)).map((model) => ({
     ...model,
     provider: model.provider === 'google' ? 'Google' : 'Anthropic',
     available: true,

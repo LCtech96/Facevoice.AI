@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { isAdminEmail } from '@/lib/admin-auth'
+import { accessStatuses, allDisabledModels } from '@/lib/chat-access'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -46,13 +47,21 @@ export async function GET(req: NextRequest) {
       if (data.users.length < PER_PAGE) break
     }
 
+    // Stato della chat interna: abilitato, richiesta in attesa, rifiutata.
+    const statuses = await accessStatuses().catch(() => new Map())
+    const disabled = await allDisabledModels().catch(() => new Map<string, string[]>())
     return NextResponse.json({
-      users: allUsers.map((user) => ({
-        id: user.id,
-        email: user.email,
-        created_at: user.created_at,
-        last_sign_in_at: user.last_sign_in_at,
-      })),
+      users: allUsers
+        .map((user) => ({
+          id: user.id,
+          email: user.email,
+          created_at: user.created_at,
+          last_sign_in_at: user.last_sign_in_at,
+          chat_status: statuses.get(user.id) ?? null,
+          disabled_models: disabled.get(user.id) ?? [],
+        }))
+        // Le richieste in attesa in cima.
+        .sort((a, b) => Number(b.chat_status === 'pending') - Number(a.chat_status === 'pending')),
     })
   } catch (error: any) {
     return NextResponse.json(
