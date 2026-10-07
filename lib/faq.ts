@@ -5,6 +5,22 @@ import { PROJECTS } from '@/lib/seo/projects'
 // Domande frequenti della pagina /faq (e dei dati strutturati FAQPage).
 // Solo informazioni vere: niente prezzi o risultati finche' non li fornisce Luca.
 
+/** Prezzi indicativi "a partire da", forniti da Luca. */
+export const PRICES: { service: string; from: number }[] = [
+  { service: 'Sito vetrina', from: 499 },
+  { service: 'E-commerce', from: 1200 },
+  { service: 'Gestione social', from: 600 },
+  { service: 'Chat AI sul sito e risposte automatiche', from: 200 },
+  { service: 'Software gestionale su misura', from: 800 },
+]
+
+export const PRICES_NOTE =
+  'Sono prezzi indicativi: la cifra finale è una stima realistica basata sulle esigenze di ognuno e può variare in base al progetto.'
+
+export const formatEuro = (value: number) => `${value.toLocaleString('it-IT')} €`
+
+const priceList = PRICES.map((p) => `${p.service} a partire da ${formatEuro(p.from)}`).join('; ')
+
 export type FaqItem = {
   question: string
   answer: string
@@ -29,8 +45,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     question: 'Quanto costa un sito, la gestione dei social o un software su misura?',
-    answer:
-      'Dipende da cosa serve davvero alla tua attività: un sito vetrina, un e-commerce, la gestione completa dei social o un gestionale hanno costi molto diversi. Per questo prima ci sentiamo per una breve chiamata, capiamo l’obiettivo e poi ti mandiamo un preventivo chiaro.',
+    answer: `Prezzi indicativi: ${priceList}. ${PRICES_NOTE} Per questo prima ci sentiamo per una breve chiamata, capiamo l’obiettivo e poi ti mandiamo un preventivo chiaro.`,
   },
   {
     question: 'Vi occupate anche della gestione dei social dopo il lancio?',
