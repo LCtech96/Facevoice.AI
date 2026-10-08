@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { deliver, setOrigin, type SocialPlatform } from '@/lib/meta/agent'
 import { resolveKey, type Member } from '@/lib/meta/identities'
+import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,11 @@ export async function GET(req: NextRequest) {
     .eq('direction', 'in')
     .is('read_at', null)
 
-  return NextResponse.json({ messages: data || [], members })
+  // Dopo un'eliminazione dalla casella si vedono solo i messaggi nuovi (come su WhatsApp).
+  const hidden = await loadHidden()
+  const visible = (data || []).filter((m) => !isHidden(hidden, m.platform, m.contact_id, m.created_at))
+
+  return NextResponse.json({ messages: visible, members })
 }
 
 /** Risposta scritta a mano. body: { text, platform? } — senza platform si usa l'ultimo canale privato usato. */

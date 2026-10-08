@@ -19,6 +19,7 @@ import {
   Unlink,
   Mail,
   Globe,
+  Trash2,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
@@ -352,6 +353,113 @@ function PlatformBadge({ platform, size = 'sm' }: { platform: string; size?: 'sm
   )
 }
 
+const SWIPE_ACTION = 88
+
+/**
+ * Riga con swipe a sinistra come su WhatsApp: scoprendo il pulsante rosso
+ * "Elimina"; uno swipe lungo elimina subito. Funziona anche col mouse.
+ */
+function SwipeRow({
+  open,
+  onOpenChange,
+  onDelete,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDelete: () => void
+  children: React.ReactNode
+}) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const start = useRef<{ x: number; y: number; base: number; id: number } | null>(null)
+  const mode = useRef<'idle' | 'swipe' | 'scroll'>('idle')
+  const moved = useRef(false)
+  const [dx, setDx] = useState<number | null>(null)
+
+  const offset = dx ?? (open ? -SWIPE_ACTION : 0)
+  const width = () => rowRef.current?.offsetWidth || 320
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    start.current = { x: e.clientX, y: e.clientY, base: open ? -SWIPE_ACTION : 0, id: e.pointerId }
+    mode.current = 'idle'
+    moved.current = false
+  }
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const s = start.current
+    if (!s || s.id !== e.pointerId) return
+    const mx = e.clientX - s.x
+    const my = e.clientY - s.y
+    if (mode.current === 'idle') {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return
+      // Movimento soprattutto verticale: e' uno scroll della lista, non uno swipe.
+      mode.current = Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll'
+      if (mode.current === 'swipe') {
+        moved.current = true
+        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      }
+    }
+    if (mode.current !== 'swipe') return
+    setDx(Math.min(0, Math.max(-width(), s.base + mx)))
+  }
+
+  const onPointerEnd = () => {
+    const current = dx
+    start.current = null
+    if (mode.current !== 'swipe' || current === null) {
+      mode.current = 'idle'
+      return
+    }
+    mode.current = 'idle'
+    setDx(null)
+    if (-current > width() * 0.6) {
+      onOpenChange(false)
+      onDelete()
+    } else {
+      onOpenChange(-current > SWIPE_ACTION / 2)
+    }
+  }
+
+  return (
+    <div ref={rowRef} className="relative overflow-hidden border-b border-[var(--border-color)]">
+      <button
+        type="button"
+        onClick={() => {
+          onOpenChange(false)
+          onDelete()
+        }}
+        className="absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-1 bg-[#FF3B30] text-white text-xs font-medium"
+        style={{ width: Math.max(SWIPE_ACTION, -offset) }}
+        tabIndex={open ? 0 : -1}
+        aria-label="Elimina conversazione"
+      >
+        <Trash2 className="w-5 h-5" />
+        Elimina
+      </button>
+      <div
+        className="relative bg-[var(--card-background)] touch-pan-y select-none"
+        style={{ transform: `translateX(${offset}px)`, transition: dx === null ? 'transform 0.2s ease' : 'none' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onClickCapture={(e) => {
+          // Dopo uno swipe (o con la riga aperta) il tocco non apre la conversazione.
+          if (moved.current || open) {
+            e.preventDefault()
+            e.stopPropagation()
+            moved.current = false
+            if (open) onOpenChange(false)
+          }
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function InboxPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -373,6 +481,9 @@ function InboxPage() {
   const [linking, setLinking] = useState(false)
   const [linkQuery, setLinkQuery] = useState('')
   const threadRef = useRef<HTMLDivElement>(null)
+  const [swipeOpen, setSwipeOpen] = useState<string | null>(null)
+  const [removed, setRemoved] = useState<{ name: string; previous: Record<string, string | null> } | null>(null)
+  const removedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const key = searchParams.get('c')
@@ -459,6 +570,31 @@ function InboxPage() {
   const select = (key: string | null) => {
     setSelectedKey(key)
     router.replace(key ? `/admin/inbox?c=${encodeURIComponent(key)}` : '/admin/inbox', { scroll: false })
+  }
+
+  // Swipe "Elimina": la conversazione sparisce subito; per qualche secondo si puo' annullare.
+  const removeConversation = async (c: Conversation) => {
+    setConversations((list) => list.filter((x) => x.key !== c.key))
+    if (selectedKey === c.key) select(null)
+    const res = await authFetch('/api/admin/inbox/hide', { method: 'POST', body: JSON.stringify({ key: c.key }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (!res?.ok) {
+      setNotice(data.error || 'Eliminazione non riuscita')
+      loadConversations()
+      return
+    }
+    if (removedTimer.current) clearTimeout(removedTimer.current)
+    setRemoved({ name: c.contactName || c.members[0]?.contactId || 'Conversazione', previous: data.previous || {} })
+    removedTimer.current = setTimeout(() => setRemoved(null), 6000)
+  }
+
+  const undoRemove = async () => {
+    if (!removed) return
+    if (removedTimer.current) clearTimeout(removedTimer.current)
+    const previous = removed.previous
+    setRemoved(null)
+    await authFetch('/api/admin/inbox/hide', { method: 'POST', body: JSON.stringify({ undo: previous }) }).catch(() => null)
+    loadConversations()
   }
 
   const act = async (message: Message, action: 'approve' | 'reject') => {
@@ -572,6 +708,15 @@ function InboxPage() {
           <AutoReplyToggles />
         </div>
 
+        {removed && (
+          <div className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-50 flex items-center gap-4 px-4 py-3 rounded-xl bg-[#1c1c1e] text-white text-sm shadow-lg max-w-[calc(100vw-32px)]">
+            <span className="truncate">Eliminata: {removed.name}</span>
+            <button onClick={undoRemove} className="font-semibold text-[#0A84FF] shrink-0">
+              Annulla
+            </button>
+          </div>
+        )}
+
         {notice && (
           <div className="mb-3 px-3 py-2 rounded-lg bg-[#FF3B30]/10 text-[#FF3B30] text-sm flex justify-between gap-2">
             <span>{notice}</span>
@@ -635,10 +780,15 @@ function InboxPage() {
               {conversations.map((c) => {
                 const active = c.key === selectedKey
                 return (
-                  <button
+                  <SwipeRow
                     key={c.key}
+                    open={swipeOpen === c.key}
+                    onOpenChange={(open) => setSwipeOpen(open ? c.key : null)}
+                    onDelete={() => removeConversation(c)}
+                  >
+                  <button
                     onClick={() => select(c.key)}
-                    className={`w-full text-left px-3 py-3 flex gap-3 border-b border-[var(--border-color)] transition-colors ${
+                    className={`w-full text-left px-3 py-3 flex gap-3 transition-colors ${
                       active ? 'bg-[var(--background-secondary)]' : 'hover:bg-[var(--background-secondary)]'
                     }`}
                   >
@@ -700,6 +850,7 @@ function InboxPage() {
                       </div>
                     </div>
                   </button>
+                  </SwipeRow>
                 )
               })}
             </div>
