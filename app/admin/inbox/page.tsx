@@ -852,6 +852,11 @@ function InboxPage() {
                   Non lette
                 </button>
               </div>
+              {conversations.length > 0 && (
+                <p className="text-[11px] text-[var(--text-secondary)]">
+                  Scorri una chat verso sinistra, o tienila premuta, per eliminarla.
+                </p>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto">
