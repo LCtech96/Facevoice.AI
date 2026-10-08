@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { loadIdentityMap } from '@/lib/meta/identities'
+import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
   const query = params.get('q')?.trim().toLowerCase() || ''
   const filter = params.get('filter')
 
-  const [{ data, error }, identities] = await Promise.all([
+  const [{ data, error }, identities, hidden] = await Promise.all([
     supabaseAdmin
       .from('social_messages')
       .select('platform, kind, contact_id, contact_name, direction, body, status, read_at, created_at')
@@ -62,12 +63,15 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(SCAN_LIMIT),
     loadIdentityMap(),
+    loadHidden(),
   ])
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const conversations = new Map<string, Conversation & { haystack: string }>()
 
   for (const row of (data || []) as Row[]) {
+    // Conversazione eliminata dalla casella: contano solo i messaggi arrivati dopo.
+    if (isHidden(hidden, row.platform, row.contact_id, row.created_at)) continue
     const person = identities.get(`${row.platform}:${row.contact_id}`)
     const key = person ? `person:${person}` : `${row.platform}:${row.contact_id}`
 
