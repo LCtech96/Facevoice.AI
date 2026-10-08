@@ -354,10 +354,15 @@ function PlatformBadge({ platform, size = 'sm' }: { platform: string; size?: 'sm
 }
 
 const SWIPE_ACTION = 88
+const LONG_PRESS_MS = 550
 
 /**
- * Riga con swipe a sinistra come su WhatsApp: scoprendo il pulsante rosso
- * "Elimina"; uno swipe lungo elimina subito. Funziona anche col mouse.
+ * Riga con swipe a sinistra come su WhatsApp: scopre il pulsante rosso
+ * "Elimina"; uno swipe lungo elimina subito. Anche una pressione lunga scopre
+ * il pulsante. Col mouse si trascina.
+ *
+ * I gesti touch usano listener nativi non passivi: cosi' appena il movimento
+ * e' orizzontale il browser non puo' prenderselo (scroll, gesti di sistema).
  */
 function SwipeRow({
   open,
@@ -371,55 +376,125 @@ function SwipeRow({
   children: React.ReactNode
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
-  const start = useRef<{ x: number; y: number; base: number; id: number } | null>(null)
-  const mode = useRef<'idle' | 'swipe' | 'scroll'>('idle')
-  const moved = useRef(false)
+  const fgRef = useRef<HTMLDivElement>(null)
   const [dx, setDx] = useState<number | null>(null)
+  const suppressClick = useRef(false)
+  // Valori sempre aggiornati per i listener nativi (registrati una volta sola).
+  const live = useRef({ open, onOpenChange, onDelete })
+  live.current = { open, onOpenChange, onDelete }
 
-  const offset = dx ?? (open ? -SWIPE_ACTION : 0)
-  const width = () => rowRef.current?.offsetWidth || 320
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg) return
+    let start: { x: number; y: number; base: number } | null = null
+    let mode: 'idle' | 'swipe' | 'scroll' = 'idle'
+    let current = 0
+    let pressTimer: ReturnType<typeof setTimeout> | null = null
+    const width = () => rowRef.current?.offsetWidth || 320
+    const clearPress = () => {
+      if (pressTimer) clearTimeout(pressTimer)
+      pressTimer = null
+    }
 
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-    start.current = { x: e.clientX, y: e.clientY, base: open ? -SWIPE_ACTION : 0, id: e.pointerId }
-    mode.current = 'idle'
-    moved.current = false
-  }
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    const s = start.current
-    if (!s || s.id !== e.pointerId) return
-    const mx = e.clientX - s.x
-    const my = e.clientY - s.y
-    if (mode.current === 'idle') {
-      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return
-      // Movimento soprattutto verticale: e' uno scroll della lista, non uno swipe.
-      mode.current = Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll'
-      if (mode.current === 'swipe') {
-        moved.current = true
-        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    const begin = (x: number, y: number) => {
+      start = { x, y, base: live.current.open ? -SWIPE_ACTION : 0 }
+      mode = 'idle'
+      suppressClick.current = false
+      current = start.base
+    }
+    // true = gesto orizzontale in corso (va bloccato lo scroll del browser)
+    const move = (x: number, y: number) => {
+      if (!start) return false
+      const mx = x - start.x
+      const my = y - start.y
+      if (mode === 'idle') {
+        if (Math.abs(mx) < 6 && Math.abs(my) < 6) return false
+        clearPress()
+        mode = Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll'
+      }
+      if (mode !== 'swipe') return false
+      current = Math.min(0, Math.max(-width(), start.base + mx))
+      setDx(current)
+      return true
+    }
+    const end = () => {
+      clearPress()
+      const wasSwipe = mode === 'swipe'
+      start = null
+      mode = 'idle'
+      if (!wasSwipe) return
+      suppressClick.current = true
+      setDx(null)
+      if (-current > width() * 0.55) {
+        live.current.onOpenChange(false)
+        live.current.onDelete()
+      } else {
+        live.current.onOpenChange(-current > SWIPE_ACTION / 3)
       }
     }
-    if (mode.current !== 'swipe') return
-    setDx(Math.min(0, Math.max(-width(), s.base + mx)))
-  }
 
-  const onPointerEnd = () => {
-    const current = dx
-    start.current = null
-    if (mode.current !== 'swipe' || current === null) {
-      mode.current = 'idle'
-      return
+    // Dopo un tocco i telefoni mandano anche eventi mouse "di compatibilita'": vanno ignorati.
+    let lastTouchAt = 0
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchAt = Date.now()
+      if (e.touches.length !== 1) return
+      const t = e.touches[0]
+      begin(t.clientX, t.clientY)
+      clearPress()
+      pressTimer = setTimeout(() => {
+        // Pressione lunga senza movimento: scopre "Elimina".
+        if (start && mode === 'idle') {
+          suppressClick.current = true
+          start = null
+          live.current.onOpenChange(true)
+          navigator.vibrate?.(15)
+        }
+      }, LONG_PRESS_MS)
     }
-    mode.current = 'idle'
-    setDx(null)
-    if (-current > width() * 0.6) {
-      onOpenChange(false)
-      onDelete()
-    } else {
-      onOpenChange(-current > SWIPE_ACTION / 2)
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0]
+      if (t && move(t.clientX, t.clientY) && e.cancelable) e.preventDefault()
     }
-  }
+    const onTouchEnd = () => {
+      lastTouchAt = Date.now()
+      end()
+    }
+
+    let mouseDown = false
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || Date.now() - lastTouchAt < 1000) return
+      mouseDown = true
+      begin(e.clientX, e.clientY)
+    }
+    const onMouseMove = (e: MouseEvent) => {
+      if (mouseDown) move(e.clientX, e.clientY)
+    }
+    const onMouseUp = () => {
+      if (!mouseDown) return
+      mouseDown = false
+      end()
+    }
+
+    fg.addEventListener('touchstart', onTouchStart, { passive: true })
+    fg.addEventListener('touchmove', onTouchMove, { passive: false })
+    fg.addEventListener('touchend', onTouchEnd)
+    fg.addEventListener('touchcancel', onTouchEnd)
+    fg.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      clearPress()
+      fg.removeEventListener('touchstart', onTouchStart)
+      fg.removeEventListener('touchmove', onTouchMove)
+      fg.removeEventListener('touchend', onTouchEnd)
+      fg.removeEventListener('touchcancel', onTouchEnd)
+      fg.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  const offset = dx ?? (open ? -SWIPE_ACTION : 0)
 
   return (
     <div ref={rowRef} className="relative overflow-hidden border-b border-[var(--border-color)]">
@@ -438,19 +513,28 @@ function SwipeRow({
         Elimina
       </button>
       <div
-        className="relative bg-[var(--card-background)] touch-pan-y select-none"
-        style={{ transform: `translateX(${offset}px)`, transition: dx === null ? 'transform 0.2s ease' : 'none' }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerEnd}
-        onPointerCancel={onPointerEnd}
+        ref={fgRef}
+        className="relative bg-[var(--card-background)] select-none"
+        style={{
+          transform: `translateX(${offset}px)`,
+          transition: dx === null ? 'transform 0.2s ease' : 'none',
+          touchAction: 'pan-y',
+          WebkitTouchCallout: 'none',
+        }}
+        onContextMenu={(e) => e.preventDefault()}
         onClickCapture={(e) => {
-          // Dopo uno swipe (o con la riga aperta) il tocco non apre la conversazione.
-          if (moved.current || open) {
+          // Il click che chiude uno swipe o una pressione lunga non apre la chat.
+          if (suppressClick.current) {
             e.preventDefault()
             e.stopPropagation()
-            moved.current = false
-            if (open) onOpenChange(false)
+            suppressClick.current = false
+            return
+          }
+          // Riga aperta: un tocco la richiude soltanto.
+          if (open) {
+            e.preventDefault()
+            e.stopPropagation()
+            onOpenChange(false)
           }
         }}
       >
@@ -899,6 +983,14 @@ function InboxPage() {
                         ))}
                       </div>
                     </div>
+                    <button
+                      onClick={() => current && removeConversation(current)}
+                      className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[#FF3B30] hover:bg-[var(--background-secondary)]"
+                      aria-label="Elimina conversazione"
+                      title="Elimina conversazione"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => setLinking((v) => !v)}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
