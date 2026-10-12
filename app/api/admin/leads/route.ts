@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { LEAD_STATUSES, MAX_RESULTS, SYSTEM_EMAIL, placesKey, searchPlaces } from '@/lib/leads'
 import { syncLeadStatuses } from '@/lib/lead-status'
+import { withCalls } from '@/lib/lead-calls'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     for (const l of wrong) l.email = null
   }
 
-  return NextResponse.json({ leads: data || [], configured: Boolean(placesKey()) })
+  return NextResponse.json({ leads: await withCalls(data || []), configured: Boolean(placesKey()) })
 }
 
 /** Nuova ricerca su Google Maps. body: { query, max } */
