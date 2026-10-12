@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
+  Check,
   Copy,
   ExternalLink,
   Facebook,
@@ -43,6 +44,8 @@ type Lead = {
   notes: string | null
   analyzed_at: string | null
   contacted_at: string | null
+  /** Casella "Chiamato": quando Luca ha telefonato. */
+  called_at: string | null
   created_at: string
 }
 
@@ -78,6 +81,7 @@ export default function LeadsPage() {
   const [configured, setConfigured] = useState(true)
   const [leads, setLeads] = useState<Lead[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
+  const [callFilter, setCallFilter] = useState<'all' | 'todo' | 'done'>('all')
   const [filterText, setFilterText] = useState('')
   // Schede mostrate su richiesta (ultima ricerca su Maps o indicate dall'assistente).
   const [focus, setFocus] = useState<{ label: string; ids: string[] } | null>(null)
@@ -89,6 +93,9 @@ export default function LeadsPage() {
   const [progress, setProgress] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Lead>>({})
 
+  // Caselle "Chiamato" in salvataggio: l'aggiornamento automatico non deve rimetterle com'erano.
+  const pendingCalls = useRef(new Map<string, string | null>())
+
   const load = useCallback(async () => {
     const res = await authFetch('/api/admin/leads?status=all')
     if (res.status === 401) return setAuthorized(false)
@@ -96,7 +103,12 @@ export default function LeadsPage() {
     if (!res.ok) return setNotice(data.error || 'Errore nel caricamento')
     setAuthorized(true)
     setConfigured(data.configured)
-    setLeads(data.leads)
+    const pending = pendingCalls.current
+    setLeads(
+      pending.size
+        ? (data.leads as Lead[]).map((l) => (pending.has(l.id) ? { ...l, called_at: pending.get(l.id) ?? null } : l))
+        : data.leads
+    )
     return data.leads as Lead[]
   }, [])
 
@@ -131,8 +143,16 @@ export default function LeadsPage() {
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: leads.length }
     for (const l of leads) c[l.status] = (c[l.status] || 0) + 1
+    c.called = leads.filter((l) => l.called_at).length
+    c.toCall = leads.filter(toCall).length
     return c
   }, [leads])
+
+  // Da chiamare: c'e' il telefono, non e' ancora stato chiamato e non e' chiuso (cliente, scartato…).
+  function toCall(l: Lead) {
+    return Boolean(l.phone) && !l.called_at && (l.status === 'new' || l.status === 'contacted' || l.status === 'replied')
+  }
+  const matchesCall = (l: Lead) => callFilter === 'all' || (callFilter === 'done' ? Boolean(l.called_at) : toCall(l))
 
   // Le schede generate da poco restano sempre visibili, qualunque filtro sia attivo.
   const isRecent = (l: Lead) => Date.now() - new Date(l.created_at).getTime() < RECENT_MS
@@ -143,26 +163,28 @@ export default function LeadsPage() {
         (l) =>
           !isRecent(l) &&
           (statusFilter === 'all' || l.status === statusFilter) &&
+          matchesCall(l) &&
           (!filterText.trim() ||
             `${l.name} ${l.search_query || ''} ${l.address || ''}`.toLowerCase().includes(filterText.trim().toLowerCase()))
       )
-  const filtersOn = statusFilter !== 'all' || Boolean(filterText.trim())
+  const filtersOn = statusFilter !== 'all' || callFilter !== 'all' || Boolean(filterText.trim())
   const resetFilters = () => {
     setFocus(null)
     setStatusFilter('all')
+    setCallFilter('all')
     setFilterText('')
   }
 
   const renderLead = (lead: Lead) => (
-    <button
+    <div
       key={lead.id}
-      onClick={() => setSelectedId(lead.id)}
-      className={`w-full text-left p-3 rounded-xl border transition-colors ${
+      className={`flex items-stretch rounded-xl border transition-colors ${
         lead.id === selectedId
           ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5'
           : 'border-[var(--border-color)] bg-[var(--card-background)]'
       }`}
     >
+    <button onClick={() => setSelectedId(lead.id)} className="min-w-0 flex-1 text-left p-3">
       <div className="flex items-start gap-3">
         <span
           className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-sm font-bold text-white"
@@ -185,13 +207,37 @@ export default function LeadsPage() {
             {lead.instagram && <Instagram className="w-3 h-3" />}
             {lead.facebook && <Facebook className="w-3 h-3" />}
             {!lead.website && <span className="text-[#FF9500]">senza sito</span>}
+            {lead.called_at && (
+              <span className="text-[#34C759]">chiamato il {new Date(lead.called_at).toLocaleDateString('it-IT')}</span>
+            )}
           </div>
         </div>
       </div>
     </button>
+    <CallBox lead={lead} onToggle={toggleCalled} />
+    </div>
   )
 
   const replaceLead = (lead: Lead) => setLeads((list) => list.map((l) => (l.id === lead.id ? lead : l)))
+
+  // Casella "Chiamato": si aggiorna subito, poi si salva; se il salvataggio fallisce torna com'era.
+  const toggleCalled = async (lead: Lead) => {
+    const called = !lead.called_at
+    const optimistic = called ? new Date().toISOString() : null
+    pendingCalls.current.set(lead.id, optimistic)
+    replaceLead({ ...lead, called_at: optimistic })
+    const res = await authFetch(`/api/admin/leads/${lead.id}`, { method: 'PATCH', body: JSON.stringify({ called }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (pendingCalls.current.get(lead.id) === optimistic) pendingCalls.current.delete(lead.id)
+    // Toccata di nuovo mentre salvava: vale l'ultima scelta.
+    else if (pendingCalls.current.has(lead.id)) return
+    if (!res?.ok || !data.lead) {
+      replaceLead(lead)
+      setNotice(data.error || 'Non sono riuscito a salvare la chiamata, riprova.')
+      return
+    }
+    replaceLead(data.lead)
+  }
 
   const runSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -386,6 +432,27 @@ export default function LeadsPage() {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-2 mb-1">
+              {(
+                [
+                  ['all', 'Telefono: tutti'],
+                  ['todo', `Da chiamare${counts.toCall ? ` (${counts.toCall})` : ''}`],
+                  ['done', `Chiamati${counts.called ? ` (${counts.called})` : ''}`],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setFocus(null)
+                    setCallFilter(key)
+                  }}
+                  className={chip(callFilter === key)}
+                >
+                  {key !== 'all' && <Phone className="inline w-3 h-3 mr-1 -mt-0.5" />}
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="flex gap-2 mb-3">
               <input
                 value={filterText}
@@ -468,6 +535,28 @@ export default function LeadsPage() {
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
+
+                {selected.phone && (
+                  <button
+                    onClick={() => toggleCalled(selected)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm text-left ${
+                      selected.called_at
+                        ? 'border-[#34C759]/40 bg-[#34C759]/10 text-[var(--text-primary)]'
+                        : 'border-[var(--border-color)] text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <span
+                      className={`w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center ${
+                        selected.called_at ? 'bg-[#34C759] border-[#34C759]' : 'border-[var(--text-secondary)]'
+                      }`}
+                    >
+                      {selected.called_at && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
+                    </span>
+                    {selected.called_at
+                      ? `Chiamato il ${new Date(selected.called_at).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+                      : 'Segna come chiamato'}
+                  </button>
+                )}
 
                 <div className="flex flex-wrap gap-2 text-sm">
                   {selected.phone && (
@@ -617,5 +706,29 @@ export default function LeadsPage() {
         </div>
       </div>
     </main>
+  )
+}
+
+/** Casella "Chiamato" a destra della scheda: separata dal resto, non apre il dettaglio. */
+function CallBox({ lead, onToggle }: { lead: Lead; onToggle: (lead: Lead) => void }) {
+  if (!lead.phone && !lead.called_at) return null
+  const called = Boolean(lead.called_at)
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(lead)}
+      aria-pressed={called}
+      aria-label={called ? `${lead.name}: chiamato, tocca per togliere` : `Segna ${lead.name} come chiamato`}
+      className="shrink-0 w-16 flex flex-col items-center justify-center gap-1 border-l border-[var(--border-color)] text-[10px] text-[var(--text-secondary)]"
+    >
+      <span
+        className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${
+          called ? 'bg-[#34C759] border-[#34C759]' : 'border-[var(--text-secondary)]'
+        }`}
+      >
+        {called && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
+      </span>
+      <span className={called ? 'text-[#34C759]' : ''}>{called ? 'Chiamato' : 'Chiama'}</span>
+    </button>
   )
 }

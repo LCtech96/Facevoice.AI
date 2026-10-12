@@ -28,6 +28,8 @@ export type Lead = {
   notes: string | null
   analyzed_at: string | null
   contacted_at: string | null
+  /** Telefonata segnata con la casella "Chiamato" (da app_settings, non dalla tabella). */
+  called_at?: string | null
   created_at: string
 }
 
