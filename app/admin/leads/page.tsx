@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  Download,
   ExternalLink,
   Facebook,
   Globe,
@@ -21,6 +22,7 @@ import {
 import Navigation from '@/components/Navigation'
 import LeadAssistant from './LeadAssistant'
 import { getAccessToken } from '@/lib/session-token'
+import { collectPhones, saveFile, toCsv, toVcf } from '@/lib/phone-export'
 
 type Lead = {
   id: string
@@ -83,6 +85,8 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
   const [callFilter, setCallFilter] = useState<'all' | 'todo' | 'done'>('all')
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportMobileOnly, setExportMobileOnly] = useState(true)
   const [filterText, setFilterText] = useState('')
   // Schede mostrate su richiesta (ultima ricerca su Maps o indicate dall'assistente).
   const [focus, setFocus] = useState<{ label: string; ids: string[] } | null>(null)
@@ -220,6 +224,23 @@ export default function LeadsPage() {
   )
 
   const replaceLead = (lead: Lead) => setLeads((list) => list.map((l) => (l.id === lead.id ? lead : l)))
+
+  // Esportazione numeri: tutte le schede (non solo quelle filtrate), tranne chi ha chiesto di non essere contattato.
+  const phoneRows = leads
+    .filter((l) => l.phone && l.status !== 'do_not_contact')
+    .map((l) => ({ name: l.name, phone: l.phone!, status: l.status, calledAt: l.called_at, address: l.address, search: l.search_query }))
+  const mobileCount = collectPhones(phoneRows, true).length
+  const allPhonesCount = collectPhones(phoneRows, false).length
+  const exportPhones = async (format: 'csv' | 'vcf') => {
+    const entries = collectPhones(phoneRows, exportMobileOnly)
+    if (!entries.length) return setNotice(exportMobileOnly ? 'Nessun cellulare tra le schede.' : 'Nessun numero tra le schede.')
+    const label = (st: string) => STATUS[st]?.label || st
+    const day = new Date().toISOString().slice(0, 10)
+    const name = `${exportMobileOnly ? 'cellulari' : 'numeri'}-clienti-${day}`
+    if (format === 'csv') await saveFile(toCsv(entries, label), `${name}.csv`, 'text/csv;charset=utf-8')
+    else await saveFile(toVcf(entries, label), `${name}.vcf`, 'text/vcard;charset=utf-8')
+    setNotice(`${entries.length} ${exportMobileOnly ? 'cellulari' : 'numeri'} esportati.`)
+  }
 
   // Casella "Chiamato": si aggiorna subito, poi si salva; se il salvataggio fallisce torna com'era.
   const toggleCalled = async (lead: Lead) => {
@@ -434,6 +455,10 @@ export default function LeadsPage() {
               ))}
             </div>
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-1">
+              <button onClick={() => setExportOpen((v) => !v)} className={chip(exportOpen)}>
+                <Download className="inline w-3 h-3 mr-1 -mt-0.5" />
+                Scarica numeri
+              </button>
               {(
                 [
                   ['all', 'Telefono: tutti'],
@@ -454,6 +479,36 @@ export default function LeadsPage() {
                 </button>
               ))}
             </div>
+            {exportOpen && (
+              <div className="mb-3 p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={() => setExportMobileOnly(true)} className={chip(exportMobileOnly)}>
+                    Solo cellulari ({mobileCount})
+                  </button>
+                  <button onClick={() => setExportMobileOnly(false)} className={chip(!exportMobileOnly)}>
+                    Tutti i numeri ({allPhonesCount})
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => exportPhones('csv')}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--accent-blue)] text-white text-sm font-medium"
+                  >
+                    <Download className="w-4 h-4" /> Excel (CSV)
+                  </button>
+                  <button
+                    onClick={() => exportPhones('vcf')}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
+                  >
+                    <Phone className="w-4 h-4" /> Contatti (.vcf)
+                  </button>
+                </div>
+                <p className="text-[11px] text-[var(--text-secondary)]">
+                  Tutte le schede della lista, senza doppioni, esclusi i &quot;Non contattare&quot;. Il CSV si apre con Excel o
+                  Numbers (nome, numero, cellulare o fisso, stato, chiamato). Il file .vcf si importa nei Contatti del telefono.
+                </p>
+              </div>
+            )}
             <div className="flex gap-2 mb-3">
               <input
                 value={filterText}
