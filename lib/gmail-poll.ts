@@ -138,7 +138,7 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
         outreach: lead,
       })
       // Un contatto della Ricerca clienti ha risposto: la scheda passa a "ha risposto".
-      if (lead?.status === 'contacted') {
+      if (lead?.status === 'contacted' || lead?.status === 'no_answer') {
         await supabaseAdmin.from('leads').update({ status: 'replied' }).eq('id', lead.leadId)
       }
       processed++

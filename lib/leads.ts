@@ -33,7 +33,8 @@ export type Lead = {
   created_at: string
 }
 
-export const LEAD_STATUSES = ['new', 'contacted', 'replied', 'client', 'discarded', 'do_not_contact'] as const
+// no_answer: scelto a mano ("Non ha risposto") dopo email o telefonate senza risposta.
+export const LEAD_STATUSES = ['new', 'contacted', 'no_answer', 'replied', 'client', 'discarded', 'do_not_contact'] as const
 export const MAX_RESULTS = 60
 // Tetto giornaliero di primi contatti via email: protegge la reputazione di facevoice.ai.
 export const DAILY_EMAIL_LIMIT = 30

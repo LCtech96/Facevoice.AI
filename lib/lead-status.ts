@@ -4,9 +4,10 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 // - ultimo messaggio nostro (inviato)  → "contacted" (Contattato, aspettiamo lui)
 // - ultimo messaggio suo               → "replied"   (Ha risposto, tocca a noi)
 // Le bozze in attesa non contano finche' non partono. Gli stati scelti a mano
-// (cliente, scartato, non contattare) non vengono mai toccati.
+// (cliente, scartato, non contattare) non vengono mai toccati. "Non ha risposto",
+// scelto a mano, cambia solo se arriva una sua risposta (diventa "Ha risposto").
 
-const AUTO_STATUSES = ['new', 'contacted', 'replied']
+const AUTO_STATUSES = ['new', 'contacted', 'no_answer', 'replied']
 
 type Row = {
   contact_id: string
@@ -84,6 +85,7 @@ export async function syncLeadStatuses(): Promise<number> {
     if (!firstOut.has(email) && !lead.contacted_at) continue
     const status = last.direction === 'in' ? 'replied' : 'contacted'
     if (status === lead.status) continue
+    if (lead.status === 'no_answer' && status !== 'replied') continue
     const update: Record<string, string> = { status }
     if (!lead.contacted_at && firstOut.get(email)) update.contacted_at = firstOut.get(email)!
     const { error } = await supabaseAdmin.from('leads').update(update).eq('id', lead.id).in('status', AUTO_STATUSES)

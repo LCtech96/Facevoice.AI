@@ -52,6 +52,7 @@ type Lead = {
 const STATUS: Record<string, { label: string; color: string }> = {
   new: { label: 'Da contattare', color: '#8E8E93' },
   contacted: { label: 'Contattato', color: '#0A84FF' },
+  no_answer: { label: 'Non ha risposto', color: '#AF52DE' },
   replied: { label: 'Ha risposto', color: '#FF9500' },
   client: { label: 'Cliente', color: '#34C759' },
   discarded: { label: 'Scartato', color: '#636366' },
@@ -150,7 +151,7 @@ export default function LeadsPage() {
 
   // Da chiamare: c'e' il telefono, non e' ancora stato chiamato e non e' chiuso (cliente, scartato…).
   function toCall(l: Lead) {
-    return Boolean(l.phone) && !l.called_at && (l.status === 'new' || l.status === 'contacted' || l.status === 'replied')
+    return Boolean(l.phone) && !l.called_at && ['new', 'contacted', 'no_answer', 'replied'].includes(l.status)
   }
   const matchesCall = (l: Lead) => callFilter === 'all' || (callFilter === 'done' ? Boolean(l.called_at) : toCall(l))
 
