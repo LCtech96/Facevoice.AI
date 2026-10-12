@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { data: lead } = await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle()
   if (!lead) return NextResponse.json({ error: 'Contatto non trovato' }, { status: 404 })
   if (lead.status === 'do_not_contact') return NextResponse.json({ error: 'Ha chiesto di non essere ricontattato' }, { status: 409 })
-  if (lead.status !== 'contacted') return NextResponse.json({ error: 'Il contatto ha già risposto o non è stato contattato' }, { status: 409 })
+  if (lead.status !== 'contacted' && lead.status !== 'no_answer') return NextResponse.json({ error: 'Il contatto ha già risposto o non è stato contattato' }, { status: 409 })
 
   const to = String(lead.email || '').toLowerCase()
   const subject = String(body?.subject || '').trim()

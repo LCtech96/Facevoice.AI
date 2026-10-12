@@ -125,10 +125,11 @@ async function stats() {
     da_contattare_con_email: n((l) => l.status === 'new' && Boolean(l.email)),
     da_contattare_non_analizzati: n((l) => l.status === 'new' && !l.analyzed_at),
     contattati_senza_risposta: n((l) => l.status === 'contacted'),
+    segnati_non_ha_risposto: n((l) => l.status === 'no_answer'),
     hanno_risposto: n((l) => l.status === 'replied'),
     clienti: n((l) => l.status === 'client'),
     chiamati_al_telefono: n((l) => Boolean(l.called_at)),
-    da_chiamare_con_telefono: n((l) => Boolean(l.phone) && !l.called_at && ['new', 'contacted'].includes(l.status)),
+    da_chiamare_con_telefono: n((l) => Boolean(l.phone) && !l.called_at && ['new', 'contacted', 'no_answer'].includes(l.status)),
     limite_primi_contatti_al_giorno: DAILY_EMAIL_LIMIT,
   }
 }
@@ -238,7 +239,7 @@ async function prepareFollowups(args: { ids?: string[]; filter?: string; instruc
   const limit = Math.min(BATCH_LIMIT, Math.max(1, args.limit || BATCH_LIMIT))
   const pool = (await loadLeads(args.ids)).filter(
     (l) =>
-      l.status === 'contacted' &&
+      (l.status === 'contacted' || l.status === 'no_answer') &&
       l.email &&
       l.contacted_at &&
       new Date(l.contacted_at).getTime() <= before &&
@@ -523,7 +524,7 @@ A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
 
 Strumenti:
 - "stats": {} → numeri della lista.
-- "list_leads": {"status": "new|contacted|replied|client|discarded|do_not_contact|all", "filter": "testo opzionale", "only_with_email": false, "recent_minutes": 120, "called": true|false, "only_with_phone": false, "limit": 30, "label": "titolo breve"} → elenco schede (id, nome, stato, email, telefono, chiamato_il...). "called": true = già chiamati al telefono da Luca (casella "Chiamato"), false = non ancora chiamati. Le schede trovate vengono anche MOSTRATE a Luca nella lista della pagina: usalo quando chiede di vedere/mostrare contatti (es. "mostrami quelli generati poco fa" → recent_minutes 180, label "Generati poco fa").
+- "list_leads": {"status": "new|contacted|no_answer|replied|client|discarded|do_not_contact|all" (no_answer = "Non ha risposto", segnato a mano da Luca), "filter": "testo opzionale", "only_with_email": false, "recent_minutes": 120, "called": true|false, "only_with_phone": false, "limit": 30, "label": "titolo breve"} → elenco schede (id, nome, stato, email, telefono, chiamato_il...). "called": true = già chiamati al telefono da Luca (casella "Chiamato"), false = non ancora chiamati. Le schede trovate vengono anche MOSTRATE a Luca nella lista della pagina: usalo quando chiede di vedere/mostrare contatti (es. "mostrami quelli generati poco fa" → recent_minutes 180, label "Generati poco fa").
 - "search_places": {"query": "ristoranti Catania", "max": 20} → cerca su Google Maps e aggiunge alla lista (max 20, 40 o 60).
 - "analyze": {"ids": [...] oppure omesso, "limit": 25} → legge i siti delle schede nuove non analizzate: trova email e social, dà il punteggio.
 - "prepare_first_emails": {"ids": [...] opzionale, "filter": "testo opzionale", "instructions": "indicazioni di Luca", "limit": 25} → prepara le PRIME email per chi non è ancora stato contattato (analizza da solo chi non è analizzato). Le bozze compaiono a Luca per il controllo.
