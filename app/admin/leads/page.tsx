@@ -728,7 +728,7 @@ function CallBox({ lead, onToggle }: { lead: Lead; onToggle: (lead: Lead) => voi
       >
         {called && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
       </span>
-      <span className={called ? 'text-[#34C759]' : ''}>{called ? 'Chiamato' : 'Chiama'}</span>
+      <span className={called ? 'text-[#34C759]' : ''}>{called ? 'Chiamato' : 'Da chiamare'}</span>
     </button>
   )
 }
