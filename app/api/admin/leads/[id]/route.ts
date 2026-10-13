@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAdminEmail } from '@/lib/admin-request'
+import { canAccess, guard } from '@/lib/staff-access'
 import { LEAD_STATUSES } from '@/lib/leads'
 import { setCalled, withCalls } from '@/lib/lead-calls'
 
@@ -9,9 +9,19 @@ export const dynamic = 'force-dynamic'
 const TEXT_FIELDS = ['notes', 'email', 'email_subject', 'email_body', 'dm_text', 'instagram', 'facebook', 'phone'] as const
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const access = await guard(req, 'leads', 'view')
+  if (access instanceof NextResponse) return access
   const { id } = await params
   const body = await req.json().catch(() => ({}))
+
+  // Permessi per tipo di modifica: chiamate, stato e note da una parte; contatti ed email dall'altra.
+  const touches = (fields: string[]) => fields.some((f) => body?.[f] !== undefined)
+  if (touches(['called', 'status', 'notes']) && !canAccess(access, 'leads', 'calls')) {
+    return NextResponse.json({ error: 'Non hai il permesso di segnare chiamate, stato o note.' }, { status: 403 })
+  }
+  if (touches(['email', 'email_subject', 'email_body', 'dm_text', 'instagram', 'facebook', 'phone']) && !canAccess(access, 'leads', 'email')) {
+    return NextResponse.json({ error: 'Non hai il permesso di modificare contatti ed email.' }, { status: 403 })
+  }
 
   const updates: Record<string, unknown> = {}
   for (const field of TEXT_FIELDS) {
@@ -39,7 +49,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  // Eliminare schede fa parte della gestione delle ricerche.
+  const access = await guard(req, 'leads', 'search')
+  if (access instanceof NextResponse) return access
   const { id } = await params
   await supabaseAdmin.from('leads').delete().eq('id', id)
   await setCalled(id, false).catch(() => undefined)

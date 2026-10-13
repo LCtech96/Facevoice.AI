@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ChatAuthError, currentPeriodStart, requireChatAdmin } from '@/lib/chat-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendWelcomeEmail } from '@/lib/chat-access'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +49,8 @@ function addRow(totals: ReturnType<typeof emptyTotals>, row: UsageRow) {
 /** Consumo del mese corrente per ogni dipendente, con dettaglio per modello. */
 export async function GET(req: NextRequest) {
   try {
-    await requireChatAdmin(req)
+    // Vedere i consumi: admin o dipendente con il permesso. Modificare resta dell'admin.
+    if (!canAccess(await getStaffAccess(req), 'usage', 'view')) await requireChatAdmin(req)
 
     const periodStart = currentPeriodStart()
 

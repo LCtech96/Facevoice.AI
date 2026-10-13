@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAdminEmail } from '@/lib/admin-request'
+import { guard } from '@/lib/staff-access'
 import { LEAD_STATUSES, MAX_RESULTS, SYSTEM_EMAIL, placesKey, searchPlaces } from '@/lib/leads'
 import { syncLeadStatuses } from '@/lib/lead-status'
 import { withCalls } from '@/lib/lead-calls'
@@ -10,7 +10,8 @@ export const maxDuration = 60
 
 /** Elenco lead: ?status=new|...|all, ?q=testo. Prima i punteggi piu' alti. */
 export async function GET(req: NextRequest) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const access = await guard(req, 'leads', 'view')
+  if (access instanceof NextResponse) return access
   const params = req.nextUrl.searchParams
   const status = params.get('status') || 'all'
   const q = params.get('q')?.trim()
@@ -42,7 +43,8 @@ export async function GET(req: NextRequest) {
 
 /** Nuova ricerca su Google Maps. body: { query, max } */
 export async function POST(req: NextRequest) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const access = await guard(req, 'leads', 'search')
+  if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   const query = String(body?.query || '').trim().slice(0, 200)
   if (query.length < 3) return NextResponse.json({ error: 'Scrivi cosa cercare, es. "ristoranti Catania"' }, { status: 400 })

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ChatAuthError, currentPeriodStart, requireChatAdmin } from '@/lib/chat-auth'
+import { ChatAuthError, currentPeriodStart } from '@/lib/chat-auth'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +32,9 @@ function add(t: ReturnType<typeof totals>, row: Row) {
 /** Consumo delle AI automatiche (chat del sito, risposte, Ricerca clienti) nel mese corrente. */
 export async function GET(req: NextRequest) {
   try {
-    await requireChatAdmin(req)
+    if (!canAccess(await getStaffAccess(req), 'usage', 'view')) {
+      return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
+    }
     const periodStart = currentPeriodStart()
     const rows: Row[] = []
     // Paginato: Supabase restituisce al massimo 1000 righe per richiesta.

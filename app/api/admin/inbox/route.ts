@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAdminEmail } from '@/lib/admin-request'
+import { guard } from '@/lib/staff-access'
 import { loadIdentityMap } from '@/lib/meta/identities'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 
@@ -46,9 +46,8 @@ const normalizeName = (name: string | null) =>
  * persona (es. Instagram + Messenger) diventano un'unica conversazione.
  */
 export async function GET(req: NextRequest) {
-  if (!(await getAdminEmail(req))) {
-    return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-  }
+  const access = await guard(req, 'inbox', 'view')
+  if (access instanceof NextResponse) return access
 
   const params = req.nextUrl.searchParams
   const platform = params.get('platform')

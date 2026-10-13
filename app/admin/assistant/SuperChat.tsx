@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Plus, Send, Sparkles, X } from 'lucide-react'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
+import { useStaffAccess } from '@/components/useStaffAccess'
 import { AI_MODEL_CHOICES, modelLabel } from '@/lib/ai-models'
 
 const MODEL_KEY = 'fv_superchat_model'
@@ -31,6 +32,9 @@ const EXAMPLES = [
 ]
 
 export default function SuperChat() {
+  // Solo lettura per chi non ha il permesso di scrivere alla super chat.
+  const staff = useStaffAccess()
+  const canUse = staff.can('assistant', 'use')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
   const [model, setModel] = useState<string>('auto')
@@ -344,6 +348,11 @@ export default function SuperChat() {
           )}
         </div>
         {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
+        {!staff.loading && !canUse ? (
+          <p className="px-3 py-3 rounded-2xl border border-[var(--border-color)] text-sm text-center text-[var(--text-secondary)]">
+            Puoi vedere la conversazione, ma non scrivere alla super chat.
+          </p>
+        ) : (
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -384,6 +393,7 @@ export default function SuperChat() {
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
           </button>
         </form>
+        )}
       </div>
     </div>
   )

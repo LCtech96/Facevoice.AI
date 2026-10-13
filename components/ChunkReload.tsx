@@ -6,7 +6,7 @@ const SCRIPT = `(function(){var K='fv_reload_at';function bad(m){return /ChunkLo
 // Web app tenuta aperta in background: tornando in primo piano, se nel
 // frattempo e' uscita una versione nuova del sito, la pagina si ricarica.
 const versionScript = (version: string) =>
-  `(function(){var V=${JSON.stringify(version)},K='fv_version_reload_at',last=0;if(!V)return;function check(){if(document.visibilityState!=='visible'||Date.now()-last<60000)return;last=Date.now();fetch('/api/version',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){if(!d||!d.v||d.v===V)return;try{var t=+sessionStorage.getItem(K)||0;if(Date.now()-t<60000)return;sessionStorage.setItem(K,String(Date.now()))}catch(e){}location.reload()}).catch(function(){})}document.addEventListener('visibilitychange',check);window.addEventListener('focus',check);setInterval(check,600000)})();`
+  `(function(){var V=${JSON.stringify(version)},K='fv_version_reload_at',last=0;if(!V)return;function check(){if(document.visibilityState!=='visible'||Date.now()-last<60000)return;last=Date.now();fetch('/api/version',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){if(!d||!d.v||d.v===V)return;try{var t=+sessionStorage.getItem(K)||0;if(Date.now()-t<60000)return;sessionStorage.setItem(K,String(Date.now()))}catch(e){}location.reload()}).catch(function(){})}document.addEventListener('visibilitychange',check);window.addEventListener('focus',check);window.addEventListener('pageshow',check);setTimeout(check,3000);setInterval(check,600000)})();`
 
 export default function ChunkReload() {
   const version = process.env.VERCEL_GIT_COMMIT_SHA || ''

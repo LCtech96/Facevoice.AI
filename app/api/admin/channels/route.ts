@@ -1,22 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { isAdminEmail } from '@/lib/admin-auth'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key')
 
-const supabaseAuth = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key')
 
-const isAdminRequest = async (req: NextRequest) => {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) return false
-  const token = authHeader.replace('Bearer ', '')
-  const { data } = await supabaseAuth.auth.getUser(token)
-  return isAdminEmail(data.user?.email)
-}
+// Admin, oppure dipendente con il permesso su "Canali e AI" (vedere / modificare).
+const isAdminRequest = async (req: NextRequest, cap: 'view' | 'edit' = 'edit') =>
+  canAccess(await getStaffAccess(req), 'control', cap)
 
 /**
  * Stato di avanzamento dei canali social, non un'integrazione vera.
@@ -25,7 +18,7 @@ const isAdminRequest = async (req: NextRequest) => {
  */
 export async function GET(req: NextRequest) {
   try {
-    if (!(await isAdminRequest(req))) {
+    if (!(await isAdminRequest(req, 'view'))) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 

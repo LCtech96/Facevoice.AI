@@ -9,6 +9,16 @@ import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { isAdminEmail } from '@/lib/admin-auth'
+import { useStaffAccess } from './useStaffAccess'
+import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage } from '@/lib/staff-pages'
+
+const STAFF_ICONS: Record<StaffPage, typeof Home> = {
+  inbox: Inbox,
+  leads: Target,
+  assistant: Sparkles,
+  control: Bot,
+  usage: BarChart3,
+}
 
 interface NavigationProps {
   activeSection?: string | null
@@ -78,6 +88,9 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }
   
   const isAdmin = isAdminEmail(user?.email)
+  // Dipendenti: le pagine del gestionale che l'admin ha aperto per loro.
+  const staff = useStaffAccess(Boolean(user) && !isAdmin)
+  const staffPages = isAdmin ? [] : STAFF_PAGE_IDS.filter((page) => staff.can(page))
   const isChatPage = pathname?.startsWith('/ai-chat')
   const { t } = useTranslation()
 
@@ -98,6 +111,11 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
         { id: 'admin-control', label: 'Canali e AI', icon: Bot, href: '/admin/control' },
         { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
+      ]
+    : staffPages.length
+    ? [
+        ...staffPages.map((page) => ({ id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href })),
+        { id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' },
       ]
     : [
         { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },

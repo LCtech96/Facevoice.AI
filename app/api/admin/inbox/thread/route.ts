@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAdminEmail } from '@/lib/admin-request'
+import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type SocialPlatform } from '@/lib/meta/agent'
 import { resolveKey, type Member } from '@/lib/meta/identities'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
@@ -23,9 +23,8 @@ function membersFilter(members: Member[]) {
 
 /** Messaggi della conversazione (tutti i canali della persona); segna come letti quelli in arrivo. */
 export async function GET(req: NextRequest) {
-  if (!(await getAdminEmail(req))) {
-    return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-  }
+  const access = await guard(req, 'inbox', 'view')
+  if (access instanceof NextResponse) return access
   const members = await readMembers(req)
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
@@ -54,9 +53,8 @@ export async function GET(req: NextRequest) {
 
 /** Risposta scritta a mano. body: { text, platform? } — senza platform si usa l'ultimo canale privato usato. */
 export async function POST(req: NextRequest) {
-  if (!(await getAdminEmail(req))) {
-    return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-  }
+  const access = await guard(req, 'inbox', 'reply')
+  if (access instanceof NextResponse) return access
   const members = await readMembers(req)
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
