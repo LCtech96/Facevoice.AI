@@ -7,6 +7,8 @@ import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { getChatModelName } from '@/lib/chat-models'
 import AutomationUsage from './AutomationUsage'
+import { useStaffAccess } from '@/components/useStaffAccess'
+import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage, type StaffPermissions } from '@/lib/staff-pages'
 
 type ModelTotals = {
   model: string
@@ -47,6 +49,39 @@ export default function AdminUsagePage() {
   const [newEmail, setNewEmail] = useState('')
   const [adding, setAdding] = useState(false)
   const supabase = createClient()
+  // Solo l'admin gestisce dipendenti e permessi; chi ha il permesso "Consumi" li vede soltanto.
+  const staff = useStaffAccess()
+  const isAdmin = staff.isAdmin
+  const [permissions, setPermissions] = useState<Record<string, StaffPermissions>>({})
+
+  const loadPermissions = useCallback(async () => {
+    const token = await getAccessToken()
+    if (!token) return
+    const res = await fetch('/api/admin/staff-access', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+    if (res?.ok) setPermissions((await res.json()).permissions || {})
+  }, [])
+
+  useEffect(() => {
+    if (isAdmin) loadPermissions()
+  }, [isAdmin, loadPermissions])
+
+  const savePermissions = async (userId: string, next: StaffPermissions) => {
+    const previous = permissions[userId] || {}
+    setPermissions((all) => ({ ...all, [userId]: next }))
+    const token = await getAccessToken()
+    const res = await fetch('/api/admin/staff-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId, permissions: next }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (!res?.ok) {
+      setPermissions((all) => ({ ...all, [userId]: previous }))
+      alert(data.error || 'Permessi non salvati, riprova.')
+      return
+    }
+    setPermissions((all) => ({ ...all, [userId]: data.permissions || {} }))
+  }
 
   const load = useCallback(async () => {
     const token = await getAccessToken()
@@ -194,6 +229,7 @@ export default function AdminUsagePage() {
 
         <AutomationUsage />
 
+        {isAdmin && (
         <section className="mb-8 p-4 bg-[var(--card-background)] border border-[var(--border-color)] rounded-xl">
           <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-2">
             Aggiungi un dipendente
@@ -218,6 +254,7 @@ export default function AdminUsagePage() {
             </button>
           </div>
         </section>
+        )}
 
         <div className="space-y-3">
           {members.map((member) => {
@@ -286,6 +323,14 @@ export default function AdminUsagePage() {
                     </span>
                   </div>
 
+                  {isAdmin && member.role !== 'admin' && (
+                    <PageAccess
+                      permissions={permissions[member.userId] || {}}
+                      onChange={(next) => savePermissions(member.userId, next)}
+                    />
+                  )}
+
+                  {isAdmin && (
                   <div className="flex flex-wrap items-center gap-2 mt-4">
                     <label className="text-xs text-[var(--text-secondary)]">
                       Limite mensile $
@@ -322,6 +367,7 @@ export default function AdminUsagePage() {
                       </button>
                     )}
                   </div>
+                  )}
                 </div>
 
                 {expanded === member.userId && (
@@ -355,5 +401,62 @@ export default function AdminUsagePage() {
         </div>
       </div>
     </main>
+  )
+}
+
+/**
+ * Tag delle pagine del gestionale per un dipendente: tocchi una pagina per
+ * aprirla (in sola visione), poi i tag sotto per le azioni consentite.
+ */
+function PageAccess({ permissions, onChange }: { permissions: StaffPermissions; onChange: (next: StaffPermissions) => void }) {
+  const togglePage = (page: StaffPage) => {
+    const next = { ...permissions }
+    if (next[page]) delete next[page]
+    else next[page] = ['view']
+    onChange(next)
+  }
+  const toggleCap = (page: StaffPage, cap: string) => {
+    const caps = permissions[page] || ['view']
+    onChange({ ...permissions, [page]: caps.includes(cap) ? caps.filter((c) => c !== cap) : [...caps, cap] })
+  }
+  const tag = (on: boolean) =>
+    `px-2.5 py-1 rounded-full text-xs border transition-colors ${
+      on ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)] text-white' : 'border-[var(--border-color)] text-[var(--text-secondary)]'
+    }`
+
+  return (
+    <div className="mt-4 pt-3 border-t border-[var(--border-color)]">
+      <p className="text-xs font-medium text-[var(--text-primary)] mb-2">Accesso al gestionale</p>
+      <div className="flex flex-wrap gap-1.5">
+        {STAFF_PAGE_IDS.map((page) => (
+          <button key={page} type="button" onClick={() => togglePage(page)} className={tag(Boolean(permissions[page]))}>
+            {STAFF_PAGES[page].label}
+          </button>
+        ))}
+      </div>
+      {STAFF_PAGE_IDS.filter((page) => permissions[page]).map((page) => {
+        const caps = Object.entries(STAFF_PAGES[page].caps).filter(([cap]) => cap !== 'view')
+        return (
+          <div key={page} className="mt-2.5 pl-3 border-l-2 border-[var(--accent-blue)]/40">
+            <p className="text-[11px] text-[var(--text-secondary)] mb-1.5">
+              {STAFF_PAGES[page].label}: {STAFF_PAGES[page].caps.view.toLowerCase()}
+              {caps.length ? '. Può anche:' : '.'}
+            </p>
+            {caps.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {caps.map(([cap, label]) => (
+                  <button key={cap} type="button" onClick={() => toggleCap(page, cap)} className={tag(Boolean(permissions[page]?.includes(cap)))}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {!STAFF_PAGE_IDS.some((page) => permissions[page]) && (
+        <p className="mt-2 text-[11px] text-[var(--text-secondary)]">Nessuna pagina: usa solo la chat AI interna.</p>
+      )}
+    </div>
   )
 }

@@ -23,6 +23,7 @@ import {
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
+import { useStaffAccess } from '@/components/useStaffAccess'
 
 // ---------------------------------------------------------------------
 // Tipi
@@ -147,6 +148,9 @@ export default function AdminControlPage() {
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('memory')
   const supabase = createClient()
+  // Dipendente senza permesso di modifica: tutto visibile ma bloccato.
+  const staff = useStaffAccess()
+  const readOnly = !staff.loading && !staff.can('control', 'edit')
 
   // Ritorno dal collegamento Gmail: /admin/control?tab=channels
   useEffect(() => {
@@ -262,6 +266,12 @@ export default function AdminControlPage() {
           ))}
         </div>
 
+        {readOnly && (
+          <p className="mb-4 px-3 py-2 rounded-lg bg-[var(--background-secondary)] text-xs text-[var(--text-secondary)]">
+            Sola consultazione: per modificare chiedi il permesso all’amministratore.
+          </p>
+        )}
+        <fieldset disabled={readOnly} className="contents">
         {tab === 'memory' && (
           <MemoryTab items={knowledge} authFetch={authFetch} onChange={setKnowledge} />
         )}
@@ -271,6 +281,7 @@ export default function AdminControlPage() {
         {tab === 'posts' && (
           <PostsTab posts={posts} channels={channels} authFetch={authFetch} onChange={setPosts} />
         )}
+        </fieldset>
       </div>
     </main>
   )

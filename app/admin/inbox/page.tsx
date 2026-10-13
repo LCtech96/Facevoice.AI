@@ -24,6 +24,7 @@ import {
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
+import { useStaffAccess } from '@/components/useStaffAccess'
 
 type Platform = 'whatsapp' | 'facebook' | 'instagram' | 'email' | 'web'
 
@@ -368,11 +369,14 @@ function SwipeRow({
   open,
   onOpenChange,
   onDelete,
+  disabled = false,
   children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onDelete: () => void
+  /** Senza permesso di eliminare: riga normale, senza swipe. */
+  disabled?: boolean
   children: React.ReactNode
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
@@ -385,7 +389,7 @@ function SwipeRow({
 
   useEffect(() => {
     const fg = fgRef.current
-    if (!fg) return
+    if (!fg || disabled) return
     let start: { x: number; y: number; base: number } | null = null
     let mode: 'idle' | 'swipe' | 'scroll' = 'idle'
     let current = 0
@@ -492,9 +496,11 @@ function SwipeRow({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [])
+  }, [disabled])
 
   const offset = dx ?? (open ? -SWIPE_ACTION : 0)
+
+  if (disabled) return <div className="border-b border-[var(--border-color)]">{children}</div>
 
   return (
     <div ref={rowRef} className="relative overflow-hidden border-b border-[var(--border-color)]">
@@ -550,6 +556,9 @@ function InboxPage() {
   const supabase = createClient()
 
   const [authorized, setAuthorized] = useState<boolean | null>(null)
+  // Permessi del dipendente (l'admin li ha tutti).
+  const staff = useStaffAccess()
+  const canReply = staff.can('inbox', 'reply')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [totals, setTotals] = useState({ pending: 0, unread: 0 })
   const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>('all')
@@ -583,7 +592,7 @@ function InboxPage() {
     if (statusFilter !== 'all') params.set('filter', statusFilter)
     if (query.trim()) params.set('q', query.trim())
     const res = await authFetch(`/api/admin/inbox?${params}`)
-    if (res.status === 401) return setAuthorized(false)
+    if (res.status === 401 || res.status === 403) return setAuthorized(false)
     const data = await res.json()
     if (!res.ok) return setNotice(data.error || 'Errore nel caricare i messaggi')
     setAuthorized(true)
@@ -751,7 +760,7 @@ function InboxPage() {
     return (
       <main className="min-h-screen bg-[var(--background)]">
         <Navigation />
-        <p className="pt-32 text-center text-[var(--text-secondary)]">Area riservata agli amministratori.</p>
+        <p className="pt-32 text-center text-[var(--text-secondary)]">Non hai accesso a questa pagina: chiedilo all’amministratore.</p>
       </main>
     )
   }
@@ -785,12 +794,14 @@ function InboxPage() {
               )}
             </p>
           </div>
-          <PushToggle />
+          {staff.isAdmin && <PushToggle />}
         </div>
 
-        <div className={selectedKey ? 'hidden md:block' : ''}>
-          <AutoReplyToggles />
-        </div>
+        {staff.can('control', 'edit') && (
+          <div className={selectedKey ? 'hidden md:block' : ''}>
+            <AutoReplyToggles />
+          </div>
+        )}
 
         {removed && (
           <div className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-50 flex items-center gap-4 px-4 py-3 rounded-xl bg-[#1c1c1e] text-white text-sm shadow-lg max-w-[calc(100vw-32px)]">
@@ -852,7 +863,7 @@ function InboxPage() {
                   Non lette
                 </button>
               </div>
-              {conversations.length > 0 && (
+              {canReply && conversations.length > 0 && (
                 <p className="text-[11px] text-[var(--text-secondary)]">
                   Scorri una chat verso sinistra, o tienila premuta, per eliminarla.
                 </p>
@@ -874,6 +885,7 @@ function InboxPage() {
                     open={swipeOpen === c.key}
                     onOpenChange={(open) => setSwipeOpen(open ? c.key : null)}
                     onDelete={() => removeConversation(c)}
+                    disabled={!canReply}
                   >
                   <button
                     onClick={() => select(c.key)}
@@ -975,7 +987,7 @@ function InboxPage() {
                         {(current?.members || []).map((m) => (
                           <span key={`${m.platform}:${m.contactId}`} className="inline-flex items-center gap-1">
                             <PlatformBadge platform={m.platform} size="xs" />
-                            {current?.linked && current.members.length > 1 && (
+                            {canReply && current?.linked && current.members.length > 1 && (
                               <button
                                 onClick={() => unlink(m.platform, m.contactId)}
                                 className="text-[10px] text-[var(--text-secondary)] hover:text-[#FF3B30]"
@@ -988,6 +1000,8 @@ function InboxPage() {
                         ))}
                       </div>
                     </div>
+                    {canReply && (
+                    <>
                     <button
                       onClick={() => current && removeConversation(current)}
                       className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[#FF3B30] hover:bg-[var(--background-secondary)]"
@@ -1004,6 +1018,8 @@ function InboxPage() {
                       <Link2 className="w-3.5 h-3.5" />
                       <span className="hidden sm:inline">Stessa persona</span>
                     </button>
+                    </>
+                    )}
                     <button
                       onClick={() => {
                         loadThread()
@@ -1016,7 +1032,7 @@ function InboxPage() {
                     </button>
                   </div>
 
-                  {current?.suggestion && !linking && (
+                  {canReply && current?.suggestion && !linking && (
                     <div className="flex flex-wrap items-center gap-2 px-2.5 py-2 rounded-lg bg-[#AF52DE]/10 text-xs text-[var(--text-primary)]">
                       <span>
                         Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
@@ -1031,7 +1047,7 @@ function InboxPage() {
                     </div>
                   )}
 
-                  {linking && (
+                  {canReply && linking && (
                     <div className="rounded-lg border border-[var(--border-color)] p-2 space-y-2">
                       <p className="text-xs text-[var(--text-secondary)]">
                         Scegli la conversazione della stessa persona su un altro canale: verranno unite qui e l&apos;AI
@@ -1101,7 +1117,7 @@ function InboxPage() {
                                 : 'bg-[var(--accent-blue)] text-white'
                           }`}
                         >
-                          {isPending ? (
+                          {isPending && canReply ? (
                             <div className="space-y-2 min-w-[min(240px,70vw)]">
                               <p className="text-[11px] font-medium text-[#FF9500]">
                                 {m.status === 'failed' ? `Invio fallito: ${m.error_message}` : 'Bozza AI · da approvare'}
@@ -1145,6 +1161,7 @@ function InboxPage() {
                   })}
                 </div>
 
+                {canReply && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
@@ -1185,6 +1202,7 @@ function InboxPage() {
                     <Send className="w-4 h-4" />
                   </button>
                 </form>
+                )}
               </>
             )}
           </section>

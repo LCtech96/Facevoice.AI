@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAdminEmail } from '@/lib/admin-request'
+import { guard } from '@/lib/staff-access'
 import { sendNewEmail } from '@/lib/gmail'
 import { DAILY_EMAIL_LIMIT } from '@/lib/leads'
 
@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic'
  * La conversazione finisce in Messaggi: le risposte arrivano li' come ogni email.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  const access = await guard(req, 'leads', 'email')
+  if (access instanceof NextResponse) return access
   const { id } = await params
   const body = await req.json().catch(() => ({}))
 

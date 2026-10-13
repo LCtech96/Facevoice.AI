@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 import {
   buildAuthUrl,
   createOAuthState,
@@ -14,7 +15,9 @@ export const dynamic = 'force-dynamic'
 
 /** Stato della casella email collegata (mai il token). */
 export async function GET(req: NextRequest) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  if (!canAccess(await getStaffAccess(req), 'control', 'view')) {
+    return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+  }
   const settings = await loadGmailSettings()
   return NextResponse.json({
     configured: isGmailConfigured(),
@@ -27,9 +30,19 @@ export async function GET(req: NextRequest) {
 
 /** body.action: 'connect' -> URL di Google da aprire; 'sync' -> controlla subito le nuove email. */
 export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}))
+
+  // Controllo nuove email: lo fa anche la casella Messaggi aperta da un dipendente.
+  if (body?.action === 'sync') {
+    if (!canAccess(await getStaffAccess(req), 'inbox', 'view')) {
+      return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+    }
+    return NextResponse.json(await pollGmail())
+  }
+
+  // Collegare la casella resta solo dell'admin.
   const admin = await getAdminEmail(req)
   if (!admin) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-  const body = await req.json().catch(() => ({}))
 
   if (body?.action === 'connect') {
     if (!isGmailConfigured()) {
@@ -39,10 +52,6 @@ export async function POST(req: NextRequest) {
       )
     }
     return NextResponse.json({ url: buildAuthUrl(createOAuthState(admin), admin) })
-  }
-
-  if (body?.action === 'sync') {
-    return NextResponse.json(await pollGmail())
   }
 
   return NextResponse.json({ error: 'Azione non valida' }, { status: 400 })

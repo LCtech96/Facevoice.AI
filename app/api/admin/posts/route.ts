@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { isAdminEmail } from '@/lib/admin-auth'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key')
 
-const supabaseAuth = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key')
 
 /** null = non autorizzato; altrimenti l'email dell'admin autenticato. */
-const getAdminEmail = async (req: NextRequest): Promise<string | null> => {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) return null
-  const token = authHeader.replace('Bearer ', '')
-  const { data } = await supabaseAuth.auth.getUser(token)
-  return isAdminEmail(data.user?.email) ? data.user!.email! : null
+// Admin, oppure dipendente con il permesso su "Canali e AI" (vedere / modificare).
+const getAdminEmail = async (req: NextRequest, cap: 'view' | 'edit' = 'edit'): Promise<string | null> => {
+  const access = await getStaffAccess(req)
+  return canAccess(access, 'control', cap) ? access!.email : null
 }
 
 const VALID_PLATFORMS = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedin', 'x']
@@ -30,7 +25,7 @@ const VALID_PLATFORMS = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'linkedi
  */
 export async function GET(req: NextRequest) {
   try {
-    if (!(await getAdminEmail(req))) {
+    if (!(await getAdminEmail(req, 'view'))) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 

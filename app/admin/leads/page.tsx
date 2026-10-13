@@ -23,6 +23,7 @@ import Navigation from '@/components/Navigation'
 import LeadAssistant from './LeadAssistant'
 import { getAccessToken } from '@/lib/session-token'
 import { collectPhones, saveFile, toCsv, toVcf } from '@/lib/phone-export'
+import { useStaffAccess } from '@/components/useStaffAccess'
 
 type Lead = {
   id: string
@@ -81,6 +82,12 @@ function scoreColor(score: number | null) {
 
 export default function LeadsPage() {
   const [authorized, setAuthorized] = useState<boolean | null>(null)
+  // Permessi del dipendente (l'admin li ha tutti): cosa mostrare e cosa no.
+  const staff = useStaffAccess()
+  const canCalls = staff.can('leads', 'calls')
+  const canSearch = staff.can('leads', 'search')
+  const canEmail = staff.can('leads', 'email')
+  const canAssistant = staff.can('leads', 'assistant')
   const [configured, setConfigured] = useState(true)
   const [leads, setLeads] = useState<Lead[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
@@ -103,7 +110,7 @@ export default function LeadsPage() {
 
   const load = useCallback(async () => {
     const res = await authFetch('/api/admin/leads?status=all')
-    if (res.status === 401) return setAuthorized(false)
+    if (res.status === 401 || res.status === 403) return setAuthorized(false)
     const data = await res.json()
     if (!res.ok) return setNotice(data.error || 'Errore nel caricamento')
     setAuthorized(true)
@@ -219,7 +226,7 @@ export default function LeadsPage() {
         </div>
       </div>
     </button>
-    <CallBox lead={lead} onToggle={toggleCalled} />
+    <CallBox lead={lead} onToggle={canCalls ? toggleCalled : undefined} />
     </div>
   )
 
@@ -376,7 +383,7 @@ export default function LeadsPage() {
     return (
       <main className="min-h-screen bg-[var(--background)]">
         <Navigation />
-        <p className="pt-32 text-center text-[var(--text-secondary)]">Area riservata agli amministratori.</p>
+        <p className="pt-32 text-center text-[var(--text-secondary)]">Non hai accesso a questa pagina: chiedilo all’amministratore.</p>
       </main>
     )
   }
@@ -407,8 +414,16 @@ export default function LeadsPage() {
             </p>
           )}
 
-          <LeadAssistant authFetch={authFetch} onRefresh={load} onFocus={setFocus} />
+          {!staff.loading && !staff.isAdmin && (
+            <p className="mb-3 px-3 py-2 rounded-lg bg-[var(--background-secondary)] text-xs text-[var(--text-secondary)]">
+              {canSearch ? 'Accesso completo alle ricerche.' : 'Vedi le ricerche fatte dall’amministratore: la lista si aggiorna da sola.'}
+              {!canCalls && ' Sola consultazione.'}
+            </p>
+          )}
 
+          {canAssistant && <LeadAssistant authFetch={authFetch} onRefresh={load} onFocus={setFocus} />}
+
+          {canSearch && (
           <form onSubmit={runSearch} className="flex flex-col sm:flex-row gap-2 mb-4">
             <input
               value={query}
@@ -433,6 +448,7 @@ export default function LeadsPage() {
               </button>
             </div>
           </form>
+          )}
         </div>
 
         {notice && (
@@ -455,10 +471,12 @@ export default function LeadsPage() {
               ))}
             </div>
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-1">
-              <button onClick={() => setExportOpen((v) => !v)} className={chip(exportOpen)}>
-                <Download className="inline w-3 h-3 mr-1 -mt-0.5" />
-                Scarica numeri
-              </button>
+              {canCalls && (
+                <button onClick={() => setExportOpen((v) => !v)} className={chip(exportOpen)}>
+                  <Download className="inline w-3 h-3 mr-1 -mt-0.5" />
+                  Scarica numeri
+                </button>
+              )}
               {(
                 [
                   ['all', 'Telefono: tutti'],
@@ -479,7 +497,7 @@ export default function LeadsPage() {
                 </button>
               ))}
             </div>
-            {exportOpen && (
+            {exportOpen && canCalls && (
               <div className="mb-3 p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] space-y-3">
                 <div className="flex flex-wrap gap-1.5">
                   <button onClick={() => setExportMobileOnly(true)} className={chip(exportMobileOnly)}>
@@ -519,6 +537,7 @@ export default function LeadsPage() {
                 placeholder="Filtra per nome o ricerca…"
                 className={input}
               />
+              {canSearch && (
               <button
                 onClick={analyzeAll}
                 disabled={busy !== null}
@@ -527,6 +546,7 @@ export default function LeadsPage() {
               >
                 <Sparkles className="w-4 h-4" /> {progress || 'Analizza nuovi'}
               </button>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -587,14 +607,17 @@ export default function LeadsPage() {
                     <h2 className="text-lg font-semibold text-[var(--text-primary)] break-words">{selected.name}</h2>
                     <p className="text-xs text-[var(--text-secondary)]">Trovata con: {selected.search_query}</p>
                   </div>
-                  <button onClick={remove} className="p-1.5 text-[var(--text-secondary)]" aria-label="Elimina">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {canSearch && (
+                    <button onClick={remove} className="p-1.5 text-[var(--text-secondary)]" aria-label="Elimina">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 {selected.phone && (
                   <button
                     onClick={() => toggleCalled(selected)}
+                    disabled={!canCalls}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm text-left ${
                       selected.called_at
                         ? 'border-[#34C759]/40 bg-[#34C759]/10 text-[var(--text-primary)]'
@@ -646,7 +669,8 @@ export default function LeadsPage() {
                   <select
                     value={selected.status}
                     onChange={(e) => save({ status: e.target.value })}
-                    className={`${input} w-auto`}
+                    disabled={!canCalls}
+                    className={`${input} w-auto disabled:opacity-70`}
                   >
                     {Object.entries(STATUS).map(([key, meta]) => (
                       <option key={key} value={key}>
@@ -654,6 +678,7 @@ export default function LeadsPage() {
                       </option>
                     ))}
                   </select>
+                  {canSearch && (
                   <button
                     onClick={() => analyzeOne(selected.id)}
                     disabled={busy !== null}
@@ -662,6 +687,7 @@ export default function LeadsPage() {
                     <Sparkles className="w-4 h-4" />
                     {busy === `analyze:${selected.id}` ? 'Analizzo il sito…' : selected.analyzed_at ? 'Rifai analisi' : 'Analizza'}
                   </button>
+                  )}
                 </div>
 
                 {selected.analysis && (
@@ -674,7 +700,7 @@ export default function LeadsPage() {
                 )}
 
                 {selected.analyzed_at && (
-                  <>
+                  <fieldset disabled={!canEmail} className="contents">
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-[var(--text-secondary)]">Email di primo contatto</p>
                       <input
@@ -703,7 +729,7 @@ export default function LeadsPage() {
                           Contattato il {new Date(selected.contacted_at).toLocaleDateString('it-IT')}: le risposte arrivano in
                           Messaggi.
                         </p>
-                      ) : (
+                      ) : canEmail && (
                         <button
                           onClick={sendEmail}
                           disabled={busy !== null || !draft.email || selected.status === 'do_not_contact'}
@@ -742,7 +768,7 @@ export default function LeadsPage() {
                         )}
                       </div>
                     </div>
-                  </>
+                  </fieldset>
                 )}
 
                 <div className="space-y-2">
@@ -752,6 +778,7 @@ export default function LeadsPage() {
                     onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
                     onBlur={() => draft.notes !== (selected.notes || '') && save({ notes: draft.notes || '' })}
                     rows={2}
+                    readOnly={!canCalls}
                     placeholder="Es. richiamare lunedì, parlato con il titolare…"
                     className={input}
                   />
@@ -766,13 +793,16 @@ export default function LeadsPage() {
 }
 
 /** Casella "Chiamato" a destra della scheda: separata dal resto, non apre il dettaglio. */
-function CallBox({ lead, onToggle }: { lead: Lead; onToggle: (lead: Lead) => void }) {
+function CallBox({ lead, onToggle }: { lead: Lead; onToggle?: (lead: Lead) => void }) {
   if (!lead.phone && !lead.called_at) return null
   const called = Boolean(lead.called_at)
+  // Senza permesso: si vede chi e' stato chiamato, ma non si cambia.
+  if (!onToggle && !called) return null
   return (
     <button
       type="button"
-      onClick={() => onToggle(lead)}
+      disabled={!onToggle}
+      onClick={() => onToggle?.(lead)}
       aria-pressed={called}
       aria-label={called ? `${lead.name}: chiamato, tocca per togliere` : `Segna ${lead.name} come chiamato`}
       className="shrink-0 w-16 flex flex-col items-center justify-center gap-1 border-l border-[var(--border-color)] text-[10px] text-[var(--text-secondary)]"

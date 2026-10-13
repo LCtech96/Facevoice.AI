@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server'
-import { getAdminEmail } from '@/lib/admin-request'
+import { canAccess, getStaffAccess } from '@/lib/staff-access'
 import { asModelChoice } from '@/lib/ai'
 import { asScope, isRunning, loadState, newId, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
 
@@ -9,10 +9,17 @@ export const maxDuration = 300
 
 const internalKey = () => (process.env.CRON_SECRET || '').trim()
 
-async function authorized(req: NextRequest) {
+/**
+ * Permessi per scope: la chat della pagina Clienti richiede "assistant" su Clienti;
+ * la super chat "view" per leggere e "use" per scrivere. Le continuazioni interne
+ * passano con la chiave del server.
+ */
+async function authorized(req: NextRequest, scope: Scope, write: boolean) {
   const key = internalKey()
   if (key && req.headers.get('x-internal-key') === key) return true
-  return Boolean(await getAdminEmail(req))
+  const access = await getStaffAccess(req)
+  if (scope === 'super') return canAccess(access, 'assistant', write ? 'use' : 'view')
+  return canAccess(access, 'leads', 'assistant')
 }
 
 /** Avvia un lavoro e lo esegue dopo aver risposto: prosegue anche se la pagina si chiude. */
@@ -33,8 +40,9 @@ function startJob(req: NextRequest, scope: Scope, message: string, original: str
 
 /** Stato della conversazione: ?scope=leads|super */
 export async function GET(req: NextRequest) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
-  const state = await loadState(asScope(req.nextUrl.searchParams.get('scope')))
+  const scope = asScope(req.nextUrl.searchParams.get('scope'))
+  if (!(await authorized(req, scope, false))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
+  const state = await loadState(scope)
   return NextResponse.json({ ...state, running: isRunning(state.job) })
 }
 
@@ -43,9 +51,9 @@ export async function GET(req: NextRequest) {
  * Continuazione interna: { scope, continueOriginal, round } con x-internal-key.
  */
 export async function POST(req: NextRequest) {
-  if (!(await authorized(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const scope = asScope(body?.scope)
+  if (!(await authorized(req, scope, true))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
   const continuing = typeof body?.continueOriginal === 'string' && req.headers.get('x-internal-key') === internalKey()
 
   const original = String(continuing ? body.continueOriginal : body?.message || '').trim().slice(0, 2000)
@@ -86,9 +94,11 @@ export async function POST(req: NextRequest) {
  * Modifiche dalla pagina. body: { scope, drafts?, appendTurns?, updateTurn?: { id, actions }, handled?: jobId, clearTurns? }
  */
 export async function PUT(req: NextRequest) {
-  if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
   const scope = asScope(body?.scope)
+  if (!(await getStaffAccess(req)) || !(await authorized(req, scope, true))) {
+    return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
+  }
   const state = await updateState(scope, (s) => {
     if (Array.isArray(body?.drafts)) s.drafts = body.drafts.filter((d: { leadId?: unknown }) => typeof d?.leadId === 'string').slice(0, 80)
     if (Array.isArray(body?.appendTurns)) {
