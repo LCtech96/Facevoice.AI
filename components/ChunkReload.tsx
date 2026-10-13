@@ -8,12 +8,17 @@ const SCRIPT = `(function(){var K='fv_reload_at';function bad(m){return /ChunkLo
 const versionScript = (version: string) =>
   `(function(){var V=${JSON.stringify(version)},K='fv_version_reload_at',last=0;if(!V)return;function check(){if(document.visibilityState!=='visible'||Date.now()-last<60000)return;last=Date.now();fetch('/api/version',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){if(!d||!d.v||d.v===V)return;try{var t=+sessionStorage.getItem(K)||0;if(Date.now()-t<60000)return;sessionStorage.setItem(K,String(Date.now()))}catch(e){}location.reload()}).catch(function(){})}document.addEventListener('visibilitychange',check);window.addEventListener('focus',check);window.addEventListener('pageshow',check);setTimeout(check,3000);setInterval(check,600000)})();`
 
+// iPhone: chiusa la tastiera, i menu fissi (in alto e in basso) a volte restano
+// spostati a meta' pagina finche' non si scorre. Un micro-scroll li rimette a posto.
+const IOS_FIXED_SCRIPT = `(function(){var vv=window.visualViewport;function nudge(){var y=window.scrollY;window.scrollTo(window.scrollX,y+1);window.scrollTo(window.scrollX,y)}function field(el){return el&&/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)}document.addEventListener('focusout',function(e){if(!field(e.target))return;setTimeout(function(){if(!field(document.activeElement))nudge()},150)});if(vv){var h=vv.height;vv.addEventListener('resize',function(){if(vv.height>h+100)setTimeout(nudge,50);h=vv.height})}})();`
+
 export default function ChunkReload() {
   const version = process.env.VERCEL_GIT_COMMIT_SHA || ''
   return (
     <>
       <script dangerouslySetInnerHTML={{ __html: SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: versionScript(version) }} />
+      <script dangerouslySetInnerHTML={{ __html: IOS_FIXED_SCRIPT }} />
     </>
   )
 }
