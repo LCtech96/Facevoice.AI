@@ -354,15 +354,18 @@ function PlatformBadge({ platform, size = 'sm' }: { platform: string; size?: 'sm
 }
 
 const SWIPE_ACTION = 88
-const LONG_PRESS_MS = 550
+const SWIPE_REVEAL = 28
+const SWIPE_DELETE_RATIO = 0.4
+const LONG_PRESS_MS = 480
 
 /**
  * Riga con swipe a sinistra come su WhatsApp: scopre il pulsante rosso
  * "Elimina"; uno swipe lungo elimina subito. Anche una pressione lunga scopre
  * il pulsante. Col mouse si trascina.
  *
- * I gesti touch usano listener nativi non passivi: cosi' appena il movimento
- * e' orizzontale il browser non puo' prenderselo (scroll, gesti di sistema).
+ * Listener in capture + non-passive su touchmove: il gesto parte anche se il
+ * dito è sul contenuto interno (prima era un <button> che rubava il tocco) e
+ * il browser non può prendersi lo scroll orizzontale.
  */
 function SwipeRow({
   open,
@@ -379,7 +382,7 @@ function SwipeRow({
   const fgRef = useRef<HTMLDivElement>(null)
   const [dx, setDx] = useState<number | null>(null)
   const suppressClick = useRef(false)
-  // Valori sempre aggiornati per i listener nativi (registrati una volta sola).
+  const suppressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const live = useRef({ open, onOpenChange, onDelete })
   live.current = { open, onOpenChange, onDelete }
 
@@ -390,27 +393,36 @@ function SwipeRow({
     let mode: 'idle' | 'swipe' | 'scroll' = 'idle'
     let current = 0
     let pressTimer: ReturnType<typeof setTimeout> | null = null
+    let activePointer: number | null = null
     const width = () => rowRef.current?.offsetWidth || 320
     const clearPress = () => {
       if (pressTimer) clearTimeout(pressTimer)
       pressTimer = null
     }
+    const armSuppress = () => {
+      suppressClick.current = true
+      if (suppressTimer.current) clearTimeout(suppressTimer.current)
+      // Su iOS dopo uno swipe spesso non arriva il click: non lasciare il flag bloccato.
+      suppressTimer.current = setTimeout(() => {
+        suppressClick.current = false
+        suppressTimer.current = null
+      }, 450)
+    }
 
     const begin = (x: number, y: number) => {
       start = { x, y, base: live.current.open ? -SWIPE_ACTION : 0 }
       mode = 'idle'
-      suppressClick.current = false
       current = start.base
     }
-    // true = gesto orizzontale in corso (va bloccato lo scroll del browser)
     const move = (x: number, y: number) => {
       if (!start) return false
       const mx = x - start.x
       const my = y - start.y
       if (mode === 'idle') {
-        if (Math.abs(mx) < 6 && Math.abs(my) < 6) return false
+        if (Math.abs(mx) < 5 && Math.abs(my) < 5) return false
         clearPress()
-        mode = Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll'
+        // Preferisci lo swipe se c'è una chiara componente orizzontale.
+        mode = Math.abs(mx) >= Math.abs(my) * 0.85 ? 'swipe' : 'scroll'
       }
       if (mode !== 'swipe') return false
       current = Math.min(0, Math.max(-width(), start.base + mx))
@@ -422,75 +434,75 @@ function SwipeRow({
       const wasSwipe = mode === 'swipe'
       start = null
       mode = 'idle'
+      activePointer = null
       if (!wasSwipe) return
-      suppressClick.current = true
+      armSuppress()
       setDx(null)
-      if (-current > width() * 0.55) {
+      if (-current > width() * SWIPE_DELETE_RATIO) {
         live.current.onOpenChange(false)
         live.current.onDelete()
       } else {
-        live.current.onOpenChange(-current > SWIPE_ACTION / 3)
+        live.current.onOpenChange(-current > SWIPE_REVEAL)
       }
     }
 
-    // Dopo un tocco i telefoni mandano anche eventi mouse "di compatibilita'": vanno ignorati.
-    let lastTouchAt = 0
-    const onTouchStart = (e: TouchEvent) => {
-      lastTouchAt = Date.now()
-      if (e.touches.length !== 1) return
-      const t = e.touches[0]
-      begin(t.clientX, t.clientY)
-      clearPress()
-      pressTimer = setTimeout(() => {
-        // Pressione lunga senza movimento: scopre "Elimina".
-        if (start && mode === 'idle') {
-          suppressClick.current = true
-          start = null
-          live.current.onOpenChange(true)
-          navigator.vibrate?.(15)
-        }
-      }, LONG_PRESS_MS)
-    }
-    const onTouchMove = (e: TouchEvent) => {
-      const t = e.touches[0]
-      if (t && move(t.clientX, t.clientY) && e.cancelable) e.preventDefault()
-    }
-    const onTouchEnd = () => {
-      lastTouchAt = Date.now()
-      end()
-    }
-
-    let mouseDown = false
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0 || Date.now() - lastTouchAt < 1000) return
-      mouseDown = true
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+      if (activePointer !== null) return
+      activePointer = e.pointerId
       begin(e.clientX, e.clientY)
+      clearPress()
+      try {
+        fg.setPointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+      if (e.pointerType !== 'mouse') {
+        pressTimer = setTimeout(() => {
+          if (start && mode === 'idle') {
+            armSuppress()
+            start = null
+            activePointer = null
+            live.current.onOpenChange(true)
+            navigator.vibrate?.(15)
+          }
+        }, LONG_PRESS_MS)
+      }
     }
-    const onMouseMove = (e: MouseEvent) => {
-      if (mouseDown) move(e.clientX, e.clientY)
+    const onPointerMove = (e: PointerEvent) => {
+      if (activePointer !== e.pointerId) return
+      if (move(e.clientX, e.clientY) && e.cancelable) e.preventDefault()
     }
-    const onMouseUp = () => {
-      if (!mouseDown) return
-      mouseDown = false
+    const onPointerUp = (e: PointerEvent) => {
+      if (activePointer !== null && activePointer !== e.pointerId) return
+      try {
+        if (fg.hasPointerCapture(e.pointerId)) fg.releasePointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
       end()
     }
 
-    fg.addEventListener('touchstart', onTouchStart, { passive: true })
-    fg.addEventListener('touchmove', onTouchMove, { passive: false })
-    fg.addEventListener('touchend', onTouchEnd)
-    fg.addEventListener('touchcancel', onTouchEnd)
-    fg.addEventListener('mousedown', onMouseDown)
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    // touchmove non-passive in capture: su Safari è l'unico modo affidabile
+    // per bloccare lo scroll della lista mentre si swipa.
+    const onTouchMove = (e: TouchEvent) => {
+      if (mode === 'swipe' && e.cancelable) e.preventDefault()
+    }
+
+    const opts = { capture: true } as const
+    fg.addEventListener('pointerdown', onPointerDown, opts)
+    fg.addEventListener('pointermove', onPointerMove, opts)
+    fg.addEventListener('pointerup', onPointerUp, opts)
+    fg.addEventListener('pointercancel', onPointerUp, opts)
+    fg.addEventListener('touchmove', onTouchMove, { capture: true, passive: false })
     return () => {
       clearPress()
-      fg.removeEventListener('touchstart', onTouchStart)
-      fg.removeEventListener('touchmove', onTouchMove)
-      fg.removeEventListener('touchend', onTouchEnd)
-      fg.removeEventListener('touchcancel', onTouchEnd)
-      fg.removeEventListener('mousedown', onMouseDown)
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+      if (suppressTimer.current) clearTimeout(suppressTimer.current)
+      fg.removeEventListener('pointerdown', onPointerDown, opts)
+      fg.removeEventListener('pointermove', onPointerMove, opts)
+      fg.removeEventListener('pointerup', onPointerUp, opts)
+      fg.removeEventListener('pointercancel', onPointerUp, opts)
+      fg.removeEventListener('touchmove', onTouchMove, opts)
     }
   }, [])
 
@@ -520,17 +532,21 @@ function SwipeRow({
           transition: dx === null ? 'transform 0.2s ease' : 'none',
           touchAction: 'pan-y',
           WebkitTouchCallout: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
         }}
         onContextMenu={(e) => e.preventDefault()}
         onClickCapture={(e) => {
-          // Il click che chiude uno swipe o una pressione lunga non apre la chat.
           if (suppressClick.current) {
             e.preventDefault()
             e.stopPropagation()
             suppressClick.current = false
+            if (suppressTimer.current) {
+              clearTimeout(suppressTimer.current)
+              suppressTimer.current = null
+            }
             return
           }
-          // Riga aperta: un tocco la richiude soltanto.
           if (open) {
             e.preventDefault()
             e.stopPropagation()
@@ -854,12 +870,12 @@ function InboxPage() {
               </div>
               {conversations.length > 0 && (
                 <p className="text-[11px] text-[var(--text-secondary)]">
-                  Scorri una chat verso sinistra, o tienila premuta, per eliminarla.
+                  Scorri una riga verso sinistra (o tienila premuta) e tocca Elimina. Uno swipe lungo cancella subito.
                 </p>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto overscroll-y-contain">
               {authorized === null && (
                 <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>
               )}
@@ -875,9 +891,17 @@ function InboxPage() {
                     onOpenChange={(open) => setSwipeOpen(open ? c.key : null)}
                     onDelete={() => removeConversation(c)}
                   >
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => select(c.key)}
-                    className={`w-full text-left px-3 py-3 flex gap-3 transition-colors ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        select(c.key)
+                      }
+                    }}
+                    className={`w-full text-left px-3 py-3 flex gap-3 transition-colors cursor-pointer ${
                       active ? 'bg-[var(--background-secondary)]' : 'hover:bg-[var(--background-secondary)]'
                     }`}
                   >
@@ -938,7 +962,7 @@ function InboxPage() {
                         )}
                       </div>
                     </div>
-                  </button>
+                  </div>
                   </SwipeRow>
                 )
               })}
