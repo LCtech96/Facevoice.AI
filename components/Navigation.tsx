@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookUser } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -15,6 +15,7 @@ import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage } from '@/lib/staff-pages'
 const STAFF_ICONS: Record<StaffPage, typeof Home> = {
   inbox: Inbox,
   leads: Target,
+  contacts: BookUser,
   assistant: Sparkles,
   control: Bot,
   usage: BarChart3,
@@ -101,14 +102,16 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     }
   }, [isAdmin, pathname, router])
 
-  type NavItem = { id: string; label: string; icon: typeof Home; href: string }
+  // short: etichetta per la barra in basso del telefono, dove lo spazio e' poco.
+  type NavItem = { id: string; label: string; short?: string; icon: typeof Home; href: string }
 
   const mainNavItems: NavItem[] = isAdmin
     ? [
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
-        { id: 'admin-assistant', label: 'Super chat', icon: Sparkles, href: '/admin/assistant' },
+        { id: 'admin-assistant', label: 'Super chat', short: 'Super', icon: Sparkles, href: '/admin/assistant' },
         { id: 'admin-leads', label: 'Clienti', icon: Target, href: '/admin/leads' },
-        { id: 'admin-control', label: 'Canali e AI', icon: Bot, href: '/admin/control' },
+        { id: 'admin-contacts', label: 'Contatti', icon: BookUser, href: '/admin/contacts' },
+        { id: 'admin-control', label: 'Canali e AI', short: 'Canali', icon: Bot, href: '/admin/control' },
         { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
       ]
@@ -437,21 +440,21 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
           {mainNavItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item)
-            const displayLabel = item.label
+            const displayLabel = item.short || item.label
 
             return (
               <motion.button
                 key={item.id}
                 whileTap={{ scale: 0.9 }}
                 onClick={(e) => handleItemClick(item, e)}
-                className={`flex flex-col items-center justify-center gap-1 px-1 py-1.5 min-h-[52px] rounded-xl transition-all min-w-0 flex-1 ${
+                className={`flex flex-col items-center justify-center gap-1 ${mainNavItems.length > 6 ? 'px-0' : 'px-1'} py-1.5 min-h-[52px] rounded-xl transition-all min-w-0 flex-1 ${
                   active
                     ? 'text-[var(--accent-blue)]'
                     : 'text-[var(--text-secondary)]'
                 }`}
               >
                 <Icon size={24} className="shrink-0" />
-                <span className="text-[11px] sm:text-xs font-medium text-center leading-tight w-full px-0.5 truncate">
+                <span className={`${mainNavItems.length > 6 ? 'text-[10px] tracking-tight px-0' : 'text-[11px] px-0.5'} sm:text-xs font-medium text-center leading-tight w-full truncate`}>
                   {displayLabel}
                 </span>
               </motion.button>

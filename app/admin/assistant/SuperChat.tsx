@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Plus, Send, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Mic, Plus, Send, Sparkles, Square, X } from 'lucide-react'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import { useDictation } from '@/components/useDictation'
 import { AI_MODEL_CHOICES, modelLabel } from '@/lib/ai-models'
 
 const MODEL_KEY = 'fv_superchat_model'
@@ -58,6 +59,8 @@ export default function SuperChat() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Comando vocale: quello che detti si aggiunge al messaggio, poi lo invii.
+  const dictation = useDictation((text) => setInput((current) => (current.trim() ? `${current.trim()} ${text}` : text)))
   const sendAllRef = useRef<() => Promise<void>>(async () => {})
 
   const onJobDone = useCallback((job: Job) => {
@@ -130,6 +133,7 @@ export default function SuperChat() {
 
   const ask = async (message: string) => {
     if (!message.trim() || busy) return
+    if (dictation.listening) dictation.stop()
     setInput('')
     await askServer(message, model)
   }
@@ -348,6 +352,8 @@ export default function SuperChat() {
           )}
         </div>
         {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
+        {dictation.error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{dictation.error}</p>}
+        {dictation.listening && <p className="mb-2 px-2 text-xs text-[var(--text-secondary)]">Ti ascolto… parla, poi tocca il quadrato per fermare e invia.</p>}
         {!staff.loading && !canUse ? (
           <p className="px-3 py-3 rounded-2xl border border-[var(--border-color)] text-sm text-center text-[var(--text-secondary)]">
             Puoi vedere la conversazione, ma non scrivere alla super chat.
@@ -384,6 +390,19 @@ export default function SuperChat() {
             placeholder="Chiedi qualsiasi cosa…"
             className="flex-1 min-w-0 resize-none bg-transparent py-2 text-[16px] leading-6 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none"
           />
+          {dictation.supported && (
+            <button
+              type="button"
+              onClick={dictation.toggle}
+              className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${
+                dictation.listening ? 'bg-[#FF3B30] text-white animate-pulse' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
+              }`}
+              aria-label={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
+              title={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
+            >
+              {dictation.listening ? <Square className="w-4 h-4" /> : <Mic className="w-5 h-5" />}
+            </button>
+          )}
           <button
             type="submit"
             disabled={busy || !input.trim()}

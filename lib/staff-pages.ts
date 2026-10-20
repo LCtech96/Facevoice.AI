@@ -23,6 +23,14 @@ export const STAFF_PAGES = {
       assistant: "Usare l'assistente della pagina",
     },
   },
+  contacts: {
+    label: 'Contatti',
+    href: '/admin/contacts',
+    caps: {
+      view: 'Vedere la rubrica contatti',
+      edit: 'Aggiungere e modificare contatti',
+    },
+  },
   assistant: {
     label: 'Super chat',
     href: '/admin/assistant',
