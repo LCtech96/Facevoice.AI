@@ -13,6 +13,7 @@ import {
 import { prepareOutreachReply } from '@/lib/meta/agent'
 import { pollGmail } from '@/lib/gmail-poll'
 import { withCalls } from '@/lib/lead-calls'
+import { SOURCE_CHAT, addContact } from '@/lib/contacts'
 import { inspectWebsite } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { conversationKeyFor } from '@/lib/meta/identities'
@@ -552,6 +553,10 @@ Strumenti di ricerca e social:
 - "list_conversations": {"platform": "instagram|facebook|all", "filter": "nome opzionale", "limit": 20} → persone che ci hanno scritto su Instagram o Facebook (contactId, nome, ultimo messaggio e data).
 - "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
 
+Rubrica contatti (pagina Contatti, dove finiscono anche tutte le schede delle ricerche):
+- "add_contact": {"name": "...", "phone": "...", "email": "...", "website": "...", "address": "...", "instagram": "...", "facebook": "...", "notes": "..."} → aggiunge un contatto alla rubrica. Usalo quando Luca detta o scrive i dati di un cliente o di una persona (anche a voce, es. "aggiungi Mario Rossi della pizzeria Da Mario, numero 333 1234567, vuole un sito"). Solo "name" è obbligatorio; metti in "notes" quello che non rientra negli altri campi (chi è, cosa vuole, quando richiamarlo). Non inventare dati: se un campo non è stato detto, omettilo. Se il contatto esiste già (stessa email, telefono o nome) vengono completati solo i campi mancanti. Per più contatti chiamalo più volte. Nella risposta conferma in breve cosa hai salvato.
+- Per cercare o elencare contatti già salvati usa "list_leads" (con "filter" sul nome).
+
 Strumenti per le notifiche push (i dispositivi su cui arrivano gli avvisi di Messaggi, richieste di accesso, ecc.):
 - "list_push_devices": {} → tutti i dispositivi che ricevono le notifiche: id, nome, browser e sistema (es. "Chrome su Windows", "Safari su iPhone"), se è l'app installata, email dell'account, data di registrazione, ultima apertura di Messaggi, ultima notifica consegnata, ultimo errore. Se "knownDetails" è false il dispositivo è stato registrato prima che salvassimo il browser: il tipo è dedotto dal servizio push; si completa da solo quando Luca apre Messaggi da quel dispositivo. Usalo per domande tipo "quali dispositivi ricevono le notifiche".
 - "test_push": {"deviceIds": [...] opzionale, "text": "testo opzionale"} → invia una notifica di prova a quei dispositivi (o a tutti) e dice quanti l'hanno ricevuta. Utile per capire quale dispositivo è quale.
@@ -907,6 +912,18 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           }
           actions.push(action)
           result = { preparato: true, nota: 'compare a Luca con il pulsante Invia', entro_24_ore: Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000 }
+          break
+        }
+        case 'add_contact': {
+          reportStatus('Salvo il contatto in rubrica…')
+          const saved = await addContact(args, SOURCE_CHAT)
+          refresh = true
+          result = {
+            salvato: true,
+            nuovo: saved.created,
+            nota: saved.created ? 'aggiunto alla rubrica' : 'esisteva già: completati i campi mancanti',
+            contatto: compact(saved.lead),
+          }
           break
         }
         case 'list_push_devices': {
