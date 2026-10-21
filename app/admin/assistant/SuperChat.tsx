@@ -168,11 +168,13 @@ export default function SuperChat() {
     (sum, t) => (t.usage ? { calls: sum.calls + t.usage.calls, input: sum.input + t.usage.input, output: sum.output + t.usage.output, cost: sum.cost + t.usage.cost, models: sum.models } : sum),
     { calls: 0, input: 0, output: 0, cost: 0, models: {} }
   )
+  // Lavoro in corso: solo la parte non ancora scritta nelle risposte (i giri gia' finiti sono gia' sopra).
   if (busy && job?.usage) {
-    totalUsage.calls += job.usage.calls
-    totalUsage.input += job.usage.input
-    totalUsage.output += job.usage.output
-    totalUsage.cost += job.usage.cost
+    const done = turns.filter((t) => t.job === job.id && t.usage)
+    totalUsage.calls += Math.max(0, job.usage.calls - done.reduce((n, t) => n + t.usage!.calls, 0))
+    totalUsage.input += Math.max(0, job.usage.input - done.reduce((n, t) => n + t.usage!.input, 0))
+    totalUsage.output += Math.max(0, job.usage.output - done.reduce((n, t) => n + t.usage!.output, 0))
+    totalUsage.cost += Math.max(0, job.usage.cost - done.reduce((n, t) => n + t.usage!.cost, 0))
   }
 
   return (
@@ -243,7 +245,13 @@ export default function SuperChat() {
                   </div>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{status || 'Ci sto lavorando…'}</span>
-                    {usageLine(job?.usage) && <span className="block text-[11px] opacity-80 tabular-nums">{usageLine(job?.usage)}</span>}
+                    {(usageLine(job?.usage) || job?.budget) && (
+                      <span className="block text-[11px] opacity-80 tabular-nums">
+                        {usageLine(job?.usage)}
+                        {job?.budget &&
+                          ` · limite ${[job.budget.tokens ? `${fmtTokens(job.budget.tokens)} token` : '', job.budget.usd ? `$${job.budget.usd}` : ''].filter(Boolean).join(' o ')}`}
+                      </span>
+                    )}
                   </span>
                   {startedAt && <span className="ml-auto tabular-nums opacity-70">{Math.floor((Date.now() - startedAt) / 1000)}s</span>}
                 </div>

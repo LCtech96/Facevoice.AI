@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
 import { asModelChoice } from '@/lib/ai'
-import { asScope, isRunning, loadState, newId, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
+import { asScope, isRunning, loadState, newId, recoverStaleJob, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
+import { parseBudget } from '@/lib/assistant-budget'
 
 export const dynamic = 'force-dynamic'
 // Il lavoro continua dopo la risposta (after): serve il tempo massimo.
@@ -42,7 +43,7 @@ function startJob(req: NextRequest, scope: Scope, message: string, original: str
 export async function GET(req: NextRequest) {
   const scope = asScope(req.nextUrl.searchParams.get('scope'))
   if (!(await authorized(req, scope, false))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
-  const state = await loadState(scope)
+  const state = await recoverStaleJob(scope, await loadState(scope))
   return NextResponse.json({ ...state, running: isRunning(state.job) })
 }
 
@@ -61,9 +62,18 @@ export async function POST(req: NextRequest) {
   const round = continuing ? Math.max(1, Number(body.round) || 1) : 0
   const message = continuing ? `Continua il lavoro richiesto prima (“${original}”) con quello che resta.` : original
 
-  const current = await loadState(scope)
+  const current = await recoverStaleJob(scope, await loadState(scope))
   if (!continuing && isRunning(current.job)) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta che finisca.' }, { status: 409 })
+  }
+
+  // Limite di spesa: scritto in questa richiesta, oppure nella precedente se nel
+  // frattempo l'assistente aveva solo fatto una domanda ("Va bene, ma non spendere più di…").
+  let budget = continuing ? current.job?.budget ?? null : parseBudget(original)
+  if (!continuing && !budget) {
+    const lastAssistant = [...current.turns].reverse().find((t) => t.role === 'assistant')
+    const lastUser = [...current.turns].reverse().find((t) => t.role === 'user')
+    if (lastAssistant?.text.trim().endsWith('?') && lastUser) budget = parseBudget(lastUser.text)
   }
 
   const jobId = newId()
@@ -82,6 +92,7 @@ export async function POST(req: NextRequest) {
       // La continuazione tiene modello e conteggio della richiesta originale.
       model: continuing ? previous?.model : asModelChoice(body?.model),
       usage: continuing ? previous?.usage : undefined,
+      budget,
     }
   })
 
