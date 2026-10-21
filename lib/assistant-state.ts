@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { emptyTally, runWithStatus, type AIModelChoice, type UsageTally } from '@/lib/ai'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
+import { overBudget, type Budget } from '@/lib/assistant-budget'
 
 // Conversazioni dell'assistente salvate sul server (una per pagina: "leads" e
 // "super"). Ogni richiesta diventa un lavoro che prosegue anche se la pagina
@@ -9,7 +10,8 @@ import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistan
 export const SCOPES = ['leads', 'super'] as const
 export type Scope = (typeof SCOPES)[number]
 
-export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: UsageTally }
+/** job: lavoro che ha scritto la risposta (per non contare due volte i token di un lavoro in corso). */
+export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: UsageTally; job?: string }
 
 export type Job = {
   id: string
@@ -27,6 +29,8 @@ export type Job = {
   model?: AIModelChoice
   /** Token e costi usati finora da questa richiesta (si aggiorna mentre lavora). */
   usage?: UsageTally
+  /** Limite di spesa scritto da Luca nella richiesta. */
+  budget?: Budget | null
 }
 
 export type AssistantState = { turns: Turn[]; drafts: Draft[]; job: Job | null }
@@ -35,6 +39,8 @@ const MAX_TURNS = 80
 /** Oltre questo tempo senza aggiornamenti un lavoro "in corso" e' considerato interrotto. */
 export const STALE_MS = 6 * 60_000
 const WORK_BUDGET_MS = 210_000
+/** Oltre questo tempo si risponde comunque, prima che Vercel chiuda la funzione (maxDuration 300 s). */
+const HARD_STOP_MS = 270_000
 const MAX_ROUNDS = 5
 
 const keyOf = (scope: Scope) => `assistant_state:${scope}`
@@ -71,6 +77,40 @@ export async function updateState(scope: Scope, fn: (state: AssistantState) => v
 export const isRunning = (job: Job | null) =>
   Boolean(job && job.status === 'running' && Date.now() - new Date(job.updatedAt).getTime() < STALE_MS)
 
+const sumUsage = (turns: Turn[]) => turns.reduce((sum, t) => (t.usage ? addTally(sum, t.usage) : sum), emptyTally())
+
+function minusTally(a: UsageTally, b: UsageTally): UsageTally {
+  return {
+    calls: Math.max(0, a.calls - b.calls),
+    input: Math.max(0, a.input - b.input),
+    output: Math.max(0, a.output - b.output),
+    cost: Math.max(0, a.cost - b.cost),
+    models: { ...a.models },
+  }
+}
+
+/**
+ * Lavoro rimasto "in corso" ma fermo da troppo (il server l'ha interrotto):
+ * lo chiude con un messaggio e conserva i token spesi, invece di farlo sparire.
+ */
+export async function recoverStaleJob(scope: Scope, state: AssistantState): Promise<AssistantState> {
+  const job = state.job
+  if (!job || job.status !== 'running' || isRunning(job)) return state
+  return updateState(scope, (s) => {
+    if (!s.job || s.job.id !== job.id || s.job.status !== 'running' || isRunning(s.job)) return
+    const lost = minusTally(s.job.usage || emptyTally(), sumUsage(s.turns.filter((t) => t.job === job.id)))
+    s.turns.push({
+      id: newId(),
+      role: 'assistant',
+      job: job.id,
+      text: 'Mi sono interrotto prima di finire: il lavoro ha richiesto troppo tempo. Scrivimi "continua" e riprendo da dove sono rimasto, oppure chiedimi una cosa più piccola.',
+      usage: lost.calls ? lost : undefined,
+    })
+    s.job.status = 'error'
+    s.job.updatedAt = new Date().toISOString()
+  })
+}
+
 /**
  * Esegue il lavoro (chiamato dentro after(): prosegue anche a pagina chiusa).
  * Se il tempo finisce prima del termine, chiama `continueJob` per un nuovo giro.
@@ -104,12 +144,52 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
   const base: UsageTally = job?.usage && (job.round ?? 0) > 0 ? job.usage : emptyTally()
   const total = () => addTally(base, tally)
 
+  const budget = job?.budget ?? null
+  let seen = total()
+  let lastStep: UsageTally | undefined
+  let timedOut = false
   try {
-    const result = await runWithStatus(
-      { status: (text) => void writeStatus(text), deadline: Date.now() + WORK_BUDGET_MS, model: job?.model, usage: tally, onUsage: () => void writeStatus(pendingText || job?.statusText || '') },
-      () => runAssistant(message, history, start.drafts)
+    const work = runWithStatus(
+      {
+        status: (text) => void writeStatus(text),
+        deadline: Date.now() + WORK_BUDGET_MS,
+        model: job?.model,
+        usage: tally,
+        onUsage: () => {
+          // Costo dell'ultima chiamata: serve a prevedere se la prossima sta nel limite.
+          const now = total()
+          lastStep = { calls: 1, input: now.input - seen.input, output: now.output - seen.output, cost: now.cost - seen.cost, models: {} }
+          seen = now
+          void writeStatus(pendingText || job?.statusText || '')
+        },
+        overBudget: () => overBudget(budget, total(), lastStep),
+      },
+      () => runAssistant(message, history, start.drafts, budget)
     )
-    const again = Boolean(result.more) && (job?.round ?? 0) < MAX_ROUNDS
+    // Prima che il server chiuda la funzione (300 s) si salva comunque una risposta.
+    const result = await Promise.race([
+      work,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), HARD_STOP_MS)),
+    ])
+    if (!result) {
+      timedOut = true
+      await updateState(scope, (s) => {
+        if (s.job?.id !== jobId) return
+        s.turns.push({
+          id: newId(),
+          role: 'assistant',
+          job: jobId,
+          text: 'Questo passo ha richiesto troppo tempo e mi sono fermato prima di finire. Scrivimi "continua" e riprendo, oppure chiedimi una cosa più piccola.',
+          usage: { ...tally, models: { ...tally.models } },
+        })
+        s.job.status = 'done'
+        s.job.statusText = ''
+        s.job.usage = total()
+        s.job.updatedAt = new Date().toISOString()
+      })
+      return
+    }
+    const again = Boolean(result.more) && (job?.round ?? 0) < MAX_ROUNDS && !overBudget(budget, total())
     await updateState(scope, (s) => {
       const drafts = new Map(s.drafts.map((d) => [d.leadId, d]))
       for (const id of result.removeDrafts || []) drafts.delete(id)
@@ -118,6 +198,7 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
       s.turns.push({
         id: newId(),
         role: 'assistant',
+        job: jobId,
         text: clean(result.reply || ''),
         actions: result.actions?.length ? result.actions : undefined,
         usage: { ...tally, models: { ...tally.models } },
@@ -143,8 +224,15 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
       }
     }
   } catch (error) {
+    if (timedOut) return
     await updateState(scope, (s) => {
-      s.turns.push({ id: newId(), role: 'assistant', text: error instanceof Error ? error.message : 'Qualcosa è andato storto, riprova.' })
+      s.turns.push({
+        id: newId(),
+        role: 'assistant',
+        job: jobId,
+        text: error instanceof Error ? error.message : 'Qualcosa è andato storto, riprova.',
+        usage: tally.calls ? { ...tally, models: { ...tally.models } } : undefined,
+      })
       if (s.job?.id === jobId) {
         s.job.status = 'error'
         s.job.updatedAt = new Date().toISOString()

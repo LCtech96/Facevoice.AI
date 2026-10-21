@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { callAIPaced, hasAIProvider, reportStatus, timeIsUp } from '@/lib/ai'
+import { budgetReached, callAIPaced, hasAIProvider, reportStatus, timeIsUp } from '@/lib/ai'
+import { describeBudget, type Budget } from '@/lib/assistant-budget'
 import {
   DAILY_EMAIL_LIMIT,
   FIRST_EMAIL_RULES,
@@ -85,7 +86,7 @@ async function inBatches<T, R>(
 ): Promise<{ out: R[]; unfinished: number }> {
   const out: R[] = []
   for (let i = 0; i < items.length; i += size) {
-    if (timeIsUp()) return { out, unfinished: items.length - i }
+    if (timeIsUp() || budgetReached()) return { out, unfinished: items.length - i }
     const results = await Promise.all(
       items.slice(i, i + size).map((item, j) => fn(item, `${i + j + 1}/${items.length}`).catch(() => null))
     )
@@ -624,7 +625,7 @@ const asIds = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is
 const asText = (value: unknown) => (typeof value === 'string' ? value : undefined)
 const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
-export async function runAssistant(message: string, history: Turn[], openDrafts: Draft[]): Promise<AssistantResult> {
+export async function runAssistant(message: string, history: Turn[], openDrafts: Draft[], budget?: Budget | null): Promise<AssistantResult> {
   if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
   const drafts = new Map(openDrafts.map((d) => [d.leadId, d]))
@@ -650,6 +651,9 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           .join('\n')}`
       : 'Nessuna bozza aperta.',
     history.length ? `Conversazione recente:\n${history.slice(-6).map((t) => `${t.role === 'user' ? 'Luca' : 'Assistente'}: ${t.text}`).join('\n')}` : '',
+    budget
+      ? `LIMITE DI SPESA per questa richiesta: ${describeBudget(budget)} in tutto. Ogni passo costa: fai pochi passi, ricerche e analisi su numeri piccoli (es. 20 risultati, limit 10), e punta al risultato più utile. Quando il limite sta per finire ti fermo io e mi dai il riepilogo.`
+      : '',
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -662,6 +666,19 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     [instructions?.trim(), `Richiesta di Luca, da rispettare per tono e contenuto: ${message}`].filter(Boolean).join('\n')
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    if (budget && step > 0 && budgetReached()) {
+      // Limite di spesa: un'ultima risposta breve con quello che e' stato fatto, niente altri strumenti.
+      reportStatus('Limite di spesa raggiunto: preparo il riepilogo…')
+      transcript.push({
+        role: 'user',
+        content: `LIMITE DI SPESA RAGGIUNTO (${describeBudget(budget)}). Non usare altri strumenti: rispondi ora SOLO con {"reply": "..."} dicendo in breve cosa hai fatto, cosa hai trovato e cosa resta da fare se Luca vuole continuare.`,
+      })
+      // Riepilogo economico: la conversazione va all'AI accorciata.
+      const short = transcript.map((m, i) => (i === 0 ? { ...m, content: m.content.slice(-2500) } : { ...m, content: m.content.slice(0, 600) }))
+      const last = await callAIPaced(short, AGENT_PROMPT, { feature: 'assistente_clienti', temperature: 0.2, maxOutputTokens: 600 })
+      const summary = parseStep(last.message || '')
+      return finish(`${summary?.reply || 'Mi sono fermato al limite di spesa che mi hai dato.'}\n\n(Mi sono fermato al limite di spesa: ${describeBudget(budget)}.)`)
+    }
     if (timeIsUp()) {
       more = true
       return finish(`Ho preparato ${changed.size} bozze finora, continuo con il resto…`)
@@ -1038,6 +1055,12 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
 
     transcript.push({ role: 'assistant', content: JSON.stringify({ tool: call.tool, args }) })
     transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 12000)}` })
+    // Ogni passo rimanda all'AI tutta la conversazione: i risultati vecchi si accorciano
+    // (restano interi gli ultimi due), cosi' il costo non cresce passo dopo passo.
+    const results = transcript.filter((m) => m.role === 'user' && m.content.startsWith('Risultato di '))
+    for (const m of results.slice(0, -2)) {
+      if (m.content.length > 1500) m.content = `${m.content.slice(0, 1500)}… (accorciato: dettagli già usati)`
+    }
   }
 
   return finish('Ho fatto quello che potevo in questo giro: dimmi se continuo.')

@@ -117,6 +117,8 @@ type WorkContext = {
   usage?: UsageTally
   /** Avvisato dopo ogni chiamata conteggiata (per salvare i token in tempo reale). */
   onUsage?: () => void
+  /** Limite di spesa chiesto da Luca per questa richiesta: true quando e' (quasi) raggiunto. */
+  overBudget?: () => boolean
 }
 const work = new AsyncLocalStorage<WorkContext>()
 
@@ -129,6 +131,15 @@ export function reportStatus(text: string) {
     work.getStore()?.status(text)
   } catch {
     // Il client puo' essersi scollegato: il lavoro continua comunque.
+  }
+}
+
+/** Limite di spesa della richiesta raggiunto: i lavori lunghi si fermano qui. */
+export function budgetReached(): boolean {
+  try {
+    return Boolean(work.getStore()?.overBudget?.())
+  } catch {
+    return false
   }
 }
 

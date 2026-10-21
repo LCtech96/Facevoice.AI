@@ -30,7 +30,7 @@ export type SocialAction = {
 
 export type Usage = { calls: number; input: number; output: number; cost: number; models: Record<string, number> }
 
-export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: Usage }
+export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: Usage; job?: string }
 
 export type Job = {
   id: string
@@ -42,6 +42,8 @@ export type Job = {
   handled?: boolean
   model?: string
   usage?: Usage
+  /** Limite di spesa letto dalla richiesta. */
+  budget?: { tokens?: number; usd?: number } | null
 }
 
 type ServerState = { turns: Turn[]; drafts: Draft[]; job: Job | null; running: boolean }
