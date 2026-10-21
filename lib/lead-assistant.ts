@@ -7,6 +7,8 @@ import {
   MAX_RESULTS,
   WHATSAPP_DISPLAY,
   analyzeLead,
+  fetchPage,
+  isPublicUrl,
   searchPlaces,
   type Lead,
 } from '@/lib/leads'
@@ -14,7 +16,7 @@ import { prepareOutreachReply } from '@/lib/meta/agent'
 import { pollGmail } from '@/lib/gmail-poll'
 import { withCalls } from '@/lib/lead-calls'
 import { SOURCE_CHAT, addContact } from '@/lib/contacts'
-import { inspectWebsite } from '@/lib/site-inspect'
+import { inspectWebsite, platformOf } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { conversationKeyFor } from '@/lib/meta/identities'
 import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
@@ -514,6 +516,40 @@ async function listConversations(platform: string | undefined, filter: string | 
 }
 
 // ---------------------------------------------------------------------
+// Piattaforma dei siti (WordPress, Wix…): solo la home, risultato in cache
+// ---------------------------------------------------------------------
+
+const PLATFORM_KEY = 'site_platform:'
+const PLATFORM_TTL = 7 * 86_400_000
+
+async function sitePlatforms(leads: Lead[]): Promise<{ results: { lead: Lead; platform: string | null; reachable: boolean }[]; unfinished: number }> {
+  const keys = leads.map((l) => `${PLATFORM_KEY}${l.id}`)
+  const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
+  const cached = new Map<string, { platform: string | null; reachable: boolean; checkedAt: number }>()
+  for (const row of data || []) {
+    try {
+      cached.set(row.key.slice(PLATFORM_KEY.length), JSON.parse(row.value))
+    } catch {}
+  }
+  const { out, unfinished } = await inBatches(leads, async (lead, position) => {
+    const hit = cached.get(lead.id)
+    if (hit && Date.now() - hit.checkedAt < PLATFORM_TTL) return { lead, platform: hit.platform, reachable: hit.reachable }
+    reportStatus(`Controllo il sito di ${lead.name} (${position})…`)
+    let html = ''
+    try {
+      const url = new URL(/^https?:\/\//i.test(lead.website!) ? lead.website! : `https://${lead.website}`)
+      if (isPublicUrl(url)) html = await fetchPage(url.href)
+    } catch {}
+    const result = { platform: html ? platformOf(html) : null, reachable: Boolean(html), checkedAt: Date.now() }
+    await supabaseAdmin
+      .from('app_settings')
+      .upsert({ key: `${PLATFORM_KEY}${lead.id}`, value: JSON.stringify(result), updated_at: new Date().toISOString() })
+    return { lead, platform: result.platform, reachable: result.reachable }
+  }, 6)
+  return { results: out, unfinished }
+}
+
+// ---------------------------------------------------------------------
 // Agente
 // ---------------------------------------------------------------------
 
@@ -552,6 +588,9 @@ Strumenti di ricerca e social:
 - "instagram_profiles": {"ids": [...] opzionale, "filter": "", "limit": 15} → lo stesso per più schede che hanno un Instagram (per domande tipo "quali hanno Instagram e quanti follower").
 - "list_conversations": {"platform": "instagram|facebook|all", "filter": "nome opzionale", "limit": 20} → persone che ci hanno scritto su Instagram o Facebook (contactId, nome, ultimo messaggio e data).
 - "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
+
+Piattaforma dei siti:
+- "site_platforms": {"platform": "WordPress", "ids": [...] opzionale, "filter": "testo opzionale", "limit": 60} → controlla con cosa è fatto il sito di ogni scheda con un sito (WordPress, Wix, Shopify, Squarespace, Webflow, Jimdo, su misura) e restituisce quelle con la piattaforma chiesta (senza "platform": tutte, con la piattaforma di ciascuna). Le schede trovate vengono MOSTRATE a Luca nella lista. Usalo per richieste tipo "quali contatti hanno un sito WordPress" o prima di scrivere a chi usa una certa piattaforma (es. un avviso di sicurezza per WordPress/PHP): poi usa prepare_first_emails con quegli "ids" per chi non è ancora stato contattato e prepare_followups con quegli "ids" e "days": 0 per chi è già stato contattato, passando il testo o le indicazioni di Luca in "instructions".
 
 Rubrica contatti (pagina Contatti, dove finiscono anche tutte le schede delle ricerche):
 - "add_contact": {"name": "...", "phone": "...", "email": "...", "website": "...", "address": "...", "instagram": "...", "facebook": "...", "notes": "..."} → aggiunge un contatto alla rubrica. Usalo quando Luca detta o scrive i dati di un cliente o di una persona (anche a voce, es. "aggiungi Mario Rossi della pizzeria Da Mario, numero 333 1234567, vuole un sito"). Solo "name" è obbligatorio; metti in "notes" quello che non rientra negli altri campi (chi è, cosa vuole, quando richiamarlo). Non inventare dati: se un campo non è stato detto, omettilo. Se il contatto esiste già (stessa email, telefono o nome) vengono completati solo i campi mancanti. Per più contatti chiamalo più volte. Nella risposta conferma in breve cosa hai salvato.
@@ -912,6 +951,29 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           }
           actions.push(action)
           result = { preparato: true, nota: 'compare a Luca con il pulsante Invia', entro_24_ore: Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000 }
+          break
+        }
+        case 'site_platforms': {
+          const wanted = asText(args.platform)?.trim().toLowerCase()
+          const ids = asIds(args.ids)
+          const limit = Math.min(150, asNumber(args.limit) || 60)
+          const pool = (await loadLeads(ids))
+            .filter((l) => l.website && (ids?.length ? true : matchesFilter(l, asText(args.filter))))
+            .slice(0, limit)
+          const { results, unfinished } = await sitePlatforms(pool)
+          const matching = wanted ? results.filter((r) => (r.platform || '').toLowerCase().includes(wanted)) : results
+          if (matching.length) {
+            focus = { label: wanted ? `Siti ${asText(args.platform)}` : 'Piattaforma dei siti', ids: matching.map((r) => r.lead.id) }
+          }
+          result = {
+            controllati: results.length,
+            da_controllare_ancora: unfinished,
+            trovati: matching.length,
+            schede: matching.slice(0, 60).map((r) => ({ ...compact(r.lead), piattaforma: r.platform || (r.reachable ? 'non riconosciuta' : 'sito non raggiungibile') })),
+            con_email: matching.filter((r) => r.lead.email).length,
+            gia_contattati: matching.filter((r) => r.lead.contacted_at).length,
+          }
+          if (unfinished && timeIsUp()) more = true
           break
         }
         case 'add_contact': {
