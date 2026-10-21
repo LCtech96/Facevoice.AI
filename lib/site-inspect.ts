@@ -27,7 +27,7 @@ function yearsIn(text: string): number[] {
   return (text.match(/\b20[0-3]\d\b/g) || []).map(Number).filter((y) => y >= 2005 && y <= now)
 }
 
-function platformOf(html: string): string | null {
+export function platformOf(html: string): string | null {
   if (/wp-content|wp-includes/i.test(html)) return 'WordPress'
   if (/cdn\.shopify|Shopify\.theme/i.test(html)) return 'Shopify'
   if (/wixstatic|wix\.com/i.test(html)) return 'Wix'
