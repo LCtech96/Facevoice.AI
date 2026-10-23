@@ -18,6 +18,7 @@ const TEASER_KEY = 'fv_chat_teaser_closed'
 const TEASER_TEXT: Record<string, { question: string; cta: string }> = {
   it: { question: 'Vuoi sapere in breve di cosa ci occupiamo e come possiamo aiutarti?', cta: 'Scrivici qui' },
   en: { question: 'Want to know in short what we do and how we can help you?', cta: 'Write to us here' },
+  es: { question: '¿Quieres saber en breve a qué nos dedicamos y cómo podemos ayudarte?', cta: 'Escríbenos aquí' },
 }
 const SESSION_KEY = 'fv_site_chat_session'
 const POLL_OPEN_MS = 4000
