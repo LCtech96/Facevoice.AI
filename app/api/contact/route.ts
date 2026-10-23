@@ -4,7 +4,7 @@ import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { asSiteLanguage } from '@/lib/site-languages'
-import { translateTexts } from '@/lib/translate'
+import { translateOrKeep } from '@/lib/translate'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
   // Conferma nella lingua scelta sul sito (testi base in italiano, tradotti se serve).
   const language = asSiteLanguage(body?.language)
-  const [cSubject, cHello, cIntro, cYouWrote, cBye, cTeam] = await translateTexts(language, [
+  const [cSubject, cHello, cIntro, cYouWrote, cBye, cTeam] = await translateOrKeep(language, [
     'Abbiamo ricevuto il tuo messaggio · Facevoice AI',
     'Ciao',
     `il tuo messaggio è stato recapitato al team di Facevoice AI: ti ricontatteremo a breve al numero ${phone} o a questa email.`,
