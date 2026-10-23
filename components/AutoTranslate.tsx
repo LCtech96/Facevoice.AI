@@ -14,7 +14,10 @@ import { useTranslation } from '@/lib/i18n/LanguageContext'
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'SVG', 'TITLE'])
 const ATTRS = ['placeholder', 'aria-label', 'title', 'alt'] as const
 const BATCH = 100
-const CACHE_PREFIX = 'fv_tr_'
+// v2: le cache vecchie potevano contenere frasi rimaste in italiano per errore.
+const CACHE_PREFIX = 'fv_tr2_'
+const OLD_CACHE_PREFIX = 'fv_tr_'
+const RETRY_MS = [15_000, 45_000, 120_000, 300_000]
 const CACHE_MAX = 4000
 const HAS_LETTERS = /\p{L}{2,}/u
 
@@ -35,6 +38,7 @@ function skipped(el: Element | null): boolean {
 
 function loadCache(lang: string): Map<string, string> {
   try {
+    localStorage.removeItem(OLD_CACHE_PREFIX + lang)
     const raw = localStorage.getItem(CACHE_PREFIX + lang)
     if (raw) return new Map(JSON.parse(raw) as [string, string][])
   } catch {}
@@ -54,6 +58,8 @@ export default function AutoTranslate() {
   const textEntries = useRef(new WeakMap<Text, Entry>())
   const attrEntries = useRef(new WeakMap<Element, Map<string, Entry>>())
   const tracked = useRef(new Set<WeakRef<Node>>())
+  // Titolo della scheda: originale (italiano) e versione tradotta applicata.
+  const titleEntry = useRef<{ original: string; applied?: string } | null>(null)
 
   useEffect(() => {
     const root = document.documentElement
@@ -63,6 +69,9 @@ export default function AutoTranslate() {
 
   useEffect(() => {
     const restoreAll = () => {
+      const te = titleEntry.current
+      if (te?.applied !== undefined && document.title === te.applied) document.title = te.original
+      if (te) te.applied = undefined
       for (const ref of tracked.current) {
         const node = ref.deref()
         if (!node) continue
@@ -91,7 +100,40 @@ export default function AutoTranslate() {
     const cache = loadCache(lang)
     const pending = new Set<string>()
     let timer: ReturnType<typeof setTimeout> | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let retries = 0
     let stopped = false
+
+    // Traduzione non riuscita (AI occupata): si riprova piu' tardi, mai tenendosi l'italiano.
+    const scheduleRetry = () => {
+      if (stopped || retryTimer || retries >= RETRY_MS.length) return
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        retries++
+        run([document.body], true)
+      }, RETRY_MS[retries])
+    }
+
+    const titleTarget = (): Target | null => {
+      const value = document.title
+      if (!value || !HAS_LETTERS.test(value)) return null
+      let e = titleEntry.current
+      if (!e || (value !== e.applied && value !== e.original)) {
+        e = { original: value }
+        titleEntry.current = e
+      }
+      if (value !== e.original) return null
+      const entry = e
+      return {
+        source: value.trim(),
+        apply: (t) => {
+          if (document.title === entry.original && t !== entry.original) {
+            entry.applied = t
+            document.title = t
+          }
+        },
+      }
+    }
 
     // Raccoglie i testi da tradurre: nodo di testo o attributo → testo originale.
     type Target = { apply: (translated: string) => void; source: string }
@@ -163,9 +205,13 @@ export default function AutoTranslate() {
       }
     }
 
-    const run = async (scopes: Node[]) => {
+    const run = async (scopes: Node[], withTitle = false) => {
       const targets: Target[] = []
       for (const scope of scopes) if (scope.isConnected) collect(scope, targets)
+      if (withTitle) {
+        const t = titleTarget()
+        if (t) targets.push(t)
+      }
       if (!targets.length) return
 
       // Subito quello che e' gia' in cache, poi il resto dal server.
@@ -190,10 +236,16 @@ export default function AutoTranslate() {
             body: JSON.stringify({ lang, texts: batch }),
           })
           const data = res.ok ? await res.json() : null
-          const translations: string[] = data?.translations || []
-          batch.forEach((source, j) => cache.set(source, translations[j] ?? source))
+          const translations: (string | null)[] = data?.translations || []
+          let missing = !res.ok
+          batch.forEach((source, j) => {
+            const t = translations[j]
+            if (typeof t === 'string') cache.set(source, t)
+            else missing = true
+          })
+          if (missing) scheduleRetry()
         } catch {
-          batch.forEach((source) => cache.set(source, source))
+          scheduleRetry()
         } finally {
           batch.forEach((source) => pending.delete(source))
         }
@@ -208,7 +260,13 @@ export default function AutoTranslate() {
 
     // Prima passata su tutta la pagina, poi solo sui pezzi che cambiano.
     restoreAll()
-    run([document.body])
+    run([document.body], true)
+
+    // Il titolo della scheda cambia a ogni pagina: si traduce anche quello.
+    const titleObserver = new MutationObserver(() => {
+      if (document.title !== titleEntry.current?.applied) run([], true)
+    })
+    titleObserver.observe(document.head, { childList: true, subtree: true, characterData: true })
 
     const dirty = new Set<Node>()
     const observer = new MutationObserver((mutations) => {
@@ -235,7 +293,9 @@ export default function AutoTranslate() {
     return () => {
       stopped = true
       observer.disconnect()
+      titleObserver.disconnect()
       if (timer) clearTimeout(timer)
+      if (retryTimer) clearTimeout(retryTimer)
     }
   }, [language, pathname])
 

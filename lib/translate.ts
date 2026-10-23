@@ -32,13 +32,18 @@ async function translateChunk(lang: SiteLanguage, texts: string[]): Promise<stri
   })
   const json = (result.message || '').match(/\[[\s\S]*\]/)?.[0]
   const parsed = json ? (JSON.parse(json) as unknown[]) : []
-  // Se l'AI sbaglia il numero di elementi si tiene il testo originale per quelli mancanti.
+  // Numero di elementi sbagliato: non si salva niente, si riprova la volta dopo.
+  if (parsed.length !== texts.length) throw new Error(`traduzione incompleta (${parsed.length}/${texts.length})`)
   return texts.map((text, i) => (typeof parsed[i] === 'string' && parsed[i] ? (parsed[i] as string) : text))
 }
 
-/** Traduce i testi nella lingua indicata, usando la cache dove possibile. */
-export async function translateTexts(lang: SiteLanguage, texts: string[]): Promise<string[]> {
-  if (lang === 'it' || !texts.length) return texts
+/**
+ * Traduce i testi nella lingua indicata, usando la cache dove possibile.
+ * null = non tradotto ora (AI non disponibile): il sito riprova piu' tardi
+ * invece di tenersi per sempre il testo italiano.
+ */
+export async function translateTexts(lang: SiteLanguage, texts: string[]): Promise<(string | null)[]> {
+  if (lang === 'it' || !texts.length) return [...texts]
   const hashes = texts.map((t) => hashOf(lang, t))
   const found = new Map<string, string>()
 
@@ -85,5 +90,11 @@ export async function translateTexts(lang: SiteLanguage, texts: string[]): Promi
     }
   }
 
-  return texts.map((text, i) => found.get(hashes[i]) ?? text)
+  return texts.map((_, i) => found.get(hashes[i]) ?? null)
+}
+
+/** Come translateTexts, ma dove la traduzione non e' riuscita tiene il testo originale. */
+export async function translateOrKeep(lang: SiteLanguage, texts: string[]): Promise<string[]> {
+  const out = await translateTexts(lang, texts)
+  return texts.map((text, i) => out[i] ?? text)
 }
