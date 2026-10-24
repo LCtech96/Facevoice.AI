@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
 import { asModelChoice } from '@/lib/ai'
-import { asScope, isRunning, loadState, newId, recoverStaleJob, runJob, updateState, type Scope, type Turn } from '@/lib/assistant-state'
+import {
+  asScope,
+  continuationMessage,
+  isRunning,
+  isStale,
+  loadState,
+  newId,
+  recoverStaleJob,
+  runJob,
+  updateState,
+  type Job,
+  type Scope,
+  type Turn,
+} from '@/lib/assistant-state'
+import { internalKey, requestRound, resumeOrClose } from '@/lib/assistant-launch'
 import { parseBudget } from '@/lib/assistant-budget'
 
 export const dynamic = 'force-dynamic'
 // Il lavoro continua dopo la risposta (after): serve il tempo massimo.
 export const maxDuration = 300
 
-const internalKey = () => (process.env.CRON_SECRET || '').trim()
-
 /**
  * Permessi per scope: la chat della pagina Clienti richiede "assistant" su Clienti;
- * la super chat "view" per leggere e "use" per scrivere. Le continuazioni interne
+ * la super chat "view" per leggere e "use" per scrivere. I giri successivi
  * passano con la chiave del server.
  */
 async function authorized(req: NextRequest, scope: Scope, write: boolean) {
@@ -23,54 +35,72 @@ async function authorized(req: NextRequest, scope: Scope, write: boolean) {
   return canAccess(access, 'leads', 'assistant')
 }
 
-/** Avvia un lavoro e lo esegue dopo aver risposto: prosegue anche se la pagina si chiude. */
-function startJob(req: NextRequest, scope: Scope, message: string, original: string, round: number) {
+/** Esegue il giro dopo aver risposto: prosegue anche se la pagina si chiude. */
+function launch(req: NextRequest, scope: Scope, jobId: string, message: string) {
   const origin = req.nextUrl.origin
-  const continueJob = async (orig: string, nextRound: number) => {
-    const key = internalKey()
-    if (!key) throw new Error('CRON_SECRET mancante: niente continuazione automatica')
-    const res = await fetch(`${origin}/api/admin/leads/assistant`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
-      body: JSON.stringify({ scope, continueOriginal: orig, round: nextRound }),
-    })
-    if (!res.ok) throw new Error(`continuazione rifiutata: ${res.status}`)
-  }
-  return { run: (jobId: string) => runJob(scope, jobId, message, continueJob), original, round }
+  after(() => runJob(scope, jobId, message, (round) => requestRound(origin, scope, jobId, round)))
 }
+
+/** "continua", "vai avanti"…: riprende l'ultima richiesta senza rifare i passi gia' fatti. */
+const CONTINUE_RE = /^\s*(continua|continuare|vai avanti|prosegui|riprendi|vai)\b[\s.!]*$/i
 
 /** Stato della conversazione: ?scope=leads|super */
 export async function GET(req: NextRequest) {
   const scope = asScope(req.nextUrl.searchParams.get('scope'))
   if (!(await authorized(req, scope, false))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
-  const state = await recoverStaleJob(scope, await loadState(scope))
+  // Lavoro fermo (il server ha chiuso la funzione): riparte da solo.
+  const state = await resumeOrClose(req.nextUrl.origin, scope, await loadState(scope))
   return NextResponse.json({ ...state, running: isRunning(state.job) })
 }
 
 /**
- * Nuova richiesta. body: { scope, message }
- * Continuazione interna: { scope, continueOriginal, round } con x-internal-key.
+ * Nuova richiesta. body: { scope, message, model? }
+ * Giro successivo (interno, con x-internal-key): { scope, jobId, round }.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const scope = asScope(body?.scope)
   if (!(await authorized(req, scope, true))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
-  const continuing = typeof body?.continueOriginal === 'string' && req.headers.get('x-internal-key') === internalKey()
+  const key = internalKey()
+  const internal = Boolean(key) && req.headers.get('x-internal-key') === key
 
-  const original = String(continuing ? body.continueOriginal : body?.message || '').trim().slice(0, 2000)
-  if (!original) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
-  const round = continuing ? Math.max(1, Number(body.round) || 1) : 0
-  const message = continuing ? `Continua il lavoro richiesto prima (“${original}”) con quello che resta.` : original
+  if (internal && typeof body?.jobId === 'string') {
+    // Giro successivo: stesso lavoro, nuovo giro. Lo avvia uno solo (chi arriva dopo riceve 409).
+    const jobId = body.jobId
+    const round = Math.max(1, Number(body.round) || 1)
+    let job: Job | null = null
+    await updateState(scope, (s) => {
+      if (!s.job || s.job.id !== jobId || s.job.status !== 'running' || (s.job.round ?? 0) >= round) return false
+      const resumed = isStale(s.job)
+      s.job.round = round
+      s.job.run = newId()
+      if (resumed) s.job.statusText = 'Riprendo da dove mi ero fermato…'
+      s.job.updatedAt = new Date().toISOString()
+      job = { ...s.job }
+    })
+    if (!job) return NextResponse.json({ error: 'Giro già avviato o lavoro chiuso' }, { status: 409 })
+    launch(req, scope, jobId, continuationMessage((job as Job).original))
+    return NextResponse.json({ ok: true })
+  }
+
+  const text = String(body?.message || '').trim().slice(0, 2000)
+  if (!text) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
 
   const current = await recoverStaleJob(scope, await loadState(scope))
-  if (!continuing && isRunning(current.job)) {
+  if (isRunning(current.job)) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta che finisca.' }, { status: 409 })
   }
 
+  // "continua" dopo un lavoro fermato: si riprende quella richiesta con i passi gia' fatti.
+  const previous = current.job
+  const resuming = CONTINUE_RE.test(text) && Boolean(previous?.original) && Boolean(previous?.steps?.length)
+  const original = resuming ? previous!.original : text
+
   // Limite di spesa: scritto in questa richiesta, oppure nella precedente se nel
   // frattempo l'assistente aveva solo fatto una domanda ("Va bene, ma non spendere più di…").
-  let budget = continuing ? current.job?.budget ?? null : parseBudget(original)
-  if (!continuing && !budget) {
+  let budget = parseBudget(text)
+  if (!budget && resuming) budget = previous?.budget ?? null
+  if (!budget) {
     const lastAssistant = [...current.turns].reverse().find((t) => t.role === 'assistant')
     const lastUser = [...current.turns].reverse().find((t) => t.role === 'user')
     if (lastAssistant?.text.trim().endsWith('?') && lastUser) budget = parseBudget(lastUser.text)
@@ -79,25 +109,23 @@ export async function POST(req: NextRequest) {
   const jobId = newId()
   const now = new Date().toISOString()
   const state = await updateState(scope, (s) => {
-    if (!continuing) s.turns.push({ id: newId(), role: 'user', text: original })
-    const previous = s.job
+    s.turns.push({ id: newId(), role: 'user', text })
     s.job = {
       id: jobId,
       status: 'running',
-      statusText: continuing ? 'Continuo con il resto…' : 'Ci penso…',
-      startedAt: continuing && previous ? previous.startedAt : now,
+      statusText: resuming ? 'Riprendo da dove mi ero fermato…' : 'Ci penso…',
+      startedAt: now,
       updatedAt: now,
       original,
-      round,
-      // La continuazione tiene modello e conteggio della richiesta originale.
-      model: continuing ? previous?.model : asModelChoice(body?.model),
-      usage: continuing ? previous?.usage : undefined,
+      round: 0,
+      model: asModelChoice(body?.model),
       budget,
+      run: newId(),
+      steps: resuming ? previous!.steps : undefined,
     }
   })
 
-  const job = startJob(req, scope, message, original, round)
-  after(() => job.run(jobId))
+  launch(req, scope, jobId, resuming ? continuationMessage(original) : original)
   return NextResponse.json({ ...state, running: true })
 }
 

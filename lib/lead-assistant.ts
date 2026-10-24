@@ -625,7 +625,23 @@ const asIds = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is
 const asText = (value: unknown) => (typeof value === 'string' ? value : undefined)
 const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
-export async function runAssistant(message: string, history: Turn[], openDrafts: Draft[], budget?: Budget | null): Promise<AssistantResult> {
+/** Avanzamento tra un giro e l'altro: passi gia' fatti e avviso a ogni passo concluso. */
+export type Progress = { done?: string[]; onStep?: (line: string) => void }
+
+/** Riga breve che descrive un passo concluso (strumento, argomenti, esito). */
+function stepLine(tool: string, args: Record<string, unknown>, result: unknown) {
+  const a = JSON.stringify(args)
+  const r = JSON.stringify(result) ?? ''
+  return `${tool} ${a === '{}' ? '' : a.slice(0, 200)} → ${r.length > 260 ? `${r.slice(0, 260)}…` : r}`
+}
+
+export async function runAssistant(
+  message: string,
+  history: Turn[],
+  openDrafts: Draft[],
+  budget?: Budget | null,
+  progress?: Progress
+): Promise<AssistantResult> {
   if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
   const drafts = new Map(openDrafts.map((d) => [d.leadId, d]))
@@ -651,6 +667,9 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
           .join('\n')}`
       : 'Nessuna bozza aperta.',
     history.length ? `Conversazione recente:\n${history.slice(-6).map((t) => `${t.role === 'user' ? 'Luca' : 'Assistente'}: ${t.text}`).join('\n')}` : '',
+    progress?.done?.length
+      ? `PASSI GIÀ FATTI per questa richiesta nei giri precedenti (i risultati sono già salvati nel database: NON rifarli, riparti da quello che manca; per rivedere le schede trovate usa list_leads con recent_minutes):\n${progress.done.map((l) => `- ${l}`).join('\n')}`
+      : '',
     budget
       ? `LIMITE DI SPESA per questa richiesta: ${describeBudget(budget)} in tutto. Ogni passo costa: fai pochi passi, ricerche e analisi su numeri piccoli (es. 20 risultati, limit 10), e punta al risultato più utile. Quando il limite sta per finire ti fermo io e mi dai il riepilogo.`
       : '',
@@ -681,7 +700,7 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     }
     if (timeIsUp()) {
       more = true
-      return finish(`Ho preparato ${changed.size} bozze finora, continuo con il resto…`)
+      return finish(changed.size ? `Ho preparato ${changed.size} bozze finora, continuo con il resto…` : 'Sto ancora lavorando: continuo con il resto…')
     }
     reportStatus(step === 0 ? 'Leggo la richiesta e decido da dove partire…' : 'Valuto il risultato e decido il passo successivo…')
     const response = await callAIPaced(transcript, AGENT_PROMPT, {
@@ -1053,6 +1072,9 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
       result = { errore: error instanceof Error ? error.message : 'errore' }
     }
 
+    try {
+      progress?.onStep?.(stepLine(call.tool || '?', args, result))
+    } catch {}
     transcript.push({ role: 'assistant', content: JSON.stringify({ tool: call.tool, args }) })
     transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 12000)}` })
     // Ogni passo rimanda all'AI tutta la conversazione: i risultati vecchi si accorciano
@@ -1063,7 +1085,9 @@ export async function runAssistant(message: string, history: Turn[], openDrafts:
     }
   }
 
-  return finish('Ho fatto quello che potevo in questo giro: dimmi se continuo.')
+  // Passi del giro finiti ma lavoro non concluso: si prosegue da soli nel giro successivo.
+  more = true
+  return finish('Sto ancora lavorando: continuo con il resto…')
 
   function finish(reply: string, confirmSend = false): AssistantResult {
     return {
