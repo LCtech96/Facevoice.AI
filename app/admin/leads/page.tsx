@@ -19,6 +19,7 @@ import {
   Star,
   Trash2,
 } from 'lucide-react'
+import Link from 'next/link'
 import Navigation from '@/components/Navigation'
 import LeadAssistant from './LeadAssistant'
 import { getAccessToken } from '@/lib/session-token'
@@ -402,7 +403,15 @@ export default function LeadsPage() {
       <Navigation />
       <div className="max-w-6xl mx-auto px-4 pt-20 md:pt-24 pb-28 md:pb-8">
         <div className={selectedId ? 'hidden md:block' : ''}>
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Ricerca clienti</h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold text-[var(--text-primary)]">Ricerca clienti</h1>
+            <Link
+              href="/admin/pipeline"
+              className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-blue)]"
+            >
+              Motore clienti →
+            </Link>
+          </div>
           <p className="text-sm text-[var(--text-secondary)] mb-4">
             Trova attività su Google Maps, l&apos;AI legge il loro sito e prepara un primo contatto personalizzato. Le
             email partono solo dopo che le hai controllate.

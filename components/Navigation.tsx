@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookUser } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookUser, Activity } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -129,6 +129,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
   const dropdownMenuItems: NavItem[] = isAdmin
     ? [
+        { id: 'admin-pipeline', label: 'Motore clienti', icon: Activity, href: '/admin/pipeline' },
         { id: 'chat', label: 'Assistente AI interno', icon: MessageSquare, href: '/ai-chat' },
       ]
     : [
