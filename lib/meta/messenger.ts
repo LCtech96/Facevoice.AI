@@ -64,11 +64,17 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
   const commentId = value.comment_id || value.id
   const text = (typeof value.message === 'string' ? value.message : value.text || '').trim()
   const authorId = value.from?.id
-  if (!commentId || !text || !authorId) return
+  if (!commentId || !text || !authorId) {
+    console.log(`${platform} comment: ignorato (manca ${!commentId ? 'id' : !text ? 'testo' : 'autore'})`)
+    return
+  }
 
   // Mai rispondere ai commenti scritti dall'account stesso (comprese le nostre risposte).
   const page = await getPageToken()
-  if (authorId === accountId || authorId === page?.pageId) return
+  if (authorId === accountId || authorId === page?.pageId) {
+    console.log(`${platform} comment: ignorato (scritto dal nostro account, es. una nostra risposta)`)
+    return
+  }
 
   const postId = platform === 'instagram' ? value.media?.id : value.post_id
   const postCaption = postId ? await fetchPostCaption(platform, postId) : null
