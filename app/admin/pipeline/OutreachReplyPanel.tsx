@@ -104,7 +104,7 @@ export default function OutreachReplyPanel() {
       {open && (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-[var(--text-secondary)]">
-            Incolla qui conversazioni vere scritte da te (es. lo scambio con Dario): l’AI ne prende il metodo, cioè come rispondi, come
+            Il metodo della tua conversazione con Dario è già incluso. Qui puoi incollare altre conversazioni vere scritte da te: l’AI ne prende il metodo, cioè come rispondi, come
             sposti il discorso e come porti alla chiamata, ma scrive sempre come Luca di Facevoice AI e non copia frasi o persone.
           </p>
           <textarea

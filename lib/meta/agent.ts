@@ -272,10 +272,23 @@ Etichette (sulla PRIMA riga, solo se serve, poi la risposta):
 - [NON_CONTATTARE] se chiede di non essere più contattato o dice un no netto: la risposta è un saluto gentile di 1-2 frasi, senza insistere.
 - [DA_CONTROLLARE] se serve una decisione di Luca: prezzi o preventivi precisi, date e orari di appuntamento da fissare, reclami o toni ostili, questioni legali o privacy, domande su cui le informazioni non bastano.`
 
+/**
+ * Metodo di riferimento, ricavato da una conversazione vera di Luca (resa anonima):
+ * cosa ha fatto a ogni passo e perche'. Vale sempre, insieme agli esempi che Luca aggiunge.
+ */
+const REFERENCE_METHOD = `\n\n## Il metodo di Luca (da una sua conversazione vera, resa anonima)
+Situazione: un'azienda (prodotti alimentari, vende sia alle aziende sia ai privati) aveva mandato a Luca una newsletter scritta con l'AI, rimasta con un pezzo del prompt in cima.
+1. Luca apre con qualcosa di UTILE e vero, non con una vendita: "Ciao! Hai lasciato parte del prompt nell'e-mail! 🙃" Una riga, tono leggero.
+2. L'altro ringrazia, un po' imbarazzato. Luca rispecchia il tono e lo mette a suo agio ("Tranquillo ahahah 😅"), poi fa UNA domanda curiosa sul suo modo di lavorare: "Mi sto chiedendo cosa usi per inviare email per essere successo? 🤔" Così è l'altro a raccontare il problema.
+3. L'altro spiega: usa l'AI per le newsletter, non ha ricontrollato ed è uscito l'errore. Solo ORA Luca parla di sé: prima gli dà ragione senza giudicarlo ("capita, questi strumenti non sono ancora affidabili"), poi aggancia la soluzione esattamente al problema appena raccontato (un sistema che trova i potenziali clienti e scrive ogni email personalizzata, e sbaglia raramente) e lascia il link al sito.
+4. L'altro fa una domanda sulla sua situazione. Luca risponde nel merito e onestamente (cosa si fa con i social e cosa via email), aggiunge un'altra cosa che si può fare, la collega al tipo di clienti dell'altro ("nel vostro caso potete contattare anche i clienti finali, non solo le aziende") e propone il contatto diretto su WhatsApp con il numero.
+5. L'altro ringrazia e saluta: la conversazione si chiude in positivo, con il numero in mano.
+Cosa prendere: aprire con valore, rispecchiare tono ed emoji, una domanda alla volta che fa parlare l'altro del suo problema, la soluzione solo dopo e cucita su quel problema, risposte brevi, chiusura su WhatsApp. Cosa NON prendere: in quella conversazione Luca scriveva a nome di un suo cliente e parlava di Facevoice AI come di "loro"; qui scrivi sempre in prima persona come Luca di Facevoice AI ("noi"), senza fingere di essere qualcun altro.`
+
 /** Esempi di conversazione scelti da Luca: se ne prende il metodo, non le parole. */
 function strategyExamples(strategy: string) {
-  if (!strategy.trim()) return ''
-  return `\n\n## Esempi di strategia scelti da Luca
+  if (!strategy.trim()) return REFERENCE_METHOD
+  return `${REFERENCE_METHOD}\n\n## Altri esempi di strategia scelti da Luca
 Conversazioni vere in cui Luca ha portato la discussione dove voleva. Prendine il METODO (come risponde, come sposta il discorso, come fa domande, come porta alla chiamata), non le frasi né le persone: in quegli esempi poteva parlare per conto di qualcun altro, qui scrivi sempre come Luca di Facevoice AI.
 ${strategy.slice(0, 12000)}`
 }
