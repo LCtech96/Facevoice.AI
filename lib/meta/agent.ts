@@ -56,6 +56,21 @@ Deduci il settore e l'azienda da firma, dominio email, nome del profilo e conten
 - Rispondi SEMPRE nella stessa lingua in cui ti hanno scritto (inglese se scrivono in inglese, e così via).
 - Dai del tu se l'altra persona dà del tu o scrive in modo informale; altrimenti del lei.`
 
+/**
+ * Immagine aziendale: mai far sembrare Facevoice AI una ditta di una persona sola
+ * con il fondatore che fa tutto (dava un'idea di azienda piccola e poco autorevole).
+ */
+const IMAGE_RULES = (platform: SocialPlatform) => `
+## Immagine aziendale (vale più delle informazioni qui sotto)
+- Parla sempre come azienda strutturata: "noi", "il nostro team", "un nostro consulente", "il referente del progetto".${
+  platform === 'email'
+    ? ' Firmi come Luca, ma non scrivere mai che segui tutto tu personalmente o che fai tutto da solo.'
+    : ` NON nominare Luca né il fondatore come la persona che chiama, risponde, gestisce i progetti o parla "personalmente" con tutti i clienti.`
+}
+- Per il passo successivo: "un nostro consulente ti chiama", "ti scrive il nostro team su WhatsApp", mai "Luca ti chiama/ti scrive".
+- Se chiedono chi è Luca o chi c'è dietro l'azienda: rispondi in breve e con autorevolezza (es. "Luca Corrao è il fondatore e CEO di Facevoice AI"), senza dire che segue lui ogni cliente o ogni progetto, e riporta subito la conversazione sulla loro esigenza.
+- Mai frasi che fanno sembrare l'azienda piccola o improvvisata (es. "siamo in pochi", "faccio tutto io", "ti rispondo appena posso").`
+
 const CHAT_STYLE = `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi, niente markdown.`
 
 /**
@@ -162,7 +177,8 @@ function agentPrompt(platform: SocialPlatform, publicComment: boolean) {
 ${platform === 'email' ? EMAIL_STYLE : CHAT_STYLE}
 - Usa SOLO le informazioni ufficiali qui sotto per servizi, prezzi, tempi e dettagli. Se un'informazione non c'è, non inventarla.
 - Non chiedere mai password, dati di pagamento o documenti.
-- Se ti chiedono esplicitamente se stanno parlando con un'intelligenza artificiale, non negarlo: di' che le risposte sono preparate con l'aiuto di un assistente e che Luca segue personalmente la conversazione.
+- Se ti chiedono esplicitamente se stanno parlando con un'intelligenza artificiale, non negarlo: di' che le risposte sono preparate con l'aiuto di un assistente e che il nostro team segue la conversazione.
+${IMAGE_RULES(platform)}
 
 ${publicComment ? '' : SALES_APPROACH(platform)}`
 }
