@@ -445,7 +445,9 @@ async function queueReply(
       .select('id')
       .single()
     if (row) await setOrigin(row.id, 'ai_auto')
-    if (sent.error) console.error(`${target.platform} send error:`, sent.error)
+    // Esito nei log Vercel (senza contenuti): serve a capire se le risposte partono davvero.
+    if (sent.error) console.error(`${target.platform} ${target.kind}: invio fallito:`, sent.error)
+    else console.log(`${target.platform} ${target.kind}${target.reply_to && target.kind === 'message' ? ' (privato dal commento)' : ''}: risposta inviata`)
     return false
   }
   const { data: draft } = await supabaseAdmin
@@ -540,6 +542,7 @@ export async function handleIncoming(input: {
 
   if (error || !inserted) {
     if (error?.code !== '23505') console.error(`${input.platform} insert error:`, error)
+    else console.log(`${input.platform} ${input.kind}: già ricevuto (doppione di Meta), ignorato`)
     return
   }
 
@@ -602,6 +605,13 @@ export async function handleIncoming(input: {
     pendingDraft = Boolean(draftId)
     if (draftId && outreachAuto) scheduledAt = await scheduleAutoSend(draftId)
   } else if (reply) pendingDraft = Boolean(await queueReply(target, input.contactName, reply, settings.autoSend))
+
+  if (!reply) {
+    const why = outreach ? 'testo mancante o generazione non riuscita' : !settings.enabled ? 'canale non collegato in Canali e AI' : "l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita"
+    console.log(`${input.platform} ${input.kind}: nessuna risposta (${why})`)
+  } else if (pendingDraft) {
+    console.log(`${input.platform} ${input.kind}: ${scheduledAt ? 'controrisposta programmata' : 'risposta in bozza da approvare in Messaggi'}`)
+  }
 
   // Commento con un interesse concreto: oltre alla risposta pubblica, un messaggio privato.
   if (settings.enabled && input.kind === 'comment' && input.text && input.platform !== 'whatsapp') {
