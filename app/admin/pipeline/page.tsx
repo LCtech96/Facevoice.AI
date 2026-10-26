@@ -8,6 +8,8 @@ import Navigation from '@/components/Navigation'
 import { getAccessToken } from '@/lib/session-token'
 import AutopilotPanel from './AutopilotPanel'
 import OutreachReplyPanel from './OutreachReplyPanel'
+import AppointmentsPanel from './AppointmentsPanel'
+import LiveFeed, { type FeedEvent } from './LiveFeed'
 
 // Motore clienti: la pipeline vera in una schermata. Le schede passano da sole
 // da una colonna all'altra man mano che avanzano (ricerca, analisi, contatto,
@@ -21,6 +23,7 @@ type Data = {
   cards: Record<StageId, Card[]>
   hero: { replies: number; contacted: number; clients: number; replyRate: number }
   discarded: number
+  events: FeedEvent[]
   running: { text: string } | null
 }
 
@@ -101,16 +104,23 @@ function shortDate(iso: string) {
   return date.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
 }
 
-function LeadCard({ card, stage }: { card: Card; stage: StageId }) {
+function LeadCard({ card, stage, flash, delay }: { card: Card; stage: StageId; flash: boolean; delay: number }) {
   const won = stage === 'clients'
+  const glow = won ? DONE : ACCENT
   return (
     <motion.div
       layout
       layoutId={card.id}
-      initial={{ opacity: 0, scale: 0.92 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0, y: 14, scale: 0.92 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        // Qualcosa e' appena successo a questo contatto: la scheda pulsa e si illumina.
+        scale: flash ? [1, 1.06, 1] : 1,
+        boxShadow: flash ? [`0 0 0 0 ${glow}00`, `0 0 0 4px ${glow}66`, `0 0 0 0 ${glow}00`] : `0 0 0 0 ${glow}00`,
+      }}
       exit={{ opacity: 0, scale: 0.92 }}
-      transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+      transition={{ type: 'spring', stiffness: 260, damping: 30, delay, ...(flash ? { duration: 1.4, type: 'tween' } : {}) }}
       className="rounded-xl border bg-[var(--background-secondary)] px-2.5 py-2 min-w-0"
       style={{ borderColor: won ? DONE : 'var(--border-color)' }}
     >
@@ -143,6 +153,11 @@ export default function PipelinePage() {
   const [error, setError] = useState<string | null>(null)
   // Cosa sta facendo l'automazione giornaliera (ha la precedenza sulla super chat).
   const [autopilotText, setAutopilotText] = useState<string | null>(null)
+  // Eventi gia' visti: quelli nuovi entrano evidenziati e fanno pulsare la scheda del contatto.
+  const seen = useRef<Set<string> | null>(null)
+  const [fresh, setFresh] = useState<Set<string>>(new Set())
+  const [flash, setFlash] = useState<Set<string>>(new Set())
+  const firstLoad = useRef(true)
 
   const load = useCallback(async (p: string) => {
     const res = await authFetch(`/api/admin/pipeline?period=${p}`).catch(() => null)
@@ -152,7 +167,19 @@ export default function PipelinePage() {
     if (!res.ok) return setError(json.error || 'Errore nel caricare i dati')
     setAuthorized(true)
     setError(null)
+    const events: FeedEvent[] = json.events || []
+    if (seen.current) {
+      const added = events.filter((e) => !seen.current!.has(e.id))
+      if (added.length) {
+        setFresh(new Set(added.map((e) => e.id)))
+        setFlash(new Set(added.map((e) => e.leadId).filter((id): id is string => Boolean(id))))
+        setTimeout(() => setFlash(new Set()), 2500)
+      }
+    }
+    seen.current = new Set([...(seen.current || []), ...events.map((e) => e.id)])
     setData(json)
+    // Dopo il primo disegno le schede non aspettano piu' il turno di entrata.
+    setTimeout(() => (firstLoad.current = false), 1500)
   }, [])
 
   useEffect(() => {
@@ -226,9 +253,6 @@ export default function PipelinePage() {
           </div>
         </section>
 
-        {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
-        {authorized && <OutreachReplyPanel />}
-
         <div className="mt-4 flex gap-2">
           {PERIODS.map((p) => (
             <button
@@ -264,9 +288,15 @@ export default function PipelinePage() {
                       {stage.recent ? <span style={{ color: ACCENT }}> +{stage.recent}</span> : null}
                     </p>
                     <div className="space-y-2">
-                      <AnimatePresence mode="popLayout" initial={false}>
-                        {data.cards[stage.id].map((card) => (
-                          <LeadCard key={card.id} card={card} stage={stage.id} />
+                      <AnimatePresence mode="popLayout">
+                        {data.cards[stage.id].map((card, row) => (
+                          <LeadCard
+                            key={card.id}
+                            card={card}
+                            stage={stage.id}
+                            flash={flash.has(card.id)}
+                            delay={firstLoad.current ? index * 0.12 + row * 0.07 : 0}
+                          />
                         ))}
                       </AnimatePresence>
                       {data.cards[stage.id].length === 0 && (
@@ -287,6 +317,11 @@ export default function PipelinePage() {
             {data.discarded ? ` ${data.discarded} scartate non sono nelle colonne.` : ''} Si aggiorna da sola.
           </p>
         )}
+
+        {data && <LiveFeed events={data.events || []} fresh={fresh} />}
+        {authorized && <AppointmentsPanel />}
+        {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
+        {authorized && <OutreachReplyPanel />}
       </div>
     </main>
   )

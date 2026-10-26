@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAIPaced, hasAIProvider } from '@/lib/ai'
+import { defineSection, sectionText } from '@/lib/ai-context'
 
 // Ricerca clienti: Google Places (API ufficiale, niente scraping di Google),
 // poi lettura del sito di ogni attivita' per email e social, poi analisi AI
@@ -222,7 +223,12 @@ export async function readWebsite(website: string): Promise<SiteInfo> {
 // ---------------------------------------------------------------------
 
 // Regole della prima email: condivise con l'assistente della Ricerca clienti.
-export const FIRST_EMAIL_RULES = `come se Luca la scrivesse al volo dal telefono a una persona del posto: italiano parlato di tutti i giorni, parole semplici e comuni, frasi corte, del TU. Deve sembrare scritta da una persona, non da un'agenzia.
+export const FIRST_EMAIL = defineSection({
+  id: 'first_email',
+  title: 'Prima email a chi non ci conosce',
+  usedFor: 'Prime email del Motore clienti (automazione giornaliera e pagina Clienti)',
+  group: 'contatti',
+  defaultText: `come se Luca la scrivesse al volo dal telefono a una persona del posto: italiano parlato di tutti i giorni, parole semplici e comuni, frasi corte, del TU. Deve sembrare scritta da una persona, non da un'agenzia.
 LUNGHEZZA: 50-80 parole in tutto (firma esclusa). Se superi le 80 parole, taglia. Paragrafi di 1-2 frasi separati da una riga vuota, niente elenchi, niente prezzi.
 PAROLE VIETATE (sanno di marketing): soluzioni, valorizzare, ottimizzare, potenziare, incrementare, presenza online, presenza digitale, strategia, esperienza utente, fidelizzare, eccellenza, straordinario, eccezionale, innovativo, rivoluzionario, a 360 gradi, realtà (per dire azienda), "mi permetto di".
 Struttura, in quest'ordine:
@@ -252,20 +258,34 @@ Se ti va ne parliamo dieci minuti su WhatsApp: scrivimi al +39 351 420 6353 e ti
 A presto,
 Luca Corrao"
 Oggetto: corto e parlato, max 6 parole, legato a loro (es. "Una curiosità sul vostro B&B", "Il menù di Osteria da Fortunata"), niente maiuscole urlate o emoji.
-Se Luca dà indicazioni sullo stile o sul contenuto, seguile alla lettera: valgono più di queste regole (tranne non inventare fatti).`
+Se Luca dà indicazioni sullo stile o sul contenuto, seguile alla lettera: valgono più di queste regole (tranne non inventare fatti).`,
+})
+
+/** Regole della prima email in uso (quelle modificate dalla pagina Memoria, o le predefinite). */
+export const firstEmailRules = () => sectionText(FIRST_EMAIL)
 
 export const WHATSAPP_DISPLAY = '+39 351 420 6353'
 
-const ANALYSIS_PROMPT = `Sei l'assistente commerciale di Luca Corrao, fondatore di Facevoice AI: azienda siciliana di sviluppo software su misura, siti web, integrazione AI e automazioni, digitalizzazione e social media management per imprese.
+const LEAD_ANALYSIS = defineSection({
+  id: 'lead_analysis',
+  title: 'Analisi delle attività trovate',
+  usedFor: 'Lettura dei siti nel Motore clienti: punteggio, punti deboli, bozza email e Direct',
+  group: 'contatti',
+  defaultText: `Sei l'assistente commerciale di Luca Corrao, fondatore di Facevoice AI: azienda siciliana di sviluppo software su misura, siti web, integrazione AI e automazioni, digitalizzazione e social media management per imprese.
 
 Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo sito (se esiste). Devi:
 1. Valutare quanto è promettente come cliente per Facevoice AI: punteggio da 1 a 10. Alto se ci sono problemi concreti che Facevoice risolve (niente sito, sito datato o lento, niente prenotazione/ordine online, niente social o social trascurati, processi manuali evidenti) e l'attività sembra sana (recensioni, presenza). Basso per catene, franchising, enti pubblici, attività chiuse.
 2. Scrivere l'analisi: 2-4 punti deboli concreti e verificabili dai dati, in italiano, una riga ciascuno.
-3. Scrivere la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
-4. Scrivere un messaggio Direct per Instagram/Facebook: 2-3 frasi brevissime, dai del tu, stesso tono parlato e stessa idea per settore (complimento specifico, chi siamo in mezza frase, l'idea, invito a sentirsi su WhatsApp), niente link.
+3. Scrivere la PRIMA email di contatto a freddo, seguendo le regole della prima email (sotto).
+4. Scrivere un messaggio Direct per Instagram/Facebook: 2-3 frasi brevissime, dai del tu, stesso tono parlato e stessa idea per settore (complimento specifico, chi siamo in mezza frase, l'idea, invito a sentirsi su WhatsApp), niente link.`,
+})
 
-Rispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
+/** Istruzioni dell'analisi: blocchi modificabili + formato della risposta (fisso, serve al codice). */
+async function analysisPrompt() {
+  const [head, rules] = await Promise.all([sectionText(LEAD_ANALYSIS), firstEmailRules()])
+  return `${head}\n\n## Regole della prima email\nScrivi la prima email ${rules}\n\nRispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
 {"score": 7, "analysis": "- punto 1\\n- punto 2", "email_subject": "...", "email_body": "...", "dm_text": "..."}`
+}
 
 type Analysis = { score: number; analysis: string; email_subject: string; email_body: string; dm_text: string }
 
@@ -306,7 +326,7 @@ export async function analyzeLead(lead: Lead): Promise<Lead> {
     .filter(Boolean)
     .join('\n')
 
-  const result = await callAIPaced([{ role: 'user', content: facts }], ANALYSIS_PROMPT, {
+  const result = await callAIPaced([{ role: 'user', content: facts }], await analysisPrompt(), {
     feature: 'analisi_clienti',
     temperature: 0.6,
     maxOutputTokens: 2048,

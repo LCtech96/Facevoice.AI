@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { HANDOFF_MESSAGES, LANGUAGE_NAMES, type SiteLanguage } from '@/lib/site-languages'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { defineSection, sectionText } from '@/lib/ai-context'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { loadKnowledge } from '@/lib/meta/agent'
@@ -51,7 +52,13 @@ export async function loadSession(sessionId: string, after?: string): Promise<Si
   return (data || []) as SiteMessage[]
 }
 
-const SITE_PROMPT = `Sei l'assistente della chat sul sito di Facevoice AI, una software house siciliana (Palermo) che si prende cura di tutto il lato digitale delle aziende: contenuti e gestione social, siti web, e-commerce, software e gestionali su misura, integrazione dell'intelligenza artificiale.
+const SITE_PROMPT = defineSection({
+  id: 'site_chat',
+  title: 'Chat del sito',
+  usedFor: 'Chat in basso a destra sul sito facevoice.ai',
+  group: 'sito',
+  mustContain: [HANDOFF_TAG, '[[NOME:'],
+  defaultText: `Sei l'assistente della chat sul sito di Facevoice AI, una software house siciliana (Palermo) che si prende cura di tutto il lato digitale delle aziende: contenuti e gestione social, siti web, e-commerce, software e gestionali su misura, integrazione dell'intelligenza artificiale.
 
 ## Il tuo obiettivo
 Capire con calma cosa serve al visitatore e raccogliere un suo contatto, poi passarlo a un operatore umano del team.
@@ -72,7 +79,8 @@ Capire con calma cosa serve al visitatore e raccogliere un suo contatto, poi pas
 4. Appena hai sia l'esigenza sia un contatto valido, chiudi con un messaggio tipo: "Perfetto, grazie! Ti metto subito in contatto con un operatore del team: attendi qualche istante e non chiudere la chat." e aggiungi in fondo, su una riga a parte, esattamente: ${HANDOFF_TAG}
 5. Quando l'utente ti dice il suo nome, aggiungi in fondo al messaggio, su una riga a parte: [[NOME: nome dell'utente]]
 
-I marcatori tra doppie parentesi quadre non vengono mostrati all'utente.`
+I marcatori tra doppie parentesi quadre non vengono mostrati all'utente.`,
+})
 
 function cleanReply(text: string) {
   return text
@@ -182,7 +190,7 @@ export async function handleSiteMessage(
 
   const knowledge = await loadKnowledge().catch(() => '')
   const system = [
-    SITE_PROMPT,
+    await sectionText(SITE_PROMPT),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
     language !== 'it'

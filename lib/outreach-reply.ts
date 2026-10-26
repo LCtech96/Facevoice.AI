@@ -13,7 +13,7 @@ const SCHEDULE_PREFIX = 'outreach_auto:'
 /** Attesa prima dell'invio automatico. */
 const DELAY_MS: [number, number] = [4 * 60_000, 12 * 60_000]
 /** Oltre queste risposte automatiche in 24 ore alla stessa persona si passa alla bozza. */
-const MAX_AUTO_PER_DAY = 3
+const MAX_AUTO_PER_DAY = 8
 
 export type OutreachReplySettings = {
   auto: boolean

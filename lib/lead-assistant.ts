@@ -3,7 +3,7 @@ import { budgetReached, callAIPaced, hasAIProvider, reportStatus, timeIsUp } fro
 import { describeBudget, type Budget } from '@/lib/assistant-budget'
 import {
   DAILY_EMAIL_LIMIT,
-  FIRST_EMAIL_RULES,
+  firstEmailRules,
   LEAD_STATUSES,
   MAX_RESULTS,
   WHATSAPP_DISPLAY,
@@ -169,8 +169,9 @@ function leadFacts(lead: Lead) {
 }
 
 async function firstEmail(lead: Lead, extra?: string): Promise<Draft | null> {
+  const rules = await firstEmailRules()
   const generated = await generate(
-    `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Scrivi la PRIMA email di contatto a freddo, ${FIRST_EMAIL_RULES}
+    `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Scrivi la PRIMA email di contatto a freddo, ${rules}
 ${extra ? `\nIndicazioni aggiuntive di Luca (valgono sullo stile, mai sull'onestà dei fatti): ${extra}` : ''}
 
 Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,

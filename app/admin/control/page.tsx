@@ -24,6 +24,7 @@ import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import AIContextPanel from './AIContextPanel'
 
 // ---------------------------------------------------------------------
 // Tipi
@@ -282,6 +283,8 @@ export default function AdminControlPage() {
           <PostsTab posts={posts} channels={channels} authFetch={authFetch} onChange={setPosts} />
         )}
         </fieldset>
+        {/* Fuori dal fieldset: in sola consultazione i blocchi devono comunque aprirsi. */}
+        {tab === 'memory' && <AIContextPanel authFetch={authFetch} readOnly={readOnly} />}
       </div>
     </main>
   )
