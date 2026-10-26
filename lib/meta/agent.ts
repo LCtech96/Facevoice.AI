@@ -13,6 +13,7 @@ import { notifyNewMessage } from '@/lib/meta/notify'
 import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta/identities'
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
+import { replyLanguage } from '@/lib/reply-language'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
 
 const HISTORY_LIMIT = 12
@@ -325,6 +326,18 @@ const PRIVATE_FOLLOW_UP_RULES = `\n\n## Stai scrivendo il PRIMO MESSAGGIO PRIVAT
 - Poi segui il metodo consulenziale: 1-2 domande mirate e la richiesta naturale di un numero WhatsApp.
 - 2-4 frasi, tono da chat, niente elenchi.`
 
+/**
+ * Lingua della risposta, in fondo alle istruzioni (dove pesa di piu'): le regole e gli
+ * esempi sono in italiano e senza questa riga l'AI tendeva a rispondere in italiano
+ * anche a chi scrive in russo o in inglese.
+ */
+function languageRule(lastText: string | undefined) {
+  const detected = replyLanguage(lastText)
+  return `\n\n## LINGUA DELLA RISPOSTA (regola più importante)
+${detected ? `Il messaggio a cui rispondi è in ${detected}: scrivi TUTTA la risposta ${detected.includes('(') ? 'in quella stessa lingua' : `in ${detected}`}.` : 'Scrivi TUTTA la risposta nella stessa lingua del messaggio a cui rispondi (commento in russo → risposta in russo, in inglese → in inglese, e così via). Se il messaggio è troppo corto per capirlo (emoji, una parola), usa la lingua dei messaggi precedenti o, in mancanza, l’italiano.'}
+Vale anche per il primo messaggio privato dopo un commento. Le istruzioni e gli esempi qui sopra sono in italiano solo per comodità: traducine il senso, non copiarli. Nomi, numeri di telefono, link e firma restano uguali.`
+}
+
 async function generateReply(
   platform: SocialPlatform,
   contactId: string,
@@ -355,6 +368,7 @@ async function generateReply(
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+    languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
   ].join('')
 
   try {
