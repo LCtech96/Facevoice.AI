@@ -13,6 +13,7 @@ import { notifyNewMessage } from '@/lib/meta/notify'
 import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta/identities'
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
+import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
 
 const HISTORY_LIMIT = 12
 
@@ -255,13 +256,36 @@ export type OutreachContext = {
 }
 
 const OUTREACH_REPLY_RULES = `\n\n## Questa persona sta RISPONDENDO a una nostra email di primo contatto
-Siamo stati noi a scrivere per primi (Ricerca clienti): Luca le ha presentato Facevoice AI. Prepara la controrisposta, che Luca controllerà prima dell'invio.
-- Leggi con attenzione cosa scrive e rispondi nel merito, seguendo il filo della conversazione. Dai del TU, tono amichevole e rispettoso come nella prima email, frasi brevi.
-- Interesse o domande: rispondi in breve e concretamente, poi porta alla chiamata: chiedi il suo numero e quando preferisce essere chiamato, oppure invitalo a scrivere su WhatsApp al ${WHATSAPP_DISPLAY}.
-- Obiezione (costi, tempo, "abbiamo già qualcuno", "non ci serve"): riconoscila con rispetto e usa come leva UN punto debole concreto emerso dall'analisi (senza ripetere la prima email), poi proponi dieci minuti di chiamata senza impegno.
-- No chiaro o richiesta di non essere ricontattato: ringrazia con gentilezza in 1-2 frasi, nessuna insistenza.
-- Niente prezzi, niente promesse che non puoi mantenere, niente P.S.
-- Firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp ${WHATSAPP_DISPLAY}"`
+Siamo stati noi a scrivere per primi: Luca le ha presentato Facevoice AI. Scrivi la controrisposta come Luca, con strategia: l'obiettivo è una chiamata o un messaggio WhatsApp, non vendere per email.
+Metodo:
+- Prima rispondi davvero a quello che ha scritto, nel merito e in breve: chi si sente ascoltato continua a parlare. Rispecchia il suo tono e la lunghezza del suo messaggio (se scrive due righe, rispondi con poche righe).
+- Un passo alla volta: in ogni email UNA sola idea e UNA sola richiesta finale, facile da accettare (es. "ti va se ti chiamo domani dieci minuti?", "a che numero ti trovo?").
+- Fai lavorare la curiosità invece di spiegare tutto: un dettaglio concreto sulla sua attività preso dall'analisi (cosa manca, cosa sta perdendo, cosa fanno i concorrenti) vale più di un elenco di servizi.
+- Fai domande che lo fanno parlare dei suoi problemi (prenotazioni, clienti che non trovano il menù, tempo perso coi messaggi): sono le sue risposte a vendere.
+- Interesse: conferma in una frase che è proprio il vostro lavoro e porta subito alla chiamata (chiedi numero e orario, oppure WhatsApp ${WHATSAPP_DISPLAY}).
+- Obiezioni ("costa", "non ho tempo", "ho già qualcuno", "non mi serve"): dagli ragione su quello che è vero, poi sposta il punto con UN fatto concreto dall'analisi (senza ripetere la prima email) e proponi dieci minuti senza impegno.
+- Domande su prezzi: niente cifre, spiega che dipende da cosa serve davvero e che in dieci minuti di chiamata gli dai un'idea precisa.
+- Mai bugie: niente clienti, risultati, numeri o promesse inventati; cita lavori o clienti solo se sono nelle Informazioni ufficiali. Scrivi sempre come Luca di Facevoice AI, mai a nome di altri.
+- Dai del TU, frasi brevi, niente elenchi puntati, niente P.S.
+- Firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp ${WHATSAPP_DISPLAY}"
+Etichette (sulla PRIMA riga, solo se serve, poi la risposta):
+- [NON_CONTATTARE] se chiede di non essere più contattato o dice un no netto: la risposta è un saluto gentile di 1-2 frasi, senza insistere.
+- [DA_CONTROLLARE] se serve una decisione di Luca: prezzi o preventivi precisi, date e orari di appuntamento da fissare, reclami o toni ostili, questioni legali o privacy, domande su cui le informazioni non bastano.`
+
+/** Esempi di conversazione scelti da Luca: se ne prende il metodo, non le parole. */
+function strategyExamples(strategy: string) {
+  if (!strategy.trim()) return ''
+  return `\n\n## Esempi di strategia scelti da Luca
+Conversazioni vere in cui Luca ha portato la discussione dove voleva. Prendine il METODO (come risponde, come sposta il discorso, come fa domande, come porta alla chiamata), non le frasi né le persone: in quegli esempi poteva parlare per conto di qualcun altro, qui scrivi sempre come Luca di Facevoice AI.
+${strategy.slice(0, 12000)}`
+}
+
+/** Etichette della controrisposta: da rivedere a mano, o persona da non ricontattare. */
+export function parseOutreachReply(text: string): { text: string; review: boolean; stop: boolean } {
+  const review = /\[DA_CONTROLLARE\]/.test(text)
+  const stop = /\[NON_CONTATTARE\]/.test(text)
+  return { text: text.replace(/\[(DA_CONTROLLARE|NON_CONTATTARE)\]\s*/g, '').trim(), review, stop }
+}
 
 function outreachFacts(outreach: OutreachContext): string {
   return [
@@ -302,17 +326,18 @@ async function generateReply(
   const fromComment = Boolean(publicComment)
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
-  const [knowledge, history, styleExamples] = await Promise.all([
+  const [knowledge, history, styleExamples, outreachSettings] = await Promise.all([
     loadKnowledge(),
     fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
     fromComment && !privateFollowUp ? Promise.resolve('') : loadStyleExamples(platform),
+    outreach ? loadOutreachReplySettings().catch(() => null) : Promise.resolve(null),
   ])
 
   const system = [
     agentPrompt(platform, fromComment && !privateFollowUp),
     fromComment ? (privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : '',
     postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
-    outreach ? OUTREACH_REPLY_RULES + outreachFacts(outreach) : '',
+    outreach ? OUTREACH_REPLY_RULES + outreachFacts(outreach) + strategyExamples(outreachSettings?.strategy || '') : '',
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
@@ -384,13 +409,13 @@ export async function deliver(target: OutgoingTarget, text: string): Promise<Sen
   return sendMessengerText(target.contact_id, text)
 }
 
-/** Invia subito (modalita' automatica) o salva come bozza da approvare. true = bozza creata. */
+/** Invia subito (modalita' automatica) o salva come bozza da approvare. Restituisce l'id della bozza creata, o false. */
 async function queueReply(
   target: OutgoingTarget,
   contactName: string | null,
   text: string,
   autoSend: boolean
-): Promise<boolean> {
+): Promise<string | false> {
   if (autoSend) {
     const sent = await deliver(target, text)
     const { data: row } = await supabaseAdmin
@@ -410,14 +435,18 @@ async function queueReply(
     if (sent.error) console.error(`${target.platform} send error:`, sent.error)
     return false
   }
-  await supabaseAdmin.from('social_messages').insert({
-    ...target,
-    contact_name: contactName,
-    direction: 'out',
-    body: text,
-    status: 'pending',
-  })
-  return true
+  const { data: draft } = await supabaseAdmin
+    .from('social_messages')
+    .insert({
+      ...target,
+      contact_name: contactName,
+      direction: 'out',
+      body: text,
+      status: 'pending',
+    })
+    .select('id')
+    .single()
+  return draft?.id ?? false
 }
 
 /**
@@ -439,7 +468,7 @@ export async function prepareOutreachReply(
     .maybeSingle()
   if (!last) return { ok: false, reason: 'nessuna risposta ricevuta da questo indirizzo' }
 
-  const text = await generateReply('email', contactEmail, last.contact_name, { outreach })
+  const text = parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
 
   await supabaseAdmin
@@ -475,7 +504,7 @@ export async function handleIncoming(input: {
   text: string | null
   fallbackLabel: string
   postCaption?: string | null
-  /** Risponde a una nostra email della Ricerca clienti: controrisposta sempre da approvare. */
+  /** Risponde a una nostra email della Ricerca clienti: controrisposta con il suo interruttore (vedi lib/outreach-reply). */
   outreach?: OutreachContext | null
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
@@ -505,9 +534,23 @@ export async function handleIncoming(input: {
   const outreach = input.kind === 'message' ? input.outreach ?? null : null
 
   let reply = ''
+  // Controrisposta ai contatti cercati da noi: si prepara sempre; parte da sola (dopo qualche
+  // minuto) solo con l'interruttore "risposte automatiche ai contatti" acceso.
+  let outreachAuto = false
+  let outreachStop = false
   if (outreach) {
-    // Con i contatti cercati da noi la controrisposta si prepara sempre, ma non parte mai da sola.
-    reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName, { outreach }) : ''
+    const raw = input.text ? await generateReply(input.platform, input.contactId, input.contactName, { outreach }) : ''
+    const parsed = parseOutreachReply(raw)
+    reply = parsed.text
+    outreachStop = parsed.stop
+    if (reply && !parsed.review && !parsed.stop) {
+      const outreachSettings = await loadOutreachReplySettings().catch(() => null)
+      outreachAuto = Boolean(outreachSettings?.auto) && (await autoReplyAllowed(input.platform, input.contactId))
+    }
+    if (outreachStop) {
+      // Ha chiesto di non essere ricontattato: la scheda esce da ogni invio futuro.
+      await supabaseAdmin.from('leads').update({ status: 'do_not_contact' }).eq('id', outreach.leadId)
+    }
   } else if (settings.enabled) {
     if (input.kind === 'comment') {
       reply = input.text
@@ -530,6 +573,7 @@ export async function handleIncoming(input: {
   }
 
   let pendingDraft = false
+  let scheduledAt: string | null = null
   if (reply && outreach) {
     // Ha scritto di nuovo: la controrisposta ancora in attesa e' superata da quella nuova.
     await supabaseAdmin
@@ -540,7 +584,11 @@ export async function handleIncoming(input: {
       .eq('direction', 'out')
       .eq('status', 'pending')
   }
-  if (reply) pendingDraft = await queueReply(target, input.contactName, reply, settings.autoSend && !outreach)
+  if (reply && outreach) {
+    const draftId = await queueReply(target, input.contactName, reply, false)
+    pendingDraft = Boolean(draftId)
+    if (draftId && outreachAuto) scheduledAt = await scheduleAutoSend(draftId)
+  } else if (reply) pendingDraft = Boolean(await queueReply(target, input.contactName, reply, settings.autoSend))
 
   // Commento con un interesse concreto: oltre alla risposta pubblica, un messaggio privato.
   if (settings.enabled && input.kind === 'comment' && input.text && input.platform !== 'whatsapp') {
@@ -551,7 +599,7 @@ export async function handleIncoming(input: {
     })
     if (privateText) {
       const privateTarget: OutgoingTarget = { ...target, kind: 'message', reply_to: input.externalId }
-      pendingDraft = (await queueReply(privateTarget, input.contactName, privateText, settings.autoSend)) || pendingDraft
+      pendingDraft = Boolean(await queueReply(privateTarget, input.contactName, privateText, settings.autoSend)) || pendingDraft
     }
   }
 
@@ -564,5 +612,6 @@ export async function handleIncoming(input: {
     messageId: inserted.id,
     hasPendingDraft: pendingDraft,
     outreachName: outreach?.name ?? null,
+    scheduledAt,
   })
 }

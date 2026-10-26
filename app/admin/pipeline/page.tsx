@@ -7,6 +7,7 @@ import { Check, Mail, Phone } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { getAccessToken } from '@/lib/session-token'
 import AutopilotPanel from './AutopilotPanel'
+import OutreachReplyPanel from './OutreachReplyPanel'
 
 // Motore clienti: la pipeline vera in una schermata. Le schede passano da sole
 // da una colonna all'altra man mano che avanzano (ricerca, analisi, contatto,
@@ -226,6 +227,7 @@ export default function PipelinePage() {
         </section>
 
         {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
+        {authorized && <OutreachReplyPanel />}
 
         <div className="mt-4 flex gap-2">
           {PERIODS.map((p) => (
