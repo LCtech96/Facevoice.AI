@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { readSetting, updateSetting } from '@/lib/settings-store'
 import { emptyTally, runWithStatus, type AIModelChoice, type UsageTally } from '@/lib/ai'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
 import { overBudget, type Budget } from '@/lib/assistant-budget'
@@ -69,51 +69,21 @@ function parseState(value: string | null | undefined): AssistantState {
   }
 }
 
-/** Stato e "timbro" (updated_at) della versione letta. */
-async function loadStamped(scope: Scope): Promise<{ state: AssistantState; stamp: string | null }> {
-  const { data, error } = await supabaseAdmin.from('app_settings').select('value, updated_at').eq('key', keyOf(scope)).maybeSingle()
-  if (error) throw new Error(error.message)
-  return { state: parseState(data?.value), stamp: data?.updated_at ?? null }
-}
-
 export async function loadState(scope: Scope): Promise<AssistantState> {
-  return (await loadStamped(scope)).state
+  return parseState((await readSetting(keyOf(scope))).value)
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Legge, modifica e salva solo se nel frattempo nessun altro ha salvato (confronto
- * su updated_at); altrimenti rilegge e rifa' la modifica. Prima un salvataggio di
- * stato lento poteva sovrascrivere la risposta finale: il lavoro sembrava ancora
- * in corso e dopo qualche minuto risultava "interrotto".
+ * Legge, modifica e salva solo se nel frattempo nessun altro ha salvato.
+ * Prima un salvataggio di stato lento poteva sovrascrivere la risposta finale:
+ * il lavoro sembrava ancora in corso e dopo qualche minuto risultava "interrotto".
  * fn puo' restituire false per non salvare niente.
  */
-async function casUpdate(scope: Scope, fn: (state: AssistantState) => void | boolean): Promise<AssistantState> {
-  let lastError = 'stato occupato'
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const { state, stamp } = await loadStamped(scope)
-    if (fn(state) === false) return state
-    const value = JSON.stringify({ ...state, turns: state.turns.slice(-MAX_TURNS) })
-    // Il nuovo timbro deve essere sempre successivo a quello letto.
-    const next = new Date(Math.max(Date.now(), stamp ? new Date(stamp).getTime() + 1 : 0)).toISOString()
-    if (stamp === null) {
-      const { error } = await supabaseAdmin.from('app_settings').insert({ key: keyOf(scope), value, updated_at: next })
-      if (!error) return state
-      lastError = error.message
-    } else {
-      const { data, error } = await supabaseAdmin
-        .from('app_settings')
-        .update({ value, updated_at: next })
-        .eq('key', keyOf(scope))
-        .eq('updated_at', stamp)
-        .select('key')
-      if (error) throw new Error(error.message)
-      if (data?.length) return state
-    }
-    await sleep(40 + Math.random() * 160)
-  }
-  throw new Error(`Non riesco a salvare la conversazione: ${lastError}`)
+function casUpdate(scope: Scope, fn: (state: AssistantState) => void | boolean): Promise<AssistantState> {
+  return updateSetting(keyOf(scope), parseState, (state) => {
+    if (fn(state) === false) return false
+    return { ...state, turns: state.turns.slice(-MAX_TURNS) }
+  })
 }
 
 // Nello stesso server le scritture di una chat passano una alla volta.

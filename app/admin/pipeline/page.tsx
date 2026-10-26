@@ -6,6 +6,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { Check, Mail, Phone } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { getAccessToken } from '@/lib/session-token'
+import AutopilotPanel from './AutopilotPanel'
 
 // Motore clienti: la pipeline vera in una schermata. Le schede passano da sole
 // da una colonna all'altra man mano che avanzano (ricerca, analisi, contatto,
@@ -139,6 +140,8 @@ export default function PipelinePage() {
   const [period, setPeriod] = useState('7')
   const [data, setData] = useState<Data | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Cosa sta facendo l'automazione giornaliera (ha la precedenza sulla super chat).
+  const [autopilotText, setAutopilotText] = useState<string | null>(null)
 
   const load = useCallback(async (p: string) => {
     const res = await authFetch(`/api/admin/pipeline?period=${p}`).catch(() => null)
@@ -169,6 +172,7 @@ export default function PipelinePage() {
   }
 
   const periodText = PERIODS.find((p) => p.id === period)?.text || ''
+  const activity = autopilotText || data?.running?.text || null
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
@@ -184,10 +188,10 @@ export default function PipelinePage() {
           </p>
           <span className="flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
             <span className="relative flex w-2 h-2 shrink-0">
-              {data?.running && <span className="absolute inset-0 rounded-full animate-ping" style={{ background: DONE, opacity: 0.6 }} />}
-              <span className="relative w-2 h-2 rounded-full" style={{ background: data?.running ? DONE : 'var(--text-secondary)' }} />
+              {activity && <span className="absolute inset-0 rounded-full animate-ping" style={{ background: DONE, opacity: 0.6 }} />}
+              <span className="relative w-2 h-2 rounded-full" style={{ background: activity ? DONE : 'var(--text-secondary)' }} />
             </span>
-            <span className="truncate max-w-[40vw] md:max-w-sm">{data?.running ? data.running.text : 'In pausa'}</span>
+            <span className="truncate max-w-[40vw] md:max-w-sm">{activity || 'In pausa'}</span>
           </span>
         </div>
 
@@ -220,6 +224,8 @@ export default function PipelinePage() {
             </p>
           </div>
         </section>
+
+        {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
 
         <div className="mt-4 flex gap-2">
           {PERIODS.map((p) => (
