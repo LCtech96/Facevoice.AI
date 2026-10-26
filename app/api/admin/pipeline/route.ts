@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { loadCalls } from '@/lib/lead-calls'
 import { isRunning, loadState } from '@/lib/assistant-state'
+import { formatRome, listAppointments } from '@/lib/appointments'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +52,34 @@ async function loadLeads(): Promise<Row[]> {
   return rows
 }
 
+type FeedEvent = { id: string; at: string; kind: string; text: string; leadId?: string; platform?: string }
+
+const PLATFORM_NAME: Record<string, string> = { instagram: 'Instagram', facebook: 'Messenger', whatsapp: 'WhatsApp', email: 'email', web: 'chat del sito' }
+/** Finestra degli eventi mostrati nel flusso in tempo reale. */
+const FEED_MS = 3 * 86_400_000
+const FEED_MAX = 25
+
+/** Messaggi (ricevuti e inviati) degli ultimi giorni: solo chi e quando, mai il testo. */
+async function recentMessages() {
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('id, platform, kind, direction, status, contact_id, contact_name, created_at')
+    .gte('created_at', new Date(Date.now() - FEED_MS).toISOString())
+    .in('status', ['sent', 'received'])
+    .order('created_at', { ascending: false })
+    .limit(60)
+  const { data: incoming } = await supabaseAdmin
+    .from('social_messages')
+    .select('id, platform, kind, direction, status, contact_id, contact_name, created_at')
+    .gte('created_at', new Date(Date.now() - FEED_MS).toISOString())
+    .eq('direction', 'in')
+    .order('created_at', { ascending: false })
+    .limit(60)
+  const all = new Map<string, any>()
+  for (const m of [...(data || []), ...(incoming || [])]) all.set(m.id, m)
+  return [...all.values()]
+}
+
 /** Prima risposta email ricevuta da ogni indirizzo. */
 async function firstReplies(): Promise<Map<string, string>> {
   const { data } = await supabaseAdmin
@@ -77,12 +106,14 @@ export async function GET(req: NextRequest) {
   const inPeriod = (date: string | null | undefined) => Boolean(date) && new Date(date!).getTime() >= since
 
   try {
-    const [leads, calls, replies, superState, leadsState] = await Promise.all([
+    const [leads, calls, replies, superState, leadsState, messages, appointments] = await Promise.all([
       loadLeads(),
       loadCalls().catch(() => ({}) as Record<string, string>),
       firstReplies().catch(() => new Map<string, string>()),
       loadState('super').catch(() => null),
       loadState('leads').catch(() => null),
+      recentMessages().catch(() => [] as any[]),
+      listAppointments().catch(() => []),
     ])
 
     const reached = { found: 0, research: 0, outreach: 0, replies: 0, clients: 0 } as Record<Stage, number>
@@ -141,6 +172,40 @@ export async function GET(req: NextRequest) {
       cards[stage] = cards[stage].slice(0, CARDS_PER_STAGE)
     }
 
+    // Flusso in tempo reale: cosa e' successo negli ultimi giorni, dal piu' recente.
+    const feedSince = Date.now() - FEED_MS
+    const recentAt = (date: string | null | undefined) => Boolean(date) && new Date(date!).getTime() >= feedSince
+    const byEmail = new Map(leads.filter((l) => l.email).map((l) => [l.email!.toLowerCase(), l]))
+    const events: FeedEvent[] = []
+    for (const lead of leads) {
+      if (recentAt(lead.created_at)) events.push({ id: `f${lead.id}`, at: lead.created_at, kind: 'found', text: `Trovata: ${lead.name}`, leadId: lead.id })
+      if (recentAt(lead.analyzed_at))
+        events.push({ id: `a${lead.id}`, at: lead.analyzed_at!, kind: 'research', text: `Sito letto: ${lead.name}${lead.email ? ' · email trovata' : ''}`, leadId: lead.id })
+      if (recentAt(lead.contacted_at)) events.push({ id: `c${lead.id}`, at: lead.contacted_at!, kind: 'outreach', text: `Email inviata a ${lead.name}`, leadId: lead.id })
+      if (recentAt(calls[lead.id])) events.push({ id: `p${lead.id}`, at: calls[lead.id], kind: 'outreach', text: `Chiamata segnata: ${lead.name}`, leadId: lead.id })
+    }
+    for (const m of messages) {
+      const lead = m.platform === 'email' ? byEmail.get(String(m.contact_id).toLowerCase()) : undefined
+      const who = lead?.name || m.contact_name || 'un contatto'
+      const where = PLATFORM_NAME[m.platform] || m.platform
+      const text =
+        m.direction === 'in'
+          ? lead
+            ? `${who} ha risposto alla tua email`
+            : m.kind === 'comment'
+            ? `Nuovo commento di ${who} su ${where}`
+            : `Nuovo messaggio di ${who} su ${where}`
+          : m.kind === 'comment'
+          ? `Risposta pubblica a ${who} su ${where}`
+          : `Risposta inviata a ${who} su ${where}`
+      events.push({ id: `m${m.id}`, at: m.created_at, kind: m.direction === 'in' ? 'replies' : 'answer', text, leadId: lead?.id, platform: m.platform })
+    }
+    for (const a of appointments) {
+      if (a.status === 'confirmed' && recentAt(a.createdAt))
+        events.push({ id: `t${a.id}`, at: a.createdAt, kind: 'meeting', text: `Appuntamento con ${a.contactName || 'un contatto'}: ${formatRome(a.when)}`, leadId: a.leadId || undefined })
+    }
+    events.sort((a, b) => b.at.localeCompare(a.at))
+
     const running = [superState, leadsState].map((s) => s?.job).find((job) => isRunning(job ?? null))
     return NextResponse.json({
       period: days ? String(days) : 'all',
@@ -153,6 +218,7 @@ export async function GET(req: NextRequest) {
         replyRate: reached.outreach ? Math.round((reached.replies / reached.outreach) * 100) : 0,
       },
       discarded,
+      events: events.slice(0, FEED_MAX),
       running: running ? { text: running.statusText || 'Al lavoro…' } : null,
       updatedAt: new Date().toISOString(),
     })

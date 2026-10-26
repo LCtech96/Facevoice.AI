@@ -15,6 +15,8 @@ import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
+import { defineSection, sectionText } from '@/lib/ai-context'
+import { bookedSlotsText, cancelAppointmentsFor, createAppointment, parseAppointmentMarkers } from '@/lib/appointments'
 
 const HISTORY_LIMIT = 12
 
@@ -34,7 +36,12 @@ const NON_TEXT_REPLY =
 
 // Stile di Luca: prima capire, poi proporre. Niente "si', costa X" alla prima
 // risposta: frase empatica breve + domande mirate, e un contatto diretto.
-const SALES_APPROACH = (platform: SocialPlatform) => `## Come gestisci una richiesta (approccio consulenziale)
+const SALES_APPROACH = defineSection({
+  id: 'sales_approach',
+  title: 'Metodo di vendita nei messaggi',
+  usedFor: 'Messaggi privati (Instagram, Messenger, WhatsApp) ed email ricevute',
+  group: 'social',
+  defaultText: `## Come gestisci una richiesta (approccio consulenziale)
 Prima di tutto capisci CHI scrive e PERCHÉ, e rispondi di conseguenza:
 - **Potenziale cliente** (chiede un servizio, un'informazione, un preventivo): è la priorità. Segui il metodo qui sotto.
 - **Cliente già attivo** (fa riferimento a un lavoro in corso): rispondi nel merito se hai le informazioni, altrimenti conferma che il team lo ricontatta a breve.
@@ -46,39 +53,55 @@ Deduci il settore e l'azienda da firma, dominio email, nome del profilo e conten
 1. Apri con UNA frase breve e naturale che mostra che hai capito la richiesta (es. "Ok, chiaro", "Sì, è una cosa fattibile", "Interessante, ne facciamo spesso di simili"). Niente entusiasmo finto, niente "Grazie per averci contattato" di circostanza.
 2. NON dare subito prezzi, tempi o un "sì, si fa così": prima serve capire. Anche se nelle informazioni ufficiali c'è un prezzo, dallo solo quando la richiesta è già chiara.
 3. Fai 1-3 domande mirate e funzionali, scelte tra: come gestiscono la cosa oggi, qual è l'obiettivo concreto (più clienti, risparmiare tempo, vendere online...), cosa hanno già (sito, social, gestionale), tempi o urgenza, dimensione dell'attività. Non fare l'interrogatorio: poche domande, scritte come le farebbe una persona.
-4. ${platform === 'whatsapp'
-  ? 'Su WhatsApp hai già il numero: se utile, proponi una breve chiamata.'
-  : 'Chiedi, in modo naturale e una sola volta nella conversazione, un numero di telefono (meglio WhatsApp) per sentirsi più velocemente, e se ha senso il profilo social dell’attività. Se nello storico l’ha già dato, non chiederlo di nuovo.'}
+4. {{PASSO_CONTATTO}}
 5. Quando hai capito l'esigenza, proponi il passo successivo concreto: una breve chiamata o un incontro.
 
 ### Tono
 - Scrivi come una persona vera del team, linguaggio naturale e diretto, frasi brevi. Mai frasi da intelligenza artificiale ("Sono qui per aiutarti", "Certamente!", "Ottima domanda"). Nelle chat niente elenchi; nelle email solo le domande numerate come negli esempi.
 - Rispondi SEMPRE nella stessa lingua in cui ti hanno scritto (inglese se scrivono in inglese, e così via).
-- Dai del tu se l'altra persona dà del tu o scrive in modo informale; altrimenti del lei.`
+- Dai del tu se l'altra persona dà del tu o scrive in modo informale; altrimenti del lei.`,
+})
+
+/** Passo 4 del metodo: su WhatsApp il numero c'e' gia'. */
+const contactStep = (platform: SocialPlatform) =>
+  platform === 'whatsapp'
+    ? 'Su WhatsApp hai già il numero: se utile, proponi una breve chiamata.'
+    : 'Chiedi, in modo naturale e una sola volta nella conversazione, un numero di telefono (meglio WhatsApp) per sentirsi più velocemente, e se ha senso il profilo social dell’attività. Se nello storico l’ha già dato, non chiederlo di nuovo.'
 
 /**
  * Immagine aziendale: mai far sembrare Facevoice AI una ditta di una persona sola
  * con il fondatore che fa tutto (dava un'idea di azienda piccola e poco autorevole).
  */
-const IMAGE_RULES = (platform: SocialPlatform) => `
-## Immagine aziendale (vale più delle informazioni qui sotto)
-- Parla sempre come azienda strutturata: "noi", "il nostro team", "un nostro consulente", "il referente del progetto".${
-  platform === 'email'
-    ? ' Firmi come Luca, ma non scrivere mai che segui tutto tu personalmente o che fai tutto da solo.'
-    : ` NON nominare Luca né il fondatore come la persona che chiama, risponde, gestisce i progetti o parla "personalmente" con tutti i clienti.`
-}
+const IMAGE_RULES = defineSection({
+  id: 'image_rules',
+  title: 'Immagine aziendale',
+  usedFor: 'Tutte le risposte: messaggi, commenti ed email',
+  group: 'social',
+  defaultText: `- Parla sempre come azienda strutturata: "noi", "il nostro team", "un nostro consulente", "il referente del progetto". {{REGOLA_CANALE}}
 - Per il passo successivo: "un nostro consulente ti chiama", "ti scrive il nostro team su WhatsApp", mai "Luca ti chiama/ti scrive".
 - Se chiedono chi è Luca o chi c'è dietro l'azienda: rispondi in breve e con autorevolezza (es. "Luca Corrao è il fondatore e CEO di Facevoice AI"), senza dire che segue lui ogni cliente o ogni progetto, e riporta subito la conversazione sulla loro esigenza.
-- Mai frasi che fanno sembrare l'azienda piccola o improvvisata (es. "siamo in pochi", "faccio tutto io", "ti rispondo appena posso").`
+- Mai frasi che fanno sembrare l'azienda piccola o improvvisata (es. "siamo in pochi", "faccio tutto io", "ti rispondo appena posso").`,
+})
 
-const CHAT_STYLE = `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi, niente markdown.`
+const channelImageRule = (platform: SocialPlatform) =>
+  platform === 'email'
+    ? 'Firmi come Luca, ma non scrivere mai che segui tutto tu personalmente o che fai tutto da solo.'
+    : 'NON nominare Luca né il fondatore come la persona che chiama, risponde, gestisce i progetti o parla "personalmente" con tutti i clienti.'
+
+const CHAT_STYLE = defineSection({
+  id: 'chat_style',
+  title: 'Stile dei messaggi in chat',
+  usedFor: 'Messaggi privati e commenti (Instagram, Messenger, WhatsApp)',
+  group: 'social',
+  defaultText: `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi, niente markdown.`,
+})
 
 /**
  * Risposte approvate, corrette o scritte a mano da Luca: l'AI le usa come
  * riferimento di stile. Prima quelle corrette o scritte a mano, poi le approvate
  * cosi' com'erano. Email e chat restano separate (registro diverso).
  */
-async function loadStyleExamples(platform: SocialPlatform): Promise<string> {
+export async function loadStyleExamples(platform: SocialPlatform): Promise<string> {
   let query = supabaseAdmin
     .from('social_messages')
     .select('platform, contact_id, body, origin, created_at')
@@ -124,7 +147,12 @@ export async function setOrigin(id: string, origin: 'ai_approved' | 'ai_edited' 
   if (error && error.code !== '42703') console.error('origin update:', error.message)
 }
 
-const EMAIL_STYLE = `- Stai rispondendo a un'EMAIL ricevuta su luca@facevoice.ai, come Luca. Segui lo stile degli esempi qui sotto:
+const EMAIL_STYLE = defineSection({
+  id: 'email_style',
+  title: 'Stile delle email (con esempi di Luca)',
+  usedFor: 'Risposte alle email ricevute su luca@facevoice.ai',
+  group: 'email',
+  defaultText: `- Stai rispondendo a un'EMAIL ricevuta su luca@facevoice.ai, come Luca. Segui lo stile degli esempi qui sotto:
   - saluto adatto all'ora ("Buongiorno Nome," / "Buon pomeriggio Nome,");
   - una frase breve che riconosce la richiesta (es. "grazie mille per le informazioni, la tua lista di priorità è chiarissima");
   - le domande come elenco numerato breve, ognuna con un'etichetta di una o due parole seguita da due punti (es. "1. Software attuali: ...");
@@ -166,21 +194,39 @@ Una volta lette le risposte, se ti va possiamo fare una brevissima call per alli
 
 Buon lavoro e a presto,
 
-Luca"`
+Luca"`,
+})
 
-function agentPrompt(platform: SocialPlatform, publicComment: boolean) {
-  const where = platform === 'email' ? 'via email' : `su ${PLATFORM_LABEL[platform]}`
-  const who = platform === 'email' ? 'Luca Corrao, fondatore di Facevoice AI,' : 'il team di Facevoice AI'
-  return `Scrivi le risposte che ${who} invia ${where}. Facevoice AI è un'azienda siciliana di sviluppo software su misura, integrazione AI, digitalizzazione e social media management per imprese, che lavora in tutta la Sicilia e in Italia.
+const AGENT_BASE = defineSection({
+  id: 'agent_base',
+  title: 'Chi scrive e regole di base',
+  usedFor: 'Tutte le risposte: messaggi, commenti ed email',
+  group: 'social',
+  defaultText: `Scrivi le risposte che {{CHI}} invia {{DOVE}}. Facevoice AI è un'azienda siciliana di sviluppo software su misura, integrazione AI, digitalizzazione e social media management per imprese, che lavora in tutta la Sicilia e in Italia.
 
 ## Regole
-${platform === 'email' ? EMAIL_STYLE : CHAT_STYLE}
 - Usa SOLO le informazioni ufficiali qui sotto per servizi, prezzi, tempi e dettagli. Se un'informazione non c'è, non inventarla.
 - Non chiedere mai password, dati di pagamento o documenti.
-- Se ti chiedono esplicitamente se stanno parlando con un'intelligenza artificiale, non negarlo: di' che le risposte sono preparate con l'aiuto di un assistente e che il nostro team segue la conversazione.
-${IMAGE_RULES(platform)}
+- Se ti chiedono esplicitamente se stanno parlando con un'intelligenza artificiale, non negarlo: di' che le risposte sono preparate con l'aiuto di un assistente e che il nostro team segue la conversazione.`,
+})
 
-${publicComment ? '' : SALES_APPROACH(platform)}`
+/** Istruzioni di base per canale, dai blocchi modificabili dalla pagina Memoria. */
+async function agentPrompt(platform: SocialPlatform, publicComment: boolean) {
+  const [base, style, image, sales] = await Promise.all([
+    sectionText(AGENT_BASE, {
+      CHI: platform === 'email' ? 'Luca Corrao, fondatore di Facevoice AI,' : 'il team di Facevoice AI',
+      DOVE: platform === 'email' ? 'via email' : `su ${PLATFORM_LABEL[platform]}`,
+    }),
+    sectionText(platform === 'email' ? EMAIL_STYLE : CHAT_STYLE),
+    sectionText(IMAGE_RULES, { REGOLA_CANALE: channelImageRule(platform) }),
+    publicComment ? Promise.resolve('') : sectionText(SALES_APPROACH, { PASSO_CONTATTO: contactStep(platform) }),
+  ])
+  return [
+    base,
+    style ? `\n\n## Stile\n${style}` : '',
+    image ? `\n\n## Immagine aziendale (vale più delle informazioni qui sotto)\n${image}` : '',
+    sales ? `\n\n${sales}` : '',
+  ].join('')
 }
 
 export function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
@@ -272,7 +318,12 @@ export type OutreachContext = {
   firstEmail: string | null
 }
 
-const OUTREACH_REPLY_RULES = `\n\n## Questa persona sta RISPONDENDO a una nostra email di primo contatto
+const OUTREACH_REPLY_RULES = defineSection({
+  id: 'outreach_reply',
+  title: 'Controrisposte a chi abbiamo contattato noi',
+  usedFor: 'Email di risposta alle nostre prime email (Motore clienti)',
+  group: 'contatti',
+  defaultText: `## Questa persona sta RISPONDENDO a una nostra email di primo contatto
 Siamo stati noi a scrivere per primi: Luca le ha presentato Facevoice AI. Scrivi la controrisposta come Luca, con strategia: l'obiettivo è una chiamata o un messaggio WhatsApp, non vendere per email.
 Metodo:
 - Prima rispondi davvero a quello che ha scritto, nel merito e in breve: chi si sente ascoltato continua a parlare. Rispecchia il suo tono e la lunghezza del suo messaggio (se scrive due righe, rispondi con poche righe).
@@ -287,25 +338,63 @@ Metodo:
 - Firma: "A presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai\nWhatsApp ${WHATSAPP_DISPLAY}"
 Etichette (sulla PRIMA riga, solo se serve, poi la risposta):
 - [NON_CONTATTARE] se chiede di non essere più contattato o dice un no netto: la risposta è un saluto gentile di 1-2 frasi, senza insistere.
-- [DA_CONTROLLARE] se serve una decisione di Luca: prezzi o preventivi precisi, date e orari di appuntamento da fissare, reclami o toni ostili, questioni legali o privacy, domande su cui le informazioni non bastano.`
+- [DA_CONTROLLARE] se serve una decisione di Luca: prezzi o preventivi precisi, reclami o toni ostili, questioni legali o privacy, domande su cui le informazioni non bastano.`,
+})
 
 /**
  * Metodo di riferimento, ricavato da una conversazione vera di Luca (resa anonima):
  * cosa ha fatto a ogni passo e perche'. Vale sempre, insieme agli esempi che Luca aggiunge.
  */
-const REFERENCE_METHOD = `\n\n## Il metodo di Luca (da una sua conversazione vera, resa anonima)
+const REFERENCE_METHOD = defineSection({
+  id: 'reference_method',
+  title: 'Il metodo di Luca (conversazione con Dario, anonima)',
+  usedFor: 'Controrisposte a chi abbiamo contattato noi',
+  group: 'contatti',
+  defaultText: `## Il metodo di Luca (da una sua conversazione vera, resa anonima)
 Situazione: un'azienda (prodotti alimentari, vende sia alle aziende sia ai privati) aveva mandato a Luca una newsletter scritta con l'AI, rimasta con un pezzo del prompt in cima.
 1. Luca apre con qualcosa di UTILE e vero, non con una vendita: "Ciao! Hai lasciato parte del prompt nell'e-mail! 🙃" Una riga, tono leggero.
 2. L'altro ringrazia, un po' imbarazzato. Luca rispecchia il tono e lo mette a suo agio ("Tranquillo ahahah 😅"), poi fa UNA domanda curiosa sul suo modo di lavorare: "Mi sto chiedendo cosa usi per inviare email per essere successo? 🤔" Così è l'altro a raccontare il problema.
 3. L'altro spiega: usa l'AI per le newsletter, non ha ricontrollato ed è uscito l'errore. Solo ORA Luca parla di sé: prima gli dà ragione senza giudicarlo ("capita, questi strumenti non sono ancora affidabili"), poi aggancia la soluzione esattamente al problema appena raccontato (un sistema che trova i potenziali clienti e scrive ogni email personalizzata, e sbaglia raramente) e lascia il link al sito.
 4. L'altro fa una domanda sulla sua situazione. Luca risponde nel merito e onestamente (cosa si fa con i social e cosa via email), aggiunge un'altra cosa che si può fare, la collega al tipo di clienti dell'altro ("nel vostro caso potete contattare anche i clienti finali, non solo le aziende") e propone il contatto diretto su WhatsApp con il numero.
 5. L'altro ringrazia e saluta: la conversazione si chiude in positivo, con il numero in mano.
-Cosa prendere: aprire con valore, rispecchiare tono ed emoji, una domanda alla volta che fa parlare l'altro del suo problema, la soluzione solo dopo e cucita su quel problema, risposte brevi, chiusura su WhatsApp. Cosa NON prendere: in quella conversazione Luca scriveva a nome di un suo cliente e parlava di Facevoice AI come di "loro"; qui scrivi sempre in prima persona come Luca di Facevoice AI ("noi"), senza fingere di essere qualcun altro.`
+Cosa prendere: aprire con valore, rispecchiare tono ed emoji, una domanda alla volta che fa parlare l'altro del suo problema, la soluzione solo dopo e cucita su quel problema, risposte brevi, chiusura su WhatsApp. Cosa NON prendere: in quella conversazione Luca scriveva a nome di un suo cliente e parlava di Facevoice AI come di "loro"; qui scrivi sempre in prima persona come Luca di Facevoice AI ("noi"), senza fingere di essere qualcun altro.`,
+})
+
+/**
+ * Percorso verso la chiamata: ogni risposta in una conversazione fa fare un passo
+ * avanti, fino a un appuntamento con giorno e ora precisi.
+ */
+const FUNNEL_RULES = defineSection({
+  id: 'funnel',
+  title: 'Percorso verso la chiamata (funnel)',
+  usedFor: 'Messaggi privati, email ricevute e controrisposte ai contatti',
+  group: 'contatti',
+  defaultText: `## Percorso verso la chiamata
+Ogni risposta deve far fare UN passo avanti verso una chiamata conoscitiva con un nostro consulente, senza saltare passi e senza fermarsi:
+1. Aggancio: rispondi a quello che ha scritto e mostra che hai capito.
+2. Esigenza: con 1-2 domande capisci attività, problema e obiettivo.
+3. Valore: collega UN beneficio concreto al suo problema (senza inventare risultati o clienti).
+4. Proposta: proponi una chiamata di 15 minuti offrendo DUE orari precisi tra quelli disponibili (es. "domani alle 11:00 o giovedì alle 16:30?").
+5. Contatto: chiedi il numero, meglio WhatsApp, se non l'hai già.
+6. Conferma: quando accetta un orario preciso, riepiloga giorno, ora e numero in una frase e ringrazia; da lì non vendere più.
+Capisci da che punto riparte la conversazione leggendo lo storico. Se si raffredda o rimanda, non insistere: lascia la porta aperta con una domanda leggera.`,
+})
+
+/** Istruzioni tecniche (non modificabili): orari possibili e riga che segna l'appuntamento. */
+function appointmentRules(booked: string) {
+  return `\n\n## Appuntamenti (istruzioni tecniche, obbligatorie)
+Orari in cui il team fa le chiamate: dal lunedì al venerdì, 9:30-13:00 e 15:00-18:30 (ora italiana), da almeno 3 ore da adesso fino ai prossimi 10 giorni. Proponi SOLO orari dentro queste fasce e non già occupati. Già occupati: ${booked || 'nessuno'}.
+Quando la persona CONFERMA un giorno E un'ora precisi (non "magari", non "la prossima settimana"), aggiungi in fondo alla risposta, su una riga a parte:
+[[APPUNTAMENTO: AAAA-MM-GG HH:MM | chiamata o incontro | telefono se l'ha dato, altrimenti - | una riga su cosa le serve]]
+Data vera calcolata da "Data e ora" qui sotto, ora italiana. Scrivila una volta sola, nel messaggio in cui l'appuntamento viene confermato. Se sposta o annulla un appuntamento già fissato, aggiungi [[APPUNTAMENTO_ANNULLATO]] (e la nuova riga se ne fissa un altro). Queste righe non vengono mostrate alla persona.`
+}
 
 /** Esempi di conversazione scelti da Luca: se ne prende il metodo, non le parole. */
-function strategyExamples(strategy: string) {
-  if (!strategy.trim()) return REFERENCE_METHOD
-  return `${REFERENCE_METHOD}\n\n## Altri esempi di strategia scelti da Luca
+async function strategyExamples(strategy: string) {
+  const method = await sectionText(REFERENCE_METHOD)
+  const base = method ? `\n\n${method}` : ''
+  if (!strategy.trim()) return base
+  return `${base}\n\n## Altri esempi di strategia scelti da Luca
 Conversazioni vere in cui Luca ha portato la discussione dove voleva. Prendine il METODO (come risponde, come sposta il discorso, come fa domande, come porta alla chiamata), non le frasi né le persone: in quegli esempi poteva parlare per conto di qualcun altro, qui scrivi sempre come Luca di Facevoice AI.
 ${strategy.slice(0, 12000)}`
 }
@@ -328,19 +417,31 @@ function outreachFacts(outreach: OutreachContext): string {
     .join('\n')
 }
 
-const PUBLIC_COMMENT_RULES = `\n\n## Stai rispondendo a un COMMENTO PUBBLICO sotto un tuo post o reel
+const PUBLIC_COMMENT_RULES = defineSection({
+  id: 'public_comment',
+  title: 'Risposte pubbliche ai commenti',
+  usedFor: 'Commenti sotto post e reel di Instagram e Facebook',
+  group: 'social',
+  defaultText: `## Stai rispondendo a un COMMENTO PUBBLICO sotto un tuo post o reel
 - Massimo 1-2 frasi, tono cordiale e umano, un'emoji va bene se il commento ne ha.
 - Se il commento è un complimento o una reazione positiva, ringrazia in modo caloroso e breve.
 - Se fa una domanda, rispondi in breve usando il contenuto del post; per prezzi, preventivi o dettagli personali di' che gli scrivi in privato.
 - Non chiedere né citare dati personali o dettagli riservati in pubblico.
-- Se il commento è offensivo, spam o un semplice tag di amici, rispondi solo con: NESSUNA_RISPOSTA`
+- Se il commento è offensivo, spam o un semplice tag di amici, rispondi solo con: NESSUNA_RISPOSTA`,
+})
 
-const PRIVATE_FOLLOW_UP_RULES = `\n\n## Stai scrivendo il PRIMO MESSAGGIO PRIVATO a chi ha commentato un tuo post o reel
+const PRIVATE_FOLLOW_UP_RULES = defineSection({
+  id: 'private_followup',
+  title: 'Primo messaggio privato dopo un commento',
+  usedFor: 'Messaggio privato a chi commenta mostrando interesse',
+  group: 'social',
+  defaultText: `## Stai scrivendo il PRIMO MESSAGGIO PRIVATO a chi ha commentato un tuo post o reel
 - Scrivilo SOLO se il commento mostra un interesse concreto verso i servizi (chiede info, prezzi, come funziona, se lo fate anche per la sua attività, scrive "info", ecc.).
 - Per complimenti, emoji, tag di amici, battute o commenti negativi rispondi solo con: NESSUNA_RISPOSTA
 - Apri facendo riferimento al suo commento e al post (es. "Ciao! Ho visto il tuo commento sul reel del sito per il ristorante…").
 - Poi segui il metodo consulenziale: 1-2 domande mirate e la richiesta naturale di un numero WhatsApp.
-- 2-4 frasi, tono da chat, niente elenchi.`
+- 2-4 frasi, tono da chat, niente elenchi.`,
+})
 
 /**
  * Lingua della risposta, in fondo alle istruzioni (dove pesa di piu'): le regole e gli
@@ -368,18 +469,27 @@ async function generateReply(
   const fromComment = Boolean(publicComment)
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
-  const [knowledge, history, styleExamples, outreachSettings] = await Promise.all([
+  const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked] = await Promise.all([
     loadKnowledge(),
     fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
     fromComment && !privateFollowUp ? Promise.resolve('') : loadStyleExamples(platform),
     outreach ? loadOutreachReplySettings().catch(() => null) : Promise.resolve(null),
+    agentPrompt(platform, fromComment && !privateFollowUp),
+    fromComment ? sectionText(privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : Promise.resolve(''),
+    outreach ? sectionText(OUTREACH_REPLY_RULES) : Promise.resolve(''),
+    // Il percorso verso la chiamata vale nelle conversazioni, non nei commenti pubblici.
+    fromComment ? Promise.resolve('') : sectionText(FUNNEL_RULES),
+    fromComment ? Promise.resolve('') : bookedSlotsText().catch(() => ''),
   ])
+  const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
 
   const system = [
-    agentPrompt(platform, fromComment && !privateFollowUp),
-    fromComment ? (privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : '',
+    base,
+    commentRules ? `\n\n${commentRules}` : '',
     postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
-    outreach ? OUTREACH_REPLY_RULES + outreachFacts(outreach) + strategyExamples(outreachSettings?.strategy || '') : '',
+    outreach ? (outreachRules ? `\n\n${outreachRules}` : '') + outreachFacts(outreach) + strategy : '',
+    funnel ? `\n\n${funnel}` : '',
+    fromComment ? '' : appointmentRules(booked),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
@@ -607,6 +717,30 @@ export async function handleIncoming(input: {
         : ''
     } else {
       reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
+    }
+  }
+
+  // Appuntamento confermato nella conversazione: in calendario e notifica subito.
+  if (reply && input.kind === 'message') {
+    const parsed = parseAppointmentMarkers(reply)
+    reply = parsed.text
+    try {
+      if (parsed.cancel) await cancelAppointmentsFor(input.platform, input.contactId)
+      for (const a of parsed.appointments) {
+        await createAppointment({
+          when: a.when.toISOString(),
+          kind: a.kind,
+          phone: a.phone,
+          note: a.note,
+          contactName: outreach?.name || input.contactName,
+          platform: input.platform,
+          contactId: input.contactId,
+          leadId: outreach?.leadId ?? null,
+        })
+        console.log(`${input.platform} message: appuntamento fissato`)
+      }
+    } catch (error) {
+      console.error('appuntamento non salvato:', error)
     }
   }
 
