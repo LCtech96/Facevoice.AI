@@ -25,6 +25,7 @@ import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import { DraftTranslate, TranslatableBody } from './Translate'
 
 type Platform = 'whatsapp' | 'facebook' | 'instagram' | 'email' | 'web'
 
@@ -1128,6 +1129,7 @@ function InboxPage() {
                                 rows={Math.min(10, Math.max(3, Math.ceil((drafts[m.id] ?? m.body).length / 32)))}
                                 className="w-full px-2 py-1.5 text-sm rounded-lg bg-[var(--background)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)] resize-y"
                               />
+                              <DraftTranslate text={drafts[m.id] ?? m.body} />
                               <div className="flex gap-2 justify-end">
                                 <button
                                   onClick={() => act(m, 'reject')}
@@ -1147,7 +1149,7 @@ function InboxPage() {
                               </div>
                             </div>
                           ) : (
-                            <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                            <TranslatableBody text={m.body} tone={isIn ? 'in' : 'out'} />
                           )}
                           {!isPending && (
                             <p className={`text-[10px] mt-1 ${isIn ? 'text-[var(--text-secondary)]' : 'text-white/70'}`}>
