@@ -19,6 +19,8 @@ export async function notifyNewMessage(input: {
   hasPendingDraft: boolean
   /** Nome della scheda se risponde a una nostra email della Ricerca clienti. */
   outreachName?: string | null
+  /** Controrisposta programmata: parte da sola a quest'ora se nessuno la ferma. */
+  scheduledAt?: string | null
 }) {
   const channel = input.outreachName
     ? 'ha risposto alla tua email'
@@ -30,7 +32,9 @@ export async function notifyNewMessage(input: {
   const url = `${SITE_URL}/admin/inbox?c=${encodeURIComponent(key)}`
   const preview = input.body.length > 140 ? `${input.body.slice(0, 140)}…` : input.body
   const action = input.outreachName
-    ? input.hasPendingDraft
+    ? input.scheduledAt
+      ? `Controrisposta pronta: parte da sola alle ${new Date(input.scheduledAt).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' })}, se vuoi cambiala prima.`
+      : input.hasPendingDraft
       ? 'Controrisposta pronta: controllala e approvala.'
       : 'Rispondi tu dalla casella.'
     : input.hasPendingDraft
