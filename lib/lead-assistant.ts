@@ -633,7 +633,8 @@ Strumenti di ricerca e social:
 - "instagram_profiles": {"ids": [...] opzionale, "filter": "", "limit": 15} → lo stesso per più schede che hanno un Instagram (per domande tipo "quali hanno Instagram e quanti follower").
 - "list_conversations": {"platform": "email|instagram|facebook|whatsapp|web|all", "filter": "parole da cercare, opzionale", "limit": 20} → conversazioni della casella Messaggi su TUTTI i canali, email comprese (platform, contactId, nome, ultimo messaggio, data). Il filtro cerca in nome, indirizzo e testo dei messaggi (anche l'oggetto delle email) e ignora spazi e maiuscole: "Galdieri Rent" trova anche "Galdierirent". Se Luca nomina una persona o un'azienda che non è nella lista Clienti, cercala QUI prima di dire che non esiste.
 - "read_thread": {"platform": "...", "contactId": "..."} → legge gli ultimi messaggi di una conversazione qualsiasi di Messaggi (ricevuti, inviati, bozze).
-- "prepare_inbox_reply": {"platform": "...", "contactId": "...", "instructions": "cosa vuole Luca"} → prepara la risposta a una conversazione qualsiasi di Messaggi (email, Instagram, Messenger, WhatsApp, chat del sito) seguendo le indicazioni di Luca e la mette da approvare in Messaggi (non parte da sola). Per chi è nella lista Clienti e ha risposto alle nostre email usa invece prepare_reply.
+- "prepare_inbox_reply": {"platform": "...", "contactId": "...", "instructions": "cosa vuole Luca", "to": "email, solo se Luca indica un indirizzo diverso"} → prepara la risposta a una conversazione qualsiasi di Messaggi (email, Instagram, Messenger, WhatsApp, chat del sito) seguendo le indicazioni di Luca e la mette da approvare in Messaggi (non parte da sola). Per chi è nella lista Clienti e ha risposto alle nostre email usa invece prepare_reply.
+REGOLA: se Luca ti chiede di rispondere a qualcuno, non dirgli mai "non lo trovo" o "dammi l'email" prima di aver cercato con list_conversations (anche solo con una parte del nome o dell'azienda). Quando lo trovi, prepara SEMPRE la risposta con prepare_inbox_reply, anche se l'ultima email è una ricevuta o arriva da un indirizzo automatico (no-reply): lo strumento trova da solo l'indirizzo vero dell'azienda. Poi dici a Luca a chi va (destinatario) e riporti l'avviso se c'è.
 - "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
 
 Piattaforma dei siti:
@@ -1022,9 +1023,9 @@ export async function runAssistant(
             break
           }
           reportStatus('Scrivo la risposta…')
-          const out = await prepareInboxReply(platform as SocialPlatform, contactId, withLuca(asText(args.instructions)))
+          const out = await prepareInboxReply(platform as SocialPlatform, contactId, withLuca(asText(args.instructions)), asText(args.to))
           result = out.ok
-            ? { preparata: true, dove: 'Messaggi, da approvare', testo: out.text, avviso: out.warning }
+            ? { preparata: true, dove: 'Messaggi, da approvare', destinatario: out.sentTo, testo: out.text, avviso: out.warning }
             : { preparata: false, motivo: out.reason }
           refresh = true
           break

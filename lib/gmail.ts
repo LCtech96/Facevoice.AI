@@ -1,3 +1,4 @@
+import { isAutomaticEmail } from '@/lib/email-address'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SITE_URL } from '@/lib/seo/site'
@@ -296,7 +297,9 @@ export async function sendThreadReply(threadId: string, to: string, text: string
     const subject = /^re:/i.test(subjectRaw) ? subjectRaw : `Re: ${subjectRaw || 'Facevoice AI'}`
     const messageId = ref ? header(ref, 'Message-ID') : ''
     const references = [ref ? header(ref, 'References') : '', messageId].filter(Boolean).join(' ')
-    const recipient = incoming ? parseAddress(header(incoming, 'Reply-To') || header(incoming, 'From')).email : to
+    const detected = incoming ? parseAddress(header(incoming, 'Reply-To') || header(incoming, 'From')).email : ''
+    // Ultima email da un indirizzo automatico (no-reply): si risponde all'indirizzo vero scelto per la bozza.
+    const recipient = detected && !(isAutomaticEmail(detected) && to && to.toLowerCase() !== detected.toLowerCase()) ? detected : to
 
     const mime = [
       `From: ${settings.email}`,
