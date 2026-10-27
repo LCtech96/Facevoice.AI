@@ -14,6 +14,8 @@ import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
+import { baseDomain, emailsInText, isAutomaticEmail } from '@/lib/email-address'
+import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
 import { defineSection, sectionText } from '@/lib/ai-context'
 import { bookedSlotsText, cancelAppointmentsFor, createAppointment, parseAppointmentMarkers } from '@/lib/appointments'
@@ -659,11 +661,64 @@ export async function prepareOutreachReply(
  * WhatsApp, chat del sito) chiesta da Luca nella Super chat: preparata con le sue
  * indicazioni e messa in bozza da approvare, al posto di eventuali bozze vecchie.
  */
+/**
+ * Indirizzo vero dell'azienda quando l'ultima email arriva da un no-reply: altre
+ * conversazioni con lo stesso dominio, indirizzi scritti nelle email, schede Clienti.
+ */
+async function realAddressFor(contactId: string): Promise<{ address: string; threadId: string | null; why: string } | null> {
+  const domain = baseDomain(contactId)
+  const ours = (a: string) => isAdminEmail(a) || a.endsWith('@facevoice.ai')
+  const usable = (a: string) => !isAutomaticEmail(a) && !ours(a)
+
+  // 1) Conversazioni collegate o con lo stesso dominio (la piu' recente).
+  const members = (await linkedMembers('email', contactId).catch(() => [])).filter((m) => m.platform === 'email').map((m) => m.contactId)
+  const { data: sameDomain } = domain
+    ? await supabaseAdmin
+        .from('social_messages')
+        .select('contact_id, channel_account_id, created_at')
+        .eq('platform', 'email')
+        .ilike('contact_id', `%${domain}`)
+        .order('created_at', { ascending: false })
+        .limit(200)
+    : { data: [] }
+  const { data: linked } = members.length
+    ? await supabaseAdmin
+        .from('social_messages')
+        .select('contact_id, channel_account_id, created_at')
+        .eq('platform', 'email')
+        .in('contact_id', members)
+        .order('created_at', { ascending: false })
+        .limit(50)
+    : { data: [] }
+  const conv = [...(linked || []), ...(sameDomain || [])].find((m) => usable(m.contact_id) && (members.includes(m.contact_id) || baseDomain(m.contact_id) === domain))
+  if (conv) return { address: conv.contact_id, threadId: conv.channel_account_id, why: 'un’altra conversazione con la stessa azienda' }
+
+  // 2) Indirizzi scritti nel testo delle email (firme, ricevute, email di Luca).
+  const { data: bodies } = await supabaseAdmin
+    .from('social_messages')
+    .select('body')
+    .eq('platform', 'email')
+    .in('contact_id', [contactId, ...members])
+    .order('created_at', { ascending: false })
+    .limit(30)
+  const found = emailsInText((bodies || []).map((b) => b.body || '').join('\n')).filter(usable)
+  const pick = found.find((e) => baseDomain(e) === domain) || found[0]
+  if (pick) return { address: pick, threadId: null, why: 'un indirizzo scritto nelle loro email' }
+
+  // 3) Schede Clienti con lo stesso dominio.
+  if (domain) {
+    const { data: lead } = await supabaseAdmin.from('leads').select('email').ilike('email', `%@${domain}`).limit(1).maybeSingle()
+    if (lead?.email && usable(lead.email)) return { address: lead.email.toLowerCase(), threadId: null, why: 'la scheda Clienti dell’azienda' }
+  }
+  return null
+}
+
 export async function prepareInboxReply(
   platform: SocialPlatform,
   contactId: string,
-  instructions?: string
-): Promise<{ ok: boolean; reason?: string; text?: string; warning?: string }> {
+  instructions?: string,
+  to?: string
+): Promise<{ ok: boolean; reason?: string; text?: string; warning?: string; sentTo?: string }> {
   const { data: last } = await supabaseAdmin
     .from('social_messages')
     .select('channel_account_id, contact_name, created_at')
@@ -689,25 +744,38 @@ export async function prepareInboxReply(
   const text = parseAppointmentMarkers(raw).text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
 
+  // Email da un no-reply: la bozza va a un indirizzo vero dell'azienda (o a quello indicato da Luca).
+  let recipient = contactId
+  let threadId = last?.channel_account_id ?? null
+  let warning: string | undefined
+  const explicit = to?.trim().toLowerCase()
+  if (platform === 'email' && explicit && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(explicit)) {
+    recipient = explicit
+  } else if (platform === 'email' && isAutomaticEmail(contactId)) {
+    const real = await realAddressFor(contactId)
+    if (real) {
+      recipient = real.address
+      threadId = real.threadId || threadId
+      warning = `${contactId} è un indirizzo automatico: la risposta va a ${real.address} (trovato in ${real.why}). Controlla che sia quello giusto prima di approvare.`
+    } else {
+      warning = `${contactId} è un indirizzo automatico e non ho trovato un indirizzo vero dell’azienda: prima di approvare dimmi a quale email mandarla (lo strumento accetta "to").`
+    }
+  }
+
   await supabaseAdmin
     .from('social_messages')
     .delete()
     .eq('platform', platform)
-    .eq('contact_id', contactId)
+    .in('contact_id', [...new Set([contactId, recipient])])
     .eq('direction', 'out')
     .eq('status', 'pending')
   await queueReply(
-    { platform, kind: 'message', contact_id: contactId, channel_account_id: last?.channel_account_id ?? null, reply_to: null },
+    { platform, kind: 'message', contact_id: recipient, channel_account_id: threadId, reply_to: null },
     name,
     text,
     false
   )
-  const automatic = /(^|[^a-z])(no-?reply|do-?not-?reply|donotreply|automated|mailer-daemon|notifications?)([^a-z]|$)/i.test(contactId)
-  return {
-    ok: true,
-    text,
-    warning: automatic ? 'l’indirizzo sembra automatico (no-reply): la risposta potrebbe non essere letta da nessuno' : undefined,
-  }
+  return { ok: true, text, warning, sentTo: recipient }
 }
 
 /**
