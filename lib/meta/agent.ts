@@ -450,9 +450,14 @@ const PRIVATE_FOLLOW_UP_RULES = defineSection({
  */
 function languageRule(lastText: string | undefined) {
   const detected = replyLanguage(lastText)
+  const quoted = (lastText || '').replace(/\s+/g, ' ').trim().slice(0, 200)
   return `\n\n## LINGUA DELLA RISPOSTA (regola più importante)
-${detected ? `Il messaggio a cui rispondi è in ${detected}: scrivi TUTTA la risposta ${detected.includes('(') ? 'in quella stessa lingua' : `in ${detected}`}.` : 'Scrivi TUTTA la risposta nella stessa lingua del messaggio a cui rispondi (commento in russo → risposta in russo, in inglese → in inglese, e così via). Se il messaggio è troppo corto per capirlo (emoji, una parola), usa la lingua dei messaggi precedenti o, in mancanza, l’italiano.'}
-Vale anche per il primo messaggio privato dopo un commento. Le istruzioni e gli esempi qui sopra sono in italiano solo per comodità: traducine il senso, non copiarli. Nomi, numeri di telefono, link e firma restano uguali.`
+${
+  detected
+    ? `L'ultimo messaggio è in ${detected}: scrivi TUTTA la risposta ${detected.includes('(') ? 'in quella stessa lingua' : `in ${detected}`}.`
+    : `Scrivi TUTTA la risposta nella lingua dell'ULTIMO messaggio${quoted ? ` («${quoted}»)` : ''}, anche se prima la conversazione era in un'altra lingua: se la persona cambia lingua, cambi anche tu. Solo se l'ultimo messaggio non contiene parole (solo emoji, un adesivo o un link) usa la lingua dei messaggi precedenti o, in mancanza, l'italiano.`
+}
+Conta sempre l'ultimo messaggio, non quelli prima. Vale anche per il primo messaggio privato dopo un commento. Le istruzioni e gli esempi qui sopra sono in italiano solo per comodità: traducine il senso, non copiarli. Nomi, numeri di telefono, link e firma restano uguali.`
 }
 
 async function generateReply(

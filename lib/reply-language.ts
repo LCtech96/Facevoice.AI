@@ -17,8 +17,8 @@ const SCRIPTS: [RegExp, string][] = [
 
 // Parole comuni (gia' in minuscolo, senza punteggiatura) per le lingue con alfabeto latino.
 const WORDS: Record<string, string[]> = {
-  italiano: ['il', 'lo', 'gli', 'che', 'di', 'è', 'per', 'con', 'come', 'quanto', 'ciao', 'grazie', 'sono', 'una', 'del', 'della', 'non', 'anche', 'questo', 'vorrei', 'buongiorno', 'salve', 'costa'],
-  inglese: ['the', 'and', 'you', 'is', 'are', 'to', 'of', 'for', 'with', 'what', 'how', 'this', 'that', 'your', 'can', 'do', 'my', 'please', 'hi', 'hello', 'much', 'price', 'thanks', 'want', 'love'],
+  italiano: ['il', 'lo', 'gli', 'che', 'di', 'è', 'per', 'con', 'come', 'quanto', 'ciao', 'grazie', 'sono', 'una', 'del', 'della', 'non', 'anche', 'questo', 'vorrei', 'buongiorno', 'salve', 'costa', 'sì', 'si', 'vede', 'bene', 'prego', 'certo', 'perfetto', 'allora', 'però', 'perché', 'cosa', 'dove', 'quando', 'vero', 'tutto', 'molto', 'ancora', 'sempre', 'ho', 'hai', 'ha', 'sei', 'siete', 'abbiamo', 'mi', 'ti', 'ci', 'va', 'grazie', 'bello', 'bellissimo', 'bravi', 'brava', 'bravo', 'fatto', 'niente', 'adesso', 'oggi', 'domani', 'anch', 'chi', 'nel', 'nella', 'sul', 'alla', 'al'],
+  inglese: ['the', 'and', 'you', 'is', 'are', 'to', 'of', 'for', 'with', 'what', 'how', 'this', 'that', 'your', 'can', 'do', 'my', 'please', 'hi', 'hello', 'much', 'price', 'thanks', 'want', 'love', 'yes', 'yeah', 'see', 'sounds', 'good', 'great', 'nice', 'sure', 'thank', 'awesome', 'cool', 'me', 'i', 'we', 'am', 'will', 'would', 'like', 'know', 'sorry', 'okay', 'it', 'be', 'have', 'not', 'there', 'who', 'when', 'where', 'why'],
   spagnolo: ['el', 'los', 'las', 'que', 'y', 'es', 'por', 'para', 'como', 'cuánto', 'cuanto', 'hola', 'gracias', 'usted', 'una', 'del', 'muy', 'quiero', 'precio', 'cómo', 'también'],
   francese: ['le', 'les', 'des', 'est', 'et', 'je', 'vous', 'pour', 'avec', 'bonjour', 'merci', 'combien', 'une', 'du', 'c’est', "c'est", 'très', 'nous', 'pas', 'prix'],
   tedesco: ['der', 'die', 'das', 'und', 'ist', 'ich', 'sie', 'nicht', 'mit', 'für', 'wie', 'viel', 'hallo', 'danke', 'ein', 'eine', 'auch', 'was', 'kostet', 'sehr'],
@@ -26,6 +26,8 @@ const WORDS: Record<string, string[]> = {
 }
 
 const ACCENTS: [RegExp, string][] = [
+  // ì e ò con l'accento grave sono quasi solo italiane.
+  [/[ìò]/, 'italiano'],
   [/[ñ¿¡]/, 'spagnolo'],
   [/[ãõ]/, 'portoghese'],
   [/[ßäöü]/, 'tedesco'],
