@@ -16,6 +16,8 @@ const SETTINGS_KEY = 'autopilot:settings'
 const RUN_KEY = 'autopilot:run'
 /** Schede lette al massimo in un giorno (ogni lettura costa una chiamata AI). */
 const ANALYZE_MAX = 40
+/** Email pronte da tenere in coda anche quando oggi non se ne possono piu' inviare. */
+const READY_BUFFER = 10
 const ROUND_MS = 230_000
 /** Oltre questo tempo senza aggiornamenti il giro e' fermo: il server l'ha chiuso. */
 const STALE_MS = 330_000
@@ -75,10 +77,21 @@ const clamp = (value: unknown, min: number, max: number, fallback: number) => {
 }
 
 /** Impostazioni valide (valori fuori misura riportati nei limiti). */
+/**
+ * Google Maps capisce una citta' per ricerca: "Ristoranti Palermo e Trapani" trova
+ * quasi niente. Si divide in "Ristoranti Palermo" e "Ristoranti Trapani".
+ */
+export function expandQuery(query: string): string[] {
+  const m = query.trim().match(/^(.+?)\s+((?:[A-ZÀ-Ý][^\s,]*)(?:\s*(?:,|\be\b|\bo\b)\s*[A-ZÀ-Ý][^\s,]*)+)$/)
+  if (!m) return [query.trim()]
+  const places = m[2].split(/\s*(?:,|\be\b|\bo\b)\s*/).filter(Boolean)
+  return places.length > 1 ? places.map((place) => `${m[1]} ${place}`) : [query.trim()]
+}
+
 export function cleanSettings(input: Partial<AutopilotSettings> | null | undefined, base = DEFAULT_SETTINGS): AutopilotSettings {
   const time = typeof input?.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(input.time) ? input.time : base.time
   const searches = Array.isArray(input?.searches)
-    ? [...new Set(input.searches.map((s) => String(s).trim().slice(0, 120)).filter((s) => s.length >= 3))].slice(0, 100)
+    ? [...new Set(input.searches.flatMap((s) => expandQuery(String(s).slice(0, 120))).filter((s) => s.length >= 3))].slice(0, 100)
     : base.searches
   return {
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : base.enabled,
@@ -233,7 +246,9 @@ async function finish(runId: string, status: 'done' | 'error', note?: string) {
     title: status === 'done' ? 'Motore clienti: lavoro di oggi finito' : 'Motore clienti: si è fermato',
     body:
       status === 'done'
-        ? `${added} nuove attività, ${run.withEmail} email trovate, ${run.sent.length} email inviate.`
+        ? `${added} nuove attività, ${run.withEmail} email trovate, ${run.sent.length} email inviate.${
+            run.errors.some((e) => e.startsWith('Limite di oggi')) ? ' Limite di email di oggi raggiunto.' : ''
+          }`
         : note || 'Apri la pagina per i dettagli.',
     url: '/admin/pipeline',
   }).catch(() => undefined)
@@ -262,7 +277,11 @@ export async function runRound(origin: string, runId: string) {
     // 1) Ricerche
     let phase = run.phase
     if (phase === 'search') {
-      for (let i = run.searched.length; i < Math.min(settings.searchesPerDay, settings.searches.length); i++) {
+      // Una ricerca che non porta attivita' nuove (gia' tutte in lista) non conta:
+      // si passa alla successiva della lista, finche' non si arriva al numero scelto.
+      const productive = () => run.searched.filter((x) => x.added > 0).length
+      let i = run.searched.length
+      for (; i < settings.searches.length && productive() < settings.searchesPerDay; i++) {
         if (timeLeft() < 40_000) return nextRound()
         const query = settings.searches[(run.searchStart + i) % settings.searches.length]
         await patch(runId, (r) => void (r.statusText = `Cerco su Google Maps: “${query}”…`))
@@ -271,10 +290,10 @@ export async function runRound(origin: string, runId: string) {
           (error) => ({ query, found: 0, added: 0, error: error instanceof Error ? error.message : String(error) })
         )
         await patch(runId, (r) => void r.searched.push(entry))
+        run.searched.push(entry)
       }
       // La rotazione riparte dalla ricerca successiva il giorno dopo.
-      const used = Math.min(settings.searchesPerDay, settings.searches.length)
-      if (used) await saveSettings({ next: (run.searchStart + used) % settings.searches.length })
+      if (i) await saveSettings({ next: (run.searchStart + i) % settings.searches.length })
       phase = 'analyze'
       await patch(runId, (r) => void (r.phase = 'analyze'))
     }
@@ -286,7 +305,9 @@ export async function runRound(origin: string, runId: string) {
       if (phase === 'analyze') {
         const quota = Math.max(0, settings.emailsPerDay - (await sentToday()))
         let current = (await loadRun())!
-        while (current.analyzed < ANALYZE_MAX && (await sendable(quota, current.skipped)).length < quota) {
+        // Anche a limite raggiunto si tiene pronta una scorta di email per il giro successivo.
+        const ready = Math.max(quota, READY_BUFFER)
+        while (current.analyzed < ANALYZE_MAX && (await sendable(ready, current.skipped)).length < ready) {
           if (timeLeft() < 60_000) return nextRound()
           const batch = await toAnalyze(4)
           if (!batch.length) break
@@ -313,8 +334,20 @@ export async function runRound(origin: string, runId: string) {
       }
 
       // Invio delle prime email, distanziate
-      const quota = Math.max(0, settings.emailsPerDay - (await sentToday()))
-      if (!quota) break
+      const sentSoFar = await sentToday()
+      const quota = Math.max(0, settings.emailsPerDay - sentSoFar)
+      if (!quota) {
+        // Limite di oggi raggiunto: lo si dice chiaro (prima l'esecuzione finiva a 0 senza spiegazioni).
+        const waiting = (await sendable(50, (await loadRun())?.skipped)).length
+        await patch(runId, (r) => {
+          r.errors.push(
+            `Limite di oggi raggiunto: ${sentSoFar} email già inviate su ${settings.emailsPerDay} impostate. ${waiting} email pronte partono al prossimo giro${
+              settings.emailsPerDay < DAILY_EMAIL_LIMIT ? `, oppure alza "Email al giorno" nelle impostazioni (massimo ${DAILY_EMAIL_LIMIT})` : ''
+            }.`
+          )
+        })
+        break
+      }
       const latest = await loadRun()
       // Esecuzione passata a un altro giro (o chiusa): questo non invia piu' niente.
       if (!latest || latest.run !== runId || latest.status !== 'running') return
