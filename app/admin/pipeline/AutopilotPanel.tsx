@@ -220,15 +220,27 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
             <Play className="w-3.5 h-3.5" /> Avvia ora
           </button>
           <span className="self-center text-xs text-[var(--text-secondary)]">
-            Email inviate oggi: {state.sentToday}/{MAX_EMAILS}
+            Email inviate oggi: {state.sentToday} (scelte: {settings.emailsPerDay}, massimo {MAX_EMAILS})
           </span>
         </div>
+      )}
+      {canEdit && state.sentToday >= settings.emailsPerDay && (
+        <p className="mt-2 px-3 py-2 rounded-lg bg-[#FF9500]/10 text-[#FF9500] text-xs">
+          Oggi sono già partite {state.sentToday} email, cioè il numero che hai scelto. “Avvia ora” cerca nuove attività e prepara le
+          email, ma le invia al prossimo giro.
+          {settings.emailsPerDay < MAX_EMAILS
+            ? ` Per inviarne altre oggi alza “Email al giorno” nelle Impostazioni (fino a ${MAX_EMAILS}).`
+            : ' Il massimo di 30 al giorno protegge la reputazione della casella: oltre, le email rischiano di finire in spam.'}
+        </p>
       )}
 
       {open && form && (
         <div className="mt-3 space-y-3">
           <label className="block">
-            <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Ricerche su Google Maps, una per riga (usate a rotazione, giorno dopo giorno)</span>
+            <span className="block text-[11px] text-[var(--text-secondary)] mb-1">
+              Ricerche su Google Maps, una per riga e una città per ricerca (usate a rotazione). Se scrivi “Ristoranti Palermo e Trapani” la
+              divido io in due ricerche.
+            </span>
             <textarea
               value={searchesText}
               onChange={(e) => setSearchesText(e.target.value)}
