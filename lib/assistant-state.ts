@@ -1,5 +1,6 @@
 import { readSetting, updateSetting } from '@/lib/settings-store'
-import { emptyTally, runWithStatus, type AIModelChoice, type UsageTally } from '@/lib/ai'
+import { emptyTally, readImages, reportStatus, runWithStatus, type AIModelChoice, type ImageInput, type UsageTally } from '@/lib/ai'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
 import { overBudget, type Budget } from '@/lib/assistant-budget'
 
@@ -11,7 +12,20 @@ export const SCOPES = ['leads', 'super'] as const
 export type Scope = (typeof SCOPES)[number]
 
 /** job: lavoro che ha scritto la risposta (per non contare due volte i token di un lavoro in corso). */
-export type Turn = { id: string; role: 'user' | 'assistant'; text: string; actions?: SocialAction[]; usage?: UsageTally; job?: string }
+export type Turn = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  actions?: SocialAction[]
+  usage?: UsageTally
+  job?: string
+  /** Anteprime delle immagini allegate da Luca (piccole, per la chat). */
+  images?: string[]
+  /** Immagini intere in attesa di essere lette (app_settings assistant_image:<id>). */
+  imageKeys?: string[]
+  /** Cosa c'e' nelle immagini, letto dall'AI: resta nella conversazione. */
+  imageText?: string
+}
 
 export type Job = {
   id: string
@@ -144,6 +158,45 @@ export async function recoverStaleJob(scope: Scope, state: AssistantState): Prom
   })
 }
 
+export const IMAGE_PREFIX = 'assistant_image:'
+
+/**
+ * Immagini allegate all'ultima richiesta: si leggono una volta sola (all'inizio del
+ * lavoro), il testo letto resta nella conversazione e le immagini intere si cancellano.
+ */
+async function withImages(scope: Scope, jobId: string, start: AssistantState, message: string): Promise<string> {
+  // Nei giri successivi job.original contiene gia' il testo delle immagini.
+  if ((start.job?.round ?? 0) > 0) return message
+  const turn = [...start.turns].reverse().find((t) => t.role === 'user')
+  if (!turn) return message
+  if (turn.imageText) return `${message}\n\n[Contenuto delle immagini allegate da Luca]\n${turn.imageText}`
+  if (!turn.imageKeys?.length) return message
+
+  reportStatus(turn.imageKeys.length > 1 ? 'Guardo le immagini…' : 'Guardo l’immagine…')
+  const keys = turn.imageKeys.map((k) => `${IMAGE_PREFIX}${k}`)
+  const { data } = await supabaseAdmin.from('app_settings').select('key, value').in('key', keys)
+  const images: ImageInput[] = (data || [])
+    .map((row) => row.value.match(/^data:([^;]+);base64,(.+)$/))
+    .filter((m): m is RegExpMatchArray => Boolean(m))
+    .map((m) => ({ mimeType: m[1], data: m[2] }))
+  let text = ''
+  try {
+    text = await readImages(images, turn.text)
+  } catch (error) {
+    text = `(non sono riuscito a leggere le immagini: ${error instanceof Error ? error.message : 'errore'})`
+  }
+  await updateState(scope, (s) => {
+    const t = s.turns.find((x) => x.id === turn.id)
+    if (!t) return false
+    t.imageText = text.slice(0, 8000)
+    delete t.imageKeys
+    // I giri successivi ripartono da job.original: deve contenere anche le immagini lette.
+    if (s.job?.id === jobId) s.job.original = `${s.job.original}\n\n[Contenuto delle immagini allegate da Luca]\n${t.imageText}`
+  }).catch(() => undefined)
+  await supabaseAdmin.from('app_settings').delete().in('key', keys)
+  return `${message}\n\n[Contenuto delle immagini allegate da Luca]\n${text}`
+}
+
 function addTally(a: UsageTally, b: UsageTally): UsageTally {
   const models = { ...a.models }
   for (const [m, n] of Object.entries(b.models)) models[m] = (models[m] || 0) + n
@@ -162,7 +215,9 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
   const runId = job.run
   const mine = (s: AssistantState) => s.job?.id === jobId && s.job.run === runId
 
-  const history = start.turns.slice(-9, -1).map((t) => ({ role: t.role, text: t.text.slice(0, 1500) }))
+  const history = start.turns
+    .slice(-9, -1)
+    .map((t) => ({ role: t.role, text: `${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500) }))
   // Token di questo giro; il totale della richiesta somma anche i giri precedenti.
   const tally: UsageTally = emptyTally()
   const base: UsageTally = job.usage && (job.round ?? 0) > 0 ? job.usage : emptyTally()
@@ -232,8 +287,8 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
         },
         overBudget: () => overBudget(budget, total(), lastStep),
       },
-      () =>
-        runAssistant(message, history, start.drafts, budget, {
+      async () =>
+        runAssistant(await withImages(scope, jobId, start, message), history, start.drafts, budget, {
           done: job.steps,
           onStep: (line) => {
             steps.push(line)

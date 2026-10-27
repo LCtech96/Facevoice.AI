@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Facebook, Instagram, Loader2, Mail, Mic, Plus, Send, Sparkles, Square, X } from 'lucide-react'
+import { ArrowUp, Check, Facebook, ImagePlus, Instagram, Loader2, Mail, Mic, Plus, Send, Sparkles, Square, X } from 'lucide-react'
+import { prepareImage, type PreparedImage } from '@/lib/client-image'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import { useDictation } from '@/components/useDictation'
@@ -38,6 +39,10 @@ export default function SuperChat() {
   const canUse = staff.can('assistant', 'use')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
+  // Immagini allegate al prossimo messaggio (scelte o incollate).
+  const [images, setImages] = useState<PreparedImage[]>([])
+  const [imageError, setImageError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const [model, setModel] = useState<string>('auto')
 
   // Il modello scelto resta per le prossime volte.
@@ -131,11 +136,34 @@ export default function SuperChat() {
     draftCount.current = drafts.length
   }, [drafts.length])
 
+  const MAX_IMAGES = 4
+  const addImages = async (files: Blob[]) => {
+    const list = files.filter((f) => f.type.startsWith('image/'))
+    if (!list.length) return
+    setImageError(null)
+    const room = MAX_IMAGES - images.length
+    if (room <= 0) return setImageError(`Al massimo ${MAX_IMAGES} immagini per messaggio.`)
+    const ready: PreparedImage[] = []
+    for (const file of list.slice(0, room)) {
+      try {
+        ready.push(await prepareImage(file))
+      } catch {
+        setImageError('Questa immagine non si apre: prova con uno screenshot o una foto JPG/PNG.')
+      }
+    }
+    setImages((current) => [...current, ...ready].slice(0, MAX_IMAGES))
+    if (list.length > room) setImageError(`Al massimo ${MAX_IMAGES} immagini per messaggio.`)
+  }
+
   const ask = async (message: string) => {
-    if (!message.trim() || busy) return
+    if ((!message.trim() && !images.length) || busy) return
     if (dictation.listening) dictation.stop()
+    const attached = images
     setInput('')
-    await askServer(message, model)
+    setImages([])
+    const ok = await askServer(message, model, attached)
+    // Invio non riuscito: le immagini tornano nel campo, cosi' non vanno perse.
+    if (!ok && attached.length) setImages(attached)
   }
 
   const updateAction = (turnId: string, index: number, patch: Partial<SocialAction>) => {
@@ -211,10 +239,20 @@ export default function SuperChat() {
             <div className="space-y-5">
               {turns.map((turn) =>
                 turn.role === 'user' ? (
-                  <div key={turn.id} className="flex justify-end">
-                    <p className="max-w-[85%] rounded-3xl rounded-br-lg px-4 py-2.5 bg-[var(--background-secondary)] text-[var(--text-primary)] whitespace-pre-wrap text-[15px] leading-relaxed">
-                      {turn.text}
-                    </p>
+                  <div key={turn.id} className="flex flex-col items-end gap-1.5">
+                    {turn.images?.some(Boolean) && (
+                      <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+                        {turn.images.filter(Boolean).map((src, i) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img key={i} src={src} alt="Immagine allegata" className="h-24 w-auto max-w-[160px] rounded-2xl object-cover border border-[var(--border-color)]" />
+                        ))}
+                      </div>
+                    )}
+                    {turn.text && (
+                      <p className="max-w-[85%] rounded-3xl rounded-br-lg px-4 py-2.5 bg-[var(--background-secondary)] text-[var(--text-primary)] whitespace-pre-wrap text-[15px] leading-relaxed">
+                        {turn.text}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <div key={turn.id} className="flex gap-3">
@@ -361,6 +399,25 @@ export default function SuperChat() {
         </div>
         {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
         {dictation.error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{dictation.error}</p>}
+        {imageError && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{imageError}</p>}
+        {images.length > 0 && (
+          <div className="mb-2 flex gap-2 overflow-x-auto px-1">
+            {images.map((img) => (
+              <div key={img.id} className="relative shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.thumb} alt="Anteprima" className="h-16 w-16 rounded-xl object-cover border border-[var(--border-color)]" />
+                <button
+                  type="button"
+                  onClick={() => setImages((list) => list.filter((x) => x.id !== img.id))}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/80 text-white flex items-center justify-center"
+                  aria-label="Togli immagine"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {dictation.listening && <p className="mb-2 px-2 text-xs text-[var(--text-secondary)]">Ti ascolto… parla, poi tocca il quadrato per fermare e invia.</p>}
         {!staff.loading && !canUse ? (
           <p className="px-3 py-3 rounded-2xl border border-[var(--border-color)] text-sm text-center text-[var(--text-secondary)]">
@@ -384,18 +441,47 @@ export default function SuperChat() {
           >
             <Plus className="w-5 h-5" />
           </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy || images.length >= MAX_IMAGES}
+            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)] disabled:opacity-40"
+            aria-label="Allega un'immagine"
+            title="Allega un'immagine (puoi anche incollarla)"
+          >
+            <ImagePlus className="w-5 h-5" />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addImages(Array.from(e.target.files || []))
+              e.target.value = ''
+            }}
+          />
           <textarea
             ref={inputRef}
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              // Screenshot incollato (Cmd/Ctrl+V o "Incolla" sul telefono): diventa un allegato.
+              const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
+              if (files.length) {
+                e.preventDefault()
+                addImages(files)
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) {
                 e.preventDefault()
                 ask(input)
               }
             }}
-            placeholder="Chiedi qualsiasi cosa…"
+            placeholder="Chiedi qualcosa…"
             className="flex-1 min-w-0 resize-none bg-transparent py-2 text-[16px] leading-6 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none"
           />
           {dictation.supported && (
@@ -413,7 +499,7 @@ export default function SuperChat() {
           )}
           <button
             type="submit"
-            disabled={busy || !input.trim()}
+            disabled={busy || (!input.trim() && !images.length)}
             className="shrink-0 w-9 h-9 rounded-full bg-[var(--accent-blue)] text-white flex items-center justify-center disabled:opacity-40"
             aria-label="Invia"
           >

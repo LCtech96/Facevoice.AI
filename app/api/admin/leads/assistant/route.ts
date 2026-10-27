@@ -4,6 +4,7 @@ import { asModelChoice } from '@/lib/ai'
 import {
   asScope,
   continuationMessage,
+  IMAGE_PREFIX,
   isRunning,
   isStale,
   loadState,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/assistant-state'
 import { internalKey, requestRound, resumeOrClose } from '@/lib/assistant-launch'
 import { parseBudget } from '@/lib/assistant-budget'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 // Il lavoro continua dopo la risposta (after): serve il tempo massimo.
@@ -39,6 +41,25 @@ async function authorized(req: NextRequest, scope: Scope, write: boolean) {
 function launch(req: NextRequest, scope: Scope, jobId: string, message: string) {
   const origin = req.nextUrl.origin
   after(() => runJob(scope, jobId, message, (round) => requestRound(origin, scope, jobId, round)))
+}
+
+const MAX_IMAGES = 4
+/** Limiti per immagine: l'originale (gia' ridotto dal browser) e l'anteprima per la chat. */
+const MAX_IMAGE_CHARS = 3_500_000
+const MAX_THUMB_CHARS = 80_000
+const IMAGE_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/
+
+function cleanImages(input: unknown): { list: { data: string; thumb: string }[] } | { error: string } {
+  if (!Array.isArray(input) || !input.length) return { list: [] }
+  if (input.length > MAX_IMAGES) return { error: `Al massimo ${MAX_IMAGES} immagini per messaggio` }
+  const list: { data: string; thumb: string }[] = []
+  for (const item of input) {
+    const data = typeof item?.data === 'string' ? item.data : ''
+    const thumb = typeof item?.thumb === 'string' ? item.thumb : ''
+    if (!IMAGE_RE.test(data) || data.length > MAX_IMAGE_CHARS) return { error: 'Immagine non valida o troppo grande' }
+    list.push({ data, thumb: IMAGE_RE.test(thumb) && thumb.length <= MAX_THUMB_CHARS ? thumb : '' })
+  }
+  return { list }
 }
 
 /** "continua", "vai avanti"…: riprende l'ultima richiesta senza rifare i passi gia' fatti. */
@@ -83,7 +104,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  const text = String(body?.message || '').trim().slice(0, 2000)
+  const images = cleanImages(body?.images)
+  if ('error' in images) return NextResponse.json({ error: images.error }, { status: 400 })
+  const text = String(body?.message || '').trim().slice(0, 2000) || (images.list.length ? 'Guarda le immagini allegate.' : '')
   if (!text) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
 
   const current = await recoverStaleJob(scope, await loadState(scope))
@@ -106,10 +129,25 @@ export async function POST(req: NextRequest) {
     if (lastAssistant?.text.trim().endsWith('?') && lastUser) budget = parseBudget(lastUser.text)
   }
 
+  // Immagini intere salvate a parte (si leggono all'inizio del lavoro, poi si cancellano).
+  const imageKeys = images.list.map(() => newId())
+  if (images.list.length) {
+    const now = new Date().toISOString()
+    const { error } = await supabaseAdmin
+      .from('app_settings')
+      .insert(images.list.map((img, i) => ({ key: `${IMAGE_PREFIX}${imageKeys[i]}`, value: img.data, updated_at: now })))
+    if (error) return NextResponse.json({ error: 'Immagini non salvate, riprova' }, { status: 500 })
+  }
+
   const jobId = newId()
   const now = new Date().toISOString()
   const state = await updateState(scope, (s) => {
-    s.turns.push({ id: newId(), role: 'user', text })
+    s.turns.push({
+      id: newId(),
+      role: 'user',
+      text,
+      ...(images.list.length ? { images: images.list.map((img) => img.thumb), imageKeys } : {}),
+    })
     s.job = {
       id: jobId,
       status: 'running',

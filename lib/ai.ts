@@ -336,3 +336,73 @@ export function callAIPaced(
   paceQueue = result.catch(() => undefined)
   return result
 }
+
+/** Immagine allegata (es. uno screenshot incollato nella Super chat). data: base64 senza prefisso. */
+export type ImageInput = { mimeType: string; data: string }
+
+const IMAGE_PROMPT = `Luca ha allegato queste immagini a una richiesta per il suo assistente. Il tuo compito è solo LEGGERLE, non eseguire la richiesta.
+Scrivi in italiano, in modo asciutto:
+- che cosa mostra ogni immagine (es. "schermata della pagina Messaggi con una conversazione email", "profilo Instagram", "sito web", "fattura");
+- TUTTO il testo visibile che può servire, trascritto fedelmente: nomi di persone e aziende, indirizzi email, numeri di telefono, oggetti delle email, testi dei messaggi, importi, date, codici, link;
+- se è una conversazione: chi ha scritto cosa e in che ordine.
+Niente commenti, niente consigli.`
+
+/**
+ * Legge le immagini e restituisce una descrizione testuale (con tutto il testo
+ * trascritto): l'assistente poi lavora solo sul testo, senza rimandare le
+ * immagini a ogni passo. Gemini se disponibile, altrimenti (o se fallisce) Claude.
+ */
+export async function readImages(images: ImageInput[], request: string): Promise<string> {
+  if (!images.length) return ''
+  const pref = preferredModel()
+  const prompt = `${IMAGE_PROMPT}\n\nRichiesta di Luca: ${request || '(nessun testo)'}`
+  const viaClaude = async () => {
+    if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
+    const model = pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL
+    const response = await claudeClient.messages.create({
+      model,
+      max_tokens: 3000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...images.map((img) => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
+            })),
+            { type: 'text' as const, text: prompt },
+          ],
+        },
+      ],
+    })
+    recordUsage({
+      feature: 'lettura_immagini',
+      provider: 'claude',
+      model: response.model,
+      input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0) + (response.usage.cache_read_input_tokens || 0),
+      output: response.usage.output_tokens || 0,
+    })
+    return response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+      .trim()
+  }
+  const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
+  if (pref.startsWith('claude') && claudeReady) return viaClaude()
+  if (geminiUsable()) {
+    try {
+      const result = await tryGemini([{ role: 'user', content: prompt, attachments: images }], undefined, {
+        temperature: 0.1,
+        maxOutputTokens: 3000,
+        feature: 'lettura_immagini',
+      })
+      if (result.message.trim()) return result.message.trim()
+    } catch (error) {
+      noteGeminiFailure(error, 'lettura_immagini')
+      if (!claudeReady) throw error
+    }
+  }
+  if (!claudeReady) throw new Error('Nessun modello disponibile per leggere le immagini')
+  return viaClaude()
+}

@@ -13,7 +13,7 @@ import {
   searchPlaces,
   type Lead,
 } from '@/lib/leads'
-import { prepareOutreachReply } from '@/lib/meta/agent'
+import { prepareInboxReply, prepareOutreachReply, type SocialPlatform } from '@/lib/meta/agent'
 import { pollGmail } from '@/lib/gmail-poll'
 import { withCalls } from '@/lib/lead-calls'
 import { SOURCE_CHAT, addContact } from '@/lib/contacts'
@@ -489,32 +489,74 @@ async function activityReport(args: { hours?: number; from?: string; to?: string
 }
 
 /** Conversazioni Instagram/Facebook della casella (chi ci ha scritto). */
+const INBOX_PLATFORMS = ['email', 'instagram', 'facebook', 'whatsapp', 'web']
+/** Per cercare "Galdieri Rent" anche in "Galdierirent" o "galdieri-rent.it": minuscole, niente spazi e segni. */
+const squash = (text: string) => text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9@]+/g, '')
+
+/**
+ * Conversazioni della casella Messaggi (tutti i canali), dalla piu' recente.
+ * Il filtro cerca in nome, indirizzo/id e testo dei messaggi (anche l'oggetto delle email).
+ */
 async function listConversations(platform: string | undefined, filter: string | undefined, limit: number) {
-  const platforms = platform === 'instagram' || platform === 'facebook' ? [platform] : ['instagram', 'facebook']
+  const platforms = platform && INBOX_PLATFORMS.includes(platform) ? [platform] : INBOX_PLATFORMS
   const { data } = await supabaseAdmin
     .from('social_messages')
-    .select('platform, contact_id, contact_name, body, created_at')
+    .select('platform, contact_id, contact_name, body, direction, status, created_at')
     .in('platform', platforms)
-    .eq('direction', 'in')
     .eq('kind', 'message')
     .order('created_at', { ascending: false })
-    .limit(500)
-  const seen = new Map<string, { platform: string; contactId: string; nome: string | null; ultimo_messaggio: string; ricevuto_il: string }>()
+    .limit(1500)
+  type Conv = { platform: string; contactId: string; nome: string | null; ultimo_messaggio: string; ultimo_da: string; data: string; hay: string }
+  const convs = new Map<string, Conv>()
   for (const m of data || []) {
+    if (m.status === 'rejected') continue
     const id = `${m.platform}:${m.contact_id}`
-    if (seen.has(id)) continue
-    seen.set(id, {
-      platform: m.platform,
-      contactId: m.contact_id,
-      nome: m.contact_name,
-      ultimo_messaggio: String(m.body || '').slice(0, 160),
-      ricevuto_il: m.created_at,
-    })
+    const body = String(m.body || '')
+    const conv = convs.get(id)
+    if (!conv) {
+      convs.set(id, {
+        platform: m.platform,
+        contactId: m.contact_id,
+        nome: m.contact_name,
+        ultimo_messaggio: body.slice(0, 200),
+        ultimo_da: m.direction === 'in' ? 'contatto' : m.status === 'pending' ? 'bozza in attesa' : 'noi',
+        data: m.created_at,
+        hay: squash(`${m.contact_name || ''} ${m.contact_id} ${body.slice(0, 600)}`),
+      })
+    } else {
+      if (!conv.nome && m.contact_name) conv.nome = m.contact_name
+      if (conv.hay.length < 6000) conv.hay += squash(`${m.contact_name || ''} ${body.slice(0, 600)}`)
+    }
   }
-  const words = (filter || '').toLowerCase().split(/\s+/).filter(Boolean)
-  return [...seen.values()]
-    .filter((c) => !words.length || words.every((w) => `${c.nome || ''} ${c.contactId}`.toLowerCase().includes(w)))
+  const words = (filter || '').split(/\s+/).map(squash).filter(Boolean)
+  const whole = squash(filter || '')
+  return [...convs.values()]
+    .filter((c) => !words.length || c.hay.includes(whole) || words.every((w) => c.hay.includes(w)))
     .slice(0, limit)
+    .map(({ hay: _hay, ...c }) => c)
+}
+
+/** Ultimi messaggi di una conversazione qualsiasi (letti, inviati e bozze in attesa). */
+async function readThread(platform: string, contactId: string) {
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('direction, kind, body, status, contact_name, created_at')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .order('created_at', { ascending: false })
+    .limit(20)
+  const messages = (data || []).filter((m) => m.status !== 'rejected').reverse()
+  if (!messages.length) return { errore: 'conversazione non trovata: usa list_conversations per platform e contactId' }
+  return {
+    nome: messages.find((m) => m.contact_name)?.contact_name || contactId,
+    canale: platform,
+    messaggi: messages.map((m) => ({
+      da: m.direction === 'in' ? 'contatto' : m.status === 'pending' ? 'bozza in attesa di Luca' : 'noi',
+      tipo: m.kind === 'comment' ? 'commento pubblico' : 'messaggio',
+      data: m.created_at,
+      testo: String(m.body || '').slice(0, 2500),
+    })),
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -556,6 +598,7 @@ async function sitePlatforms(leads: Lead[]): Promise<{ results: { lead: Lead; pl
 // ---------------------------------------------------------------------
 
 const AGENT_PROMPT = `Sei l'assistente operativo di Luca nella pagina "Ricerca clienti" di Facevoice AI. Luca ti chiede cose in linguaggio naturale e tu le porti a termine usando gli strumenti, anche in più passaggi. Sii proattivo: se per fare una cosa serve prima un'altra (es. analizzare i siti per trovare le email), falla senza chiedere.
+Se nella richiesta c'è "[Contenuto delle immagini allegate da Luca]", è la trascrizione degli screenshot o delle foto che Luca ti ha mandato: usala come se la vedessi (nomi, email, oggetti, importi, conversazioni) e per cercare le persone con list_conversations o list_leads.
 
 A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
 {"tool": "nome_strumento", "args": {...}}
@@ -582,13 +625,15 @@ La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la case
 Strumenti per domande sull'attività (rispondi con numeri precisi, senza fare altro):
 - "activity_report": {"hours": 1} oppure {"from": "ISO", "to": "ISO"}, "platform": "email|instagram|facebook|whatsapp|web|all" → quanti messaggi sono stati inviati e ricevuti nel periodo, per canale e per tipo (email della Ricerca clienti, risposte automatiche, approvate, scritte a mano), invii falliti, bozze in attesa, e gli ultimi 30 con ora, contatto e inizio del testo. Usalo per domande tipo "quante email sono partite nell'ultima ora", "chi ci ha scritto oggi" (calcola le ore da mezzanotte con la data e ora qui sotto), "quanti messaggi Instagram ieri".
 - Per numeri sulla lista clienti usa "stats" o "list_leads".
-Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, inspect_website, instagram_profile, list_push_devices).
+Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, read_thread, inspect_website, instagram_profile, list_push_devices).
 
 Strumenti di ricerca e social:
 - "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
 - "instagram_profile": {"username": "nomeprofilo"} oppure {"leadId": "..."} → profilo Instagram pubblico (solo account business/creator): follower, seguiti, numero di post, bio, sito, ultimi 6 post con data, like e commenti (per capire se pubblicano e quanto spesso).
 - "instagram_profiles": {"ids": [...] opzionale, "filter": "", "limit": 15} → lo stesso per più schede che hanno un Instagram (per domande tipo "quali hanno Instagram e quanti follower").
-- "list_conversations": {"platform": "instagram|facebook|all", "filter": "nome opzionale", "limit": 20} → persone che ci hanno scritto su Instagram o Facebook (contactId, nome, ultimo messaggio e data).
+- "list_conversations": {"platform": "email|instagram|facebook|whatsapp|web|all", "filter": "parole da cercare, opzionale", "limit": 20} → conversazioni della casella Messaggi su TUTTI i canali, email comprese (platform, contactId, nome, ultimo messaggio, data). Il filtro cerca in nome, indirizzo e testo dei messaggi (anche l'oggetto delle email) e ignora spazi e maiuscole: "Galdieri Rent" trova anche "Galdierirent". Se Luca nomina una persona o un'azienda che non è nella lista Clienti, cercala QUI prima di dire che non esiste.
+- "read_thread": {"platform": "...", "contactId": "..."} → legge gli ultimi messaggi di una conversazione qualsiasi di Messaggi (ricevuti, inviati, bozze).
+- "prepare_inbox_reply": {"platform": "...", "contactId": "...", "instructions": "cosa vuole Luca"} → prepara la risposta a una conversazione qualsiasi di Messaggi (email, Instagram, Messenger, WhatsApp, chat del sito) seguendo le indicazioni di Luca e la mette da approvare in Messaggi (non parte da sola). Per chi è nella lista Clienti e ha risposto alle nostre email usa invece prepare_reply.
 - "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
 
 Piattaforma dei siti:
@@ -954,7 +999,34 @@ export async function runAssistant(
           break
         }
         case 'list_conversations': {
-          result = { conversazioni: await listConversations(asText(args.platform), asText(args.filter), Math.min(50, asNumber(args.limit) || 20)) }
+          const list = await listConversations(asText(args.platform), asText(args.filter), Math.min(50, asNumber(args.limit) || 20))
+          result = { conversazioni: list, nota: list.length ? undefined : 'nessuna conversazione trovata con questo filtro: prova con meno parole o senza filtro' }
+          break
+        }
+        case 'read_thread': {
+          const platform = asText(args.platform)
+          const contactId = asText(args.contactId)
+          if (!platform || !contactId) {
+            result = { errore: 'servono platform e contactId (da list_conversations)' }
+            break
+          }
+          reportStatus('Leggo la conversazione…')
+          result = await readThread(platform, contactId)
+          break
+        }
+        case 'prepare_inbox_reply': {
+          const platform = asText(args.platform)
+          const contactId = asText(args.contactId)
+          if (!platform || !INBOX_PLATFORMS.includes(platform) || !contactId) {
+            result = { errore: 'servono platform (email|instagram|facebook|whatsapp|web) e contactId (da list_conversations)' }
+            break
+          }
+          reportStatus('Scrivo la risposta…')
+          const out = await prepareInboxReply(platform as SocialPlatform, contactId, withLuca(asText(args.instructions)))
+          result = out.ok
+            ? { preparata: true, dove: 'Messaggi, da approvare', testo: out.text, avviso: out.warning }
+            : { preparata: false, motivo: out.reason }
+          refresh = true
           break
         }
         case 'send_social_message': {

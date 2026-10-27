@@ -307,6 +307,8 @@ type ReplyOptions = {
   privateFollowUp?: boolean
   // Risposta di un contatto della Ricerca clienti: abbiamo scritto noi per primi.
   outreach?: OutreachContext | null
+  // Risposta chiesta da Luca dalla Super chat, con le sue indicazioni.
+  instructions?: string
 }
 
 /** Scheda della Ricerca clienti di chi sta rispondendo alla nostra email di primo contatto. */
@@ -470,7 +472,7 @@ async function generateReply(
     console.error(`${platform} agent: nessuna chiave AI (Gemini o Claude), nessuna risposta generata`)
     return ''
   }
-  const { publicComment, postCaption, privateFollowUp, outreach } = options
+  const { publicComment, postCaption, privateFollowUp, outreach, instructions } = options
   const fromComment = Boolean(publicComment)
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
@@ -498,6 +500,9 @@ async function generateReply(
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
+    instructions !== undefined
+      ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
+      : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
   ].join('')
@@ -647,6 +652,62 @@ export async function prepareOutreachReply(
   }
   await queueReply(target, last.contact_name, text, false)
   return { ok: true, text }
+}
+
+/**
+ * Risposta a una conversazione qualsiasi di Messaggi (email, Instagram, Messenger,
+ * WhatsApp, chat del sito) chiesta da Luca nella Super chat: preparata con le sue
+ * indicazioni e messa in bozza da approvare, al posto di eventuali bozze vecchie.
+ */
+export async function prepareInboxReply(
+  platform: SocialPlatform,
+  contactId: string,
+  instructions?: string
+): Promise<{ ok: boolean; reason?: string; text?: string; warning?: string }> {
+  const { data: last } = await supabaseAdmin
+    .from('social_messages')
+    .select('channel_account_id, contact_name, created_at')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('kind', 'message')
+    .not('channel_account_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const { data: named } = await supabaseAdmin
+    .from('social_messages')
+    .select('contact_name')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .not('contact_name', 'is', null)
+    .limit(1)
+    .maybeSingle()
+  if (!last && platform !== 'web') return { ok: false, reason: 'conversazione non trovata: usa list_conversations per platform e contactId' }
+
+  const name = named?.contact_name ?? last?.contact_name ?? null
+  const raw = await generateReply(platform, contactId, name, { instructions: instructions || '' })
+  const text = parseAppointmentMarkers(raw).text
+  if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
+
+  await supabaseAdmin
+    .from('social_messages')
+    .delete()
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('direction', 'out')
+    .eq('status', 'pending')
+  await queueReply(
+    { platform, kind: 'message', contact_id: contactId, channel_account_id: last?.channel_account_id ?? null, reply_to: null },
+    name,
+    text,
+    false
+  )
+  const automatic = /(^|[^a-z])(no-?reply|do-?not-?reply|donotreply|automated|mailer-daemon|notifications?)([^a-z]|$)/i.test(contactId)
+  return {
+    ok: true,
+    text,
+    warning: automatic ? 'l’indirizzo sembra automatico (no-reply): la risposta potrebbe non essere letta da nessuno' : undefined,
+  }
 }
 
 /**
