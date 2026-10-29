@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { HANDOFF_MESSAGES, LANGUAGE_NAMES, type SiteLanguage } from '@/lib/site-languages'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { defineSection, sectionText } from '@/lib/ai-context'
+import { CLARITY_RULES } from '@/lib/clarity-rules'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { loadKnowledge } from '@/lib/meta/agent'
@@ -197,6 +198,7 @@ export async function handleSiteMessage(
       ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
       : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+    CLARITY_RULES,
   ].join('')
 
   let raw = ''

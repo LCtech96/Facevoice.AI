@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
         title: 'Per ogni conversazione',
         where: 'Tutte le risposte',
         text:
-          '- Le voci attive della Memoria AI qui sopra (informazioni ufficiali)\n- Gli ultimi messaggi scambiati con quella persona (anche su altri canali collegati)\n- Nome del profilo\n- Per i commenti: testo del commento e didascalia del post o reel\n- Per chi abbiamo contattato noi: scheda dell’attività (analisi, note) e la prima email inviata\n- Data e ora attuali\n- La lingua in cui rispondere, riconosciuta dal messaggio\n- Istruzioni tecniche fisse: riga per segnare gli appuntamenti, etichette "da controllare" e "non contattare"',
+          '- Le voci attive della Memoria AI qui sopra (informazioni ufficiali)\n- Gli ultimi messaggi scambiati con quella persona (anche su altri canali collegati)\n- Nome del profilo\n- Per i commenti: testo del commento e didascalia del post o reel\n- Per chi abbiamo contattato noi: scheda dell’attività (analisi, note) e la prima email inviata\n- Data e ora attuali\n- La lingua in cui rispondere, riconosciuta dal messaggio\n- Istruzioni tecniche fisse: riga per segnare gli appuntamenti, etichette "da controllare" e "non contattare"\n- Regola fissa sui messaggi poco chiari o assurdi: parole inventate, orari impossibili (es. "alle quintordici") o affermazioni false non si confermano mai, si chiede gentilmente di chiarire',
         how: 'Si aggiorna da solo a ogni messaggio.',
       },
     ],
