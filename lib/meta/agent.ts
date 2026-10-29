@@ -14,6 +14,7 @@ import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
+import { CLARITY_RULES } from '@/lib/clarity-rules'
 import { baseDomain, emailsInText, isAutomaticEmail } from '@/lib/email-address'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
@@ -506,6 +507,7 @@ async function generateReply(
       ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
       : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+    CLARITY_RULES,
     languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
   ].join('')
 
