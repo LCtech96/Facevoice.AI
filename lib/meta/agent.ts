@@ -14,7 +14,7 @@ import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
-import { CLARITY_RULES } from '@/lib/clarity-rules'
+import { CLARITY_RULES, parseSuspicious } from '@/lib/clarity-rules'
 import { baseDomain, emailsInText, isAutomaticEmail } from '@/lib/email-address'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
@@ -637,7 +637,7 @@ export async function prepareOutreachReply(
     .maybeSingle()
   if (!last) return { ok: false, reason: 'nessuna risposta ricevuta da questo indirizzo' }
 
-  const text = parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text
+  const text = parseSuspicious(parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text).text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
 
   await supabaseAdmin
@@ -743,7 +743,8 @@ export async function prepareInboxReply(
 
   const name = named?.contact_name ?? last?.contact_name ?? null
   const raw = await generateReply(platform, contactId, name, { instructions: instructions || '' })
-  const text = parseAppointmentMarkers(raw).text
+  const checked = parseSuspicious(parseAppointmentMarkers(raw).text)
+  const text = checked.text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
 
   // Email da un no-reply: la bozza va a un indirizzo vero dell'azienda (o a quello indicato da Luca).
@@ -777,6 +778,7 @@ export async function prepareInboxReply(
     text,
     false
   )
+  if (checked.reason) warning = [warning, `messaggio poco attendibile: ${checked.reason}`].filter(Boolean).join(' · ')
   return { ok: true, text, warning, sentTo: recipient }
 }
 
@@ -856,11 +858,20 @@ export async function handleIncoming(input: {
     }
   }
 
+  // Messaggio giudicato poco attendibile dall'AI: la risposta resta in bozza (mai automatica).
+  const suspicious = parseSuspicious(reply)
+  reply = suspicious.text
+  if (suspicious.reason) {
+    outreachAuto = false
+    console.log(`${input.platform} ${input.kind}: messaggio sospetto, risposta in bozza`)
+  }
+
   // Appuntamento confermato nella conversazione: in calendario e notifica subito.
+  // Se il messaggio e' sospetto il marcatore si toglie ma l'appuntamento non si segna.
   if (reply && input.kind === 'message') {
     const parsed = parseAppointmentMarkers(reply)
     reply = parsed.text
-    try {
+    if (!suspicious.reason) try {
       if (parsed.cancel) await cancelAppointmentsFor(input.platform, input.contactId)
       for (const a of parsed.appointments) {
         await createAppointment({
@@ -904,7 +915,7 @@ export async function handleIncoming(input: {
     const draftId = await queueReply(target, input.contactName, reply, false)
     pendingDraft = Boolean(draftId)
     if (draftId && outreachAuto) scheduledAt = await scheduleAutoSend(draftId)
-  } else if (reply) pendingDraft = Boolean(await queueReply(target, input.contactName, reply, settings.autoSend))
+  } else if (reply) pendingDraft = Boolean(await queueReply(target, input.contactName, reply, settings.autoSend && !suspicious.reason))
 
   if (!reply) {
     const why = outreach ? 'testo mancante o generazione non riuscita' : !settings.enabled ? 'canale non collegato in Canali e AI' : "l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita"
@@ -920,9 +931,11 @@ export async function handleIncoming(input: {
       postCaption: input.postCaption,
       privateFollowUp: true,
     })
-    if (privateText) {
+    const privateCheck = parseSuspicious(privateText)
+    if (privateCheck.text) {
       const privateTarget: OutgoingTarget = { ...target, kind: 'message', reply_to: input.externalId }
-      pendingDraft = Boolean(await queueReply(privateTarget, input.contactName, privateText, settings.autoSend)) || pendingDraft
+      const auto = settings.autoSend && !suspicious.reason && !privateCheck.reason
+      pendingDraft = Boolean(await queueReply(privateTarget, input.contactName, privateCheck.text, auto)) || pendingDraft
     }
   }
 
@@ -936,5 +949,6 @@ export async function handleIncoming(input: {
     hasPendingDraft: pendingDraft,
     outreachName: outreach?.name ?? null,
     scheduledAt,
+    suspicious: suspicious.reason,
   })
 }
