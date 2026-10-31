@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { HANDOFF_MESSAGES, LANGUAGE_NAMES, type SiteLanguage } from '@/lib/site-languages'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { defineSection, sectionText } from '@/lib/ai-context'
-import { CLARITY_RULES } from '@/lib/clarity-rules'
+import { CLARITY_RULES, parseSuspicious } from '@/lib/clarity-rules'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { loadKnowledge } from '@/lib/meta/agent'
@@ -84,7 +84,8 @@ I marcatori tra doppie parentesi quadre non vengono mostrati all'utente.`,
 })
 
 function cleanReply(text: string) {
-  return text
+  return parseSuspicious(text)
+    .text
     .replace(NAME_TAG, '')
     .replace(HANDOFF_TAG, '')
     .replace(/\*\*?|__|`/g, '')

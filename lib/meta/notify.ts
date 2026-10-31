@@ -21,6 +21,8 @@ export async function notifyNewMessage(input: {
   outreachName?: string | null
   /** Controrisposta programmata: parte da sola a quest'ora se nessuno la ferma. */
   scheduledAt?: string | null
+  /** L'AI ha giudicato il messaggio poco attendibile: risposta in bozza, con il motivo. */
+  suspicious?: string | null
 }) {
   const channel = input.outreachName
     ? 'ha risposto alla tua email'
@@ -31,7 +33,9 @@ export async function notifyNewMessage(input: {
   const key = await conversationKeyFor(input.platform, input.contactId)
   const url = `${SITE_URL}/admin/inbox?c=${encodeURIComponent(key)}`
   const preview = input.body.length > 140 ? `${input.body.slice(0, 140)}…` : input.body
-  const action = input.outreachName
+  const action = input.suspicious
+    ? `⚠️ Messaggio sospetto (${input.suspicious}): la risposta è in bozza, controllala prima di inviarla.`
+    : input.outreachName
     ? input.scheduledAt
       ? `Controrisposta pronta: parte da sola alle ${new Date(input.scheduledAt).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' })}, se vuoi cambiala prima.`
       : input.hasPendingDraft
