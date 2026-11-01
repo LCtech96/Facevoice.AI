@@ -84,7 +84,11 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
     kind: 'comment',
     postCaption,
     contactId: authorId,
-    contactName: value.from?.name || (value.from?.username ? `@${value.from.username}` : null),
+    // I commenti Instagram portano solo lo username: si prova a leggere il nome del profilo.
+    contactName:
+      value.from?.name ||
+      (platform === 'instagram' ? await fetchContactName(platform, authorId).then((n) => (n && !n.startsWith('@') ? n : null)) : null) ||
+      (value.from?.username ? `@${value.from.username}` : null),
     externalId: commentId,
     channelAccountId: accountId ?? null,
     text,
