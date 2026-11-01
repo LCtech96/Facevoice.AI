@@ -15,6 +15,7 @@ import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
 import { CLARITY_RULES, parseSuspicious } from '@/lib/clarity-rules'
+import { nameHint } from '@/lib/contact-name'
 import { baseDomain, emailsInText, isAutomaticEmail } from '@/lib/email-address'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
@@ -98,6 +99,31 @@ const CHAT_STYLE = defineSection({
   group: 'social',
   defaultText: `- Messaggi brevi da chat: 1-4 frasi. Niente titoli, niente elenchi, niente markdown.`,
 })
+
+const PERSONAL_REPLY = defineSection({
+  id: 'personal_reply',
+  title: 'Nome e risposta personalizzata',
+  usedFor: 'Messaggi privati e commenti (Instagram, Messenger, WhatsApp)',
+  group: 'social',
+  defaultText: `## Risposta personalizzata
+- Ogni risposta è scritta per questa persona: riprendi le sue parole, la sua domanda e, se la conosci, la sua attività. Mai frasi fatte uguali per tutti.
+- Chiamala per nome quando lo conosci (vedi "Cliente" più sotto): nel saluto della prima risposta e poi solo ogni tanto, in modo naturale. Non ripeterlo in ogni messaggio.
+- Usa solo il nome di battesimo, scritto bene ("Marco", non "MARCO" o "marco.rossi"). Mai lo username, mai soprannomi o nomi indovinati.
+- Se il nome non è affidabile o il profilo è di un'attività, saluta senza nome ("Ciao!"); per un'attività puoi usare il nome dell'attività se suona naturale.
+- Se nella chat la persona si presenta con un altro nome, usa quello.`,
+})
+
+/** Riga "Cliente" del prompt: nome del profilo e come chiamare la persona. */
+function clientBlock(contactName: string | null, repliesSoFar: number) {
+  if (!contactName) return ''
+  const hint = nameHint(contactName)
+  const howToCall = hint.first
+    ? `Nome da usare: ${hint.first}${repliesSoFar === 0 ? ' (è la tua prima risposta: saluta per nome).' : ` (hai già risposto ${repliesSoFar} ${repliesSoFar === 1 ? 'volta' : 'volte'}: usa il nome solo se viene naturale).`}`
+    : hint.business
+      ? "Il profilo sembra di un'attività: niente nome di persona (al massimo il nome dell'attività)."
+      : 'Nessun nome di battesimo affidabile: saluta senza nome.'
+  return `\n\n## Cliente\nNome sul profilo: ${contactName}\n${howToCall}`
+}
 
 /**
  * Risposte approvate, corrette o scritte a mano da Luca: l'AI le usa come
@@ -479,7 +505,7 @@ async function generateReply(
   const fromComment = Boolean(publicComment)
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
-  const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked] = await Promise.all([
+  const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal] = await Promise.all([
     loadKnowledge(),
     fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
     fromComment && !privateFollowUp ? Promise.resolve('') : loadStyleExamples(platform),
@@ -490,6 +516,7 @@ async function generateReply(
     // Il percorso verso la chiamata vale nelle conversazioni, non nei commenti pubblici.
     fromComment ? Promise.resolve('') : sectionText(FUNNEL_RULES),
     fromComment ? Promise.resolve('') : bookedSlotsText().catch(() => ''),
+    platform === 'email' ? Promise.resolve('') : sectionText(PERSONAL_REPLY),
   ])
   const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
 
@@ -502,7 +529,8 @@ async function generateReply(
     fromComment ? '' : appointmentRules(booked),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
-    contactName ? `\n\n## Cliente\nNome sul profilo: ${contactName}` : '',
+    personal ? `\n\n${personal}` : '',
+    clientBlock(contactName, history.filter((m) => m.role === 'assistant').length),
     instructions !== undefined
       ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
       : '',
