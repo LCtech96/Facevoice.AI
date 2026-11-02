@@ -239,14 +239,14 @@ export default function AIChatWidget() {
             transition={{ duration: 0.3 }}
             className="fixed z-50 right-4 bottom-[188px] md:right-6 md:bottom-[132px] w-[min(280px,calc(100vw-2rem))]"
           >
-            <div className="relative rounded-2xl border border-white/15 bg-[#24100a]/95 backdrop-blur px-4 py-3 pr-9 shadow-2xl">
+            <div className="relative rounded-2xl border border-white/15 bg-[#0d1a33]/95 backdrop-blur px-4 py-3 pr-9 shadow-2xl">
               <button
                 type="button"
                 onClick={() => setIsOpen(true)}
                 className="text-left text-sm leading-snug text-white/85"
               >
                 {teaserText.question}
-                <span className="block mt-1 font-semibold text-[#ff8a1f]">{teaserText.cta}</span>
+                <span className="block mt-1 font-semibold text-[#5b8bff]">{teaserText.cta}</span>
               </button>
               <button
                 type="button"
@@ -261,7 +261,7 @@ export default function AIChatWidget() {
             <motion.svg
               animate={{ y: [0, 6, 0] }}
               transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-              className="absolute -bottom-[46px] right-[14px] w-9 h-11 text-[#ff8a1f]"
+              className="absolute -bottom-[46px] right-[14px] w-9 h-11 text-[#5b8bff]"
               viewBox="0 0 36 44"
               fill="none"
               stroke="currentColor"
@@ -289,7 +289,7 @@ export default function AIChatWidget() {
       >
         {isOpen ? <X size={24} /> : <span translate="no">AI</span>}
         {!isOpen && unread > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-white text-[#c2410c] text-xs font-bold flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-white text-[#1f4fe0] text-xs font-bold flex items-center justify-center">
             {unread}
           </span>
         )}
@@ -314,19 +314,19 @@ export default function AIChatWidget() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed z-[60] right-4 left-auto md:left-1/2 md:-translate-x-1/2 md:right-auto top-[2.5vh] bottom-[100px] md:top-24 md:bottom-24 w-[calc(100vw-2rem)] max-w-[500px] md:w-[500px] h-auto flex flex-col bg-[#1a0702] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden pointer-events-auto"
+            className="fixed z-[60] right-4 left-auto md:left-1/2 md:-translate-x-1/2 md:right-auto top-[2.5vh] bottom-[100px] md:top-24 md:bottom-24 w-[calc(100vw-2rem)] max-w-[500px] md:w-[500px] h-auto flex flex-col bg-[#08142b] rounded-2xl shadow-2xl border border-[var(--border-color)] overflow-hidden pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Intestazione */}
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#ff3d00] to-[#ff8a1f] flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#1f4fe0] to-[#5b8bff] flex items-center justify-center">
                   {handoff ? <UserRound className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-white" />}
                 </div>
                 <div>
                   <h3 className="font-semibold text-white">{handoff ? 'Team Facevoice AI' : 'Assistente Facevoice AI'}</h3>
                   <div className="flex items-center gap-1.5">
-                    <div className={`w-2 h-2 rounded-full ${handoff ? 'bg-[#ff8a1f]' : 'bg-green-500'}`} />
+                    <div className={`w-2 h-2 rounded-full ${handoff ? 'bg-[#5b8bff]' : 'bg-green-500'}`} />
                     <span className="text-xs text-white/60">{handoff ? 'Operatore in arrivo' : 'online'}</span>
                   </div>
                 </div>
@@ -345,7 +345,7 @@ export default function AIChatWidget() {
                     </svg>
                   </button>
                   {showMenu && (
-                    <div className="absolute right-0 top-full mt-2 w-48 bg-[#24100a] border border-[var(--border-color)] rounded-lg shadow-xl z-10 overflow-hidden">
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-[#0d1a33] border border-[var(--border-color)] rounded-lg shadow-xl z-10 overflow-hidden">
                       <button
                         onClick={handleNewChat}
                         className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-white/85 hover:bg-white/5 transition-colors"
@@ -380,7 +380,7 @@ export default function AIChatWidget() {
                   <div key={msg.id} className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2 ${
-                        mine ? 'bg-gradient-to-r from-[#ff3d00] to-[#ff8a1f] text-white' : 'bg-white/10 text-white'
+                        mine ? 'bg-gradient-to-r from-[#1f4fe0] to-[#5b8bff] text-white' : 'bg-white/10 text-white'
                       }`}
                     >
                       {/* Quello che scrive il visitatore resta com'e'; i nostri messaggi (anche le
@@ -405,16 +405,16 @@ export default function AIChatWidget() {
                 <div className="flex justify-start">
                   <div className="bg-white/10 rounded-2xl px-4 py-3">
                     <div className="flex gap-1">
-                      <div className="w-2 h-2 bg-[#ff8a1f] rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-[#ff8a1f] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                      <div className="w-2 h-2 bg-[#ff8a1f] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
+                      <div className="w-2 h-2 bg-[#5b8bff] rounded-full animate-bounce" />
+                      <div className="w-2 h-2 bg-[#5b8bff] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                      <div className="w-2 h-2 bg-[#5b8bff] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
                     </div>
                   </div>
                 </div>
               )}
 
               {handoff && (
-                <p className="text-center text-xs text-[#ffb27a] px-4">
+                <p className="text-center text-xs text-[#a9c1ff] px-4">
                   Un operatore del team ti risponderà qui a breve. Non chiudere la chat.
                 </p>
               )}
@@ -430,7 +430,7 @@ export default function AIChatWidget() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyPress}
                   placeholder="Scrivi un messaggio..."
-                  className="flex-1 px-3 py-2 bg-black/30 border border-[var(--border-color)] rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-[#ff8a1f] transition-all resize-none max-h-24 text-[16px] md:text-sm"
+                  className="flex-1 px-3 py-2 bg-black/30 border border-[var(--border-color)] rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-[#5b8bff] transition-all resize-none max-h-24 text-[16px] md:text-sm"
                   rows={1}
                   maxLength={1000}
                   disabled={isLoading}
@@ -440,7 +440,7 @@ export default function AIChatWidget() {
                   whileTap={{ scale: 0.95 }}
                   onClick={handleSend}
                   disabled={!input.trim() || isLoading}
-                  className="p-2.5 bg-gradient-to-r from-[#ff3d00] to-[#ff8a1f] text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-2.5 bg-gradient-to-r from-[#1f4fe0] to-[#5b8bff] text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Invia messaggio"
                 >
                   <Send className="w-5 h-5" />

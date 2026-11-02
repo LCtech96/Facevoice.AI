@@ -10,7 +10,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
 
   return (
     <main
-      style={{ minHeight: '100vh', background: '#120400', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+      style={{ minHeight: '100vh', background: '#050a16', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
     >
       <div style={{ maxWidth: 360, textAlign: 'center' }}>
         <p style={{ fontSize: 20, fontWeight: 600 }}>Qualcosa non si è caricato bene</p>
@@ -18,7 +18,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
         <div style={{ marginTop: 20, display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button
             onClick={() => window.location.reload()}
-            style={{ padding: '10px 18px', borderRadius: 999, background: '#ff6a1a', color: '#fff', fontWeight: 600, border: 0 }}
+            style={{ padding: '10px 18px', borderRadius: 999, background: '#2a65fe', color: '#fff', fontWeight: 600, border: 0 }}
           >
             Ricarica
           </button>

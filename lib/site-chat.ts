@@ -291,7 +291,7 @@ async function notifyHandoff(sessionId: string, contactName: string | null, tran
 <p><strong>${escapeHtml(who)}</strong> ha chiesto di parlare con il team dalla chat del sito ed è in attesa.</p>
 <p>Email: ${email ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>` : '-'}<br />
 Telefono: ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : '-'}</p>
-<p><a href="${link}" style="display: inline-block; background: #ff3d00; color: #ffffff; padding: 12px 20px; border-radius: 999px; text-decoration: none; font-weight: 600;">Apri la chat e rispondi ora</a></p>
+<p><a href="${link}" style="display: inline-block; background: #1f4fe0; color: #ffffff; padding: 12px 20px; border-radius: 999px; text-decoration: none; font-weight: 600;">Apri la chat e rispondi ora</a></p>
 <p style="margin-top: 20px;"><strong>Conversazione:</strong></p>
 <div style="background: #f7f7f7; padding: 14px 16px; border-radius: 8px;">${transcriptHtml}</div>`),
     }),

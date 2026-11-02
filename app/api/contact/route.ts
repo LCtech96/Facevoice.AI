@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
 <p>Email: <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a><br />
 Cellulare: <a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a> · <a href="${escapeHtml(waLink)}">WhatsApp</a></p>
 <p><strong>Motivo del contatto:</strong></p>
-<div style="background: #f5f5f5; border-left: 4px solid #ff6a1a; padding: 12px 16px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(message)}</div>
+<div style="background: #f5f5f5; border-left: 4px solid #2a65fe; padding: 12px 16px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(message)}</div>
 <p style="color: #666; font-size: 13px;">Rispondi a questa email per scrivergli direttamente.</p>`),
     }),
     sendEmail({
@@ -92,7 +92,7 @@ Cellulare: <a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a> · <a hre
 <p>${escapeHtml(cHello)} ${escapeHtml(firstName)},</p>
 <p>${escapeHtml(cIntro)}</p>
 <p>${escapeHtml(cYouWrote)}</p>
-<div style="background: #f5f5f5; border-left: 4px solid #ff6a1a; padding: 12px 16px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(message)}</div>
+<div style="background: #f5f5f5; border-left: 4px solid #2a65fe; padding: 12px 16px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(message)}</div>
 <p>${escapeHtml(cBye)}<br />${escapeHtml(cTeam)}</p>`),
     }),
     sendPushToAdmins({
