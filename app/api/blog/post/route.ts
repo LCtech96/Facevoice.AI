@@ -3,6 +3,10 @@ import { createClient } from '@supabase/supabase-js'
 import { canPublishBlog } from '@/lib/blog-auth'
 import { shareBlogPost } from '@/lib/blog-share'
 
+export const dynamic = 'force-dynamic'
+// Copertina, Facebook e Instagram dopo la risposta: fino a un paio di minuti.
+export const maxDuration = 300
+
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key')

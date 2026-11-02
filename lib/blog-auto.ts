@@ -41,6 +41,10 @@ export type BlogAutoSettings = {
   time: string
   /** Ogni articolo del blog (automatico o a mano) va anche sulla Pagina Facebook. */
   shareFacebook: boolean
+  /** Ogni articolo va anche su Instagram (con la copertina). */
+  shareInstagram: boolean
+  /** Copertina generata (AI, o grafica di riserva) per gli articoli senza immagine. */
+  coverImage: boolean
 }
 
 export type BlogAutoState = {
@@ -54,7 +58,7 @@ export type BlogAutoState = {
   updatedAt: string | null
 }
 
-const DEFAULTS: BlogAutoSettings = { enabled: false, days: [2, 5], time: '09:40', shareFacebook: true }
+const DEFAULTS: BlogAutoSettings = { enabled: false, days: [2, 5], time: '09:40', shareFacebook: true, shareInstagram: true, coverImage: true }
 const EMPTY_STATE: BlogAutoState = { lastDate: null, lastStatus: null, lastNote: null, lastPost: null, updatedAt: null }
 const STATE_KEY = 'blog_auto:state'
 
@@ -67,6 +71,8 @@ export function cleanSettings(input: Partial<BlogAutoSettings> | null | undefine
     days: days.length ? days : base.days,
     time: typeof input?.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(input.time) ? input.time : base.time,
     shareFacebook: typeof input?.shareFacebook === 'boolean' ? input.shareFacebook : base.shareFacebook,
+    shareInstagram: typeof input?.shareInstagram === 'boolean' ? input.shareInstagram : base.shareInstagram,
+    coverImage: typeof input?.coverImage === 'boolean' ? input.coverImage : base.coverImage,
   }
 }
 
@@ -227,7 +233,7 @@ async function uniqueSlug(base: string) {
   return `${base}-${Date.now().toString(36)}`
 }
 
-export type GenerateResult = { ok: true; title: string; url: string; content: string; slug: string } | { ok: false; reason: string; skipped?: boolean }
+export type GenerateResult = { ok: true; title: string; url: string; content: string; slug: string; id: string } | { ok: false; reason: string; skipped?: boolean }
 
 /** Legge le notizie, fa scrivere l'articolo e lo pubblica. */
 export async function generateNewsPost(): Promise<GenerateResult> {
@@ -267,7 +273,7 @@ export async function generateNewsPost(): Promise<GenerateResult> {
   await supabaseAdmin
     .from('app_settings')
     .upsert({ key: USED_KEY, value: JSON.stringify([...cited.map((n) => n.link), ...usedList].slice(0, 400)), updated_at: new Date().toISOString() })
-  return { ok: true, title: article.title, url: `${SITE_URL}/blog/${post.slug || post.id}`, content, slug: post.slug || post.id }
+  return { ok: true, title: article.title, url: `${SITE_URL}/blog/${post.slug || post.id}`, content, slug: post.slug || post.id, id: post.id }
 }
 
 // ---------------------------------------------------------------------
@@ -286,12 +292,17 @@ export async function runBlogAuto(manual: boolean) {
   console.log(`blog auto: ${result.ok ? `pubblicato "${result.title}"` : `non pubblicato (${result.reason})`}`)
   if (result.ok) {
     // Facebook e notifica (con l'esito della condivisione).
-    const share = await shareBlogPost({ title: result.title, content: result.content, slug: result.slug }, 'auto')
+    const share = await shareBlogPost({ id: result.id, title: result.title, content: result.content, slug: result.slug }, 'auto')
     await setState({
       lastStatus: 'published',
       lastNote: null,
       lastPost: { title: result.title, url: result.url },
-      lastFacebook: share.facebook === 'posted' ? 'pubblicato' : share.facebook === 'failed' ? `non riuscito: ${share.error}` : 'spento',
+      lastFacebook: [
+        `copertina ${share.image}`,
+        `Facebook ${share.facebook === 'posted' ? 'pubblicato' : share.facebook === 'failed' ? 'non riuscito' : 'spento'}`,
+        `Instagram ${share.instagram === 'posted' ? 'pubblicato' : share.instagram === 'failed' ? 'non riuscito' : 'spento'}`,
+        ...share.errors,
+      ].join(' · '),
     })
     return result
   }

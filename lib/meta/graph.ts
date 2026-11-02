@@ -217,3 +217,29 @@ export async function publishPagePost(message: string, link?: string): Promise<S
   if (result.error) return { error: result.error }
   return { id: result.raw?.id }
 }
+
+/**
+ * Post nel feed Instagram (immagine JPEG pubblica + didascalia). Due passi: si crea
+ * il contenuto, si aspetta che Meta lo elabori, poi si pubblica. Serve il permesso
+ * instagram_content_publish.
+ */
+export async function publishInstagramPost(imageUrl: string, caption: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const igId = await getInstagramUserId(page)
+  if (!igId) return { error: 'nessun account Instagram aziendale collegato alla Pagina' }
+  const created = await post(`${GRAPH}/${igId}/media`, page.token, { image_url: imageUrl, caption: caption.slice(0, 2200) })
+  if (created.error) return { error: created.error }
+  const creationId = created.raw?.id
+  if (!creationId) return { error: 'Instagram non ha creato il contenuto' }
+  for (let i = 0; i < 10; i++) {
+    const res = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(page.token)}`)
+    const status = (await res.json().catch(() => ({})))?.status_code
+    if (status === 'FINISHED') break
+    if (status === 'ERROR' || status === 'EXPIRED') return { error: `Instagram non ha accettato l’immagine (${status})` }
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  const published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: creationId })
+  if (published.error) return { error: published.error }
+  return { id: published.raw?.id }
+}
