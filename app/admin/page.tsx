@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { isAdminEmail } from '@/lib/admin-auth'
+import BlogAutoPanel from './BlogAutoPanel'
 
 interface UserSummary {
   id: string
@@ -185,6 +186,8 @@ export default function AdminPage() {
               Aggiorna
             </button>
           </div>
+
+          <BlogAutoPanel />
 
           {/* Users Section */}
           <motion.div

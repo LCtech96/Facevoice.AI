@@ -3,6 +3,7 @@ import { pollGmail } from '@/lib/gmail-poll'
 import { SCOPES, loadState } from '@/lib/assistant-state'
 import { resumeOrClose } from '@/lib/assistant-launch'
 import { autopilotTick } from '@/lib/autopilot'
+import { blogAutoTick } from '@/lib/blog-auto'
 import { sendDueOutreachReplies } from '@/lib/outreach-reply'
 
 export const dynamic = 'force-dynamic'
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
   }
   await Promise.all([
     autopilotTick(req.nextUrl.origin).catch((error) => console.error('autopilot:', error)),
+    blogAutoTick(req.nextUrl.origin).catch((error) => console.error('blog auto:', error)),
     sendDueOutreachReplies().catch((error) => console.error('outreach replies:', error)),
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])
