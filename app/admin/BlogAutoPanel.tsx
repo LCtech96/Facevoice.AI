@@ -8,7 +8,7 @@ import { getAccessToken } from '@/lib/session-token'
 // dell'intelligenza artificiale (da testate vere, con i link alle fonti) e lo
 // pubblica nel blog della home.
 
-type Settings = { enabled: boolean; days: number[]; time: string; shareFacebook: boolean }
+type Settings = { enabled: boolean; days: number[]; time: string; shareFacebook: boolean; shareInstagram: boolean; coverImage: boolean }
 type BlogState = {
   lastDate: string | null
   lastStatus: 'running' | 'published' | 'skipped' | 'error' | null
@@ -139,19 +139,29 @@ export default function BlogAutoPanel() {
         </button>
       </div>
 
-      <label className="mt-3 flex items-start gap-2 text-xs text-[var(--text-primary)]">
-        <input
-          type="checkbox"
-          checked={settings.shareFacebook !== false}
-          disabled={busy}
-          onChange={(e) => save({ shareFacebook: e.target.checked })}
-          className="mt-0.5"
-        />
-        <span>
-          Pubblica ogni articolo del blog anche sulla Pagina Facebook (automatici e scritti a mano), con l’inizio dell’articolo e il link.
-          Per ogni articolo ti arriva una notifica con l’esito.
-        </span>
-      </label>
+      <div className="mt-3 space-y-2">
+        {(
+          [
+            ['coverImage', 'Crea una copertina per ogni articolo senza immagine: generata dall’AI, oppure una grafica con titolo e marchio se l’AI non riesce.'],
+            ['shareFacebook', 'Pubblica ogni articolo anche sulla Pagina Facebook, con l’inizio dell’articolo e il link.'],
+            ['shareInstagram', 'Pubblica ogni articolo anche su Instagram, con la copertina e una didascalia (su Instagram i link non sono cliccabili: rimanda al blog).'],
+          ] as const
+        ).map(([key, label]) => (
+          <label key={key} className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
+            <input
+              type="checkbox"
+              checked={settings[key] !== false}
+              disabled={busy}
+              onChange={(e) => save({ [key]: e.target.checked })}
+              className="mt-0.5"
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+        <p className="text-[11px] text-[var(--text-secondary)]">
+          Vale per tutti gli articoli del blog, automatici e scritti a mano. Per ogni articolo ti arriva una notifica con l’esito.
+        </p>
+      </div>
 
       {notice && <p className="mt-2 text-xs text-[var(--text-secondary)]">{notice}</p>}
       {state?.lastStatus && state.lastStatus !== 'running' && (
@@ -164,7 +174,7 @@ export default function BlogAutoPanel() {
           ) : (
             <span style={{ color: '#FF9500' }}>non pubblicato ({state.lastNote})</span>
           )}
-          {state.lastStatus === 'published' && state.lastFacebook ? ` · Facebook: ${state.lastFacebook}` : ''}
+          {state.lastStatus === 'published' && state.lastFacebook ? ` · ${state.lastFacebook}` : ''}
           {state.lastPost && state.lastStatus !== 'published' ? (
             <>
               {' '}· precedente:{' '}
