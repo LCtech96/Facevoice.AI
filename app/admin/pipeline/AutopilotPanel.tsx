@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, Play, Save, Zap } from 'lucide-react'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import { autoQuery, looksLikeDescription } from '@/lib/autopilot-searches'
 
 // Pannello dell'automazione giornaliera: ogni giorno all'ora scelta cerca nuove
 // attivita', legge i loro siti (email e bozza) e invia le prime email.
@@ -16,6 +17,8 @@ type Settings = {
   resultsPerSearch: number
   emailsPerDay: number
   next: number
+  autoSearch: boolean
+  autoNext: number
 }
 type Run = {
   date: string
@@ -25,7 +28,7 @@ type Run = {
   startedAt: string
   updatedAt: string
   manual?: boolean
-  searched: { query: string; found: number; added: number; error?: string }[]
+  searched: { query: string; found: number; added: number; error?: string; auto?: boolean }[]
   analyzed: number
   withEmail: number
   sent: { id: string; name: string; email: string }[]
@@ -117,6 +120,9 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
     ? Array.from({ length: Math.min(settings.searchesPerDay, settings.searches.length) }, (_, i) => settings.searches[(settings.next + i) % settings.searches.length])
     : []
   const added = run ? run.searched.reduce((n, s) => n + s.added, 0) : 0
+  // Pronta a partire se ha ricerche sue o se puo' cercare da sola.
+  const canSearch = settings.searches.length > 0 || settings.autoSearch !== false
+  const vague = (form ? searchesText.split('\n') : settings.searches).map((q) => q.trim()).filter(looksLikeDescription)
   const input =
     'w-full px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] text-[16px] sm:text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none focus:border-[var(--accent-blue)]'
 
@@ -136,9 +142,10 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
           </p>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
             {settings.enabled
-              ? `Ogni giorno alle ${settings.time}: ${nextSearches.length ? `${nextSearches.length} ricerch${nextSearches.length === 1 ? 'a' : 'e'}` : 'nessuna ricerca'}, lettura dei siti e fino a ${settings.emailsPerDay} email.`
+              ? `Ogni giorno alle ${settings.time}: ${nextSearches.length ? `${nextSearches.length} ricerch${nextSearches.length === 1 ? 'a' : 'e'}` : 'ricerche automatiche'}, lettura dei siti e fino a ${settings.emailsPerDay} email.`
               : 'Accendila per cercare clienti, trovare le email e inviare le prime email ogni giorno da sola.'}
             {nextSearches.length ? ` Prossime ricerche: ${nextSearches.map((q) => `“${q}”`).join(', ')}.` : ''}
+            {settings.autoSearch !== false ? ` Se non trovano attività nuove cerco da solo, ad esempio “${autoQuery(settings.autoNext ?? 0)}”.` : ''}
           </p>
         </div>
         {canEdit && (
@@ -146,8 +153,8 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
             role="switch"
             aria-checked={settings.enabled}
             aria-label="Accendi o spegni l'automazione"
-            disabled={busy || (!settings.enabled && !settings.searches.length)}
-            title={!settings.searches.length ? 'Aggiungi prima almeno una ricerca' : undefined}
+            disabled={busy || (!settings.enabled && !canSearch)}
+            title={!canSearch ? 'Aggiungi prima almeno una ricerca' : undefined}
             onClick={() => save({ enabled: !settings.enabled })}
             className="relative shrink-0 w-12 h-7 rounded-full transition-colors disabled:opacity-40"
             style={{ background: settings.enabled ? DONE : 'var(--border-color)' }}
@@ -184,7 +191,9 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
           {run.searched.length > 0 && (
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               Ricerche:{' '}
-              {run.searched.map((s) => (s.error ? `“${s.query}” (errore: ${s.error})` : `“${s.query}” (${s.found} trovate, ${s.added} nuove)`)).join(' · ')}
+              {run.searched
+                .map((s) => `${s.auto ? 'automatica ' : ''}“${s.query}” (${s.error ? `errore: ${s.error}` : `${s.found} trovate, ${s.added} nuove`})`)
+                .join(' · ')}
             </p>
           )}
           {run.sent.length > 0 && (
@@ -213,7 +222,7 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
           </button>
           <button
             onClick={runNow}
-            disabled={busy || state.running || !settings.searches.length}
+            disabled={busy || state.running || !canSearch}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-white disabled:opacity-40"
             style={{ background: ACCENT }}
           >
@@ -248,6 +257,24 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
               placeholder={'alimentari Palermo\nnegozi di elettronica Palermo\nartigianato Cefalù\nB&B Terrasini'}
               className={input}
             />
+          </label>
+          {vague.length > 0 && (
+            <p className="px-3 py-2 rounded-lg bg-[#FF9500]/10 text-[#FF9500] text-xs">
+              “{vague[0]}” è una descrizione: Google Maps cerca come sulla mappa e così trova pochissimo. Scrivi categoria e città, ad
+              esempio “ristoranti Palermo” o “centri estetici Trapani”.
+            </p>
+          )}
+          <label className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
+            <input
+              type="checkbox"
+              checked={form.autoSearch !== false}
+              onChange={(e) => setForm({ ...form, autoSearch: e.target.checked })}
+              className="mt-0.5"
+            />
+            <span>
+              Ricerche automatiche: se le mie ricerche non trovano attività nuove, cerca da solo per categoria e città (ristoranti, hotel,
+              centri estetici, studi dentistici… a Palermo, Terrasini, Trapani e poi altre città), al massimo 8 al giorno.
+            </span>
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <label className="block">
