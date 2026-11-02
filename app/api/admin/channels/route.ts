@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { createClient } from '@supabase/supabase-js'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await facevoiceDb
       .from('social_channels')
       .select('*')
       .order('platform', { ascending: true })

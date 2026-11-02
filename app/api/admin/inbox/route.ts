@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { loadIdentityMap } from '@/lib/meta/identities'
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
   const filter = params.get('filter')
 
   const [{ data, error }, identities, hidden] = await Promise.all([
-    supabaseAdmin
+    facevoiceDb
       .from('social_messages')
       .select('platform, kind, contact_id, contact_name, direction, body, status, read_at, created_at')
       .in('platform', PLATFORMS)

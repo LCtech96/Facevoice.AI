@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { loadCalls } from '@/lib/lead-calls'
@@ -61,14 +62,14 @@ const FEED_MAX = 25
 
 /** Messaggi (ricevuti e inviati) degli ultimi giorni: solo chi e quando, mai il testo. */
 async function recentMessages() {
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('id, platform, kind, direction, status, contact_id, contact_name, created_at')
     .gte('created_at', new Date(Date.now() - FEED_MS).toISOString())
     .in('status', ['sent', 'received'])
     .order('created_at', { ascending: false })
     .limit(60)
-  const { data: incoming } = await supabaseAdmin
+  const { data: incoming } = await facevoiceDb
     .from('social_messages')
     .select('id, platform, kind, direction, status, contact_id, contact_name, created_at')
     .gte('created_at', new Date(Date.now() - FEED_MS).toISOString())
@@ -82,7 +83,7 @@ async function recentMessages() {
 
 /** Prima risposta email ricevuta da ogni indirizzo. */
 async function firstReplies(): Promise<Map<string, string>> {
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('contact_id, created_at')
     .eq('platform', 'email')

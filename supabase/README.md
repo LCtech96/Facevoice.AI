@@ -44,3 +44,17 @@ A settembre 2026 il database conteneva 16 tabelle in `public`, ma:
 
 La causa era che ~20 script nella root definivano le stesse tabelle in modo
 incoerente, senza che nessuno fosse autorevole. Di qui `schema.sql`.
+
+## SaaS: spazi di lavoro (branch `saas`)
+
+Dalla Fase 0 ogni cliente ha uno **spazio di lavoro** (`workspaces`,
+`workspace_members`). Canali, messaggi, contatti, memoria AI e consumi hanno la
+colonna `workspace_id`; Facevoice e' lo spazio `00000000-0000-0000-0000-000000000001`.
+Nel codice queste tabelle si usano solo tramite `lib/workspace-db.ts`
+(`workspaceDb(id)` o `facevoiceDb`), mai con `supabaseAdmin.from(...)`.
+
+- **Progetto di prova** (anteprima del branch `saas`): `schema.sql` e poi
+  `seed.sql`, come un ambiente nuovo. `schema.sql` contiene gia' la Fase 0.
+- **Produzione, il giorno del lancio**: backup, poi le migrazioni SaaS in
+  ordine (a partire da `migrations/2026-11-02_saas_workspaces.sql`), poi il
+  merge di `saas` in `main`.

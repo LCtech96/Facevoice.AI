@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { sendNewEmail, sendThreadReply } from '@/lib/gmail'
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const since = new Date()
   since.setHours(0, 0, 0, 0)
-  const { count } = await supabaseAdmin
+  const { count } = await facevoiceDb
     .from('social_messages')
     .select('id', { count: 'exact', head: true })
     .eq('platform', 'email')
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     : await sendNewEmail(to, subject || `Re: ${lead.email_subject || lead.name}`, text)
   if (sent.error) return NextResponse.json({ error: `Invio non riuscito: ${sent.error}` }, { status: 502 })
 
-  const { data: row } = await supabaseAdmin
+  const { data: row } = await facevoiceDb
     .from('social_messages')
     .insert({
       platform: 'email',
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
     .select('id')
     .single()
-  if (row) await supabaseAdmin.from('social_messages').update({ origin: 'outreach' }).eq('id', row.id)
+  if (row) await facevoiceDb.from('social_messages').update({ origin: 'outreach' }).eq('id', row.id)
 
   const note = `Follow-up inviato il ${new Date().toLocaleDateString('it-IT')}`
   await supabaseAdmin

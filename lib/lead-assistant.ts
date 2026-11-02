@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { budgetReached, callAIPaced, hasAIProvider, reportStatus, timeIsUp } from '@/lib/ai'
 import { describeBudget, type Budget } from '@/lib/assistant-budget'
 import {
@@ -255,7 +256,7 @@ async function prepareFollowups(args: { ids?: string[]; filter?: string; instruc
   const { out: drafts, unfinished } = await inBatches(pool.slice(0, limit), async (lead, position) => {
     reportStatus(`Scrivo il follow-up per ${lead.name} (${position})…`)
     const email = lead.email!.toLowerCase()
-    const { data: last } = await supabaseAdmin
+    const { data: last } = await facevoiceDb
       .from('social_messages')
       .select('body, channel_account_id')
       .eq('platform', 'email')
@@ -310,7 +311,7 @@ Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
 /** Conversazione email con un contatto (prima email, risposte, bozze in attesa). */
 async function readConversation(lead: Lead) {
   if (!lead.email) return { errore: 'la scheda non ha un’email' }
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('direction, body, status, created_at')
     .eq('platform', 'email')
@@ -343,7 +344,7 @@ async function repliesOverview() {
     .limit(40)
   if (!leads?.length) return []
   const emails = leads.map((l) => String(l.email).toLowerCase())
-  const { data: messages } = await supabaseAdmin
+  const { data: messages } = await facevoiceDb
     .from('social_messages')
     .select('contact_id, direction, status, body, created_at')
     .eq('platform', 'email')
@@ -376,7 +377,7 @@ async function replyFor(
 ): Promise<{ ok: boolean; reason?: string; text?: string }> {
   const email = lead.email!.toLowerCase()
   const extra = instructions?.trim()
-  const { data: thread } = await supabaseAdmin
+  const { data: thread } = await facevoiceDb
     .from('social_messages')
     .select('direction, status, body, created_at')
     .eq('platform', 'email')
@@ -435,7 +436,7 @@ async function activityReport(args: { hours?: number; from?: string; to?: string
   const platform = args.platform && args.platform !== 'all' ? args.platform : null
 
   const query = (fields: string) => {
-    let q = supabaseAdmin
+    let q = facevoiceDb
       .from('social_messages')
       .select(fields)
       .gte('created_at', since.toISOString())
@@ -499,7 +500,7 @@ const squash = (text: string) => text.toLowerCase().normalize('NFD').replace(/[\
  */
 async function listConversations(platform: string | undefined, filter: string | undefined, limit: number) {
   const platforms = platform && INBOX_PLATFORMS.includes(platform) ? [platform] : INBOX_PLATFORMS
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('platform, contact_id, contact_name, body, direction, status, created_at')
     .in('platform', platforms)
@@ -538,7 +539,7 @@ async function listConversations(platform: string | undefined, filter: string | 
 
 /** Ultimi messaggi di una conversazione qualsiasi (letti, inviati e bozze in attesa). */
 async function readThread(platform: string, contactId: string) {
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('direction, kind, body, status, contact_name, created_at')
     .eq('platform', platform)
@@ -1038,7 +1039,7 @@ export async function runAssistant(
             result = { errore: 'servono platform (instagram|facebook), contactId e text' }
             break
           }
-          const { data: last } = await supabaseAdmin
+          const { data: last } = await facevoiceDb
             .from('social_messages')
             .select('contact_name, created_at')
             .eq('platform', platform)

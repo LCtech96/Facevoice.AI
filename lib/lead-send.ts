@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { sendNewEmail } from '@/lib/gmail'
 import { DAILY_EMAIL_LIMIT, type Lead } from '@/lib/leads'
 
@@ -66,7 +67,7 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
     .single()
 
   // Storico in Messaggi: la risposta del contatto si aggancia a questa conversazione.
-  const { data: row } = await supabaseAdmin
+  const { data: row } = await facevoiceDb
     .from('social_messages')
     .insert({
       platform: 'email',
@@ -83,7 +84,7 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
     .single()
   if (row) {
     // Primo contatto a freddo: non va usato come esempio di stile per le risposte.
-    await supabaseAdmin.from('social_messages').update({ origin: 'outreach' }).eq('id', row.id)
+    await facevoiceDb.from('social_messages').update({ origin: 'outreach' }).eq('id', row.id)
   }
 
   return { lead: (updated || lead) as Lead }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => ({}))
   const action = body?.action
 
-  const { data: draft } = await supabaseAdmin
+  const { data: draft } = await facevoiceDb
     .from('social_messages')
     .select('id, platform, kind, contact_id, channel_account_id, reply_to, body, status, direction')
     .eq('id', id)
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (action === 'reject') {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await facevoiceDb
       .from('social_messages')
       .update({ status: 'rejected' })
       .eq('id', id)
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!text) return NextResponse.json({ error: 'Il messaggio è vuoto' }, { status: 400 })
 
   // Blocco ottimistico: solo una richiesta alla volta puo' passare da pending/failed a sending.
-  const { data: locked } = await supabaseAdmin
+  const { data: locked } = await facevoiceDb
     .from('social_messages')
     .update({ status: 'sending', body: text })
     .eq('id', id)
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const sent = await deliver(draft as OutgoingTarget, text)
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await facevoiceDb
     .from('social_messages')
     .update({
       status: sent.error ? 'failed' : 'sent',

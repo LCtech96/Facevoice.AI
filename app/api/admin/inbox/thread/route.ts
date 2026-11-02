@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type SocialPlatform } from '@/lib/meta/agent'
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
   const members = await readMembers(req)
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await facevoiceDb
     .from('social_messages')
     .select(SELECT)
     .or(membersFilter(members))
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  await supabaseAdmin
+  await facevoiceDb
     .from('social_messages')
     .update({ read_at: new Date().toISOString() })
     .or(membersFilter(members))
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
   const candidates = body?.platform ? members.filter((m) => m.platform === body.platform) : members
 
   const { data: last } = candidates.length
-    ? await supabaseAdmin
+    ? await facevoiceDb
         .from('social_messages')
         .select('platform, contact_id, channel_account_id, contact_name')
         .or(membersFilter(candidates))
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
   }
   const sent = await deliver(target, text)
 
-  const { data: row, error } = await supabaseAdmin
+  const { data: row, error } = await facevoiceDb
     .from('social_messages')
     .insert({
       ...target,

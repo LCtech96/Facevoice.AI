@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { createClient } from '@supabase/supabase-js'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
@@ -44,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Nessuna modifica richiesta' }, { status: 400 })
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await facevoiceDb
       .from('social_channels')
       .update(updates)
       .eq('id', id)

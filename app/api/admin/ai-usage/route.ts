@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ChatAuthError, currentPeriodStart } from '@/lib/chat-auth'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     const rows: Row[] = []
     // Paginato: Supabase restituisce al massimo 1000 righe per richiesta.
     for (let from = 0; from < 50_000; from += 1000) {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await facevoiceDb
         .from('ai_usage')
         .select('feature, provider, outcome, input_tokens, output_tokens, cost_usd, created_at')
         .gte('created_at', periodStart.toISOString())

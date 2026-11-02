@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
 
@@ -43,7 +44,7 @@ export function saveOutreachReplySettings(input: Partial<OutreachReplySettings>)
 
 /** Risposte automatiche gia' inviate a questa persona nelle ultime 24 ore. */
 export async function autoRepliesToday(platform: string, contactId: string) {
-  const { count } = await supabaseAdmin
+  const { count } = await facevoiceDb
     .from('social_messages')
     .select('id', { count: 'exact', head: true })
     .eq('platform', platform)
@@ -72,7 +73,7 @@ export async function sendDueOutreachReplies(): Promise<number> {
     if (new Date(row.value).getTime() > Date.now()) continue
     const id = row.key.slice(SCHEDULE_PREFIX.length)
     // Solo se e' ancora una bozza: se Luca l'ha gia' inviata, cambiata o scartata, non si tocca.
-    const { data: locked } = await supabaseAdmin
+    const { data: locked } = await facevoiceDb
       .from('social_messages')
       .update({ status: 'sending' })
       .eq('id', id)
@@ -82,7 +83,7 @@ export async function sendDueOutreachReplies(): Promise<number> {
     await supabaseAdmin.from('app_settings').delete().eq('key', row.key)
     if (!locked) continue
     const result = await deliver(locked as OutgoingTarget, String(locked.body || ''))
-    await supabaseAdmin
+    await facevoiceDb
       .from('social_messages')
       .update({ status: result.error ? 'failed' : 'sent', error_message: result.error ?? null, external_id: result.id ?? null })
       .eq('id', id)

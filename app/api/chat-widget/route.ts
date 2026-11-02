@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { createClient } from '@supabase/supabase-js'
 import {
   GEMINI_DEFAULT_MODEL,
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
     try {
       const supabaseAdmin = getSupabaseAdmin()
       if (supabaseAdmin) {
-        const { data: knowledgeData } = await supabaseAdmin
+        const { data: knowledgeData } = await facevoiceDb
           .from('ai_knowledge')
           .select('title, content')
           .eq('is_active', true)

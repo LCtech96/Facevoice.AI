@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { facevoiceDb } from '@/lib/workspace-db'
 import Anthropic from '@anthropic-ai/sdk'
 import {
   GEMINI_DEFAULT_MODEL,
@@ -80,7 +81,7 @@ function recordUsage(row: {
     } catch {}
   }
   void Promise.resolve(
-    supabaseAdmin.from('ai_usage').insert({
+    facevoiceDb.from('ai_usage').insert({
       feature: row.feature || 'altro',
       provider: row.provider,
       model: row.model,

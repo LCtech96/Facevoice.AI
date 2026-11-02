@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
@@ -131,7 +132,7 @@ function clientBlock(contactName: string | null, repliesSoFar: number) {
  * cosi' com'erano. Email e chat restano separate (registro diverso).
  */
 export async function loadStyleExamples(platform: SocialPlatform): Promise<string> {
-  let query = supabaseAdmin
+  let query = facevoiceDb
     .from('social_messages')
     .select('platform, contact_id, body, origin, created_at')
     .eq('direction', 'out')
@@ -148,7 +149,7 @@ export async function loadStyleExamples(platform: SocialPlatform): Promise<strin
 
   const examples = await Promise.all(
     picked.map(async (reply) => {
-      const { data: incoming } = await supabaseAdmin
+      const { data: incoming } = await facevoiceDb
         .from('social_messages')
         .select('body')
         .eq('platform', reply.platform)
@@ -172,7 +173,7 @@ export async function loadStyleExamples(platform: SocialPlatform): Promise<strin
 
 /** Da dove viene una risposta inviata: serve a scegliere gli esempi di stile. Mai bloccante. */
 export async function setOrigin(id: string, origin: 'ai_approved' | 'ai_edited' | 'manual' | 'ai_auto') {
-  const { error } = await supabaseAdmin.from('social_messages').update({ origin }).eq('id', id)
+  const { error } = await facevoiceDb.from('social_messages').update({ origin }).eq('id', id)
   if (error && error.code !== '42703') console.error('origin update:', error.message)
 }
 
@@ -271,7 +272,7 @@ export function verifyMetaSignature(rawBody: string, signatureHeader: string | n
 }
 
 async function getChannelSettings(platform: SocialPlatform) {
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_channels')
     .select('status, reply_mode')
     .eq('platform', platform)
@@ -284,7 +285,7 @@ async function getChannelSettings(platform: SocialPlatform) {
 }
 
 export async function loadKnowledge(): Promise<string> {
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('ai_knowledge')
     .select('title, content, category')
     .eq('is_active', true)
@@ -306,7 +307,7 @@ async function loadHistory(platform: SocialPlatform, contactId: string) {
     .map((m) => `and(platform.eq.${m.platform},contact_id.eq.${m.contactId})`)
     .join(',')
 
-  const { data } = await supabaseAdmin
+  const { data } = await facevoiceDb
     .from('social_messages')
     .select('platform, direction, body, status')
     .or(filter)
@@ -613,7 +614,7 @@ async function queueReply(
 ): Promise<string | false> {
   if (autoSend) {
     const sent = await deliver(target, text)
-    const { data: row } = await supabaseAdmin
+    const { data: row } = await facevoiceDb
       .from('social_messages')
       .insert({
         ...target,
@@ -632,7 +633,7 @@ async function queueReply(
     else console.log(`${target.platform} ${target.kind}${target.reply_to && target.kind === 'message' ? ' (privato dal commento)' : ''}: risposta inviata`)
     return false
   }
-  const { data: draft } = await supabaseAdmin
+  const { data: draft } = await facevoiceDb
     .from('social_messages')
     .insert({
       ...target,
@@ -654,7 +655,7 @@ export async function prepareOutreachReply(
   contactEmail: string,
   outreach: OutreachContext
 ): Promise<{ ok: boolean; reason?: string; text?: string }> {
-  const { data: last } = await supabaseAdmin
+  const { data: last } = await facevoiceDb
     .from('social_messages')
     .select('channel_account_id, contact_name')
     .eq('platform', 'email')
@@ -668,7 +669,7 @@ export async function prepareOutreachReply(
   const text = parseSuspicious(parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text).text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
 
-  await supabaseAdmin
+  await facevoiceDb
     .from('social_messages')
     .delete()
     .eq('platform', 'email')
@@ -703,7 +704,7 @@ async function realAddressFor(contactId: string): Promise<{ address: string; thr
   // 1) Conversazioni collegate o con lo stesso dominio (la piu' recente).
   const members = (await linkedMembers('email', contactId).catch(() => [])).filter((m) => m.platform === 'email').map((m) => m.contactId)
   const { data: sameDomain } = domain
-    ? await supabaseAdmin
+    ? await facevoiceDb
         .from('social_messages')
         .select('contact_id, channel_account_id, created_at')
         .eq('platform', 'email')
@@ -712,7 +713,7 @@ async function realAddressFor(contactId: string): Promise<{ address: string; thr
         .limit(200)
     : { data: [] }
   const { data: linked } = members.length
-    ? await supabaseAdmin
+    ? await facevoiceDb
         .from('social_messages')
         .select('contact_id, channel_account_id, created_at')
         .eq('platform', 'email')
@@ -724,7 +725,7 @@ async function realAddressFor(contactId: string): Promise<{ address: string; thr
   if (conv) return { address: conv.contact_id, threadId: conv.channel_account_id, why: 'un’altra conversazione con la stessa azienda' }
 
   // 2) Indirizzi scritti nel testo delle email (firme, ricevute, email di Luca).
-  const { data: bodies } = await supabaseAdmin
+  const { data: bodies } = await facevoiceDb
     .from('social_messages')
     .select('body')
     .eq('platform', 'email')
@@ -749,7 +750,7 @@ export async function prepareInboxReply(
   instructions?: string,
   to?: string
 ): Promise<{ ok: boolean; reason?: string; text?: string; warning?: string; sentTo?: string }> {
-  const { data: last } = await supabaseAdmin
+  const { data: last } = await facevoiceDb
     .from('social_messages')
     .select('channel_account_id, contact_name, created_at')
     .eq('platform', platform)
@@ -759,7 +760,7 @@ export async function prepareInboxReply(
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-  const { data: named } = await supabaseAdmin
+  const { data: named } = await facevoiceDb
     .from('social_messages')
     .select('contact_name')
     .eq('platform', platform)
@@ -793,7 +794,7 @@ export async function prepareInboxReply(
     }
   }
 
-  await supabaseAdmin
+  await facevoiceDb
     .from('social_messages')
     .delete()
     .eq('platform', platform)
@@ -831,7 +832,7 @@ export async function handleIncoming(input: {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
   // Meta ritenta i webhook: il vincolo UNIQUE su external_id evita doppie risposte.
-  const { data: inserted, error } = await supabaseAdmin
+  const { data: inserted, error } = await facevoiceDb
     .from('social_messages')
     .insert({
       platform: input.platform,
@@ -931,7 +932,7 @@ export async function handleIncoming(input: {
   let scheduledAt: string | null = null
   if (reply && outreach) {
     // Ha scritto di nuovo: la controrisposta ancora in attesa e' superata da quella nuova.
-    await supabaseAdmin
+    await facevoiceDb
       .from('social_messages')
       .delete()
       .eq('platform', input.platform)

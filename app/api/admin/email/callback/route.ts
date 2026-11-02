@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { completeOAuth, verifyOAuthState } from '@/lib/gmail'
 import { SITE_URL } from '@/lib/seo/site'
@@ -17,18 +18,18 @@ export async function GET(req: NextRequest) {
   try {
     const settings = await completeOAuth(code)
     // Canale email: parte con le risposte da approvare, come gli altri.
-    const { data: existing } = await supabaseAdmin
+    const { data: existing } = await facevoiceDb
       .from('social_channels')
       .select('id')
       .eq('platform', 'email')
       .maybeSingle()
     if (existing) {
-      await supabaseAdmin
+      await facevoiceDb
         .from('social_channels')
         .update({ status: 'connected', handle: settings.email })
         .eq('id', existing.id)
     } else {
-      await supabaseAdmin.from('social_channels').insert({
+      await facevoiceDb.from('social_channels').insert({
         platform: 'email',
         display_name: 'Email',
         handle: settings.email,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAdminEmail } from '@/lib/admin-request'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
@@ -61,6 +62,6 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   await disconnectGmail()
-  await supabaseAdmin.from('social_channels').update({ status: 'not_connected' }).eq('platform', 'email')
+  await facevoiceDb.from('social_channels').update({ status: 'not_connected' }).eq('platform', 'email')
   return NextResponse.json({ success: true })
 }

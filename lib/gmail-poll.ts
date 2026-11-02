@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { handleIncoming, type OutreachContext } from '@/lib/meta/agent'
 import {
   getMessage,
@@ -48,7 +49,7 @@ async function findOutreachLead(email: string, threadId: string): Promise<(Outre
     .maybeSingle()
 
   if (!lead && threadId) {
-    const { data: sent } = await supabaseAdmin
+    const { data: sent } = await facevoiceDb
       .from('social_messages')
       .select('contact_id')
       .eq('platform', 'email')
@@ -102,7 +103,7 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
     const ids = await listInboxIds(`in:inbox category:primary -from:me after:${afterSeconds}`, 50)
     if (!ids.length) return { processed, skipped }
 
-    const { data: known } = await supabaseAdmin
+    const { data: known } = await facevoiceDb
       .from('social_messages')
       .select('external_id')
       .in('external_id', ids.map((m) => `gmail:${m.id}`))

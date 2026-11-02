@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { HANDOFF_MESSAGES, LANGUAGE_NAMES, type SiteLanguage } from '@/lib/site-languages'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { defineSection, sectionText } from '@/lib/ai-context'
@@ -42,7 +43,7 @@ export async function markHandedOff(sessionId: string) {
 
 export async function loadSession(sessionId: string, after?: string): Promise<SiteMessage[]> {
   // Messaggi del visitatore e risposte gia' inviate (mai bozze o invii falliti).
-  let query = supabaseAdmin
+  let query = facevoiceDb
     .from('social_messages')
     .select('id, direction, body, created_at')
     .eq('platform', WEB_PLATFORM)
@@ -107,7 +108,7 @@ export async function handleSiteMessage(
   clientHistory: { role: string; content: string }[],
   language: SiteLanguage = 'it'
 ): Promise<HandleResult> {
-  const { data: last } = await supabaseAdmin
+  const { data: last } = await facevoiceDb
     .from('social_messages')
     .select('contact_name')
     .eq('platform', WEB_PLATFORM)
@@ -118,7 +119,7 @@ export async function handleSiteMessage(
     .maybeSingle()
   let contactName: string | null = last?.contact_name ?? null
 
-  const { error: insertError } = await supabaseAdmin.from('social_messages').insert({
+  const { error: insertError } = await facevoiceDb.from('social_messages').insert({
     platform: WEB_PLATFORM,
     kind: 'message',
     contact_id: sessionId,
@@ -146,7 +147,7 @@ export async function handleSiteMessage(
   if (EMAIL_RE.test(text) || PHONE_RE.test(text)) {
     const body = HANDOFF_MESSAGES[language].replace('{name}', contactName ? `, ${contactName}` : '')
     const { data: row } = stored
-      ? await supabaseAdmin
+      ? await facevoiceDb
           .from('social_messages')
           .insert({
             platform: WEB_PLATFORM,
@@ -221,7 +222,7 @@ export async function handleSiteMessage(
   const body = cleanReply(raw).slice(0, 1200) || 'Dimmi pure, ti ascolto.'
 
   const { data: row } = stored
-    ? await supabaseAdmin
+    ? await facevoiceDb
         .from('social_messages')
         .insert({
           platform: WEB_PLATFORM,
@@ -239,7 +240,7 @@ export async function handleSiteMessage(
 
   if (stored && contactName && nameMatch) {
     // Il nome compare anche sui messaggi gia' salvati, cosi' la casella lo mostra.
-    await supabaseAdmin
+    await facevoiceDb
       .from('social_messages')
       .update({ contact_name: contactName })
       .eq('platform', WEB_PLATFORM)

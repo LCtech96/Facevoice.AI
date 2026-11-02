@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { createClient } from '@supabase/supabase-js'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await facevoiceDb
       .from('ai_knowledge')
       .select('*')
       .order('created_at', { ascending: false })
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await facevoiceDb
       .from('ai_knowledge')
       .insert({
         title: title.trim(),

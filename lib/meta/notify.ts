@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
@@ -55,7 +56,7 @@ export async function notifyNewMessage(input: {
   ]
 
   const since = new Date(Date.now() - EMAIL_QUIET_MINUTES * 60_000).toISOString()
-  const { count } = await supabaseAdmin
+  const { count } = await facevoiceDb
     .from('social_messages')
     .select('id', { count: 'exact', head: true })
     .eq('platform', input.platform)

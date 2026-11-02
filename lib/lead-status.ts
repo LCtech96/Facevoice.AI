@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { facevoiceDb } from '@/lib/workspace-db'
 
 // Stato delle schede della Ricerca clienti ricavato dalla conversazione email vera:
 // - ultimo messaggio nostro (inviato)  → "contacted" (Contattato, aspettiamo lui)
@@ -25,7 +26,7 @@ export async function syncLeadStatuses(): Promise<number> {
   if (!leads?.length) return 0
 
   const emails = [...new Set(leads.map((l) => String(l.email).toLowerCase()))]
-  const { data: direct } = await supabaseAdmin
+  const { data: direct } = await facevoiceDb
     .from('social_messages')
     .select('contact_id, channel_account_id, direction, created_at')
     .eq('platform', 'email')
@@ -34,7 +35,7 @@ export async function syncLeadStatuses(): Promise<number> {
     .in('contact_id', emails)
     .order('created_at', { ascending: false })
     .limit(2000)
-  const { data: incoming } = await supabaseAdmin
+  const { data: incoming } = await facevoiceDb
     .from('social_messages')
     .select('contact_id, channel_account_id, direction, created_at')
     .eq('platform', 'email')
@@ -52,7 +53,7 @@ export async function syncLeadStatuses(): Promise<number> {
   }
   const threads = [...threadOwner.keys()]
   if (threads.length) {
-    const { data: others } = await supabaseAdmin
+    const { data: others } = await facevoiceDb
       .from('social_messages')
       .select('contact_id, channel_account_id, direction, created_at')
       .eq('platform', 'email')
