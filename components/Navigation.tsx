@@ -26,6 +26,9 @@ interface NavigationProps {
   setActiveSection?: (section: string | null) => void
 }
 
+/** L'admin sta guardando il sito pubblico (scelto dal menu): niente rimando alla dashboard. */
+const PUBLIC_VIEW_KEY = 'admin-public-view'
+
 export default function Navigation({ activeSection, setActiveSection }: NavigationProps) {
   const pathname = usePathname()
   const router = useRouter()
@@ -95,9 +98,22 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const isChatPage = pathname?.startsWith('/ai-chat')
   const { t } = useTranslation()
 
-  // L'admin non usa il sito pubblico: dalle sue pagine va dritto alla dashboard.
+  // Aprendo www.facevoice.ai l'admin va dritto alla dashboard. Dal menu "Home del
+  // sito" invece puo' girare le pagine pubbliche (es. per eliminare un post del blog)
+  // finche' non torna nel gestionale.
   useEffect(() => {
-    if (isAdmin && ['/', '/home', '/team', '/services'].includes(pathname || '')) {
+    if (!isAdmin) return
+    if (pathname?.startsWith('/admin')) {
+      try {
+        sessionStorage.removeItem(PUBLIC_VIEW_KEY)
+      } catch {}
+      return
+    }
+    let browsing = false
+    try {
+      browsing = sessionStorage.getItem(PUBLIC_VIEW_KEY) === '1'
+    } catch {}
+    if (!browsing && ['/', '/home', '/team', '/services'].includes(pathname || '')) {
       router.replace('/admin/inbox')
     }
   }, [isAdmin, pathname, router])
@@ -131,6 +147,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ? [
         { id: 'admin-pipeline', label: 'Motore clienti', icon: Activity, href: '/admin/pipeline' },
         { id: 'chat', label: 'Assistente AI interno', icon: MessageSquare, href: '/ai-chat' },
+        { id: 'home', label: 'Home del sito (blog)', icon: Home, href: '/home' },
       ]
     : [
         { id: 'lavora-con-noi', label: t('nav.workWithUs'), icon: Handshake, href: '/lavora-con-noi' },
@@ -141,6 +158,11 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
       ]
 
   const handleNavClick = (item: NavItem) => {
+    if (isAdmin && item.id === 'home') {
+      try {
+        sessionStorage.setItem(PUBLIC_VIEW_KEY, '1')
+      } catch {}
+    }
     if (item.href.startsWith('/home#') && pathname === '/home') {
       const section = item.href.replace('/home#', '')
       setActiveSection?.(section)
