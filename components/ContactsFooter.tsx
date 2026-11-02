@@ -8,13 +8,11 @@ export default function ContactsFooter() {
   const pathname = usePathname()
 
   // La chat occupa lo schermo intero: un footer sotto costringerebbe a
-  // scorrere la pagina per tornare ai messaggi.
-  if (pathname?.startsWith('/ai-chat') || pathname?.startsWith('/admin/assistant')) {
+  // scorrere la pagina per tornare ai messaggi. Nell'area admin i contatti
+  // dell'azienda non servono: non si mostrano in nessuna pagina.
+  if (pathname?.startsWith('/ai-chat') || pathname?.startsWith('/admin')) {
     return null
   }
-
-  // Stile pubblico "ember" ovunque tranne nell'area admin.
-  const ember = !pathname?.startsWith('/admin')
 
   const phone = '+39 3513671340'
   const whatsapp = '+39 3514206353'
@@ -22,7 +20,7 @@ export default function ContactsFooter() {
   const email = 'info@facevoice.ai'
 
   return (
-    <footer className={`${ember ? 'theme-ember ' : ''}mt-16 border-t border-[var(--border-color)] bg-[var(--background)]`}>
+    <footer className={`theme-ember mt-16 border-t border-[var(--border-color)] bg-[var(--background)]`}>
       <div className="container mx-auto max-w-6xl px-6 py-10">
         <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-6">
           Contatti
