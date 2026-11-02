@@ -3,6 +3,7 @@ import { readSetting, updateSetting } from '@/lib/settings-store'
 import { DAILY_EMAIL_LIMIT, MAX_RESULTS, SYSTEM_EMAIL, analyzeLead, searchPlaces, type Lead } from '@/lib/leads'
 import { sendFirstEmail, sentToday } from '@/lib/lead-send'
 import { sendPushToAdmins } from '@/lib/push'
+import { internalOrigin } from '@/lib/internal-origin'
 
 // Automazione giornaliera del Motore clienti. Ogni giorno all'ora scelta (ora
 // italiana): 1) ricerche su Google Maps, a rotazione dalla lista; 2) lettura dei
@@ -152,7 +153,7 @@ const internalKey = () => (process.env.CRON_SECRET || '').trim()
 async function requestRound(origin: string, runId: string) {
   const key = internalKey()
   if (!key) throw new Error('CRON_SECRET mancante nelle variabili di Vercel')
-  const res = await fetch(`${origin}/api/admin/autopilot/run`, {
+  const res = await fetch(`${internalOrigin(origin)}/api/admin/autopilot/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
     body: JSON.stringify({ runId }),
@@ -209,7 +210,7 @@ export async function autopilotTick(origin: string) {
       next = newId()
       return { ...r, round: r.round + 1, run: next, updatedAt: new Date().toISOString(), statusText: 'Riprendo da dove mi ero fermato…' }
     })
-    if (next) await requestRound(origin, next).catch(() => undefined)
+    if (next) await requestRound(origin, next).catch((error) => console.error('autopilot: ripresa non riuscita:', error))
     return
   }
   const now = romeNow()
@@ -242,6 +243,7 @@ async function finish(runId: string, status: 'done' | 'error', note?: string) {
   // Gia' chiusa da un altro giro: niente seconda notifica.
   if (!closed || !run) return
   const added = run.searched.reduce((n, s) => n + s.added, 0)
+  console.log(`autopilot: ${status === 'done' ? 'finito' : 'fermato'} (giro ${run.round}): ${added} nuove, ${run.withEmail} email trovate, ${run.sent.length} inviate${note ? ` · ${note}` : ''}`)
   await sendPushToAdmins({
     title: status === 'done' ? 'Motore clienti: lavoro di oggi finito' : 'Motore clienti: si è fermato',
     body:
@@ -270,7 +272,8 @@ export async function runRound(origin: string, runId: string) {
     })
     if (saved?.run !== next) return
     if (saved.round > MAX_ROUNDS) return finish(next, 'error', 'Mi sono fermato: troppi giri senza finire.')
-    await requestRound(origin, next).catch(() => undefined) // se fallisce lo riprende il cron
+    // Se fallisce lo riprende il cron.
+    await requestRound(origin, next).catch((error) => console.error('autopilot: giro successivo non avviato:', error))
   }
 
   try {
@@ -289,6 +292,7 @@ export async function runRound(origin: string, runId: string) {
           (found) => ({ query, found: found.found, added: found.added }),
           (error) => ({ query, found: 0, added: 0, error: error instanceof Error ? error.message : String(error) })
         )
+        console.log(`autopilot: ricerca "${query}": ${entry.found} trovate, ${entry.added} nuove${'error' in entry && entry.error ? `, errore: ${entry.error}` : ''}`)
         await patch(runId, (r) => void r.searched.push(entry))
         run.searched.push(entry)
       }
