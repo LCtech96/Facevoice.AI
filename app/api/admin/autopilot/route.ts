@@ -23,6 +23,7 @@ export async function PUT(req: NextRequest) {
   // La posizione nella rotazione la gestisce l'automazione.
   const input = { ...(body || {}) }
   delete input.next
+  delete input.autoNext
   const settings = await saveSettings(input)
   return NextResponse.json({ settings })
 }

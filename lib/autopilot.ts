@@ -4,6 +4,7 @@ import { DAILY_EMAIL_LIMIT, MAX_RESULTS, SYSTEM_EMAIL, analyzeLead, searchPlaces
 import { sendFirstEmail, sentToday } from '@/lib/lead-send'
 import { sendPushToAdmins } from '@/lib/push'
 import { internalOrigin } from '@/lib/internal-origin'
+import { autoQuery } from '@/lib/autopilot-searches'
 
 // Automazione giornaliera del Motore clienti. Ogni giorno all'ora scelta (ora
 // italiana): 1) ricerche su Google Maps, a rotazione dalla lista; 2) lettura dei
@@ -23,6 +24,8 @@ const ROUND_MS = 230_000
 /** Oltre questo tempo senza aggiornamenti il giro e' fermo: il server l'ha chiuso. */
 const STALE_MS = 330_000
 const MAX_ROUNDS = 15
+/** Ricerche automatiche provate al massimo in un'esecuzione (ognuna e' una chiamata a Google Maps). */
+const AUTO_MAX_PER_RUN = 8
 /** Pausa tra un'email e l'altra: invii distanziati arrivano meglio. */
 const SEND_GAP_MS: [number, number] = [20_000, 45_000]
 
@@ -37,6 +40,10 @@ export type AutopilotSettings = {
   emailsPerDay: number
   /** Prossima ricerca della lista da usare. */
   next: number
+  /** Se le ricerche della lista non trovano attivita' nuove, cerca da solo (categoria + citta'). */
+  autoSearch: boolean
+  /** Prossima ricerca automatica. */
+  autoNext: number
 }
 
 export type AutopilotRun = {
@@ -53,7 +60,7 @@ export type AutopilotRun = {
   manual?: boolean
   /** Prima ricerca della lista usata in questa esecuzione. */
   searchStart: number
-  searched: { query: string; found: number; added: number; error?: string }[]
+  searched: { query: string; found: number; added: number; error?: string; auto?: boolean }[]
   analyzed: number
   withEmail: number
   sent: { id: string; name: string; email: string }[]
@@ -70,6 +77,8 @@ export const DEFAULT_SETTINGS: AutopilotSettings = {
   resultsPerSearch: 20,
   emailsPerDay: 20,
   next: 0,
+  autoSearch: true,
+  autoNext: 0,
 }
 
 const clamp = (value: unknown, min: number, max: number, fallback: number) => {
@@ -102,6 +111,8 @@ export function cleanSettings(input: Partial<AutopilotSettings> | null | undefin
     resultsPerSearch: clamp(input?.resultsPerSearch ?? base.resultsPerSearch, 5, MAX_RESULTS, DEFAULT_SETTINGS.resultsPerSearch),
     emailsPerDay: clamp(input?.emailsPerDay ?? base.emailsPerDay, 0, DAILY_EMAIL_LIMIT, DEFAULT_SETTINGS.emailsPerDay),
     next: clamp(input?.next ?? base.next, 0, 10_000, 0),
+    autoSearch: typeof input?.autoSearch === 'boolean' ? input.autoSearch : base.autoSearch,
+    autoNext: clamp(input?.autoNext ?? base.autoNext, 0, 1_000_000, 0),
   }
 }
 
@@ -174,7 +185,7 @@ export async function startRun(origin: string, manual: boolean): Promise<{ run?:
     created = {
       date: today,
       status: 'running',
-      phase: settings.searches.length ? 'search' : 'analyze',
+      phase: settings.searches.length || settings.autoSearch ? 'search' : 'analyze',
       statusText: 'Parto…',
       round: 0,
       run: newId(),
@@ -283,21 +294,44 @@ export async function runRound(origin: string, runId: string) {
       // Una ricerca che non porta attivita' nuove (gia' tutte in lista) non conta:
       // si passa alla successiva della lista, finche' non si arriva al numero scelto.
       const productive = () => run.searched.filter((x) => x.added > 0).length
-      let i = run.searched.length
-      for (; i < settings.searches.length && productive() < settings.searchesPerDay; i++) {
-        if (timeLeft() < 40_000) return nextRound()
-        const query = settings.searches[(run.searchStart + i) % settings.searches.length]
+      const search = async (query: string, auto: boolean) => {
         await patch(runId, (r) => void (r.statusText = `Cerco su Google Maps: “${query}”…`))
-        const entry = await searchPlaces(query, settings.resultsPerSearch).then(
+        const entry: AutopilotRun['searched'][number] = await searchPlaces(query, settings.resultsPerSearch).then(
           (found) => ({ query, found: found.found, added: found.added }),
           (error) => ({ query, found: 0, added: 0, error: error instanceof Error ? error.message : String(error) })
         )
-        console.log(`autopilot: ricerca "${query}": ${entry.found} trovate, ${entry.added} nuove${'error' in entry && entry.error ? `, errore: ${entry.error}` : ''}`)
+        if (auto) entry.auto = true
+        console.log(`autopilot: ricerca${auto ? ' automatica' : ''} "${query}": ${entry.found} trovate, ${entry.added} nuove${entry.error ? `, errore: ${entry.error}` : ''}`)
         await patch(runId, (r) => void r.searched.push(entry))
         run.searched.push(entry)
+        return entry
+      }
+      let i = run.searched.filter((x) => !x.auto).length
+      for (; i < settings.searches.length && productive() < settings.searchesPerDay; i++) {
+        if (timeLeft() < 40_000) return nextRound()
+        await search(settings.searches[(run.searchStart + i) % settings.searches.length], false)
       }
       // La rotazione riparte dalla ricerca successiva il giorno dopo.
-      if (i) await saveSettings({ next: (run.searchStart + i) % settings.searches.length })
+      if (i && settings.searches.length) await saveSettings({ next: (run.searchStart + i) % settings.searches.length })
+
+      // Le ricerche della lista non hanno portato abbastanza attivita' nuove (gia' tutte
+      // in lista, o scritte come descrizione): si cerca per categoria e citta'.
+      if (settings.autoSearch) {
+        let n = (await loadSettings()).autoNext
+        let tries = run.searched.filter((x) => x.auto).length
+        while (productive() < settings.searchesPerDay && tries < AUTO_MAX_PER_RUN) {
+          if (timeLeft() < 40_000) {
+            await saveSettings({ autoNext: n })
+            return nextRound()
+          }
+          const entry = await search(autoQuery(n), true)
+          n++
+          tries++
+          // Google Maps non risponde (chiave, limiti): inutile insistere.
+          if (entry.error) break
+        }
+        await saveSettings({ autoNext: n })
+      }
       phase = 'analyze'
       await patch(runId, (r) => void (r.phase = 'analyze'))
     }
