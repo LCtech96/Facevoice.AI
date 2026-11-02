@@ -205,3 +205,15 @@ export async function fetchInstagramProfile(username: string): Promise<Instagram
     })),
   }
 }
+
+/**
+ * Post sulla Pagina Facebook (testo + link con anteprima). Serve il permesso
+ * pages_manage_posts sul token: senza, Meta risponde con un errore di permessi.
+ */
+export async function publishPagePost(message: string, link?: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const result = await post(`${GRAPH}/${page.pageId}/feed`, page.token, { message, ...(link ? { link } : {}) })
+  if (result.error) return { error: result.error }
+  return { id: result.raw?.id }
+}
