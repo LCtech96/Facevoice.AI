@@ -1,3 +1,4 @@
+import { internalOrigin } from '@/lib/internal-origin'
 import { canContinue, isStale, loadState, recoverStaleJob, type AssistantState, type Scope } from '@/lib/assistant-state'
 
 // Giri successivi di un lavoro della super chat: ognuno parte in una nuova
@@ -11,7 +12,7 @@ export const internalKey = () => (process.env.CRON_SECRET || '').trim()
 export async function requestRound(origin: string, scope: Scope, jobId: string, round: number) {
   const key = internalKey()
   if (!key) throw new Error('CRON_SECRET mancante: niente continuazione automatica')
-  const res = await fetch(`${origin}/api/admin/leads/assistant`, {
+  const res = await fetch(`${internalOrigin(origin)}/api/admin/leads/assistant`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
     body: JSON.stringify({ scope, jobId, round }),
