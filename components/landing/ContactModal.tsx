@@ -125,14 +125,14 @@ export default function ContactModal({ open, onClose }: Props) {
   if (!open || typeof document === 'undefined') return null
 
   const input =
-    'w-full rounded-xl border border-white/15 bg-black/30 px-3.5 py-3 text-[16px] text-white placeholder:text-white/40 outline-none focus:border-[#ff8a1f] transition-colors'
+    'w-full rounded-xl border border-white/15 bg-black/30 px-3.5 py-3 text-[16px] text-white placeholder:text-white/40 outline-none focus:border-[#5b8bff] transition-colors'
 
   return createPortal(
     <div className="ember-vars fixed inset-0 z-[200] flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="contact-title">
       <button className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={close} aria-label="Chiudi" />
 
       <div
-        className="relative w-full sm:max-w-lg max-h-[92svh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-white/15 bg-[#1a0702] px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-7 text-white shadow-2xl"
+        className="relative w-full sm:max-w-lg max-h-[92svh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-white/15 bg-[#08142b] px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-7 text-white shadow-2xl"
         style={{ fontFamily: 'var(--font-inter), system-ui, sans-serif' }}
       >
         <button onClick={close} className="absolute right-4 top-4 rounded-full p-2 text-white/60 hover:bg-white/10" aria-label="Chiudi">
@@ -141,7 +141,7 @@ export default function ContactModal({ open, onClose }: Props) {
 
         {status === 'sent' ? (
           <div className="py-8 text-center">
-            <CheckCircle2 className="mx-auto h-12 w-12 text-[#ff8a1f]" />
+            <CheckCircle2 className="mx-auto h-12 w-12 text-[#5b8bff]" />
             <h2 className="mt-4 text-2xl font-semibold" style={{ fontFamily: 'var(--font-inter-tight), sans-serif' }}>
               Messaggio inviato!
             </h2>
@@ -150,7 +150,7 @@ export default function ContactModal({ open, onClose }: Props) {
             </p>
             <button
               onClick={close}
-              className="mt-6 rounded-full bg-gradient-to-r from-[#ff3d00] to-[#ff8a1f] px-6 py-3 font-semibold"
+              className="mt-6 rounded-full bg-gradient-to-r from-[#1f4fe0] to-[#5b8bff] px-6 py-3 font-semibold"
             >
               Chiudi
             </button>
@@ -185,7 +185,7 @@ export default function ContactModal({ open, onClose }: Props) {
                   type="button"
                   onClick={toggleDictation}
                   className={`absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
-                    listening ? 'bg-[#ff3d00] text-white animate-pulse' : 'bg-white/10 text-white hover:bg-white/20'
+                    listening ? 'bg-[#1f4fe0] text-white animate-pulse' : 'bg-white/10 text-white hover:bg-white/20'
                   }`}
                   aria-label={listening ? 'Ferma la dettatura' : 'Detta il messaggio con la voce'}
                   aria-pressed={listening}
@@ -194,13 +194,13 @@ export default function ContactModal({ open, onClose }: Props) {
                 </button>
               )}
             </div>
-            {listening && <p className="text-xs text-[#ffb27a]">Ti ascolto… parla pure, poi premi il quadrato per fermare.</p>}
+            {listening && <p className="text-xs text-[#a9c1ff]">Ti ascolto… parla pure, poi premi il quadrato per fermare.</p>}
 
             {/* Campo esca per i bot: nascosto alle persone. */}
             <input type="text" tabIndex={-1} autoComplete="off" className="hidden" value={form.website} onChange={set('website')} aria-hidden="true" />
 
             <label className="flex items-start gap-2.5 text-xs text-white/60">
-              <input type="checkbox" checked={privacy} onChange={(e) => setPrivacy(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[#ff6a1a]" />
+              <input type="checkbox" checked={privacy} onChange={(e) => setPrivacy(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[#2a65fe]" />
               <span>
                 Acconsento al trattamento dei miei dati per essere ricontattato, come descritto nella{' '}
                 <Link href="/privacy" className="underline" target="_blank">
@@ -215,7 +215,7 @@ export default function ContactModal({ open, onClose }: Props) {
             <button
               type="submit"
               disabled={status === 'sending'}
-              className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff3d00] to-[#ff8a1f] py-3.5 font-semibold shadow-[0_14px_40px_rgba(255,61,0,0.38)] disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#1f4fe0] to-[#5b8bff] py-3.5 font-semibold shadow-[0_14px_40px_rgba(31, 79, 224,0.38)] disabled:opacity-60"
             >
               {status === 'sending' && <Loader2 className="h-4 w-4 animate-spin" />}
               {status === 'sending' ? 'Invio…' : 'Invia richiesta'}

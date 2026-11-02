@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Font del marchio per le immagini dei caroselli del blog (lette dal server).
+  outputFileTracingIncludes: {
+    '/api/blog/post': ['./lib/fonts/**'],
+    '/api/admin/blog-auto/run': ['./lib/fonts/**'],
+  },
   async redirects() {
     return [
       {

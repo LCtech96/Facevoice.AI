@@ -218,28 +218,57 @@ export async function publishPagePost(message: string, link?: string): Promise<S
   return { id: result.raw?.id }
 }
 
+/** Attende che Meta abbia elaborato un contenuto Instagram (FINISHED). */
+async function waitForInstagram(id: string, token: string): Promise<string | null> {
+  for (let i = 0; i < 15; i++) {
+    const res = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${encodeURIComponent(token)}`)
+    const status = (await res.json().catch(() => ({})))?.status_code
+    if (status === 'FINISHED') return null
+    if (status === 'ERROR' || status === 'EXPIRED') return `Instagram non ha accettato le immagini (${status})`
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  return null
+}
+
 /**
- * Post nel feed Instagram (immagine JPEG pubblica + didascalia). Due passi: si crea
- * il contenuto, si aspetta che Meta lo elabori, poi si pubblica. Serve il permesso
- * instagram_content_publish.
+ * Carosello nel feed Instagram (da 2 a 10 immagini JPEG pubbliche + didascalia):
+ * un contenuto per immagine, poi il carosello, poi la pubblicazione. Serve il
+ * permesso instagram_content_publish.
  */
-export async function publishInstagramPost(imageUrl: string, caption: string): Promise<SendResult> {
+export async function publishInstagramCarousel(imageUrls: string[], caption: string): Promise<SendResult> {
   const page = await getPageToken()
   if (!page) return { error: 'collegamento Meta non configurato' }
   const igId = await getInstagramUserId(page)
   if (!igId) return { error: 'nessun account Instagram aziendale collegato alla Pagina' }
-  const created = await post(`${GRAPH}/${igId}/media`, page.token, { image_url: imageUrl, caption: caption.slice(0, 2200) })
-  if (created.error) return { error: created.error }
-  const creationId = created.raw?.id
-  if (!creationId) return { error: 'Instagram non ha creato il contenuto' }
-  for (let i = 0; i < 10; i++) {
-    const res = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(page.token)}`)
-    const status = (await res.json().catch(() => ({})))?.status_code
-    if (status === 'FINISHED') break
-    if (status === 'ERROR' || status === 'EXPIRED') return { error: `Instagram non ha accettato l’immagine (${status})` }
-    await new Promise((r) => setTimeout(r, 2000))
+  const children: string[] = []
+  for (const url of imageUrls.slice(0, 10)) {
+    const item = await post(`${GRAPH}/${igId}/media`, page.token, { image_url: url, is_carousel_item: true })
+    if (item.error || !item.raw?.id) return { error: item.error || 'immagine del carosello non accettata' }
+    children.push(item.raw.id)
   }
-  const published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: creationId })
+  const carousel = await post(`${GRAPH}/${igId}/media`, page.token, { media_type: 'CAROUSEL', children: children.join(','), caption: caption.slice(0, 2200) })
+  if (carousel.error || !carousel.raw?.id) return { error: carousel.error || 'carosello non creato' }
+  const notReady = await waitForInstagram(carousel.raw.id, page.token)
+  if (notReady) return { error: notReady }
+  const published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: carousel.raw.id })
   if (published.error) return { error: published.error }
   return { id: published.raw?.id }
+}
+
+/**
+ * Post con piu' foto sulla Pagina Facebook: le foto si caricano senza pubblicarle,
+ * poi un unico post le raccoglie. Serve il permesso pages_manage_posts.
+ */
+export async function publishPagePhotos(imageUrls: string[], message: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const ids: string[] = []
+  for (const url of imageUrls.slice(0, 10)) {
+    const photo = await post(`${GRAPH}/${page.pageId}/photos`, page.token, { url, published: false })
+    if (photo.error || !photo.raw?.id) return { error: photo.error || 'foto non caricata su Facebook' }
+    ids.push(photo.raw.id)
+  }
+  const result = await post(`${GRAPH}/${page.pageId}/feed`, page.token, { message, attached_media: ids.map((id) => ({ media_fbid: id })) })
+  if (result.error) return { error: result.error }
+  return { id: result.raw?.id }
 }

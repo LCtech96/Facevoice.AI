@@ -298,7 +298,7 @@ export async function runBlogAuto(manual: boolean) {
       lastNote: null,
       lastPost: { title: result.title, url: result.url },
       lastFacebook: [
-        `copertina ${share.image}`,
+        `carosello di ${share.slides} immagini (foto ${share.image})`,
         `Facebook ${share.facebook === 'posted' ? 'pubblicato' : share.facebook === 'failed' ? 'non riuscito' : 'spento'}`,
         `Instagram ${share.instagram === 'posted' ? 'pubblicato' : share.instagram === 'failed' ? 'non riuscito' : 'spento'}`,
         ...share.errors,

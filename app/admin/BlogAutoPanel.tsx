@@ -142,9 +142,9 @@ export default function BlogAutoPanel() {
       <div className="mt-3 space-y-2">
         {(
           [
-            ['coverImage', 'Crea una copertina per ogni articolo senza immagine: generata dall’AI, oppure una grafica con titolo e marchio se l’AI non riesce.'],
-            ['shareFacebook', 'Pubblica ogni articolo anche sulla Pagina Facebook, con l’inizio dell’articolo e il link.'],
-            ['shareInstagram', 'Pubblica ogni articolo anche su Instagram, con la copertina e una didascalia (su Instagram i link non sono cliccabili: rimanda al blog).'],
+            ['coverImage', 'Usa la prima immagine del carosello come copertina dell’articolo nel blog, se non ne ha una.'],
+            ['shareFacebook', 'Pubblica ogni articolo anche sulla Pagina Facebook, come carosello di immagini con l’inizio dell’articolo e il link.'],
+            ['shareInstagram', 'Pubblica ogni articolo anche su Instagram, come carosello con una didascalia (su Instagram i link non sono cliccabili: rimanda al blog).'],
           ] as const
         ).map(([key, label]) => (
           <label key={key} className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
@@ -159,7 +159,7 @@ export default function BlogAutoPanel() {
           </label>
         ))}
         <p className="text-[11px] text-[var(--text-secondary)]">
-          Vale per tutti gli articoli del blog, automatici e scritti a mano. Per ogni articolo ti arriva una notifica con l’esito.
+          Il carosello (da 3 a 6 immagini, colori Facevoice) ha una copertina con il titolo (e una foto generata dall’AI quando riesce), una slide per ogni notizia e una slide finale con l’invito al blog. Vale per tutti gli articoli del blog, automatici e scritti a mano; per ognuno ti arriva una notifica con l’esito.
         </p>
       </div>
 

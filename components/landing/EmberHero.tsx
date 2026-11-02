@@ -16,10 +16,10 @@ const serviceIcons = [Megaphone, Code2, BrainCircuit, LayoutDashboard]
 
 // Colori dei pallini con le iniziali dei clienti.
 const tints = [
-  ['#ff7a3d', '#ffb27a'],
-  ['#c2410c', '#fb923c'],
-  ['#9a3412', '#fdba74'],
-  ['#7c2d12', '#f97316'],
+  ['#4c7dff', '#a9c1ff'],
+  ['#1f4fe0', '#5b8bff'],
+  ['#14306b', '#a9c1ff'],
+  ['#0b1a35', '#2a65fe'],
 ]
 
 const bars = [34, 52, 44, 70, 88]

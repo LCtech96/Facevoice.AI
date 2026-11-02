@@ -1,15 +1,17 @@
 import { readSetting } from '@/lib/settings-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { publishInstagramPost, publishPagePost } from '@/lib/meta/graph'
+import { publishInstagramCarousel, publishPagePhotos } from '@/lib/meta/graph'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
-import { createCover, jpegCopyOf } from '@/lib/blog-image'
+import { createCarousel } from '@/lib/blog-image'
+import { slidesFor } from '@/lib/blog-slides'
 
 // Dopo ogni articolo pubblicato nel blog (automatico o scritto a mano):
-// 1) copertina (generata dall'AI, o grafica di riserva) se l'articolo non ne ha una;
-// 2) post sulla Pagina Facebook con anteprima e link;
-// 3) post su Instagram con la copertina e la didascalia;
-// 4) notifica sul telefono con l'esito di tutto.
+// 1) carosello di almeno 3 immagini con i colori Facevoice (copertina, una slide
+//    per argomento, chiusura); la prima slide diventa la copertina del blog se
+//    l'articolo non ne ha una;
+// 2) lo stesso carosello sulla Pagina Facebook (post con piu' foto) e su Instagram;
+// 3) notifica sul telefono con l'esito di tutto. Mai un post con una sola immagine.
 
 const SETTINGS_KEY = 'blog_auto:settings'
 
@@ -64,6 +66,7 @@ export type ShareOutcome = {
   facebook: 'posted' | 'off' | 'failed'
   instagram: 'posted' | 'off' | 'failed'
   image: 'ai' | 'grafica' | 'esistente' | 'nessuna'
+  slides: number
   errors: string[]
 }
 
@@ -74,56 +77,50 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
   const settings = await shareSettings()
   const path = `/blog/${post.slug || post.id}`
   const url = `${SITE_URL}${path}`
-  const outcome: ShareOutcome = { facebook: 'off', instagram: 'off', image: post.image_url ? 'esistente' : 'nessuna', errors: [] }
+  const outcome: ShareOutcome = { facebook: 'off', instagram: 'off', image: 'nessuna', slides: 0, errors: [] }
 
-  // 1) Copertina: serve al blog e, soprattutto, a Instagram.
-  let imageUrl = post.image_url || null
-  let jpegReady = false
-  if (!imageUrl && (settings.coverImage || settings.shareInstagram)) {
+  // 1) Carosello (serve a tutti e due i social; senza carosello non si pubblica sui social).
+  let slides: string[] = []
+  if (settings.shareFacebook || settings.shareInstagram || (settings.coverImage && !post.image_url)) {
     try {
-      const cover = await createCover(post.title, teaserOf(post.content, 800))
-      imageUrl = cover.url
-      jpegReady = true
-      outcome.image = cover.source
-      if (post.id || post.slug) {
-        const query = supabaseAdmin.from('blog_posts').update({ image_url: imageUrl })
+      const texts = await slidesFor(post.title, post.content)
+      const carousel = await createCarousel(post.title, texts, teaserOf(post.content, 800), post.image_url)
+      slides = carousel.urls
+      outcome.image = carousel.photo
+      outcome.slides = slides.length
+      if (!post.image_url && settings.coverImage && (post.id || post.slug)) {
+        const query = supabaseAdmin.from('blog_posts').update({ image_url: slides[0] })
         await (post.id ? query.eq('id', post.id) : query.eq('slug', post.slug!))
       }
     } catch (error) {
-      outcome.errors.push(`copertina: ${error instanceof Error ? error.message : error}`)
+      outcome.errors.push(`carosello: ${error instanceof Error ? error.message : error}`)
     }
   }
+  const carouselReady = slides.length >= 3
 
-  // 2) Facebook (l'anteprima del link mostra la copertina dell'articolo).
+  // 2) Facebook: post con tutte le slide e il link all'articolo nel testo.
   if (settings.shareFacebook) {
-    const sent = await publishPagePost(facebookText(post.title, post.content, url), url)
+    const sent = carouselReady ? await publishPagePhotos(slides, facebookText(post.title, post.content, url)) : { error: 'carosello non pronto: non pubblico un post singolo' }
     outcome.facebook = sent.error ? 'failed' : 'posted'
     if (sent.error) outcome.errors.push(`Facebook: ${sent.error}`)
   }
 
-  // 3) Instagram: solo con un'immagine JPEG pubblica.
+  // 3) Instagram: lo stesso carosello con la didascalia.
   if (settings.shareInstagram) {
-    try {
-      if (!imageUrl) throw new Error('nessuna immagine (Instagram pubblica solo post con immagine)')
-      const jpeg = jpegReady || /\.jpe?g($|\?)/i.test(imageUrl) ? imageUrl : await jpegCopyOf(imageUrl)
-      const sent = await publishInstagramPost(jpeg, instagramCaption(post.title, post.content))
-      if (sent.error) throw new Error(sent.error)
-      outcome.instagram = 'posted'
-    } catch (error) {
-      outcome.instagram = 'failed'
-      outcome.errors.push(`Instagram: ${error instanceof Error ? error.message : error}`)
-    }
+    const sent = carouselReady ? await publishInstagramCarousel(slides, instagramCaption(post.title, post.content)) : { error: 'carosello non pronto: non pubblico un post singolo' }
+    outcome.instagram = sent.error ? 'failed' : 'posted'
+    if (sent.error) outcome.errors.push(`Instagram: ${sent.error}`)
   }
 
   console.log(
-    `blog share: "${post.title}" · copertina ${outcome.image} · Facebook ${outcome.facebook} · Instagram ${outcome.instagram}${
+    `blog share: "${post.title}" · carosello ${outcome.slides} slide (foto ${outcome.image}) · Facebook ${outcome.facebook} · Instagram ${outcome.instagram}${
       outcome.errors.length ? ` · ${outcome.errors.join(' | ')}` : ''
     }`
   )
   const posted = [outcome.facebook === 'posted' && 'Facebook', outcome.instagram === 'posted' && 'Instagram'].filter(Boolean)
   await sendPushToAdmins({
     title: origin === 'auto' ? '📰 Nuovo articolo nel blog' : '📝 Nuovo post nel blog',
-    body: [post.title, posted.length ? `Pubblicato anche su ${posted.join(' e ')}.` : '', outcome.errors.join(' · ')]
+    body: [post.title, posted.length ? `Carosello di ${outcome.slides} immagini pubblicato su ${posted.join(' e ')}.` : '', outcome.errors.join(' · ')]
       .filter(Boolean)
       .join(' · ')
       .slice(0, 240),

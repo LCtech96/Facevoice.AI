@@ -3,7 +3,7 @@
 .section {
   position: relative;
   padding: 56px 0 48px;
-  background: linear-gradient(180deg, var(--ember-ground-deep) 0%, #170601 100%);
+  background: linear-gradient(180deg, var(--ember-ground-deep) 0%, #060f1c 100%);
   color: #fff;
   overflow: hidden;
 }
@@ -34,7 +34,7 @@
   font-family: var(--font-italic);
   font-weight: 400;
   font-style: italic;
-  color: #f4b98a;
+  color: #a9c1ff;
 }
 
 .arrows { display: none; gap: 8px; }
@@ -50,7 +50,7 @@
   justify-content: center;
   transition: background 0.2s, opacity 0.2s;
 }
-.arrows button:hover:not(:disabled) { background: rgba(255, 106, 26, 0.25); }
+.arrows button:hover:not(:disabled) { background: rgba(42, 101, 254, 0.25); }
 .arrows button:disabled { opacity: 0.35; }
 .arrows svg { width: 18px; height: 18px; }
 
@@ -74,8 +74,8 @@
   border-radius: 22px;
   border: 1px solid var(--ember-hair-soft);
   background:
-    radial-gradient(120% 90% at 100% 0%, rgba(255, 61, 0, 0.22) 0%, rgba(255, 61, 0, 0) 55%),
-    linear-gradient(170deg, #2a0b02 0%, #140400 100%);
+    radial-gradient(120% 90% at 100% 0%, rgba(31, 79, 224, 0.22) 0%, rgba(31, 79, 224, 0) 55%),
+    linear-gradient(170deg, #0b1a35 0%, #050a16 100%);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -96,7 +96,7 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(180deg, rgba(18, 4, 0, 0.15) 0%, rgba(18, 4, 0, 0.55) 45%, rgba(14, 3, 0, 0.94) 78%);
+  background: linear-gradient(180deg, rgba(4, 9, 22, 0.15) 0%, rgba(4, 9, 22, 0.55) 45%, rgba(4, 8, 20, 0.94) 78%);
 }
 
 .number {
@@ -107,7 +107,7 @@
   font-style: italic;
   font-size: 92px;
   line-height: 1;
-  color: rgba(255, 138, 31, 0.28);
+  color: rgba(91, 139, 255, 0.28);
   pointer-events: none;
 }
 .withImage .number { color: rgba(255, 255, 255, 0.55); text-shadow: 0 4px 30px rgba(0, 0, 0, 0.5); }
@@ -154,14 +154,14 @@
   font-family: var(--font-italic);
   font-style: italic;
   font-size: 17px;
-  color: #f4b98a;
+  color: #a9c1ff;
 }
 
 .final {
   justify-content: center;
   background:
-    radial-gradient(90% 70% at 50% 110%, rgba(255, 61, 0, 0.75) 0%, rgba(255, 61, 0, 0) 70%),
-    linear-gradient(170deg, #2a0b02 0%, #120400 100%);
+    radial-gradient(90% 70% at 50% 110%, rgba(31, 79, 224, 0.75) 0%, rgba(31, 79, 224, 0) 70%),
+    linear-gradient(170deg, #0b1a35 0%, #050a16 100%);
 }
 .cta {
   margin-top: 18px;
@@ -174,7 +174,7 @@
   color: #fff;
   font-weight: 600;
   font-size: 15px;
-  box-shadow: 0 10px 30px rgba(255, 61, 0, 0.35);
+  box-shadow: 0 10px 30px rgba(31, 79, 224, 0.35);
 }
 .cta svg { width: 16px; height: 16px; }
 

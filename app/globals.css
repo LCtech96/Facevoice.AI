@@ -261,21 +261,21 @@ body {
    --------------------------------------------------------------------- */
 .theme-ember,
 .ember-vars {
-  --background: #120400;
-  --background-secondary: #1f0902;
-  --card-background: rgba(56, 20, 6, 0.42);
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.62);
-  --accent-blue: #ff6a1a;
-  --accent-blue-light: #ff8a1f;
+  --background: #050a16;
+  --background-secondary: #0a1426;
+  --card-background: rgba(16, 34, 72, 0.42);
+  --text-primary: #f8f8f0;
+  --text-secondary: rgba(248, 248, 240, 0.64);
+  --accent-blue: #2a65fe;
+  --accent-blue-light: #5b8bff;
   --border-color: rgba(255, 255, 255, 0.14);
   --shadow: rgba(0, 0, 0, 0.45);
 
-  --ember-ground: #2a0b02;
-  --ember-ground-deep: #120400;
-  --ember-flame: #ff3d00;
-  --ember-flame-lit: #ff8a1f;
-  --ember-glass: rgba(56, 20, 6, 0.42);
+  --ember-ground: #0b1a35;
+  --ember-ground-deep: #050a16;
+  --ember-flame: #1f4fe0;
+  --ember-flame-lit: #5b8bff;
+  --ember-glass: rgba(16, 34, 72, 0.42);
   --ember-hair: rgba(255, 255, 255, 0.14);
   --ember-hair-soft: rgba(255, 255, 255, 0.08);
   --ember-ink-soft: rgba(255, 255, 255, 0.72);
@@ -303,7 +303,7 @@ body {
   letter-spacing: -0.02em;
 }
 
-.theme-ember ::selection { background: rgba(255, 106, 26, 0.35); }
+.theme-ember ::selection { background: rgba(42, 101, 254, 0.35); }
 
 .theme-ember :focus-visible {
   outline: 2px solid var(--ember-flame-lit);
