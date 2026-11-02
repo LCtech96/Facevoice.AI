@@ -8,12 +8,13 @@ import { getAccessToken } from '@/lib/session-token'
 // dell'intelligenza artificiale (da testate vere, con i link alle fonti) e lo
 // pubblica nel blog della home.
 
-type Settings = { enabled: boolean; days: number[]; time: string }
+type Settings = { enabled: boolean; days: number[]; time: string; shareFacebook: boolean }
 type BlogState = {
   lastDate: string | null
   lastStatus: 'running' | 'published' | 'skipped' | 'error' | null
   lastNote: string | null
   lastPost: { title: string; url: string } | null
+  lastFacebook?: string | null
   updatedAt: string | null
 }
 
@@ -138,6 +139,20 @@ export default function BlogAutoPanel() {
         </button>
       </div>
 
+      <label className="mt-3 flex items-start gap-2 text-xs text-[var(--text-primary)]">
+        <input
+          type="checkbox"
+          checked={settings.shareFacebook !== false}
+          disabled={busy}
+          onChange={(e) => save({ shareFacebook: e.target.checked })}
+          className="mt-0.5"
+        />
+        <span>
+          Pubblica ogni articolo del blog anche sulla Pagina Facebook (automatici e scritti a mano), con l’inizio dell’articolo e il link.
+          Per ogni articolo ti arriva una notifica con l’esito.
+        </span>
+      </label>
+
       {notice && <p className="mt-2 text-xs text-[var(--text-secondary)]">{notice}</p>}
       {state?.lastStatus && state.lastStatus !== 'running' && (
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -149,6 +164,7 @@ export default function BlogAutoPanel() {
           ) : (
             <span style={{ color: '#FF9500' }}>non pubblicato ({state.lastNote})</span>
           )}
+          {state.lastStatus === 'published' && state.lastFacebook ? ` · Facebook: ${state.lastFacebook}` : ''}
           {state.lastPost && state.lastStatus !== 'published' ? (
             <>
               {' '}· precedente:{' '}

@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { canPublishBlog } from '@/lib/blog-auth'
+import { shareBlogPost } from '@/lib/blog-share'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -64,6 +65,8 @@ export async function POST(req: NextRequest) {
 
     if (error) throw error
 
+    // Notifica e post sulla Pagina Facebook, dopo la risposta.
+    after(() => shareBlogPost(data, 'manual').catch((e) => console.error('blog share:', e)))
     return NextResponse.json({ success: true, post: data })
   } catch (error: any) {
     console.error('Error creating post:', error)

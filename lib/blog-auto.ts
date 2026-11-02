@@ -4,6 +4,7 @@ import { callAI, hasAIProvider } from '@/lib/ai'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { internalOrigin } from '@/lib/internal-origin'
+import { shareBlogPost } from '@/lib/blog-share'
 
 // Blog automatico: nei giorni scelti (es. martedi' e venerdi') il sito legge le
 // ultime notizie sull'intelligenza artificiale da testate vere (feed RSS), l'AI
@@ -38,6 +39,8 @@ export type BlogAutoSettings = {
   days: number[]
   /** Ora italiana "HH:MM". */
   time: string
+  /** Ogni articolo del blog (automatico o a mano) va anche sulla Pagina Facebook. */
+  shareFacebook: boolean
 }
 
 export type BlogAutoState = {
@@ -46,10 +49,12 @@ export type BlogAutoState = {
   lastStatus: 'running' | 'published' | 'skipped' | 'error' | null
   lastNote: string | null
   lastPost: { title: string; url: string } | null
+  /** Esito della condivisione su Facebook dell'ultimo articolo. */
+  lastFacebook?: string | null
   updatedAt: string | null
 }
 
-const DEFAULTS: BlogAutoSettings = { enabled: false, days: [2, 5], time: '09:40' }
+const DEFAULTS: BlogAutoSettings = { enabled: false, days: [2, 5], time: '09:40', shareFacebook: true }
 const EMPTY_STATE: BlogAutoState = { lastDate: null, lastStatus: null, lastNote: null, lastPost: null, updatedAt: null }
 const STATE_KEY = 'blog_auto:state'
 
@@ -61,6 +66,7 @@ export function cleanSettings(input: Partial<BlogAutoSettings> | null | undefine
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : base.enabled,
     days: days.length ? days : base.days,
     time: typeof input?.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(input.time) ? input.time : base.time,
+    shareFacebook: typeof input?.shareFacebook === 'boolean' ? input.shareFacebook : base.shareFacebook,
   }
 }
 
@@ -221,7 +227,7 @@ async function uniqueSlug(base: string) {
   return `${base}-${Date.now().toString(36)}`
 }
 
-export type GenerateResult = { ok: true; title: string; url: string } | { ok: false; reason: string; skipped?: boolean }
+export type GenerateResult = { ok: true; title: string; url: string; content: string; slug: string } | { ok: false; reason: string; skipped?: boolean }
 
 /** Legge le notizie, fa scrivere l'articolo e lo pubblica. */
 export async function generateNewsPost(): Promise<GenerateResult> {
@@ -261,7 +267,7 @@ export async function generateNewsPost(): Promise<GenerateResult> {
   await supabaseAdmin
     .from('app_settings')
     .upsert({ key: USED_KEY, value: JSON.stringify([...cited.map((n) => n.link), ...usedList].slice(0, 400)), updated_at: new Date().toISOString() })
-  return { ok: true, title: article.title, url: `${SITE_URL}/blog/${post.slug || post.id}` }
+  return { ok: true, title: article.title, url: `${SITE_URL}/blog/${post.slug || post.id}`, content, slug: post.slug || post.id }
 }
 
 // ---------------------------------------------------------------------
@@ -278,16 +284,19 @@ export async function runBlogAuto(manual: boolean) {
     result = { ok: false, reason: error instanceof Error ? error.message : String(error) }
   }
   console.log(`blog auto: ${result.ok ? `pubblicato "${result.title}"` : `non pubblicato (${result.reason})`}`)
-  await setState(
-    result.ok
-      ? { lastStatus: 'published', lastNote: null, lastPost: { title: result.title, url: result.url } }
-      : { lastStatus: result.skipped ? 'skipped' : 'error', lastNote: result.reason }
-  )
-  await sendPushToAdmins({
-    title: result.ok ? '📰 Nuovo articolo nel blog' : 'Blog automatico: articolo non pubblicato',
-    body: result.ok ? result.title : result.reason,
-    url: result.ok ? result.url.replace(SITE_URL, '') : '/admin',
-  }).catch(() => undefined)
+  if (result.ok) {
+    // Facebook e notifica (con l'esito della condivisione).
+    const share = await shareBlogPost({ title: result.title, content: result.content, slug: result.slug }, 'auto')
+    await setState({
+      lastStatus: 'published',
+      lastNote: null,
+      lastPost: { title: result.title, url: result.url },
+      lastFacebook: share.facebook === 'posted' ? 'pubblicato' : share.facebook === 'failed' ? `non riuscito: ${share.error}` : 'spento',
+    })
+    return result
+  }
+  await setState({ lastStatus: result.skipped ? 'skipped' : 'error', lastNote: result.reason })
+  await sendPushToAdmins({ title: 'Blog automatico: articolo non pubblicato', body: result.reason, url: '/admin' }).catch(() => undefined)
   return result
 }
 
