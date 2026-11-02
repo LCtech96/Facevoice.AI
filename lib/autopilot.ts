@@ -254,11 +254,13 @@ async function finish(runId: string, status: 'done' | 'error', note?: string) {
   // Gia' chiusa da un altro giro: niente seconda notifica.
   if (!closed || !run) return
   const added = run.searched.reduce((n, s) => n + s.added, 0)
+  const gmailDown = [...run.errors].reverse().find((e) => e.startsWith('Gmail non invia'))
   console.log(`autopilot: ${status === 'done' ? 'finito' : 'fermato'} (giro ${run.round}): ${added} nuove, ${run.withEmail} email trovate, ${run.sent.length} inviate${note ? ` · ${note}` : ''}`)
   await sendPushToAdmins({
-    title: status === 'done' ? 'Motore clienti: lavoro di oggi finito' : 'Motore clienti: si è fermato',
-    body:
-      status === 'done'
+    title: gmailDown ? 'Motore clienti: le email non partono' : status === 'done' ? 'Motore clienti: lavoro di oggi finito' : 'Motore clienti: si è fermato',
+    body: gmailDown
+      ? `${added} nuove attività trovate, ma Gmail rifiuta l’invio. ${gmailDown.slice(0, 160)}`
+      : status === 'done'
         ? `${added} nuove attività, ${run.withEmail} email trovate, ${run.sent.length} email inviate.${
             run.errors.some((e) => e.startsWith('Limite di oggi')) ? ' Limite di email di oggi raggiunto.' : ''
           }`
@@ -404,14 +406,18 @@ export async function runRound(origin: string, runId: string) {
       await patch(runId, (r) => void (r.statusText = `Invio l’email a ${lead.name} (${done + 1}/${done + quota})…`))
       const result = await sendFirstEmail(lead.id)
       if ('error' in result) {
+        console.error(`autopilot: invio a ${lead.name} <${lead.email}> non riuscito (${result.status}): ${result.error}`)
         await patch(runId, (r) => {
           r.errors.push(`${lead.name}: ${result.error}`)
           // Scheda non inviabile: si salta (resta nella pagina Clienti per un invio a mano).
           if (result.status !== 502 && result.status !== 429) r.skipped = [...(r.skipped || []), lead.id]
         })
         if (result.status === 429) break
-        // Gmail non risponde o non e' collegato: dopo 3 errori di fila ci si ferma.
-        if (result.status === 502 && ++failures >= 3) break
+        // Gmail non risponde o non e' collegato: dopo 3 errori di fila ci si ferma, e lo si dice.
+        if (result.status === 502 && ++failures >= 3) {
+          await patch(runId, (r) => void r.errors.push(`Gmail non invia: ${result.error}`))
+          break
+        }
         continue
       }
       failures = 0
