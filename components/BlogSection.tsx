@@ -86,6 +86,8 @@ export default function BlogSection({ user }: { user: User | null }) {
     setSubmitting(true)
     try {
       let finalImageUrl = imageUrl.trim() || null
+      const { data: sessionData } = await supabase.auth.getSession()
+      const authHeader = { Authorization: `Bearer ${sessionData.session?.access_token || ''}` }
 
       // Se c'è un file, caricalo su Supabase Storage
       if (imageFile) {
@@ -94,6 +96,7 @@ export default function BlogSection({ user }: { user: User | null }) {
 
         const uploadResponse = await fetch('/api/blog/upload-image', {
           method: 'POST',
+          headers: authHeader,
           body: uploadFormData,
         })
 
@@ -109,7 +112,7 @@ export default function BlogSection({ user }: { user: User | null }) {
       // Crea il post con l'URL dell'immagine
       const response = await fetch('/api/blog/post', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader },
         body: JSON.stringify({
           title: title.trim(),
           content: content.trim(),

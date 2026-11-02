@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { canPublishBlog } from '@/lib/blog-auth'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -37,6 +38,7 @@ async function generateUniqueSlug(baseSlug: string, supabase: any): Promise<stri
 }
 
 export async function POST(req: NextRequest) {
+  if (!(await canPublishBlog(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   try {
     const { title, content, image_url } = await req.json()
 
