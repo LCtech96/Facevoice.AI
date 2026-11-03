@@ -5,6 +5,7 @@ import { resumeOrClose } from '@/lib/assistant-launch'
 import { autopilotTick } from '@/lib/autopilot'
 import { blogAutoTick } from '@/lib/blog-auto'
 import { sendDueOutreachReplies } from '@/lib/outreach-reply'
+import { syncAllWorkspaces } from '@/lib/saas/sync'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -23,6 +24,8 @@ export async function GET(req: NextRequest) {
   await Promise.all([
     autopilotTick(req.nextUrl.origin).catch((error) => console.error('autopilot:', error)),
     blogAutoTick(req.nextUrl.origin).catch((error) => console.error('blog auto:', error)),
+    // Caselle email dei clienti del SaaS.
+    syncAllWorkspaces(4).catch((error) => console.error('saas sync:', error)),
     sendDueOutreachReplies().catch((error) => console.error('outreach replies:', error)),
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])

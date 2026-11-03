@@ -61,7 +61,13 @@ export default function OverviewPage() {
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-[var(--text-secondary)]">{on && channel.handle ? channel.handle : info.soon}</p>
-                  {!on && <p className="mt-2 text-xs text-[var(--text-secondary)]">Il collegamento arriva a breve.</p>}
+                  {channel.platform === 'email' ? (
+                    <Link href="/app/canali/email" className="mt-3 inline-block text-sm font-semibold text-[var(--accent-blue)]">
+                      {on ? 'Gestisci' : 'Collega'} →
+                    </Link>
+                  ) : (
+                    !on && <p className="mt-2 text-xs text-[var(--text-secondary)]">Il collegamento arriva a breve.</p>
+                  )}
                 </div>
               )
             })}

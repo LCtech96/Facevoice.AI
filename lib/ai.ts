@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { facevoiceDb } from '@/lib/workspace-db'
+import { facevoiceDb, workspaceDb } from '@/lib/workspace-db'
 import Anthropic from '@anthropic-ai/sdk'
 import {
   GEMINI_DEFAULT_MODEL,
@@ -38,6 +38,8 @@ type AIOptions = {
   maxOutputTokens?: number
   /** Funzione che usa l'AI, per la pagina Consumi (es. "chat_sito", "assistente_clienti"). */
   feature?: string
+  /** Spazio di lavoro a cui addebitare il consumo (default: Facevoice). */
+  workspaceId?: string
 }
 
 // Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
@@ -59,6 +61,7 @@ export const emptyTally = (): UsageTally => ({ calls: 0, input: 0, output: 0, co
 /** Registra la chiamata per la pagina Consumi. Non blocca e non fa mai fallire la risposta. */
 function recordUsage(row: {
   feature?: string
+  workspaceId?: string
   provider: 'gemini' | 'claude'
   model: string
   outcome?: 'ok' | 'limit' | 'error'
@@ -81,7 +84,7 @@ function recordUsage(row: {
     } catch {}
   }
   void Promise.resolve(
-    facevoiceDb.from('ai_usage').insert({
+    (row.workspaceId ? workspaceDb(row.workspaceId) : facevoiceDb).from('ai_usage').insert({
       feature: row.feature || 'altro',
       provider: row.provider,
       model: row.model,
@@ -208,7 +211,7 @@ async function callClaudeText(
     .join('\n')
     .trim()
   recordUsage({
-    feature: options?.feature,
+    feature: options?.feature, workspaceId: options?.workspaceId,
     provider: 'claude',
     model: response.model,
     outcome: text && response.stop_reason !== 'refusal' ? 'ok' : 'error',
@@ -232,7 +235,7 @@ async function tryGemini(
     try {
       const result = await callGeminiAPI(messages, model, system, options)
       recordUsage({
-        feature: options?.feature,
+        feature: options?.feature, workspaceId: options?.workspaceId,
         provider: 'gemini',
         model,
         input: result.usage?.prompt_tokens,
@@ -245,7 +248,7 @@ async function tryGemini(
       if (isLimitError(message)) {
         const cooldown = /giornalier|daily|per day/i.test(message) ? DAILY_QUOTA_COOLDOWN_MS : GEMINI_COOLDOWN_MS
         geminiCooling.set(model, Date.now() + cooldown)
-        recordUsage({ feature: options?.feature, provider: 'gemini', model, outcome: 'limit' })
+        recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'gemini', model, outcome: 'limit' })
         console.warn(`Gemini ${model} al limite, provo il modello successivo`)
         continue
       }
