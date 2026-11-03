@@ -24,7 +24,7 @@ const HAS_LETTERS = /\p{L}{2,}/u
 type Entry = { original: string; applied?: string }
 
 function isPrivatePath(pathname: string | null) {
-  return Boolean(pathname && (pathname.startsWith('/admin') || pathname.startsWith('/ai-chat') || pathname === '/app' || pathname.startsWith('/app/')))
+  return Boolean(pathname && (pathname.startsWith('/admin') || pathname.startsWith('/ai-chat')))
 }
 
 function skipped(el: Element | null): boolean {
@@ -171,7 +171,9 @@ export default function AutoTranslate() {
           }
         } else if (node.nodeType === Node.ELEMENT_NODE) {
           const el = node as Element
-          if (!skipped(el)) {
+          // Di un campo di testo si traduce il suggerimento (placeholder), mai quello che c'e' scritto dentro.
+          const skipAttrs = el.tagName === 'TEXTAREA' ? el.getAttribute('translate') === 'no' || skipped(el.parentElement) : skipped(el)
+          if (!skipAttrs) {
             for (const attr of ATTRS) {
               const value = el.getAttribute(attr)
               if (!value || !HAS_LETTERS.test(value)) continue

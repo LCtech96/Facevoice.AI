@@ -38,7 +38,7 @@ export default function OverviewPage() {
 
   return (
     <div>
-      <h1 className="text-3xl font-extrabold">{workspace?.name}</h1>
+      <h1 translate="no" className="text-3xl font-extrabold">{workspace?.name}</h1>
       <p className="mt-2 text-[var(--text-secondary)]">
         {connected ? `${connected} ${connected === 1 ? 'canale collegato' : 'canali collegati'}.` : 'Nessun canale collegato: inizia da qui sotto.'}
       </p>
@@ -60,7 +60,7 @@ export default function OverviewPage() {
                       {on ? 'Collegato' : 'Da collegare'}
                     </span>
                   </div>
-                  <p className="mt-2 text-sm text-[var(--text-secondary)]">{on && channel.handle ? channel.handle : info.soon}</p>
+                  <p translate={on && channel.handle ? 'no' : undefined} className="mt-2 text-sm text-[var(--text-secondary)]">{on && channel.handle ? channel.handle : info.soon}</p>
                   {channel.platform === 'email' ? (
                     <Link href="/app/canali/email" className="mt-3 inline-block text-sm font-semibold text-[var(--accent-blue)]">
                       {on ? 'Gestisci' : 'Collega'} →

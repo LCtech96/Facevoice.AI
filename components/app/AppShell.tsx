@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Bot, LayoutGrid, Loader2, LogOut, MessagesSquare, SlidersHorizontal } from 'lucide-react'
 import AppAuth from './AppAuth'
+import LanguageSwitch from './LanguageSwitch'
 import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
 
 // Cornice dell'area clienti: accesso, creazione del primo spazio di lavoro,
@@ -40,6 +41,7 @@ function CreateWorkspace() {
 
   return (
     <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-4 py-10">
+      <LanguageSwitch className="mb-8 self-end" />
       <p className="text-sm font-semibold tracking-widest text-[var(--accent-blue)]">ULTIMO PASSO</p>
       <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[var(--text-primary)]">Come si chiama la tua attività?</h1>
       <p className="mt-3 text-[var(--text-secondary)]">È il nome del tuo spazio di lavoro: lì colleghi i canali e, se vuoi, inviti i colleghi.</p>
@@ -62,7 +64,7 @@ function CreateWorkspace() {
         </button>
       </form>
       <button onClick={signOut} className="mt-6 text-left text-sm text-[var(--text-secondary)]">
-        Esci {email ? `(${email})` : ''}
+        Esci {email ? <span translate="no">({email})</span> : null}
       </button>
     </div>
   )
@@ -103,6 +105,7 @@ function Frame({ children }: { children: ReactNode }) {
             value={workspace.id}
             onChange={(e) => selectWorkspace(e.target.value)}
             aria-label="Spazio di lavoro"
+            translate="no"
             className="mt-3 rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-2 py-2 text-sm text-[var(--text-primary)]"
           >
             {workspaces.map((w) => (
@@ -112,7 +115,7 @@ function Frame({ children }: { children: ReactNode }) {
             ))}
           </select>
         ) : (
-          <p className="mt-3 truncate px-2 font-bold text-[var(--text-primary)]">{workspace.name}</p>
+          <p translate="no" className="mt-3 truncate px-2 font-bold text-[var(--text-primary)]">{workspace.name}</p>
         )}
         <nav className="mt-6 space-y-1">
           {NAV.map(({ href, label, icon: Icon }) => (
@@ -127,16 +130,20 @@ function Frame({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <button onClick={signOut} className="mt-auto flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+        <LanguageSwitch className="mt-auto self-start" />
+        <button onClick={signOut} className="mt-3 flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
           <LogOut className="h-4 w-4" /> Esci
         </button>
       </aside>
 
       <header className="flex items-center justify-between border-b border-[var(--border-color)] px-4 py-3 md:hidden">
-        <p className="truncate font-bold text-[var(--text-primary)]">{workspace.name}</p>
-        <button onClick={signOut} aria-label="Esci" className="text-[var(--text-secondary)]">
-          <LogOut className="h-5 w-5" />
-        </button>
+        <p translate="no" className="truncate font-bold text-[var(--text-primary)]">{workspace.name}</p>
+        <div className="flex shrink-0 items-center gap-3">
+          <LanguageSwitch />
+          <button onClick={signOut} aria-label="Esci" className="text-[var(--text-secondary)]">
+            <LogOut className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">{children}</div>

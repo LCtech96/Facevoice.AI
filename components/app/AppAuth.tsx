@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import GoogleSignIn from './GoogleSignIn'
+import LanguageSwitch from './LanguageSwitch'
 
 // Accesso e registrazione all'area clienti con email e password (Supabase Auth).
 // Alla registrazione Supabase manda un'email di conferma che riporta qui.
@@ -66,7 +67,8 @@ export default function AppAuth() {
 
   return (
     <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-4 py-10">
-      <p className="text-sm font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
+      <LanguageSwitch className="mb-8 self-end" />
+      <p translate="no" className="text-sm font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
       <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[var(--text-primary)]">
         {mode === 'signup' ? 'Tutti i tuoi messaggi, un solo posto.' : mode === 'signin' ? 'Bentornato.' : 'Nuova password'}
       </h1>

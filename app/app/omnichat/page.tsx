@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // Omnichat: tutte le conversazioni dei canali collegati, la risposta a mano o
 // con le bozze dell'AI, e l'automazione di ogni canale.
@@ -38,14 +39,16 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
   { id: 'auto', label: 'Automatica', hint: 'L’AI risponde da sola. I messaggi dubbi restano in bozza.' },
 ]
 
-const when = (iso: string) => {
+const when = (iso: string, language = 'it') => {
   const d = new Date(iso)
+  const locale = language === 'it' ? 'it-IT' : 'en-GB'
   const today = new Date().toDateString() === d.toDateString()
-  return today ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+  return today ? d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString(locale, { day: 'numeric', month: 'short' })
 }
 
 export default function OmnichatPage() {
   const { appFetch, workspace } = useWorkspace()
+  const { language } = useTranslation()
   const [channels, setChannels] = useState<Channel[]>([])
   const [conversations, setConversations] = useState<Conversation[] | null>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -139,7 +142,7 @@ export default function OmnichatPage() {
                 <div key={c.platform} className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
                   <p className="flex items-center gap-2 text-sm font-semibold">
                     <Icon className="h-4 w-4 text-[var(--accent-blue)]" /> {LABELS[c.platform] || c.platform}
-                    <span className="truncate text-xs font-normal text-[var(--text-secondary)]">{c.handle}</span>
+                    <span translate="no" className="truncate text-xs font-normal text-[var(--text-secondary)]">{c.handle}</span>
                   </p>
                   <div className="mt-2 flex rounded-full bg-[var(--background)] p-0.5" role="radiogroup" aria-label={`Automazione ${LABELS[c.platform]}`}>
                     {MODES.map((m) => (
@@ -198,13 +201,13 @@ export default function OmnichatPage() {
                       <Icon className="mt-1 h-4 w-4 shrink-0 text-[var(--accent-blue)]" />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-baseline gap-2">
-                          <span className={`truncate ${c.unread ? 'font-bold' : 'font-medium'}`}>{c.name || c.contactId}</span>
-                          <span className="ml-auto shrink-0 text-[11px] text-[var(--text-secondary)]">{when(c.last.at)}</span>
+                          <span translate="no" className={`truncate ${c.unread ? 'font-bold' : 'font-medium'}`}>{c.name || c.contactId}</span>
+                          <span className="ml-auto shrink-0 text-[11px] text-[var(--text-secondary)]">{when(c.last.at, language)}</span>
                         </span>
-                        {c.subject && <span className="block truncate text-xs text-[var(--text-primary)]">{c.subject}</span>}
+                        {c.subject && <span translate="no" className="block truncate text-xs text-[var(--text-primary)]">{c.subject}</span>}
                         <span className="block truncate text-xs text-[var(--text-secondary)]">
                           {c.last.direction === 'out' ? (c.last.status === 'pending' ? 'Bozza: ' : 'Tu: ') : ''}
-                          {c.last.body}
+                          <span translate="no">{c.last.body}</span>
                         </span>
                         <span className="mt-1 flex gap-2">
                           {c.unread > 0 && <span className="rounded-full bg-[var(--accent-blue)] px-2 text-[10px] text-white">{c.unread} nuovi</span>}
@@ -253,6 +256,7 @@ function Thread({
   onChanged: () => void
 }) {
   const { appFetch } = useWorkspace()
+  const { language } = useTranslation()
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [text, setText] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -304,10 +308,10 @@ function Thread({
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0">
-          <p className="truncate font-semibold">{conversation?.name || contactId}</p>
+          <p translate="no" className="truncate font-semibold">{conversation?.name || contactId}</p>
           <p className="truncate text-xs text-[var(--text-secondary)]">
-            {LABELS[platform] || platform} · {contactId}
-            {subject ? ` · ${subject}` : ''}
+            {LABELS[platform] || platform} · <span translate="no">{contactId}</span>
+            {subject ? <span translate="no">{` · ${subject}`}</span> : null}
           </p>
         </div>
       </div>
@@ -353,6 +357,7 @@ function Thread({
           return (
             <div key={m.id} className={`max-w-[85%] ${mine ? 'ml-auto' : ''}`}>
               <div
+                translate="no"
                 className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm ${
                   mine ? 'bg-[var(--accent-blue)] text-white' : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
                 }`}
@@ -360,7 +365,7 @@ function Thread({
                 {m.body}
               </div>
               <p className={`mt-1 text-[11px] text-[var(--text-secondary)] ${mine ? 'text-right' : ''}`}>
-                {when(m.created_at)}
+                {when(m.created_at, language)}
                 {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
                 {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
                 {m.status === 'sending' ? ' · invio…' : ''}

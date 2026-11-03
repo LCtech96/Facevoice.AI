@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Mail, Trash2 } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // Collegamento della casella email: fornitore, indirizzo e password (per le app).
 
@@ -15,6 +16,7 @@ const field =
 
 export default function EmailChannelPage() {
   const { appFetch, workspace } = useWorkspace()
+  const { language } = useTranslation()
   const [presets, setPresets] = useState<Preset[]>([])
   const [connections, setConnections] = useState<Connection[] | null>(null)
   const [preset, setPreset] = useState('gmail')
@@ -95,7 +97,7 @@ export default function EmailChannelPage() {
         <div key={c.id} className="mt-6 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
           <div className="flex items-center gap-3">
             <CheckCircle2 className={`h-5 w-5 ${c.status === 'connected' ? 'text-[#34C759]' : 'text-[#FF9500]'}`} />
-            <p className="min-w-0 flex-1 truncate font-semibold">{c.account}</p>
+            <p translate="no" className="min-w-0 flex-1 truncate font-semibold">{c.account}</p>
             {canManage && (
               <button onClick={() => disconnect(c.id)} aria-label="Scollega" className="text-[var(--text-secondary)] hover:text-[#ff6b6b]">
                 <Trash2 className="h-4 w-4" />
@@ -106,7 +108,7 @@ export default function EmailChannelPage() {
             {c.error
               ? c.error
               : c.lastSync
-                ? `Collegata. Ultimo controllo: ${new Date(c.lastSync).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}.`
+                ? `Collegata. Ultimo controllo: ${new Date(c.lastSync).toLocaleString(language === 'it' ? 'it-IT' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' })}.`
                 : 'Collegata. Le email degli ultimi 3 giorni arrivano al primo controllo.'}
           </p>
           <Link href="/app/omnichat" className="mt-3 inline-block text-sm font-semibold text-[var(--accent-blue)]">

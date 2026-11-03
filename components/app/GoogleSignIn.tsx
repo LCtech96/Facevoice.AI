@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-client'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // "Continua con Google" direttamente sul nostro dominio: il pulsante ufficiale di
 // Google (Google Identity Services) restituisce un token che passiamo a Supabase.
@@ -60,6 +61,7 @@ export default function GoogleSignIn({
   onBusy: (busy: boolean) => void
 }) {
   const supabase = createClient()
+  const { language } = useTranslation()
   const slot = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<'loading' | 'gsi' | 'redirect'>(CLIENT_ID ? 'loading' : 'redirect')
 
@@ -87,7 +89,7 @@ export default function GoogleSignIn({
           },
         })
         const width = Math.min(400, Math.max(240, Math.round((slot.current.parentElement ?? slot.current).getBoundingClientRect().width)))
-        gsi.renderButton(slot.current, { type: 'standard', theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', logo_alignment: 'center', width, locale: 'it' })
+        gsi.renderButton(slot.current, { type: 'standard', theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', logo_alignment: 'center', width, locale: language === 'it' ? 'it' : 'en' })
         setMode('gsi')
       } catch {
         if (alive) setMode('redirect')
