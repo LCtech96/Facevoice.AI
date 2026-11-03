@@ -410,3 +410,53 @@ export async function readImages(images: ImageInput[], request: string): Promise
   if (!claudeReady) throw new Error('Nessun modello disponibile per leggere le immagini')
   return viaClaude()
 }
+
+const MEDIA_PROMPT = `Un cliente ha mandato questo contenuto (foto, post, reel o storia) in un messaggio diretto a un'azienda.
+Descrivi in italiano, in 2-5 frasi asciutte, cosa mostra: soggetto, situazione, prodotto o servizio, tono.
+Trascrivi il testo importante che si vede o si sente (titoli, scritte, nomi, prezzi, link).
+Niente commenti, niente consigli, niente risposta al cliente.`
+
+/**
+ * Descrive foto e video ricevuti in Direct, per rispondere sapendo cosa e' stato
+ * mandato. Gemini legge anche i video; Claude (riserva) solo le immagini.
+ */
+export async function describeMedia(media: ImageInput[]): Promise<string> {
+  if (!media.length) return ''
+  if (geminiUsable()) {
+    try {
+      const result = await tryGemini([{ role: 'user', content: MEDIA_PROMPT, attachments: media }], undefined, {
+        temperature: 0.1,
+        maxOutputTokens: 600,
+        feature: 'lettura_media_direct',
+      })
+      if (result.message.trim()) return result.message.trim()
+    } catch (error) {
+      noteGeminiFailure(error, 'lettura_media_direct')
+    }
+  }
+  const images = media.filter((m) => m.mimeType.startsWith('image/'))
+  if (!images.length || !getAnthropicApiKey()) return ''
+  if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
+  const response = await claudeClient.messages.create({
+    model: CLAUDE_FALLBACK_MODEL,
+    max_tokens: 600,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          ...images.map((img) => ({
+            type: 'image' as const,
+            source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
+          })),
+          { type: 'text' as const, text: MEDIA_PROMPT },
+        ],
+      },
+    ],
+  })
+  recordUsage({ feature: 'lettura_media_direct', provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
+  return response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim()
+}

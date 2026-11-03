@@ -111,7 +111,14 @@ const PERSONAL_REPLY = defineSection({
 - Chiamala per nome quando lo conosci (vedi "Cliente" più sotto): nel saluto della prima risposta e poi solo ogni tanto, in modo naturale. Non ripeterlo in ogni messaggio.
 - Usa solo il nome di battesimo, scritto bene ("Marco", non "MARCO" o "marco.rossi"). Mai lo username, mai soprannomi o nomi indovinati.
 - Se il nome non è affidabile o il profilo è di un'attività, saluta senza nome ("Ciao!"); per un'attività puoi usare il nome dell'attività se suona naturale.
-- Se nella chat la persona si presenta con un altro nome, usa quello.`,
+- Se nella chat la persona si presenta con un altro nome, usa quello.
+
+## Post, reel, storie e foto ricevuti
+- Le parti tra parentesi quadre ("[Ha inviato un reel. Didascalia: ... Cosa si vede: ...]") descrivono cosa la persona ha mandato: rispondi parlando di QUEL contenuto, in modo specifico, come chi l'ha visto davvero.
+- Menzione in una storia: ringrazia in modo caloroso e personale per la menzione, citando cosa c'era nella storia; niente vendita a freddo.
+- Post o reel condiviso senza testo: commenta brevemente il contenuto e chiedi con una domanda cosa ne pensa o perché te l'ha mandato.
+- Se il contenuto non si vede ("non riesco a vederne il contenuto"), non inventarlo: chiedi gentilmente di cosa si tratta.
+- Non dire mai che "leggi solo testo" né che hai ricevuto una "descrizione automatica".`,
 })
 
 /** Riga "Cliente" del prompt: nome del profilo e come chiamare la persona. */
@@ -828,6 +835,8 @@ export async function handleIncoming(input: {
   postCaption?: string | null
   /** Risponde a una nostra email della Ricerca clienti: controrisposta con il suo interruttore (vedi lib/outreach-reply). */
   outreach?: OutreachContext | null
+  /** Solo allegati: se nei 2 minuti prima c'e' gia' un altro messaggio o una risposta per questa persona, non si risponde di nuovo. */
+  burstGuard?: boolean
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -844,7 +853,7 @@ export async function handleIncoming(input: {
       channel_account_id: input.channelAccountId,
       body,
     })
-    .select('id')
+    .select('id, created_at')
     .single()
 
   if (error || !inserted) {
@@ -855,6 +864,23 @@ export async function handleIncoming(input: {
 
   const settings = await getChannelSettings(input.platform)
   const outreach = input.kind === 'message' ? input.outreach ?? null : null
+
+  // Piu' post/storie mandati di fila (es. due storie con la menzione): una risposta sola.
+  let quiet = false
+  if (input.burstGuard) {
+    const since = new Date(new Date(inserted.created_at).getTime() - 2 * 60_000).toISOString()
+    const { data: recent } = await supabaseAdmin
+      .from('social_messages')
+      .select('id, direction, body, created_at')
+      .eq('platform', input.platform)
+      .eq('contact_id', input.contactId)
+      .eq('direction', 'in')
+      .gte('created_at', since)
+      .neq('id', inserted.id)
+    // Solo se poco prima e' arrivato un altro allegato senza testo (a quello si risponde gia').
+    quiet = (recent || []).some((row) => row.created_at < inserted.created_at && /^\[(Ha inviato|Sta rispondendo)/.test(row.body || ''))
+    if (quiet) console.log(`${input.platform} message: altro allegato di fila, nessuna nuova risposta`)
+  }
 
   let reply = ''
   // Controrisposta ai contatti cercati da noi: si prepara sempre; parte da sola (dopo qualche
@@ -883,7 +909,7 @@ export async function handleIncoming(input: {
           })
         : ''
     } else {
-      reply = input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
+      reply = quiet ? '' : input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
     }
   }
 

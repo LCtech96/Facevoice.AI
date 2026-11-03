@@ -1,3 +1,4 @@
+import { cleanEmail } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { facevoiceDb } from '@/lib/workspace-db'
 import { sendNewEmail } from '@/lib/gmail'
@@ -35,10 +36,18 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
   const { data: lead } = await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle()
   if (!lead) return { error: 'Contatto non trovato', status: 404 }
 
-  const to = String(lead.email || '').trim().toLowerCase()
   const subject = String(override?.subject ?? lead.email_subject ?? '').trim()
   const text = String(override?.body ?? lead.email_body ?? '').trim()
-  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return { error: 'Email del contatto mancante', status: 400 }
+  // Indirizzi letti male dai siti (entita' HTML, "\\" finali, segnaposto di codice):
+  // si ripara quello che si puo', il resto si toglie dalla scheda cosi' non blocca la coda.
+  const raw = String(lead.email || '').trim()
+  const to = cleanEmail(raw)
+  if (!raw) return { error: 'Email del contatto mancante', status: 400 }
+  if (!to) {
+    await supabaseAdmin.from('leads').update({ email: null }).eq('id', id)
+    return { error: `Email non valida, tolta dalla scheda: ${raw.slice(0, 80)}`, status: 400 }
+  }
+  if (to !== raw) await supabaseAdmin.from('leads').update({ email: to }).eq('id', id)
   if (!subject || !text) return { error: 'Oggetto e testo sono obbligatori', status: 400 }
   if (lead.status === 'do_not_contact') return { error: 'Ha chiesto di non essere ricontattato', status: 409 }
   if (lead.contacted_at) return { error: 'Già contattato: rispondi dalla casella Messaggi', status: 409 }
@@ -56,7 +65,14 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
   }
 
   const sent = await sendNewEmail(to, subject, text)
-  if (sent.error) return { error: `Invio non riuscito: ${sent.error}`, status: 502 }
+  if (sent.error) {
+    // Gmail rifiuta l'indirizzo (non Gmail che non funziona): problema della scheda, non dell'invio.
+    if (/invalid to header|invalid (recipient|address|email)|recipient address rejected/i.test(sent.error)) {
+      await supabaseAdmin.from('leads').update({ email: null }).eq('id', id)
+      return { error: `Indirizzo rifiutato da Gmail, tolto dalla scheda: ${to}`, status: 400 }
+    }
+    return { error: `Invio non riuscito: ${sent.error}`, status: 502 }
+  }
 
   const now = new Date().toISOString()
   const { data: updated } = await supabaseAdmin
