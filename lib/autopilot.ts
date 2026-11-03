@@ -1,3 +1,4 @@
+import { cleanEmail } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { DAILY_EMAIL_LIMIT, MAX_RESULTS, SYSTEM_EMAIL, analyzeLead, searchPlaces, type Lead } from '@/lib/leads'
@@ -458,5 +459,6 @@ async function sendable(limit: number, skip: string[] = []): Promise<Lead[]> {
     .not('analyzed_at', 'is', null)
     .order('score', { ascending: false, nullsFirst: false })
     .limit(limit + skip.length + 20)
-  return ((data || []) as Lead[]).filter((l) => l.email && !SYSTEM_EMAIL.test(l.email) && !skip.includes(l.id)).slice(0, limit)
+  // Indirizzi non validi non contano come "pronti": altrimenti la coda sembra piena e non si leggono altri siti.
+  return ((data || []) as Lead[]).filter((l) => cleanEmail(l.email) && !SYSTEM_EMAIL.test(l.email!) && !skip.includes(l.id)).slice(0, limit)
 }

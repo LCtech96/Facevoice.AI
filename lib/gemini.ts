@@ -70,7 +70,8 @@ function buildParts(content: string, attachments?: GeminiAttachment[]): GeminiPa
   }
 
   for (const attachment of attachments || []) {
-    if (attachment.mimeType.startsWith('image/') && attachment.data) {
+    // Immagini e video brevi (es. un reel inoltrato in Direct): Gemini li legge entrambi.
+    if ((attachment.mimeType.startsWith('image/') || attachment.mimeType.startsWith('video/')) && attachment.data) {
       parts.push({
         inlineData: {
           mimeType: attachment.mimeType,

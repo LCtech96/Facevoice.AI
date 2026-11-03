@@ -1,5 +1,6 @@
 import { handleIncoming } from '@/lib/meta/agent'
 import { fetchContactName, fetchPostCaption, getPageToken } from '@/lib/meta/graph'
+import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib/meta/media-context'
 
 // Messenger e i Direct di Instagram arrivano con lo stesso formato ("messaging").
 // I commenti arrivano come "changes": "feed" su Facebook, "comments" su Instagram.
@@ -8,7 +9,7 @@ import { fetchContactName, fetchPostCaption, getPageToken } from '@/lib/meta/gra
 type MessagingEvent = {
   sender?: { id?: string }
   recipient?: { id?: string }
-  message?: { mid?: string; text?: string; is_echo?: boolean }
+  message?: { mid?: string; text?: string; is_echo?: boolean; attachments?: MetaAttachment[]; reply_to?: { story?: StoryReply } }
 }
 
 type CommentChange = {
@@ -40,6 +41,14 @@ async function handleEvent(platform: Platform, accountId: string | undefined, ev
   // is_echo = messaggi inviati dalla Pagina stessa (anche le nostre risposte): da ignorare.
   if (!message?.mid || message.is_echo || !senderId) return
 
+  // Post, reel, storie e foto: didascalia e cosa si vede diventano contesto per l'AI.
+  const context = await describeAttachments(message.attachments, message.reply_to?.story).catch((error) => {
+    console.warn(`${platform} allegati non letti:`, error instanceof Error ? error.message : error)
+    return null
+  })
+  const userText = message.text?.trim() || ''
+  const text = [userText, context].filter(Boolean).join('\n\n') || null
+
   await handleIncoming({
     platform,
     kind: 'message',
@@ -47,8 +56,10 @@ async function handleEvent(platform: Platform, accountId: string | undefined, ev
     contactName: await fetchContactName(platform, senderId),
     externalId: message.mid,
     channelAccountId: accountId ?? null,
-    text: message.text || null,
+    text,
     fallbackLabel: '[allegato]',
+    // Solo allegati, senza testo: se ne arrivano piu' di fila si risponde una volta sola.
+    burstGuard: !userText && Boolean(context),
   })
 }
 

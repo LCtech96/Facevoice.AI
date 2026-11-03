@@ -16,3 +16,35 @@ export function baseDomain(address: string): string | null {
 /** Indirizzi email scritti in un testo. */
 export const emailsInText = (text: string) =>
   [...new Set((text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map((e) => e.toLowerCase().replace(/[.,;:]+$/, '')))]
+
+const VALID_EMAIL = /^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/
+
+/** Decodifica le entita' HTML con cui molti siti nascondono le email (&#109; &#x6d; &#64; &commat;...). */
+export const decodeEntities = (text: string) =>
+  text
+    .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);?/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&commat;/gi, '@')
+    .replace(/&period;/gi, '.')
+    .replace(/&amp;/gi, '&')
+
+/**
+ * Indirizzo email pulito, o null se non e' un indirizzo vero. Ripara quelli
+ * letti male dai siti: entita' HTML, "mailto:", barre o virgolette finali
+ * (es. "info@sito.it\\"), segnaposto di codice ("${salon.email}").
+ */
+export function cleanEmail(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let value = decodeEntities(String(raw))
+  try {
+    value = decodeURIComponent(value)
+  } catch {}
+  value = value
+    .trim()
+    .replace(/^mailto:/i, '')
+    .split('?')[0]
+    .replace(/^[^a-z0-9]+/i, '')
+    .replace(/[^a-z]+$/i, '')
+    .toLowerCase()
+  return VALID_EMAIL.test(value) ? value : null
+}
