@@ -1,3 +1,4 @@
+import { cleanEmail, decodeEntities } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAIPaced, hasAIProvider } from '@/lib/ai'
 import { defineSection, sectionText } from '@/lib/ai-context'
@@ -153,11 +154,13 @@ export function visibleText(html: string) {
     .trim()
 }
 
-function pickEmail(html: string, domain: string): string | null {
-  const fromMailto = [...html.matchAll(/mailto:([^"'?\s>]+)/gi)].map((m) => decodeURIComponent(m[1]))
+function pickEmail(rawHtml: string, domain: string): string | null {
+  // Molti siti scrivono le email come entita' HTML (&#109;&#97;...) per nasconderle ai robot.
+  const html = decodeEntities(rawHtml)
+  const fromMailto = [...html.matchAll(/mailto:([^"'?\s>]+)/gi)].map((m) => m[1])
   const found = [...fromMailto, ...(html.match(EMAIL_RE) || [])]
-    .map((e) => e.trim().toLowerCase())
-    .filter((e) => !IGNORED_EMAIL.test(e) && !SYSTEM_EMAIL.test(e))
+    .map((e) => cleanEmail(e))
+    .filter((e): e is string => Boolean(e) && !IGNORED_EMAIL.test(e!) && !SYSTEM_EMAIL.test(e!))
   if (!found.length) return null
   // Preferisce un indirizzo dello stesso dominio del sito, poi info@/contatti@.
   const sameDomain = found.find((e) => domain && e.endsWith(`@${domain}`))
