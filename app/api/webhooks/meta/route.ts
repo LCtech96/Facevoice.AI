@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { verifyMetaSignature } from '@/lib/meta/agent'
 import { handleWhatsAppWebhook, type WhatsAppPayload } from '@/lib/meta/whatsapp'
 import { handleMessagingWebhook, type MessagingPayload } from '@/lib/meta/messenger'
+import { facevoiceAccountIds } from '@/lib/meta/graph'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,7 +46,31 @@ export async function POST(req: NextRequest) {
   if (payload.object === 'whatsapp_business_account') {
     after(() => handleWhatsAppWebhook(payload as WhatsAppPayload))
   } else if (payload.object === 'page' || payload.object === 'instagram') {
-    after(() => handleMessagingWebhook(payload as MessagingPayload))
+    const signature = req.headers.get('x-hub-signature-256')
+    after(async () => {
+      const messaging = payload as MessagingPayload
+      const own = await facevoiceAccountIds().catch(() => null)
+      // Senza gli id di Facevoice (token non disponibile) si lavora come sempre.
+      if (!own) return handleMessagingWebhook(messaging)
+      // Instagram di Facevoice non riconosciuto: meglio gestire tutto come sempre che perdere messaggi.
+      if (payload.object === 'instagram' && own.size < 2) return handleMessagingWebhook(messaging)
+      const entries = messaging.entry || []
+      const ours = entries.filter((e) => !e.id || own.has(e.id))
+      const clients = entries.length - ours.length
+      // Pagine e Instagram dei clienti del SaaS: l'evento (firmato da Meta) passa alla beta.
+      const forward = process.env.SAAS_WEBHOOK_FORWARD_URL?.trim()
+      if (clients && forward) {
+        await fetch(forward, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(signature ? { 'x-hub-signature-256': signature } : {}) },
+          body: rawBody,
+          signal: AbortSignal.timeout(20_000),
+        })
+          .then((res) => console.log(`meta webhook: ${clients} eventi di clienti girati alla beta (${res.status})`))
+          .catch((error) => console.error('meta webhook: inoltro alla beta non riuscito', error instanceof Error ? error.message : error))
+      }
+      if (ours.length) await handleMessagingWebhook({ ...messaging, entry: ours })
+    })
   }
 
   return NextResponse.json({ received: true })
