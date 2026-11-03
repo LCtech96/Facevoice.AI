@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { verifyMetaSignature } from '@/lib/meta/agent'
 import { handleWhatsAppWebhook, type WhatsAppPayload } from '@/lib/meta/whatsapp'
 import { handleMessagingWebhook, type MessagingPayload } from '@/lib/meta/messenger'
+import { routeClientEntries } from '@/lib/saas/meta-inbound'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,7 +46,13 @@ export async function POST(req: NextRequest) {
   if (payload.object === 'whatsapp_business_account') {
     after(() => handleWhatsAppWebhook(payload as WhatsAppPayload))
   } else if (payload.object === 'page' || payload.object === 'instagram') {
-    after(() => handleMessagingWebhook(payload as MessagingPayload))
+    after(async () => {
+      // Pagine e Instagram dei clienti del SaaS: ognuno nel suo spazio di lavoro.
+      const rest = await routeClientEntries(payload as MessagingPayload)
+      // Anteprima del SaaS: gli account di Facevoice li gestisce solo il sito vero.
+      if (process.env.META_WEBHOOK_CLIENTS_ONLY === '1' || !rest.entry?.length) return
+      await handleMessagingWebhook(rest as MessagingPayload)
+    })
   }
 
   return NextResponse.json({ received: true })

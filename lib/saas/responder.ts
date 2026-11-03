@@ -6,6 +6,7 @@ import { replyLanguage } from '@/lib/reply-language'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections } from './connections'
 import { sendEmailReply } from './email'
+import { sendMetaText } from './meta'
 
 // Risposte AI per i clienti del SaaS. L'AI scrive come l'attivita' del cliente,
 // seguendo le sue istruzioni (generali + del canale). Se l'automazione del canale
@@ -208,6 +209,14 @@ export async function deliverDraft(db: WorkspaceDb, draftId: string, body: strin
   if (!claimed?.length) return { ok: false, error: 'invio già in corso' }
 
   try {
+    if (draft.platform === 'facebook' || draft.platform === 'instagram') {
+      const accounts = await listConnections(db, draft.platform)
+      const account = accounts.find((c) => c.external_id === draft.channel_account_id) || accounts[0]
+      if (!account) throw new Error(`${draft.platform === 'facebook' ? 'Pagina Facebook' : 'Instagram'} non collegato`)
+      const { id } = await sendMetaText(account, draft.contact_id, body)
+      await db.from('social_messages').update({ status: 'sent', external_id: id, origin, error_message: null, created_at: new Date().toISOString() }).eq('id', draftId)
+      return { ok: true }
+    }
     if (draft.platform !== 'email') throw new Error('canale non ancora collegabile')
     const connections = await listConnections(db, 'email')
     const connection = connections.find((c) => c.external_id === draft.channel_account_id) || connections[0]
