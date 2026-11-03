@@ -137,7 +137,14 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
     channel_account_id: message.channel_account_id,
     status: 'pending',
     origin: 'ai_auto',
-    error_message: reason ? `Da controllare: ${reason}` : !hasInstructions && channel?.reply_mode === 'auto' ? 'Bozza: scrivi le istruzioni per attivare l’invio automatico.' : null,
+    // Perche' resta in bozza: mostrato sopra la bozza nell'omnichat.
+    error_message: reason
+      ? `Resta in bozza perché l’AI ha un dubbio: ${reason}`
+      : options.force
+        ? 'Bozza chiesta con ✨: non parte da sola.'
+        : channel?.reply_mode === 'auto' && !hasInstructions
+          ? 'Resta in bozza perché le Istruzioni sono vuote: scrivile per attivare l’invio automatico.'
+          : null,
   }
   const { data: saved, error } = await db.from('social_messages').insert(row).select('id').single()
   if (error || !saved) {
