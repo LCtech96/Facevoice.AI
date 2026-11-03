@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Bot, LayoutGrid, Loader2, LogOut, MessagesSquare, SlidersHorizontal } from 'lucide-react'
 import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
 
 // Cornice dell'area clienti: accesso, creazione del primo spazio di lavoro,
@@ -70,9 +71,26 @@ function CreateWorkspace() {
   )
 }
 
+/** Salva la lingua della dashboard: l'AI la usa quando dal messaggio non si capisce la lingua. */
+function useSaveDashboardLanguage() {
+  const { workspace, appFetch } = useWorkspace()
+  const { language } = useTranslation()
+  const saved = useRef<string | null>(null)
+  useEffect(() => {
+    if (!workspace) return
+    const key = `${workspace.id}:${language === 'it' ? 'it' : 'en'}`
+    if (saved.current === key) return
+    saved.current = key
+    appFetch('/api/app/preferences', { method: 'PUT', body: JSON.stringify({ language: language === 'it' ? 'it' : 'en' }) }).catch(() => {
+      saved.current = null
+    })
+  }, [workspace, language, appFetch])
+}
+
 function Frame({ children }: { children: ReactNode }) {
   const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload } = useWorkspace()
   const pathname = usePathname()
+  useSaveDashboardLanguage()
 
   if (!ready) {
     return (

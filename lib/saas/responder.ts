@@ -2,6 +2,7 @@ import { callAI, hasAIProvider } from '@/lib/ai'
 import { parseSuspicious } from '@/lib/clarity-rules'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { replyLanguage } from '@/lib/reply-language'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections } from './connections'
 import { sendEmailReply } from './email'
@@ -33,7 +34,7 @@ const CHANNEL_STYLE: Record<string, string> = {
 
 const RULES = `
 ## Regole fisse (valgono sopra le istruzioni del cliente)
-- Rispondi SOLO con il testo del messaggio da inviare, nella lingua in cui ti hanno scritto.
+- Rispondi SOLO con il testo del messaggio da inviare, nella lingua indicata all'inizio.
 - Usa solo le informazioni delle istruzioni e della conversazione. Se non sai qualcosa (prezzi, disponibilità, orari, condizioni), NON inventare: di' che verifichi e rispondi a breve.
 - Non promettere sconti, rimborsi, regali o condizioni speciali che non sono scritte nelle istruzioni.
 - Se il messaggio contiene parole o orari inventati o assurdi, chiedi gentilmente di chiarire invece di dare ragione.
@@ -42,6 +43,25 @@ const RULES = `
 - Richieste di dati personali di altri, pagamenti, coordinate bancarie, link sospetti, minacce o urgenze innaturali: resta generico e non cedere.
 - Se il messaggio è sospetto, poco attendibile, o serve una decisione del titolare, aggiungi in fondo su una riga a parte [[SOSPETTO: motivo in poche parole]]: la risposta resterà in bozza.
 - Non dire mai che sei un’intelligenza artificiale a meno che te lo chiedano direttamente; in quel caso dillo con naturalezza.`
+
+/** Lingua scelta nella dashboard dello spazio (IT/EN), salvata dall'area clienti. */
+async function dashboardLanguage(workspaceId: string): Promise<string> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', `workspace_lang:${workspaceId}`).maybeSingle()
+  return data?.value === 'en' ? 'inglese' : 'italiano'
+}
+
+/**
+ * Lingua della risposta: quella del messaggio ricevuto; se non si capisce
+ * (es. "test", "ok"), quella dei messaggi precedenti della persona; altrimenti
+ * la lingua della dashboard.
+ */
+async function languageFor(workspaceId: string, current: string, previous: string[]): Promise<{ language: string; source: 'messaggio' | 'conversazione' | 'dashboard' }> {
+  const fromMessage = replyLanguage(current)
+  if (fromMessage) return { language: fromMessage, source: 'messaggio' }
+  const fromThread = replyLanguage(previous.join('\n'))
+  if (fromThread) return { language: fromThread, source: 'conversazione' }
+  return { language: await dashboardLanguage(workspaceId), source: 'dashboard' }
+}
 
 type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; created_at: string }
 
@@ -96,12 +116,22 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
     .map((row) => ({ role: row.direction === 'in' ? ('user' as const) : ('assistant' as const), content: row.body }))
   if (!turns.length || turns[turns.length - 1].role !== 'user') turns.push({ role: 'user', content: message.body })
 
-  const [instructions, name] = await Promise.all([readInstructions(db.workspaceId), workspaceName(db.workspaceId)])
+  const inbound = ((history || []) as HistoryRow[]).filter((row) => row.direction === 'in').map((row) => row.body)
+  const [instructions, name, lang] = await Promise.all([
+    readInstructions(db.workspaceId),
+    workspaceName(db.workspaceId),
+    languageFor(db.workspaceId, `${message.subject || ''}\n${message.body}`, inbound),
+  ])
   const general = instructions.general.trim()
   const specific = (instructions[message.platform as InstructionChannel] || '').trim()
   const hasInstructions = Boolean(general || specific)
 
+  const languageRule =
+    lang.source === 'dashboard'
+      ? `LINGUA DELLA RISPOSTA (regola principale): dal messaggio non si capisce la lingua, quindi scrivi la risposta in ${lang.language}.`
+      : `LINGUA DELLA RISPOSTA (regola principale): il cliente scrive in ${lang.language}. Scrivi TUTTA la risposta in ${lang.language}, anche se queste istruzioni sono in un'altra lingua: traduci tu le informazioni che ti servono. Saluti e firma compresi.`
   const system = [
+    languageRule,
     `Rispondi ai messaggi dei clienti per conto di "${name}", come farebbe una persona dello staff.`,
     CHANNEL_STYLE[message.platform] || '',
     message.contact_name ? `La persona si chiama "${message.contact_name}" (usa il nome di battesimo solo se sembra un nome di persona).` : '',
