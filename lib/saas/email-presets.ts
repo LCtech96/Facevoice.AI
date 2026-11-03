@@ -25,7 +25,7 @@ export const EMAIL_PRESETS: EmailPreset[] = [
     smtp: { host: 'smtp.gmail.com', port: 465 },
     savesSent: true,
     passwordHelp:
-      'Serve una "password per le app": attiva la verifica in due passaggi sul tuo account Google, poi crea una password per le app e incollala qui (16 lettere).',
+      'Serve una "password per le app" (16 lettere). 1) Su myaccount.google.com → Sicurezza attiva la "Verifica in due passaggi" (senza, la pagina delle password per le app dice "non disponibile"). 2) Apri la pagina qui sotto, scrivi un nome (es. Facevoice) e premi Crea. 3) Copia le 16 lettere e incollale qui.',
     passwordUrl: 'https://myaccount.google.com/apppasswords',
   },
   {
