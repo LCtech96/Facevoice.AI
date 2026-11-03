@@ -78,8 +78,14 @@ export async function connectFromCode(
   const token = await graph<{ access_token: string }>(
     `/oauth/access_token?${new URLSearchParams({ client_id: appId, client_secret: appSecret, redirect_uri: callbackUrl(origin), code })}`
   )
+  // Token dell'utente: si scambia con quello di lunga durata, cosi' i token delle
+  // Pagine ricavati da lui non scadono. (Con il token di sistema lo scambio non
+  // serve e, se Meta lo rifiuta, si usa quello ricevuto.)
+  const longLived = await graph<{ access_token: string }>(
+    `/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: token.access_token })}`
+  ).catch(() => token)
   const { data: pages } = await graph<{ data: Page[] }>(
-    `/me/accounts?fields=id,name,access_token,instagram_business_account{id,username,profile_picture_url}&limit=50&access_token=${encodeURIComponent(token.access_token)}`
+    `/me/accounts?fields=id,name,access_token,instagram_business_account{id,username,profile_picture_url}&limit=50&access_token=${encodeURIComponent(longLived.access_token)}`
   )
   const db = workspaceDb(workspaceId)
   const facevoicePage = process.env.META_PAGE_ID?.trim()
@@ -103,7 +109,7 @@ export async function connectFromCode(
       body: new URLSearchParams({ subscribed_fields: 'messages,messaging_postbacks,feed', access_token: page.access_token }),
     }).catch((error) => console.warn('meta subscribe:', page.id, error instanceof Error ? error.message : error))
 
-    const secret: MetaSecret = { pageToken: page.access_token, pageId: page.id, userToken: token.access_token }
+    const secret: MetaSecret = { pageToken: page.access_token, pageId: page.id, userToken: longLived.access_token }
     await saveConnection(db, { platform: 'facebook', externalId: page.id, displayName: page.name, meta: { pageName: page.name }, secret, userId })
     result.pages.push(page.name)
 
