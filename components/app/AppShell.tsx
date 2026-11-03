@@ -99,7 +99,7 @@ function Frame({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-[100dvh] pb-20 md:pb-0 md:pl-60">
       <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-[var(--border-color)] bg-[var(--background-secondary)] p-4 md:flex">
-        <p className="px-2 text-xs font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
+        <p translate="no" className="px-2 text-xs font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
         {workspaces.length > 1 ? (
           <select
             value={workspace.id}

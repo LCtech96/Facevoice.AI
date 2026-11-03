@@ -12,10 +12,19 @@ const versionScript = (version: string) =>
 // spostati a meta' pagina finche' non si scorre. Un micro-scroll li rimette a posto.
 const IOS_FIXED_SCRIPT = `(function(){var vv=window.visualViewport;function nudge(){var y=window.scrollY;window.scrollTo(window.scrollX,y+1);window.scrollTo(window.scrollX,y)}function field(el){return el&&/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)}document.addEventListener('focusout',function(e){if(!field(e.target))return;setTimeout(function(){if(!field(document.activeElement))nudge()},150)});if(vv){var h=vv.height;vv.addEventListener('resize',function(){if(vv.height>h+100)setTimeout(nudge,50);h=vv.height})}})();`
 
+// Traduttori del browser (Google Traduttore di Chrome, Edge...): sostituiscono il
+// testo della pagina con elementi propri. Quando poi React aggiorna la pagina non
+// trova piu' i suoi nodi e va in errore ("insertBefore/removeChild ... not a child
+// of this node"), mostrando la pagina "Qualcosa non si e' caricato bene".
+// Qui le due operazioni diventano tolleranti: niente blocco, al massimo un testo
+// tradotto resta un attimo in piu'.
+const DOM_GUARD_SCRIPT = `(function(){if(typeof Node!=='function'||!Node.prototype||Node.prototype.__fvGuard)return;Node.prototype.__fvGuard=true;var rm=Node.prototype.removeChild,ins=Node.prototype.insertBefore;Node.prototype.removeChild=function(c){if(c&&c.parentNode!==this){if(c.parentNode)return rm.call(c.parentNode,c);return c}return rm.apply(this,arguments)};Node.prototype.insertBefore=function(n,r){if(r&&r.parentNode!==this){var a=r;while(a&&a.parentNode!==this)a=a.parentNode;return ins.call(this,n,a||null)}return ins.apply(this,arguments)}})();`
+
 export default function ChunkReload() {
   const version = process.env.VERCEL_GIT_COMMIT_SHA || ''
   return (
     <>
+      <script dangerouslySetInnerHTML={{ __html: DOM_GUARD_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: versionScript(version) }} />
       <script dangerouslySetInnerHTML={{ __html: IOS_FIXED_SCRIPT }} />
