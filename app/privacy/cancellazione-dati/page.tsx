@@ -9,6 +9,8 @@ export const metadata: Metadata = {
   description:
     'Come richiedere la cancellazione dei dati personali trattati da Facevoice AI, inclusi i messaggi ricevuti tramite WhatsApp, Messenger e Instagram.',
   alternates: { canonical: `${SITE_URL}${PATH}` },
+  // Senza questo la pagina eredita og:url della home e Meta la legge come la home.
+  openGraph: { url: `${SITE_URL}${PATH}`, type: 'website', siteName: 'Facevoice AI' },
 }
 
 export default function DataDeletionPage() {

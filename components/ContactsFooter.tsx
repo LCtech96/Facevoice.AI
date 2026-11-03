@@ -79,6 +79,12 @@ export default function ContactsFooter() {
           >
             Informativa Privacy
           </Link>
+          <Link
+            href="/termini"
+            className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors ml-5"
+          >
+            Condizioni d&apos;uso
+          </Link>
         </div>
       </div>
       {/* Spacing per mobile navbar fissa in basso */}

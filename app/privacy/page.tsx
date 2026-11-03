@@ -9,6 +9,8 @@ export const metadata: Metadata = {
   description:
     'Informativa Privacy per gli Utenti ai sensi degli Art. 13 e 14 del Regolamento UE n. 2016/679 (GDPR).',
   alternates: { canonical: `${SITE_URL}${PATH}` },
+  // Senza questo la pagina eredita og:url della home e Meta la legge come la home.
+  openGraph: { url: `${SITE_URL}${PATH}`, type: 'website', siteName: 'Facevoice AI' },
 }
 
 const SECTIONS = [
