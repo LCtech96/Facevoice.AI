@@ -362,6 +362,7 @@ function Thread({
               <p className={`mt-1 text-[11px] text-[var(--text-secondary)] ${mine ? 'text-right' : ''}`}>
                 {when(m.created_at)}
                 {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
+                {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
                 {m.status === 'sending' ? ' · invio…' : ''}
               </p>
             </div>

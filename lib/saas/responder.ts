@@ -67,6 +67,8 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
   const { data: channel } = await db.from('social_channels').select('automation_enabled, reply_mode').eq('platform', message.platform).maybeSingle()
   // force: bozza chiesta a mano dall'omnichat, anche con l'automazione spenta (e mai inviata da sola).
   if (!channel?.automation_enabled && !options.force) return { status: 'skipped', reason: 'automazione spenta' }
+  // Email vecchie arrivate con la prima lettura della casella: niente risposte automatiche a giorni di distanza.
+  if (!options.force && Date.now() - new Date(message.created_at).getTime() > 48 * 3600_000) return { status: 'skipped', reason: 'messaggio vecchio' }
   if (!hasAIProvider()) return { status: 'skipped', reason: 'AI non configurata' }
 
   // Gia' risposto o bozza gia' pronta dopo questo messaggio: niente doppioni.

@@ -21,7 +21,7 @@ export type EmailMeta = {
   sent_mailbox?: string | null
 }
 
-const FIRST_SYNC_DAYS = 3
+const FIRST_SYNC_DAYS = 7
 const MAX_PER_SYNC = 25
 const MAX_BODY = 6000
 const TIMEOUT_MS = 20_000
@@ -118,9 +118,72 @@ function toInbound(mail: ParsedMail, own: string, uidKey: string): InboundEmail 
   }
 }
 
-/** Legge le email nuove e le salva in social_messages. Restituisce gli id dei messaggi nuovi. */
+type OutboundEmail = { externalId: string; to: string; subject: string; body: string; at: string }
+
+/** Risposta inviata dalla casella (anche fuori da Facevoice), letta dalla cartella "Inviata". */
+function toOutbound(mail: ParsedMail, own: string, uidKey: string): OutboundEmail | null {
+  const recipients = (Array.isArray(mail.to) ? mail.to : mail.to ? [mail.to] : []).flatMap((a) => a.value || [])
+  const to = recipients.map((r) => r.address?.toLowerCase().trim()).find((address) => address && address !== own)
+  if (!to) return null
+  const text = mail.text || (typeof mail.html === 'string' ? mail.html.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ') : '')
+  const body = stripQuoted(text).slice(0, MAX_BODY)
+  if (!body) return null
+  return { externalId: mail.messageId?.trim() || uidKey, to, subject: (mail.subject || '').trim().slice(0, 300), body, at: (mail.date || new Date()).toISOString() }
+}
+
+type FolderState = { last_uid?: number; uid_validity?: string }
+
+/**
+ * Legge i messaggi nuovi di una cartella, dal piu' vecchio al piu' recente, a
+ * blocchi: se ce ne sono piu' di MAX_PER_SYNC il resto arriva alla lettura
+ * successiva, senza saltarne nessuno.
+ */
+async function readFolder<T>(
+  client: ImapFlow,
+  path: string,
+  state: FolderState,
+  parse: (mail: ParsedMail, uidKey: string) => T | null
+): Promise<{ items: T[]; state: FolderState }> {
+  const lock = await client.getMailboxLock(path, { readOnly: true })
+  try {
+    let lastUid = state.last_uid || 0
+    let validity = state.uid_validity
+    const current = client.mailbox ? String(client.mailbox.uidValidity) : undefined
+    if (current && current !== validity) {
+      lastUid = 0
+      validity = current
+    }
+    const uids = lastUid
+      ? ((await client.search({ uid: `${lastUid + 1}:*` }, { uid: true })) || []).filter((uid) => uid > lastUid)
+      : (await client.search({ since: new Date(Date.now() - FIRST_SYNC_DAYS * 86_400_000) }, { uid: true })) || []
+    uids.sort((a, b) => a - b)
+    const batch = uids.slice(0, MAX_PER_SYNC)
+    const items: T[] = []
+    if (batch.length) {
+      for await (const message of client.fetch(batch.join(','), { uid: true, source: true }, { uid: true })) {
+        if (!message.source) continue
+        const item = parse(await simpleParser(message.source), `uid:${validity}:${path}:${message.uid}`)
+        if (item) items.push(item)
+      }
+      lastUid = batch[batch.length - 1]
+    }
+    return { items, state: { last_uid: lastUid, uid_validity: validity } }
+  } finally {
+    lock.release()
+  }
+}
+
+async function sentFolder(client: ImapFlow): Promise<string | null> {
+  const boxes = await client.list()
+  return boxes.find((b) => b.specialUse === '\\Sent')?.path || boxes.find((b) => /^(sent|inviat|posta inviata|sent items|sent mail)/i.test(b.name))?.path || null
+}
+
+/**
+ * Legge le email nuove (in arrivo e inviate) e le salva in social_messages.
+ * Restituisce gli id dei messaggi ricevuti nuovi (quelli a cui l'AI puo' rispondere).
+ */
 export async function syncMailbox(db: WorkspaceDb, connection: Connection): Promise<{ inserted: string[]; error?: string }> {
-  const meta = (connection.meta || {}) as EmailMeta
+  const meta = (connection.meta || {}) as EmailMeta & { sent?: FolderState }
   let secret: EmailSecret
   try {
     secret = await readConnectionSecret<EmailSecret>(connection.id)
@@ -129,40 +192,18 @@ export async function syncMailbox(db: WorkspaceDb, connection: Connection): Prom
   }
   const own = connection.external_id.toLowerCase()
   const client = imapClient(secret)
-  const found: InboundEmail[] = []
-  let lastUid = meta.last_uid || 0
-  let uidValidity = meta.uid_validity
+  let inbox: { items: InboundEmail[]; state: FolderState }
+  let sent: { items: OutboundEmail[]; state: FolderState } = { items: [], state: meta.sent || {} }
   try {
     await client.connect()
-    const lock = await client.getMailboxLock('INBOX', { readOnly: true })
-    try {
-      const box = client.mailbox
-      const validity = box ? String(box.uidValidity) : undefined
-      if (validity && validity !== uidValidity) {
-        lastUid = 0
-        uidValidity = validity
-      }
-      let uids: number[]
-      if (lastUid) {
-        const result = await client.search({ uid: `${lastUid + 1}:*` }, { uid: true })
-        uids = (result || []).filter((uid) => uid > lastUid)
-      } else {
-        const since = new Date(Date.now() - FIRST_SYNC_DAYS * 86_400_000)
-        uids = (await client.search({ since }, { uid: true })) || []
-      }
-      uids.sort((a, b) => a - b)
-      const batch = uids.slice(-MAX_PER_SYNC)
-      if (batch.length) {
-        for await (const message of client.fetch(batch.join(','), { uid: true, source: true }, { uid: true })) {
-          if (!message.source) continue
-          const mail = await simpleParser(message.source)
-          const inbound = toInbound(mail, own, `uid:${uidValidity}:${message.uid}`)
-          if (inbound) found.push(inbound)
-        }
-      }
-      if (uids.length) lastUid = Math.max(lastUid, uids[uids.length - 1])
-    } finally {
-      lock.release()
+    inbox = await readFolder(client, 'INBOX', { last_uid: meta.last_uid, uid_validity: meta.uid_validity }, (mail, key) => toInbound(mail, own, key))
+    // Le risposte scritte dal programma di posta: cosi' la conversazione e' completa.
+    const sentPath = await sentFolder(client).catch(() => null)
+    if (sentPath) {
+      sent = await readFolder(client, sentPath, meta.sent || {}, (mail, key) => toOutbound(mail, own, key)).catch((error) => {
+        console.warn('email sent folder:', connection.external_id, error instanceof Error ? error.message : error)
+        return sent
+      })
     }
   } catch (error) {
     const message = explainMailError(error)
@@ -178,11 +219,11 @@ export async function syncMailbox(db: WorkspaceDb, connection: Connection): Prom
   }
 
   const inserted: string[] = []
-  if (found.length) {
+  if (inbox.items.length) {
     const { data, error } = await db
       .from('social_messages')
       .upsert(
-        found.map((m) => ({
+        inbox.items.map((m) => ({
           platform: 'email',
           kind: 'message',
           direction: 'in',
@@ -203,10 +244,49 @@ export async function syncMailbox(db: WorkspaceDb, connection: Connection): Prom
     }
     inserted.push(...(data || []).map((row) => row.id as string))
   }
+
+  // Solo le risposte a persone che hanno scritto alla casella: le altre email
+  // inviate (fornitori, newsletter dell'attivita'...) non riguardano l'omnichat.
+  if (sent.items.length) {
+    const { data: known } = await db
+      .from('social_messages')
+      .select('contact_id')
+      .eq('platform', 'email')
+      .eq('direction', 'in')
+      .in('contact_id', [...new Set(sent.items.map((m) => m.to))])
+    const contacts = new Set((known || []).map((row) => row.contact_id as string))
+    const replies = sent.items.filter((m) => contacts.has(m.to))
+    if (replies.length) {
+      const { error } = await db.from('social_messages').upsert(
+        replies.map((m) => ({
+          platform: 'email',
+          kind: 'message',
+          direction: 'out',
+          status: 'sent',
+          origin: 'mailbox',
+          contact_id: m.to,
+          external_id: m.externalId,
+          subject: m.subject,
+          body: m.body,
+          channel_account_id: own,
+          created_at: m.at,
+        })),
+        { onConflict: 'workspace_id,external_id', ignoreDuplicates: true }
+      )
+      if (error) console.error('email sync sent insert:', error.message)
+    }
+  }
+
   await updateConnection(db, connection.id, {
     status: 'connected',
     last_error: null,
-    meta: { ...meta, last_uid: lastUid, uid_validity: uidValidity, last_sync_at: new Date().toISOString() },
+    meta: {
+      ...meta,
+      last_uid: inbox.state.last_uid,
+      uid_validity: inbox.state.uid_validity,
+      sent: sent.state,
+      last_sync_at: new Date().toISOString(),
+    },
   })
   return { inserted }
 }
@@ -229,17 +309,19 @@ export async function sendEmailReply(
     inReplyTo: reference,
     references: reference ? [reference] : undefined,
   }
-  const raw = await new MailComposer(mail).compile().build()
-  const info = await smtpTransport(secret).sendMail({ envelope: { from: connection.external_id, to: [input.to] }, raw })
-  const messageId = (info.messageId as string | undefined) || `sent:${Date.now()}`
+  const node = new MailComposer(mail).compile()
+  const raw = await node.build()
+  // Lo stesso Message-ID che finisce nella copia in "Inviata": cosi' la lettura
+  // della cartella non la importa una seconda volta.
+  const messageId = node.messageId()
+  await smtpTransport(secret).sendMail({ envelope: { from: connection.external_id, to: [input.to] }, raw })
 
   // Copia nella cartella "Inviata", per chi la usa anche dal suo programma di posta.
   if (!meta.savesSent) {
     const client = imapClient(secret)
     try {
       await client.connect()
-      const boxes = await client.list()
-      const sent = boxes.find((b) => b.specialUse === '\\Sent')?.path || boxes.find((b) => /^(sent|inviat|posta inviata)/i.test(b.name))?.path
+      const sent = await sentFolder(client)
       if (sent) await client.append(sent, raw, ['\\Seen'])
     } catch (error) {
       console.warn('email sent copy:', error instanceof Error ? error.message : error)
