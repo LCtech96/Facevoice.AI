@@ -149,7 +149,7 @@ export async function fetchContactName(
 let cachedIgUserId: string | null = null
 
 /** Account Instagram aziendale collegato alla Pagina (serve per leggere profili altrui). */
-async function getInstagramUserId(page: { pageId: string; token: string }): Promise<string | null> {
+export async function getInstagramUserId(page: { pageId: string; token: string }): Promise<string | null> {
   if (cachedIgUserId) return cachedIgUserId
   const response = await fetch(`${GRAPH}/${page.pageId}?fields=instagram_business_account&access_token=${encodeURIComponent(page.token)}`)
   const data = await response.json().catch(() => ({}))
@@ -271,4 +271,14 @@ export async function publishPagePhotos(imageUrls: string[], message: string): P
   const result = await post(`${GRAPH}/${page.pageId}/feed`, page.token, { message, attached_media: ids.map((id) => ({ media_fbid: id })) })
   if (result.error) return { error: result.error }
   return { id: result.raw?.id }
+}
+
+/** Id della Pagina e dell'Instagram di Facevoice: gli altri account nei webhook sono dei clienti del SaaS. */
+export async function facevoiceAccountIds(): Promise<Set<string> | null> {
+  const page = await getPageToken()
+  if (!page) return null
+  const ids = new Set([page.pageId])
+  const ig = await getInstagramUserId(page).catch(() => null)
+  if (ig) ids.add(ig)
+  return ids
 }
