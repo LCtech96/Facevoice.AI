@@ -869,7 +869,7 @@ export async function handleIncoming(input: {
   let quiet = false
   if (input.burstGuard) {
     const since = new Date(new Date(inserted.created_at).getTime() - 2 * 60_000).toISOString()
-    const { data: recent } = await supabaseAdmin
+    const { data: recent } = await facevoiceDb
       .from('social_messages')
       .select('id, direction, body, created_at')
       .eq('platform', input.platform)
