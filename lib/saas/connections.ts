@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { openSecret, sealSecret } from '@/lib/secret-box'
-import type { WorkspaceDb } from '@/lib/workspace-db'
+import { workspaceDb as workspaceDbFor, type WorkspaceDb } from '@/lib/workspace-db'
 
 // Account collegati dai clienti (casella email, Pagina Facebook, profilo
 // Instagram). I dati non segreti stanno in channel_connections, le credenziali
@@ -40,6 +40,58 @@ export async function connectionOwner(platform: ConnectionPlatform, externalId: 
     .eq('external_id', externalId)
     .maybeSingle()
   return (data?.workspace_id as string | undefined) ?? null
+}
+
+/**
+ * L'account e' gia' collegato a un altro spazio: si puo' spostare qui?
+ * Si', se chi collega e' amministratore anche dell'altro spazio (sposta anche i
+ * messaggi di quell'account) oppure se li' il collegamento non e' piu' attivo.
+ * Il login appena fatto dimostra comunque che controlla l'account.
+ */
+export async function takeOverConnection(
+  platform: ConnectionPlatform,
+  externalId: string,
+  workspaceId: string,
+  userId: string
+): Promise<{ ok: true } | { ok: false; ownerName: string | null }> {
+  const { data: current } = await supabaseAdmin
+    .from('channel_connections')
+    .select('id, workspace_id, status')
+    .eq('platform', platform)
+    .eq('external_id', externalId)
+    .maybeSingle()
+  if (!current || current.workspace_id === workspaceId) return { ok: true }
+  const from = current.workspace_id as string
+
+  const [{ data: member }, { data: space }] = await Promise.all([
+    supabaseAdmin.from('workspace_members').select('role').eq('workspace_id', from).eq('user_id', userId).maybeSingle(),
+    supabaseAdmin.from('workspaces').select('name').eq('id', from).maybeSingle(),
+  ])
+  const sameAdmin = member?.role === 'owner' || member?.role === 'admin'
+  const inactive = current.status === 'disconnected' || current.status === 'expired'
+  if (!sameAdmin && !inactive) return { ok: false, ownerName: member ? ((space?.name as string) ?? null) : null }
+
+  // Spostamento fra spazi: unico punto in cui si scrive su due spazi insieme.
+  const { error } = await supabaseAdmin.from('channel_connections').update({ workspace_id: workspaceId }).eq('id', current.id)
+  if (error) throw new Error(`collegamento non spostato: ${error.message}`)
+  if (sameAdmin) {
+    const { error: moveError } = await supabaseAdmin
+      .from('social_messages')
+      .update({ workspace_id: workspaceId })
+      .eq('workspace_id', from)
+      .eq('platform', platform)
+      .eq('channel_account_id', externalId)
+    if (moveError) console.error('messaggi non spostati:', moveError.message)
+  }
+  const { count } = await supabaseAdmin
+    .from('channel_connections')
+    .select('id', { count: 'exact', head: true })
+    .eq('workspace_id', from)
+    .eq('platform', platform)
+    .neq('status', 'disconnected')
+  if (!count) await setChannelState(workspaceDbFor(from), platform, { status: 'not_connected', handle: null })
+  console.log(`collegamento ${platform} spostato fra spazi (${sameAdmin ? 'stesso amministratore' : 'non più attivo'})`)
+  return { ok: true }
 }
 
 export async function saveConnection(

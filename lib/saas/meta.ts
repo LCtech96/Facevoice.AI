@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
-import { connectionOwner, readConnectionSecret, saveConnection, setChannelState, type Connection } from './connections'
+import { readConnectionSecret, saveConnection, setChannelState, takeOverConnection, type Connection } from './connections'
 import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginText } from './instagram'
 
 // Facebook e Instagram dei clienti: collegamento con "Facebook Login for
@@ -98,9 +98,9 @@ export async function connectFromCode(
       result.skipped.push(`${page.name} (è la Pagina di Facevoice)`)
       continue
     }
-    const owner = await connectionOwner('facebook', page.id)
-    if (owner && owner !== workspaceId) {
-      result.skipped.push(`${page.name} (già collegata a un altro spazio)`)
+    const pageTakeOver = await takeOverConnection('facebook', page.id, workspaceId, userId)
+    if (!pageTakeOver.ok) {
+      result.skipped.push(`${page.name} (già collegata ${pageTakeOver.ownerName ? `allo spazio «${pageTakeOver.ownerName}»` : 'a uno spazio di un’altra persona'})`)
       continue
     }
     // La Pagina manda a Facevoice messaggi e commenti (anche quelli del suo Instagram).
@@ -116,9 +116,9 @@ export async function connectFromCode(
 
     const ig = page.instagram_business_account
     if (ig?.id) {
-      const igOwner = await connectionOwner('instagram', ig.id)
-      if (igOwner && igOwner !== workspaceId) {
-        result.skipped.push(`@${ig.username || ig.id} (già collegato a un altro spazio)`)
+      const igTakeOver = await takeOverConnection('instagram', ig.id, workspaceId, userId)
+      if (!igTakeOver.ok) {
+        result.skipped.push(`@${ig.username || ig.id} (già collegato ${igTakeOver.ownerName ? `allo spazio «${igTakeOver.ownerName}»` : 'a uno spazio di un’altra persona'})`)
       } else {
         await saveConnection(db, {
           platform: 'instagram',

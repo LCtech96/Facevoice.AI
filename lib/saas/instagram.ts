@@ -2,10 +2,10 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb } from '@/lib/workspace-db'
 import { facevoiceAccountIds } from '@/lib/meta/graph'
 import {
-  connectionOwner,
   readConnectionSecret,
   saveConnection,
   setChannelState,
+  takeOverConnection,
   updateConnection,
   updateConnectionSecret,
   type Connection,
@@ -121,8 +121,11 @@ export async function connectInstagramFromCode(
     const own = await facevoiceAccountIds().catch(() => null)
     if (own?.has(igUserId)) return { username, skipped: `${username || igUserId} (è l’Instagram di Facevoice)` }
   }
-  const owner = await connectionOwner('instagram', igUserId)
-  if (owner && owner !== workspaceId) return { username, skipped: `${username || igUserId} (già collegato a un altro spazio)` }
+  const takeOver = await takeOverConnection('instagram', igUserId, workspaceId, userId)
+  if (!takeOver.ok) {
+    const where = takeOver.ownerName ? `allo spazio «${takeOver.ownerName}»` : 'a uno spazio di un’altra persona'
+    return { username, skipped: `${username || igUserId} (già collegato ${where})` }
+  }
 
   // L'account manda a Facevoice i messaggi Direct che riceve.
   await igFetch(`${IG_GRAPH}/me/subscribed_apps?${new URLSearchParams({ subscribed_fields: 'messages', access_token: long.access_token })}`, { method: 'POST' }).catch(

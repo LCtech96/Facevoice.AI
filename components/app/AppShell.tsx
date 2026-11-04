@@ -154,8 +154,24 @@ function Frame({ children }: { children: ReactNode }) {
         </button>
       </aside>
 
-      <header className="flex items-center justify-between border-b border-[var(--border-color)] px-4 py-3 md:hidden">
-        <p translate="no" className="truncate font-bold text-[var(--text-primary)]">{workspace.name}</p>
+      <header className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3 md:hidden">
+        {workspaces.length > 1 ? (
+          <select
+            value={workspace.id}
+            onChange={(e) => selectWorkspace(e.target.value)}
+            aria-label="Spazio di lavoro"
+            translate="no"
+            className="min-w-0 max-w-[60%] truncate rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-2 py-1.5 text-sm font-bold text-[var(--text-primary)]"
+          >
+            {workspaces.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p translate="no" className="truncate font-bold text-[var(--text-primary)]">{workspace.name}</p>
+        )}
         <div className="flex shrink-0 items-center gap-3">
           <LanguageSwitch />
           <button onClick={signOut} aria-label="Esci" className="text-[var(--text-secondary)]">
