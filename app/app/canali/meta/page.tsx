@@ -19,6 +19,10 @@ function MetaChannels() {
   const ok = params.get('ok')
   const skipped = params.get('skipped')
   const canManage = workspace?.role !== 'member'
+  // Dalla Panoramica: ?canale=instagram oppure ?canale=facebook mostra solo quel canale.
+  const only = params.get('canale') === 'instagram' ? 'instagram' : params.get('canale') === 'facebook' ? 'facebook' : null
+  const showFacebook = only !== 'instagram'
+  const showInstagram = only !== 'facebook'
 
   const load = useCallback(async () => {
     const res = await appFetch('/api/app/channels').catch(() => null)
@@ -59,12 +63,16 @@ function MetaChannels() {
         <ArrowLeft className="h-4 w-4" /> Panoramica
       </Link>
       <h1 className="mt-4 flex items-center gap-3 text-3xl font-extrabold">
-        <Facebook className="h-7 w-7 text-[var(--accent-blue)]" />
-        <Instagram className="h-7 w-7 text-[var(--accent-blue)]" /> Facebook e Instagram
+        {showFacebook && <Facebook className="h-7 w-7 text-[var(--accent-blue)]" />}
+        {showInstagram && <Instagram className="h-7 w-7 text-[var(--accent-blue)]" />}
+        {only === 'instagram' ? 'Instagram' : only === 'facebook' ? 'Facebook' : 'Facebook e Instagram'}
       </h1>
       <p className="mt-2 text-[var(--text-secondary)]">
-        Collega la Pagina Facebook della tua attività e il tuo Instagram professionale: i messaggi di Messenger e Direct arrivano
-        nell’omnichat e l’AI risponde con le tue istruzioni. Se usi solo Instagram puoi collegarlo direttamente, senza Pagina Facebook.
+        {only === 'instagram'
+          ? 'Collega il tuo Instagram professionale: i messaggi Direct arrivano nell’omnichat e l’AI risponde con le tue istruzioni.'
+          : only === 'facebook'
+            ? 'Collega la Pagina Facebook della tua attività: i messaggi di Messenger arrivano nell’omnichat e l’AI risponde con le tue istruzioni.'
+            : 'Collega la Pagina Facebook della tua attività e il tuo Instagram professionale: i messaggi di Messenger e Direct arrivano nell’omnichat e l’AI risponde con le tue istruzioni. Se usi solo Instagram puoi collegarlo direttamente, senza Pagina Facebook.'}
       </p>
 
       {ok && (
@@ -80,7 +88,7 @@ function MetaChannels() {
       )}
       {error && <p className="mt-6 text-sm text-[#ff6b6b]">{error}</p>}
 
-      {connections?.map((c) => {
+      {connections?.filter((c) => (c.platform === 'instagram' ? showInstagram : showFacebook)).map((c) => {
         const Icon = c.platform === 'instagram' ? Instagram : Facebook
         return (
           <div key={c.id} className="mt-4 flex items-center gap-3 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
@@ -105,33 +113,44 @@ function MetaChannels() {
       })}
 
       {canManage && (
-        <div className="mt-8 space-y-3">
+        <div className="mt-8 flex flex-col gap-3">
+          {showFacebook && (
           <button
             onClick={() => connect('meta')}
             disabled={busy !== null}
             className="flex w-full items-center justify-center gap-2 rounded-full bg-[#1877F2] px-6 py-3 font-bold text-white disabled:opacity-50"
           >
             {busy === 'meta' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Facebook className="h-5 w-5" />}
-            {connections?.some((c) => c.platform === 'facebook') ? 'Collega un’altra Pagina' : 'Collega Facebook e Instagram'}
+            {connections?.some((c) => c.platform === 'facebook') ? 'Collega un’altra Pagina' : only === 'facebook' ? 'Collega la Pagina Facebook' : 'Collega Facebook e Instagram'}
           </button>
+          )}
+          {showInstagram && (
           <button
             onClick={() => connect('instagram')}
             disabled={busy !== null}
             className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#F58529] via-[#DD2A7B] to-[#8134AF] px-6 py-3 font-bold text-white disabled:opacity-50"
           >
             {busy === 'instagram' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Instagram className="h-5 w-5" />}
-            Collega solo Instagram
+            {only === 'instagram' ? 'Collega Instagram' : 'Collega solo Instagram'}
           </button>
+          )}
+          {only === 'instagram' && (
+            <button onClick={() => connect('meta')} disabled={busy !== null} className="text-sm font-semibold text-[var(--accent-blue)] disabled:opacity-50">
+              {busy === 'meta' ? 'Apertura di Facebook…' : 'Il tuo Instagram è collegato a una Pagina Facebook? Collegali insieme'}
+            </button>
+          )}
         </div>
       )}
 
       <div className="mt-6 space-y-2 text-sm text-[var(--text-secondary)]">
         <p className="font-semibold text-[var(--text-primary)]">Cosa serve</p>
-        <p>• Una Pagina Facebook di cui sei amministratore.</p>
-        <p>• Per Instagram: un account professionale (aziendale o creator) collegato a quella Pagina.</p>
-        <p>• Nella finestra di Facebook scegli la Pagina e l’Instagram da collegare e conferma i permessi.</p>
-        <p>• “Collega solo Instagram”: accedi con il tuo Instagram professionale (aziendale o creator), anche senza Pagina Facebook.</p>
-        <p className="text-xs">Puoi scollegare la Pagina in qualsiasi momento, da qui o dalle impostazioni di Facebook.</p>
+        {showFacebook && <p>• Una Pagina Facebook di cui sei amministratore.</p>}
+        {only === null && <p>• Per Instagram tramite Facebook: un account professionale (aziendale o creator) collegato a quella Pagina.</p>}
+        {showFacebook && <p>• Nella finestra di Facebook scegli la Pagina{only === null ? ' e l’Instagram' : ''} da collegare e conferma i permessi.</p>}
+        {showInstagram && (
+          <p>• {only === 'instagram' ? 'Accedi' : '“Collega solo Instagram”: accedi'} con il tuo Instagram professionale (aziendale o creator), anche senza Pagina Facebook.</p>
+        )}
+        <p className="text-xs">Puoi scollegare {only === 'instagram' ? 'l’account' : 'la Pagina'} in qualsiasi momento, da qui o dalle impostazioni di {only === 'instagram' ? 'Instagram' : 'Facebook'}.</p>
       </div>
     </div>
   )

@@ -62,7 +62,7 @@ export default function OverviewPage() {
                   </div>
                   <p translate={on && channel.handle ? 'no' : undefined} className="mt-2 text-sm text-[var(--text-secondary)]">{on && channel.handle ? channel.handle : info.soon}</p>
                   {channel.platform === 'email' || channel.platform === 'facebook' || channel.platform === 'instagram' ? (
-                    <Link href={channel.platform === 'email' ? '/app/canali/email' : '/app/canali/meta'} className="mt-3 inline-block text-sm font-semibold text-[var(--accent-blue)]">
+                    <Link href={channel.platform === 'email' ? '/app/canali/email' : `/app/canali/meta?canale=${channel.platform}`} className="mt-3 inline-block text-sm font-semibold text-[var(--accent-blue)]">
                       {on ? 'Gestisci' : 'Collega'} →
                     </Link>
                   ) : (

@@ -11,7 +11,7 @@ export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
-  const back = (query: Record<string, string>) => NextResponse.redirect(new URL(`/app/canali/meta?${new URLSearchParams(query)}`, req.nextUrl.origin))
+  const back = (query: Record<string, string>) => NextResponse.redirect(new URL(`/app/canali/meta?${new URLSearchParams({ canale: 'instagram', ...query })}`, req.nextUrl.origin))
 
   if (params.get('error')) return back({ error: 'Collegamento annullato.' })
   const state = verifyState(params.get('state'))
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   try {
     const result = await connectInstagramFromCode(req.nextUrl.origin, code, state.workspaceId, state.userId)
     if (result.skipped) return back({ error: `Instagram non collegato: ${result.skipped}` })
-    return back({ ok: result.username || 'Instagram' })
+    return back({ ok: `${result.username || 'Instagram'}${result.temporary ? ' (accesso provvisorio di 1 ora)' : ''}` })
   } catch (error) {
     console.error('instagram callback:', error instanceof Error ? error.message : error)
     return back({ error: 'Collegamento di Instagram non riuscito, riprova.' })

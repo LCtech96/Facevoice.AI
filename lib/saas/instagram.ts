@@ -65,7 +65,7 @@ export async function connectInstagramFromCode(
   rawCode: string,
   workspaceId: string,
   userId: string
-): Promise<{ username: string | null; skipped: string | null }> {
+): Promise<{ username: string | null; skipped: string | null; temporary?: boolean }> {
   const { appId, appSecret } = instagramConfig()
   // Instagram aggiunge "#_" in fondo al codice nel redirect.
   const code = rawCode.replace(/#_$/, '')
@@ -77,18 +77,33 @@ export async function connectInstagramFromCode(
   const shortToken = short.access_token || short.data?.[0]?.access_token
   if (!shortToken) throw new Error('Instagram non ha restituito il token')
 
-  // Token di 60 giorni: la guida indica GET, ma Meta a volte accetta solo POST.
+  // Token di 60 giorni. Meta ha rifiutato sia GET sia POST sull'indirizzo della
+  // guida ("Unsupported request"): si provano anche gli indirizzi con versione.
+  // Se nessuno funziona si salva il token di 1 ora, cosi' il collegamento si puo'
+  // comunque provare, e nei log resta quale tentativo ha risposto cosa.
   const exchange = new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: appSecret, access_token: shortToken })
-  const long = await igFetch<{ access_token: string; expires_in?: number }>(`https://graph.instagram.com/access_token?${exchange}`, undefined, 'token 60 giorni').catch(
-    (error) => {
-      console.warn('instagram exchange GET:', error instanceof Error ? error.message : error)
-      return igFetch<{ access_token: string; expires_in?: number }>(
-        'https://graph.instagram.com/access_token',
-        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: exchange },
-        'token 60 giorni POST'
-      )
+  const attempts: Array<[string, string, RequestInit | undefined]> = [
+    ['GET', `https://graph.instagram.com/access_token?${exchange}`, undefined],
+    ['GET v25', `${IG_GRAPH}/access_token?${exchange}`, undefined],
+    ['POST', 'https://graph.instagram.com/access_token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: exchange }],
+    ['POST v25', `${IG_GRAPH}/access_token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: exchange }],
+  ]
+  let long: { access_token: string; expires_in?: number } | null = null
+  let temporary = false
+  for (const [label, url, init] of attempts) {
+    try {
+      long = await igFetch<{ access_token: string; expires_in?: number }>(url, init, `token 60 giorni ${label}`)
+      console.log(`instagram exchange: riuscito con ${label}`)
+      break
+    } catch (error) {
+      console.warn('instagram exchange:', error instanceof Error ? error.message : error)
     }
-  )
+  }
+  if (!long) {
+    console.warn('instagram exchange: nessun tentativo riuscito, uso il token di 1 ora')
+    long = { access_token: shortToken, expires_in: 3600 }
+    temporary = true
+  }
   type Profile = { user_id?: string | number; id?: string; username?: string; name?: string; profile_picture_url?: string; account_type?: string }
   const auth = encodeURIComponent(long.access_token)
   const profile = await igFetch<Profile>(`${IG_GRAPH}/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${auth}`, undefined, 'profilo').catch(
@@ -127,7 +142,7 @@ export async function connectInstagramFromCode(
     userId,
   })
   await setChannelState(db, 'instagram', { status: 'connected', handle: username || profile.name || igUserId })
-  return { username, skipped: null }
+  return { username, skipped: null, temporary }
 }
 
 /** Rinnova il token (valido almeno 24 ore e non ancora scaduto) e salva quello nuovo. */
