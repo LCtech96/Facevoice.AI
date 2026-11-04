@@ -244,7 +244,7 @@ export default function AssistantPage() {
             )
           )
         )}
-        {(busy || (turns?.length && turns[turns.length - 1].role === 'user')) && (
+        {(busy || Boolean(turns?.length && turns[turns.length - 1].role === 'user')) && (
           <div className="flex items-center gap-3 text-sm text-[var(--text-secondary)]">
             <Loader2 className="h-4 w-4 animate-spin text-[var(--accent-blue)]" /> Ci sto lavorando… (per i post con immagini serve fino a un paio di minuti)
           </div>

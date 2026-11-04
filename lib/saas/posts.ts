@@ -56,11 +56,37 @@ async function download(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer())
 }
 
+/**
+ * Salvataggio nell'archivio (bucket workspace-media) con una chiamata diretta:
+ * cosi' si vede il codice e il testo della risposta se l'archivio rifiuta (prima
+ * arrivava solo "Unexpected token '<'"). Se la prima prova fallisce si riprova
+ * con la sola chiave nell'intestazione apikey (chiavi nuove sb_secret_).
+ */
 async function store(workspaceId: string, folder: string, jpeg: Buffer): Promise<string> {
   const path = `${workspaceId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
-  const { error } = await supabaseAdmin.storage.from(MEDIA_BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: false })
-  if (error) throw new Error(`immagine non salvata: ${error.message}`)
-  return supabaseAdmin.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '')
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
+  const url = `${base}/storage/v1/object/${MEDIA_BUCKET}/${path}`
+  const attempt = async (headers: Record<string, string>) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'image/jpeg', 'x-upsert': 'false', 'cache-control': 'max-age=31536000' },
+      body: new Uint8Array(jpeg),
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (res.ok) return null
+    const text = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 220)
+    return `HTTP ${res.status}: ${text}`
+  }
+  const first = await attempt({ apikey: key, Authorization: `Bearer ${key}` })
+  if (first) {
+    const second = await attempt({ apikey: key })
+    if (second) {
+      console.error(`archivio foto: caricamento rifiutato (${jpeg.length} byte) · ${first} · senza Authorization: ${second}`)
+      throw new Error(`immagine non salvata (${first.slice(0, 80)})`)
+    }
+  }
+  return `${base}/storage/v1/object/public/${MEDIA_BUCKET}/${path}`
 }
 
 /** Foto caricata dal cliente (data URL o file): JPEG orientato, lato lungo max 2000 px. */
