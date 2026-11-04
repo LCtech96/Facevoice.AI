@@ -2,6 +2,7 @@ import { workspaceDb } from '@/lib/workspace-db'
 import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib/meta/media-context'
 import { connectionForAccount, contactName } from './meta'
 import { respondToMessage } from './responder'
+import { handleClientComment, type CommentValue } from './comments'
 
 // Webhook di Meta per le Pagine e gli Instagram dei clienti del SaaS: ogni
 // evento va nello spazio di lavoro dell'account che l'ha ricevuto. Gli eventi
@@ -9,7 +10,8 @@ import { respondToMessage } from './responder'
 
 type Message = { mid?: string; text?: string; is_echo?: boolean; attachments?: MetaAttachment[]; reply_to?: { story?: StoryReply } }
 type MessagingEvent = { sender?: { id?: string }; recipient?: { id?: string }; message?: Message }
-type Entry = { id?: string; messaging?: MessagingEvent[]; changes?: Array<{ field?: string; value?: MessagingEvent & { message?: Message } }> }
+// Il contenuto delle 'changes' dipende dal campo (messages, comments, feed): si legge caso per caso.
+type Entry = { id?: string; messaging?: MessagingEvent[]; changes?: Array<{ field?: string; value?: unknown }> }
 export type MetaPayload = { object?: string; entry?: Entry[] }
 
 async function handleClientMessage(platform: 'facebook' | 'instagram', accountId: string, event: MessagingEvent) {
@@ -62,10 +64,14 @@ export async function routeClientEntries(payload: MetaPayload): Promise<MetaPayl
       await handleClientMessage(platform, accountId, event).catch((err) => console.error(`saas ${platform} webhook:`, err))
     }
     for (const change of entry.changes || []) {
-      if (change.field === 'messages' && change.value && typeof change.value.message === 'object') {
-        await handleClientMessage(platform, accountId, change.value).catch((err) => console.error(`saas ${platform} webhook:`, err))
+      const value = change.value as (MessagingEvent & { message?: unknown }) | undefined
+      if (change.field === 'messages' && value && typeof value.message === 'object') {
+        await handleClientMessage(platform, accountId, value as MessagingEvent).catch((err) => console.error(`saas ${platform} webhook:`, err))
       }
-      // Commenti dei clienti: arriveranno in un secondo momento.
+      // Commenti: "comments" per Instagram, "feed" per le Pagine Facebook.
+      if ((change.field === 'comments' || change.field === 'feed') && change.value) {
+        await handleClientComment(platform, accountId, change.value as CommentValue).catch((err) => console.error(`saas ${platform} commento:`, err))
+      }
     }
   }
   return { ...payload, entry: rest }

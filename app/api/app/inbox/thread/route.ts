@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
     .select('id, direction, body, subject, status, origin, error_message, contact_name, created_at')
     .eq('platform', platform)
     .eq('contact_id', contact)
+    .eq('kind', 'message')
     // Le righe senza stato (messaggi ricevuti) vanno tenute: neq da solo le scarterebbe.
     .or('status.is.null,status.neq.rejected')
     .order('created_at', { ascending: true })
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
     .update({ read_at: new Date().toISOString() })
     .eq('platform', platform)
     .eq('contact_id', contact)
+    .eq('kind', 'message')
     .eq('direction', 'in')
     .is('read_at', null)
   return NextResponse.json({ messages: data || [] })

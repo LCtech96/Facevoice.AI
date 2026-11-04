@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       .select('contact_name, subject, external_id, channel_account_id')
       .eq('platform', platform)
       .eq('contact_id', contact)
+      .eq('kind', 'message')
       .eq('direction', 'in')
       .order('created_at', { ascending: false })
       .limit(1)

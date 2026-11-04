@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
     .select('id, platform, contact_id, contact_name, direction, body, subject, status, read_at, created_at')
     // Le righe senza stato (messaggi ricevuti) vanno tenute: neq da solo le scarterebbe.
     .or('status.is.null,status.neq.rejected')
+    // I commenti hanno la loro pagina.
+    .eq('kind', 'message')
     .order('created_at', { ascending: false })
     .limit(600)
   if (platform) query = query.eq('platform', platform)

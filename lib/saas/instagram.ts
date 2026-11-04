@@ -16,7 +16,7 @@ import {
 // Pagina. Il token dura 60 giorni e si rinnova dal cron prima che scada.
 
 export const IG_GRAPH = 'https://graph.instagram.com/v25.0'
-const SCOPES = ['instagram_business_basic', 'instagram_business_manage_messages']
+const SCOPES = ['instagram_business_basic', 'instagram_business_manage_messages', 'instagram_business_manage_comments']
 const DAY = 24 * 60 * 60_000
 /** Si rinnova il token quando mancano meno di 15 giorni alla scadenza. */
 const RENEW_BEFORE_MS = 15 * DAY
@@ -44,7 +44,7 @@ export function instagramLoginUrl(origin: string, state: string): string {
   return `https://www.instagram.com/oauth/authorize?${params}`
 }
 
-async function igFetch<T>(url: string, init?: RequestInit, step = ''): Promise<T> {
+export async function igFetch<T>(url: string, init?: RequestInit, step = ''): Promise<T> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) })
   const data = await res.json().catch(() => ({}))
   if (!res.ok || data?.error) {
@@ -69,12 +69,15 @@ export async function connectInstagramFromCode(
   const { appId, appSecret } = instagramConfig()
   // Instagram aggiunge "#_" in fondo al codice nel redirect.
   const code = rawCode.replace(/#_$/, '')
-  const short = await igFetch<{ access_token?: string; data?: Array<{ access_token: string }> }>('https://api.instagram.com/oauth/access_token', {
+  const short = await igFetch<{ access_token?: string; permissions?: string | string[]; data?: Array<{ access_token: string; permissions?: string | string[] }> }>('https://api.instagram.com/oauth/access_token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: appId, client_secret: appSecret, grant_type: 'authorization_code', redirect_uri: instagramCallbackUrl(origin), code }),
   }, 'codice')
   const shortToken = short.access_token || short.data?.[0]?.access_token
+  // Permessi concessi dal cliente (puo' togliere quelli facoltativi, es. i commenti).
+  const granted = short.permissions ?? short.data?.[0]?.permissions
+  const permissions = (Array.isArray(granted) ? granted : String(granted || '').split(',')).map((p) => p.trim()).filter(Boolean)
   if (!shortToken) throw new Error('Instagram non ha restituito il token')
 
   // Token di 60 giorni. Meta ha rifiutato sia GET sia POST sull'indirizzo della
@@ -128,7 +131,7 @@ export async function connectInstagramFromCode(
   }
 
   // L'account manda a Facevoice i messaggi Direct che riceve.
-  await igFetch(`${IG_GRAPH}/me/subscribed_apps?${new URLSearchParams({ subscribed_fields: 'messages', access_token: long.access_token })}`, { method: 'POST' }).catch(
+  await igFetch(`${IG_GRAPH}/me/subscribed_apps?${new URLSearchParams({ subscribed_fields: permissions.includes('instagram_business_manage_comments') || !permissions.length ? 'messages,comments' : 'messages', access_token: long.access_token })}`, { method: 'POST' }).catch(
     (error) => console.warn('instagram subscribe:', igUserId, error instanceof Error ? error.message : error)
   )
 
@@ -140,7 +143,7 @@ export async function connectInstagramFromCode(
     platform: 'instagram',
     externalId: igUserId,
     displayName: username || profile.name || igUserId,
-    meta: { via: 'instagram_login', username: profile.username || null, picture: profile.profile_picture_url || null, token_expires_at: expiresAt },
+    meta: { via: 'instagram_login', username: profile.username || null, picture: profile.profile_picture_url || null, token_expires_at: expiresAt, permissions },
     secret,
     userId,
   })
@@ -188,6 +191,12 @@ async function tokenFor(connection: Connection, secret: InstagramSecret): Promis
 }
 
 /** Se il collegamento usa l'accesso di Instagram restituisce le sue credenziali. */
+/** Token valido di un Instagram collegato con l'accesso di Instagram (null per gli altri). */
+export async function instagramLoginToken(connection: Connection): Promise<string | null> {
+  const secret = await instagramLoginSecret(connection)
+  return secret ? tokenFor(connection, secret) : null
+}
+
 export async function instagramLoginSecret(connection: Connection): Promise<InstagramSecret | null> {
   if ((connection.meta as { via?: string })?.via !== 'instagram_login') return null
   const secret = await readConnectionSecret<unknown>(connection.id)

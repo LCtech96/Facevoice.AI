@@ -33,7 +33,7 @@ const CHANNEL_STYLE: Record<string, string> = {
   web: 'Canale: chat del sito. Breve e chiaro.',
 }
 
-const RULES = `
+export const RULES = `
 ## Regole fisse (valgono sopra le istruzioni del cliente)
 - Rispondi SOLO con il testo del messaggio da inviare, nella lingua indicata all'inizio.
 - Usa solo le informazioni delle istruzioni e della conversazione. Se non sai qualcosa (prezzi, disponibilità, orari, condizioni), NON inventare: di' che verifichi e rispondi a breve.
@@ -56,7 +56,7 @@ async function dashboardLanguage(workspaceId: string): Promise<string> {
  * (es. "test", "ok"), quella dei messaggi precedenti della persona; altrimenti
  * la lingua della dashboard.
  */
-async function languageFor(workspaceId: string, current: string, previous: string[]): Promise<{ language: string; source: 'messaggio' | 'conversazione' | 'dashboard' }> {
+export async function languageFor(workspaceId: string, current: string, previous: string[]): Promise<{ language: string; source: 'messaggio' | 'conversazione' | 'dashboard' }> {
   const fromMessage = replyLanguage(current)
   if (fromMessage) return { language: fromMessage, source: 'messaggio' }
   const fromThread = replyLanguage(previous.join('\n'))
@@ -66,7 +66,7 @@ async function languageFor(workspaceId: string, current: string, previous: strin
 
 type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; created_at: string }
 
-async function workspaceName(workspaceId: string): Promise<string> {
+export async function workspaceName(workspaceId: string): Promise<string> {
   const { data } = await supabaseAdmin.from('workspaces').select('name').eq('id', workspaceId).maybeSingle()
   return (data?.name as string | undefined) || 'la nostra attività'
 }
@@ -80,10 +80,12 @@ export type ReplyOutcome = { status: 'sent' | 'pending' | 'skipped' | 'failed'; 
 export async function respondToMessage(db: WorkspaceDb, messageId: string, options: { force?: boolean } = {}): Promise<ReplyOutcome> {
   const { data: message } = await db
     .from('social_messages')
-    .select('id, platform, contact_id, contact_name, direction, body, subject, external_id, channel_account_id, created_at')
+    .select('id, platform, kind, contact_id, contact_name, direction, body, subject, external_id, channel_account_id, created_at')
     .eq('id', messageId)
     .maybeSingle()
   if (!message || message.direction !== 'in') return { status: 'skipped', reason: 'messaggio non trovato' }
+  // I commenti hanno la loro pagina e le loro risposte (lib/saas/comments.ts).
+  if (message.kind === 'comment') return { status: 'skipped', reason: 'è un commento' }
 
   const { data: channel } = await db.from('social_channels').select('automation_enabled, reply_mode').eq('platform', message.platform).maybeSingle()
   // force: bozza chiesta a mano dall'omnichat, anche con l'automazione spenta (e mai inviata da sola).
@@ -98,6 +100,7 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
     .select('id', { count: 'exact', head: true })
     .eq('platform', message.platform)
     .eq('contact_id', message.contact_id)
+    .eq('kind', 'message')
     .eq('direction', 'out')
     .in('status', ['pending', 'sent'])
     .gte('created_at', message.created_at)
@@ -108,6 +111,7 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
     .select('direction, body, status, created_at')
     .eq('platform', message.platform)
     .eq('contact_id', message.contact_id)
+    .eq('kind', 'message')
     .lte('created_at', message.created_at)
     .order('created_at', { ascending: false })
     .limit(12)

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, LayoutGrid, Loader2, LogOut, MessagesSquare, SlidersHorizontal } from 'lucide-react'
+import { Bot, LayoutGrid, Loader2, LogOut, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
 import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
@@ -15,6 +15,7 @@ import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
 const NAV = [
   { href: '/app', label: 'Panoramica', icon: LayoutGrid },
   { href: '/app/omnichat', label: 'Omnichat', icon: MessagesSquare },
+  { href: '/app/commenti', label: 'Commenti', icon: MessageSquareText },
   { href: '/app/istruzioni', label: 'Istruzioni', icon: SlidersHorizontal },
   { href: '/app/assistente', label: 'Assistente AI', short: 'Assistente', icon: Bot },
 ]
@@ -182,7 +183,7 @@ function Frame({ children }: { children: ReactNode }) {
 
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">{children}</div>
 
-      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-4 border-t border-[var(--border-color)] bg-[var(--background-secondary)] md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-5 border-t border-[var(--border-color)] bg-[var(--background-secondary)] md:hidden">
         {NAV.map(({ href, label, short, icon: Icon }) => (
           <Link key={href} href={href} className={`flex flex-col items-center gap-1 py-2 text-[11px] ${active(href) ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'}`}>
             <Icon className="h-5 w-5" /> {short || label}
