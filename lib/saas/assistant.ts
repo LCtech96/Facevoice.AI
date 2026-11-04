@@ -6,7 +6,9 @@ import { canPublish } from './publish'
 import { workspaceName } from './responder'
 import {
   cancelPost,
+  carouselOutline,
   createPost,
+  editCarousel,
   editImage,
   generateImage,
   getPost,
@@ -32,7 +34,15 @@ export type ChatAction =
 
 export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'>
 
-export type ChatTurn = { role: 'user' | 'assistant'; text: string; images?: string[]; actions?: ChatAction[]; at: string }
+export type ChatTurn = {
+  role: 'user' | 'assistant'
+  text: string
+  images?: string[]
+  /** Cosa mostra ogni foto allegata (stesso ordine), letto dall'AI. */
+  imageNotes?: (string | null)[]
+  actions?: ChatAction[]
+  at: string
+}
 
 const chatKey = (workspaceId: string, userId: string) => `ws_chat:${workspaceId}:${userId}`
 const MAX_TURNS = 40
@@ -91,7 +101,13 @@ A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
 {"reply": "risposta finale"}
 
 Strumenti:
-- "create_post": {"brief": "tutto quello che ha chiesto: argomento, offerta, tono, a chi si rivolge, dettagli", "images": ["url", ...] opzionale, "kind": "photos|carousel", "ai_images": true} → crea un post IN BOZZA e lo mostra con l'anteprima (didascalia modificabile, scelta di giorno e ora, pulsanti Programma e Pubblica ora). "photos" = le sue foto così come sono (consigliato quando allega foto, salvo che chieda grafiche o un carosello con scritte); "carousel" = slide grafiche con testi grandi e i colori del marchio, con le sue foto dentro e, dove mancano, immagini create dall'AI (ai_images false per evitarle). Se non passi "images" usa le foto allegate al messaggio. Ci vuole fino a un paio di minuti.
+- "create_post": {"brief": "tutto quello che ha chiesto, con le sue parole", "images": ["url", ...] opzionale, "kind": "photos|carousel", "slides": [{"title": "", "text": ""}, ...] opzionale, "hook": "opzionale", "label": "opzionale", "closing": false, "ai_images": true} → crea un post IN BOZZA e lo mostra con l'anteprima (didascalia modificabile, giorno e ora, Programma e Pubblica ora).
+  · "photos" = le sue foto così come sono, senza scritte.
+  · "carousel" CON foto = UNA SLIDE PER FOTO, nell'ordine esatto delle foto (Foto 1 = slide 1 = copertina con il gancio in grande; Foto 2 = slide 2…), testo SOPRA la foto e il logo su ogni slide. Nessuna foto viene aggiunta o tolta. In "slides" metti un elemento per ogni foto, nello stesso ordine: per la Foto k scrivi titolo e testo della slide k seguendo ALLA LETTERA quello che il cliente ha chiesto per quella foto (slides[0].title = riga piccola sotto il gancio della copertina). "closing": true solo se chiede una slide finale in più.
+  · "carousel" SENZA foto = slide grafiche con testi grandi, colori del marchio e immagini create dall'AI (ai_images false per evitarle).
+  Se non passi "images" usa le foto allegate al messaggio, nel loro ordine. Ci vuole fino a un paio di minuti.
+- "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà: testi di singole slide (n = numero della slide, la copertina è 1), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere, gancio. Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima".
+- "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto (prima di correggerlo).
 - "edit_image": {"image": "url", "instruction": "cosa cambiare"} → modifica una foto con l'AI (luce, sfondo, colori, togliere oggetti, aggiungere una scritta…) e mostra il risultato. Per usarla in un post passala poi in "images" di create_post o update_post.
 - "generate_image": {"description": "cosa deve mostrare"} → crea un'immagine da zero.
 - "update_post": {"post_id": "…", "caption": "…", "facebook": "…", "platforms": ["instagram","facebook"], "images": ["url", ...]} → cambia testi, social o immagini di un post non ancora pubblicato.
@@ -100,12 +116,13 @@ Strumenti:
 - "unschedule_post": {"post_id": "…"} → annulla la programmazione (il post torna in bozza).
 - "list_posts": {"status": "draft|scheduled|published|failed|all"} → elenco dei post con stato, data e id.
 - "show_post": {"post_id": "…"} → mostra di nuovo l'anteprima di un post.
-- "set_brand": {"dark": "#rrggbb", "accent": "#rrggbb", "handle": "@nome o testo in fondo alle slide"} → colori e firma dei caroselli grafici.
+- "set_brand": {"dark": "#rrggbb", "accent": "#rrggbb", "handle": "@nome o testo in fondo alle slide", "logo": "url di una foto allegata, oppure \"\" per toglierlo"} → colori, firma e LOGO dei caroselli (il logo va in alto su ogni slide). Se il cliente allega il suo logo e chiede di usarlo, passalo qui prima di create_post. Se chiede il logo ma non l'ha mai caricato, chiedigli di allegarlo.
 - "messages_overview": {"hours": 24, "platform": "all|instagram|facebook|email|whatsapp", "kind": "all|message|comment"} → messaggi e commenti ricevuti nel periodo (chi, canale, testo, ora), per domande come "che proposte di collaborazione abbiamo ricevuto oggi?" o "chi ha chiesto i prezzi questa settimana?". Poi rispondi tu con un riassunto chiaro: nomi, cosa chiedono, cosa conviene fare.
 
 Regole:
 - Non dire mai "non posso" se c'è uno strumento adatto: usalo.
-- Le foto allegate sono nelle righe "[Foto allegate…]" come indirizzi: usa quelli, nell'ordine. Le foto mandate prima nella conversazione sono in "[Foto mandate prima…]".
+- Le foto allegate sono nelle righe "[Foto allegate…]", numerate nell'ordine in cui le ha caricate, con l'indirizzo e la descrizione di cosa mostrano: LE VEDI attraverso quelle descrizioni. Usale per abbinare i testi alle foto giuste. Le foto mandate prima nella conversazione sono in "[Foto mandate prima…]".
+- Quando il cliente dice "la prima…", "la seconda…", rispetta quell'ordine: non riordinare, non saltare, non aggiungere foto. Se dice che l'ordine va cambiato in base al contenuto (es. "metti prima la piscina"), usa le descrizioni per trovare la foto e passa "images" nell'ordine nuovo.
 - Dopo create_post o edit_image l'anteprima compare da sola sotto la tua risposta: non ripetere l'indirizzo, di' in breve cosa hai fatto e cosa può fare (modificare il testo, programmare, pubblicare).
 - Non pubblicare né programmare se non lo ha chiesto. Se chiede di programmare un post appena creato, fai create_post e poi schedule_post nella stessa richiesta.
 - Non inventare prezzi, date, promozioni o dati che non ti ha dato.`
@@ -157,7 +174,8 @@ export async function runClientAssistant(
   userId: string,
   message: string,
   images: string[],
-  history: ChatTurn[]
+  history: ChatTurn[],
+  imageNotes: (string | null)[] = []
 ): Promise<{ reply: string; actions: ChatAction[] }> {
   if (!hasAIProvider()) return { reply: 'L’assistente non è disponibile in questo momento.', actions: [] }
   const [name, connections, recent] = await Promise.all([workspaceName(db.workspaceId), listConnections(db).catch(() => []), listPosts(db, { limit: 8 }).catch(() => [])])
@@ -173,11 +191,15 @@ export async function runClientAssistant(
         .join('\n')
     : 'nessuno'
   const now = new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  const earlier = history.filter((t) => t.role === 'user').slice(-6).flatMap((t) => t.images || [])
+  const earlierTurns = history.filter((t) => t.role === 'user' && t.images?.length).slice(-4)
+  const earlier = earlierTurns.flatMap((t) => t.images || [])
+  const earlierLines = earlierTurns.flatMap((t) => (t.images || []).map((url, k) => `- ${url}${t.imageNotes?.[k] ? ` — ${t.imageNotes[k]}` : ''}`))
   const request = [
     message || 'Guarda le foto allegate.',
-    images.length ? `[Foto allegate a questo messaggio, in ordine]\n${images.join('\n')}` : '',
-    earlier.length ? `[Foto mandate prima in questa conversazione]\n${earlier.join('\n')}` : '',
+    images.length
+      ? `[Foto allegate a questo messaggio, nell'ordine in cui le ha caricate]\n${images.map((url, k) => `Foto ${k + 1}: ${url}\n   mostra: ${imageNotes[k] || '(descrizione non disponibile)'}`).join('\n')}`
+      : '',
+    earlierLines.length ? `[Foto mandate prima in questa conversazione]\n${earlierLines.join('\n')}` : '',
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -207,15 +229,33 @@ export async function runClientAssistant(
       switch (call.tool) {
         case 'create_post': {
           const given = asUrls(args.images)
+          const chosen = given.length ? given : images
+          // Descrizioni gia' lette, nello stesso ordine delle foto scelte.
+          const noteFor = (url: string) => {
+            const k = images.indexOf(url)
+            if (k >= 0) return imageNotes[k] ?? null
+            for (const t of earlierTurns) {
+              const j = (t.images || []).indexOf(url)
+              if (j >= 0) return t.imageNotes?.[j] ?? null
+            }
+            return null
+          }
           const post = await createPost(db, {
             brief: asText(args.brief) || message,
-            images: given.length ? given : images,
+            images: chosen,
             kind: args.kind === 'carousel' ? 'carousel' : args.kind === 'photos' ? 'photos' : undefined,
             aiImages: args.ai_images !== false,
             userId,
+            photoNotes: chosen.map(noteFor),
+            slides: Array.isArray(args.slides)
+              ? (args.slides as { title?: unknown; text?: unknown }[]).map((x) => ({ title: typeof x?.title === 'string' ? x.title : undefined, text: typeof x?.text === 'string' ? x.text : undefined }))
+              : undefined,
+            hook: asText(args.hook),
+            label: asText(args.label),
+            closing: args.closing === true,
           })
           showPost(post)
-          result = { creato: true, post_id: post.id, tipo: post.kind, immagini: post.media.length, titolo: post.title, didascalia: post.caption.slice(0, 300) }
+          result = { creato: true, post_id: post.id, tipo: post.kind, immagini: post.media.length, titolo: post.title, didascalia: post.caption.slice(0, 300), slide: (await carouselOutline(post.id))?.slide }
           break
         }
         case 'edit_image': {
@@ -278,8 +318,32 @@ export async function runClientAssistant(
           break
         }
         case 'set_brand': {
-          const brand = await setWorkspaceBrand(db.workspaceId, { dark: asText(args.dark), accent: asText(args.accent), light: asText(args.light), handle: asText(args.handle) })
-          result = { salvato: true, firma: brand.handle, colori: brand.palette }
+          const logoArg = typeof args.logo === 'string' ? (args.logo.trim() ? asUrls([args.logo])[0] || args.logo.trim() : '') : undefined
+          const brand = await setWorkspaceBrand(db.workspaceId, { dark: asText(args.dark), accent: asText(args.accent), light: asText(args.light), handle: asText(args.handle), logo: logoArg })
+          result = { salvato: true, firma: brand.handle, colori: brand.palette, logo: brand.logo ? 'impostato' : 'nessuno' }
+          break
+        }
+        case 'edit_carousel': {
+          const slides = Array.isArray(args.slides)
+            ? (args.slides as { n?: unknown; title?: unknown; text?: unknown }[])
+                .filter((x) => typeof x?.n === 'number')
+                .map((x) => ({ n: x.n as number, title: typeof x.title === 'string' ? x.title : undefined, text: typeof x.text === 'string' ? x.text : undefined }))
+            : undefined
+          const nums = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isFinite(n)) : undefined)
+          const post = await editCarousel(db, postId, {
+            slides,
+            order: nums(args.order),
+            remove: nums(args.remove),
+            hook: asText(args.hook),
+            label: asText(args.label),
+            closing: typeof args.closing === 'boolean' ? args.closing : undefined,
+          })
+          showPost(post)
+          result = { rifatto: true, post_id: post.id, slide: (await carouselOutline(post.id))?.slide }
+          break
+        }
+        case 'post_outline': {
+          result = (await carouselOutline(postId)) || { errore: 'non è un carosello con le foto' }
           break
         }
         case 'messages_overview':

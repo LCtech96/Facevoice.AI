@@ -445,3 +445,103 @@ export async function fitPostPhoto(input: Buffer): Promise<Buffer> {
   const front = await sharp(rotated).resize(W - 40, H - 40, { fit: 'inside' }).toBuffer()
   return sharp(backdrop).composite([{ input: front, gravity: 'center' }]).flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toBuffer()
 }
+
+// --- Carosello con le foto del cliente, testo sopra la foto -----------------------
+
+export type PhotoSlide = { title: string; text: string }
+
+/** Logo del cliente come PNG (trasparenza conservata), lato lungo max 260 px. */
+async function logoData(url: string | null | undefined): Promise<{ src: string; width: number; height: number } | null> {
+  if (!url) return null
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+    if (!res.ok) return null
+    const png = await sharp(Buffer.from(await res.arrayBuffer())).rotate().resize(260, 140, { fit: 'inside', withoutEnlargement: true }).png().toBuffer()
+    const meta = await sharp(png).metadata()
+    return { src: `data:image/png;base64,${png.toString('base64')}`, width: meta.width || 200, height: meta.height || 100 }
+  } catch {
+    return null
+  }
+}
+
+/** Una foto a tutta pagina con il testo in sovrimpressione in basso, logo in alto. */
+function photoSlide(
+  t: Theme,
+  photo: string,
+  slide: PhotoSlide,
+  i: number,
+  n: number,
+  logo: { src: string; width: number; height: number } | null,
+  cover: { hook: string; label: string } | null
+) {
+  const titleSize = cover ? hookSize(cover.hook) : slide.title.length > 50 ? 60 : slide.title.length > 30 ? 70 : 80
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.solid, color: BRAND.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={photo} width={W} height={H} style={{ position: 'absolute', top: 0, left: 0, width: W, height: H, objectFit: 'cover' }} />
+      {/* Ombra in alto (logo e numero leggibili) e in basso (testo). */}
+      <div style={{ position: 'absolute', top: 0, left: 0, width: W, height: 260, display: 'flex', background: 'linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 100%)' }} />
+      <div style={{ position: 'absolute', bottom: 0, left: 0, width: W, height: 820, display: 'flex', background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, ${alpha(t.solid, 0.55)} 38%, ${alpha(t.solid, 0.92)} 100%)` }} />
+      {logo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logo.src} width={logo.width} height={logo.height} style={{ position: 'absolute', top: 48, left: 56, width: logo.width, height: logo.height }} />
+      ) : null}
+      <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: BRAND.ink, display: 'flex' }}>{counter(i, n)}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', padding: '0 72px 56px', position: 'relative' }}>
+        {cover?.label ? <div style={{ display: 'flex', fontSize: 26, color: t.label === t.ink ? BRAND.ink : t.label, letterSpacing: 3, marginBottom: 20 }}>{cover.label.toUpperCase()}</div> : null}
+        {!cover ? <div style={{ display: 'flex', width: 110, height: 10, borderRadius: 5, background: t.accent, marginBottom: 30 }} /> : null}
+        <div style={{ display: 'flex', fontSize: titleSize, fontWeight: 800, lineHeight: 1.02, letterSpacing: -1.5 }}>{cover ? cover.hook : slide.title}</div>
+        {(cover ? slide.title : slide.text) ? (
+          <div style={{ display: 'flex', fontSize: cover ? 34 : 36, lineHeight: 1.36, color: 'rgba(248, 248, 240, 0.9)', marginTop: 24 }}>{cover ? slide.title : slide.text}</div>
+        ) : null}
+        {cover ? (
+          <div style={{ display: 'flex', marginTop: 36 }}>
+            <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 30, fontWeight: 800, padding: '18px 70px', borderRadius: 999, letterSpacing: 1 }}>SCORRI</div>
+          </div>
+        ) : null}
+        {t.handle ? <div style={{ display: 'flex', fontSize: 28, color: 'rgba(248, 248, 240, 0.8)', marginTop: 30 }}>{t.handle}</div> : null}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Carosello fatto con le foto del cliente, UNA SLIDE PER FOTO nell'ordine dato:
+ * la prima e' la copertina (gancio grande), le altre hanno titolo e testo sopra la
+ * foto. Logo del cliente su ogni slide. Chiusura solo se richiesta (max 10 in tutto).
+ */
+export async function createPhotoCarousel(input: {
+  photos: string[]
+  slides: PhotoSlide[]
+  hook: string
+  label?: string
+  cta?: Cta | null
+  palette?: Palette
+  handle?: string
+  logo?: string | null
+  mix?: number
+  storage?: { bucket: string; folder: string }
+}): Promise<string[]> {
+  const photos = input.photos.slice(0, input.cta ? 9 : 10)
+  if (!photos.length) throw new Error('nessuna foto per il carosello')
+  const themes = themesFor(input.palette || BRAND, input.handle ?? '')
+  const mix = MIXES[(((input.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length]
+  const accentTheme = themes[mix.cover]
+  const [logo, ...fitted] = await Promise.all([
+    logoData(input.logo),
+    ...photos.map(async (url) => {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
+      if (!res.ok) throw new Error(`foto non scaricata (${res.status})`)
+      // A tutta pagina (ritaglio sulla parte piu' interessante): il testo va sopra la foto.
+      const jpeg = await sharp(Buffer.from(await res.arrayBuffer())).rotate().resize(W, H, { fit: 'cover', position: 'attention' }).jpeg({ quality: 86 }).toBuffer()
+      return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+    }),
+  ])
+  const n = photos.length + (input.cta ? 1 : 0)
+  const nodes = photos.map((_, k) =>
+    photoSlide(accentTheme, fitted[k], input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null)
+  )
+  if (input.cta) nodes.push(ctaSlide(themes[mix.cta], n, n, input.cta))
+  const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
+  return Promise.all(jpegs.map((jpeg) => upload(jpeg, input.storage)))
+}

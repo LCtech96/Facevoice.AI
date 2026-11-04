@@ -420,14 +420,14 @@ Niente commenti, niente consigli, niente risposta al cliente.`
  * Descrive foto e video ricevuti in Direct, per rispondere sapendo cosa e' stato
  * mandato. Gemini legge anche i video; Claude (riserva) solo le immagini.
  */
-export async function describeMedia(media: ImageInput[]): Promise<string> {
+export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, feature = 'lettura_media_direct'): Promise<string> {
   if (!media.length) return ''
   if (geminiUsable()) {
     try {
-      const result = await tryGemini([{ role: 'user', content: MEDIA_PROMPT, attachments: media }], undefined, {
+      const result = await tryGemini([{ role: 'user', content: prompt, attachments: media }], undefined, {
         temperature: 0.1,
         maxOutputTokens: 600,
-        feature: 'lettura_media_direct',
+        feature,
       })
       if (result.message.trim()) return result.message.trim()
     } catch (error) {
@@ -448,12 +448,12 @@ export async function describeMedia(media: ImageInput[]): Promise<string> {
             type: 'image' as const,
             source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
           })),
-          { type: 'text' as const, text: MEDIA_PROMPT },
+          { type: 'text' as const, text: prompt },
         ],
       },
     ],
   })
-  recordUsage({ feature: 'lettura_media_direct', provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
+  recordUsage({ feature, provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
   return response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)

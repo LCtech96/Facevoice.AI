@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
-import { createCarousel, fitPostPhoto, PALETTE_MIXES, type Cta, type Palette, type Slide } from '@/lib/blog-image'
+import { createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, type Cta, type Palette, type Slide } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
@@ -97,7 +97,7 @@ Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`
 
 // --- Marchio del cliente ---------------------------------------------------------
 
-export type WorkspaceBrand = { palette: Palette; handle: string }
+export type WorkspaceBrand = { palette: Palette; handle: string; logo?: string | null }
 
 const DEFAULT_PALETTE: Palette = { night: '#0f1218', navy: '#141922', deep: '#222a38', blue: '#3b82f6', blueLight: '#bfd4ff', ink: '#f7f7f2' }
 
@@ -135,10 +135,14 @@ export async function workspaceBrand(workspaceId: string): Promise<WorkspaceBran
     saved = data?.value ? JSON.parse(data.value) : {}
   } catch {}
   const username = (connections[0]?.meta as { username?: string } | undefined)?.username
-  return { palette: { ...DEFAULT_PALETTE, ...(saved.palette || {}) }, handle: saved.handle ?? (username ? `@${username}` : await workspaceName(workspaceId)) }
+  return {
+    palette: { ...DEFAULT_PALETTE, ...(saved.palette || {}) },
+    handle: saved.handle ?? (username ? `@${username}` : await workspaceName(workspaceId)),
+    logo: saved.logo || null,
+  }
 }
 
-export async function setWorkspaceBrand(workspaceId: string, input: { dark?: string; accent?: string; light?: string; handle?: string }) {
+export async function setWorkspaceBrand(workspaceId: string, input: { dark?: string; accent?: string; light?: string; handle?: string; logo?: string | null }) {
   const current = await workspaceBrand(workspaceId)
   const next: WorkspaceBrand = { ...current }
   if (input.dark && input.accent) {
@@ -146,6 +150,11 @@ export async function setWorkspaceBrand(workspaceId: string, input: { dark?: str
     next.palette = paletteFrom(input.dark, input.accent, input.light)
   }
   if (typeof input.handle === 'string') next.handle = input.handle.trim().slice(0, 40)
+  if (input.logo === null || input.logo === '') next.logo = null
+  else if (typeof input.logo === 'string') {
+    if (!isOurMedia(input.logo)) throw new Error('logo non valido: caricalo qui in chat come immagine')
+    next.logo = input.logo
+  }
   const { error } = await supabaseAdmin
     .from('app_settings')
     .upsert({ key: brandKey(workspaceId), value: JSON.stringify(next), updated_at: new Date().toISOString() }, { onConflict: 'key' })
@@ -153,13 +162,38 @@ export async function setWorkspaceBrand(workspaceId: string, input: { dark?: str
   return next
 }
 
+// --- Lettura delle foto ---------------------------------------------------------
+
+const PHOTO_PROMPT = `Descrivi questa foto in italiano, in una o due frasi asciutte, per chi deve scrivere un post social: cosa mostra (ambiente, stanza, oggetti, persone, prodotto, luogo), dettagli utili (es. "camera matrimoniale con armadio bianco", "bagno con doccia e mobile in legno", "giardino con palme", "terrazza con tavolo e vista mare") e il testo leggibile se c'e'. Niente commenti.`
+
+/** Descrizione di ogni foto, una per una e nello stesso ordine (null se non riesce). */
+export async function describePhotos(urls: string[]): Promise<(string | null)[]> {
+  const out: (string | null)[] = new Array(urls.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    while (next < urls.length) {
+      const k = next++
+      try {
+        const small = await sharp(await download(urls[k])).rotate().resize(768, 768, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
+        out[k] = (await describeMedia([{ mimeType: 'image/jpeg', data: small.toString('base64') }], PHOTO_PROMPT, 'saas_lettura_foto')).replace(/\s+/g, ' ').trim().slice(0, 400) || null
+      } catch {
+        out[k] = null
+      }
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  return out
+}
+
+const numbered = (notes: (string | null)[]) => notes.map((n, k) => `Foto ${k + 1}: ${n || '(descrizione non disponibile)'}`).join('\n')
+
 // --- Testi dei post --------------------------------------------------------------
 
 type Texts = { title: string; caption: string; facebook: string; hook: string; label: string; slides: Slide[]; cta: Cta }
 
 const trim = (value: unknown, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 
-async function writeTexts(workspaceId: string, brief: string, kind: 'photos' | 'carousel', photoNotes: string, photoCount: number): Promise<Texts> {
+async function writeTexts(workspaceId: string, brief: string, kind: 'photos' | 'carousel' | 'photo_carousel', photoNotes: string, photoCount: number): Promise<Texts> {
   const [name, instructions] = await Promise.all([workspaceName(workspaceId), readInstructions(workspaceId).catch(() => null)])
   const voice = [instructions?.general, instructions?.instagram].map((t) => t?.trim()).filter(Boolean).join('\n\n').slice(0, 4000)
   const system = `Sei il social media manager di "${name}". Prepari un post per Instagram e Facebook dalle indicazioni del titolare${photoCount ? ' e dalle sue foto (te ne do la descrizione)' : ''}.
@@ -171,13 +205,18 @@ Regole:
 - "facebook": testo per Facebook (max 1000 caratteri), come la didascalia ma senza la fila di hashtag.
 - "title": titolo interno breve.
 ${
-  kind === 'carousel'
+  kind === 'photo_carousel'
+    ? `- È un CAROSELLO FATTO CON LE SUE FOTO, una slide per foto, NELL'ORDINE ESATTO delle foto: "slides" deve avere ESATTAMENTE ${photoCount} elementi e l'elemento numero k parla della Foto k (guarda la sua descrizione). Se il titolare dice a cosa serve ogni foto ("la prima…", "la seconda…"), segui alla lettera le sue indicazioni per quella foto.
+- La slide 1 è la copertina: "hook" è il gancio scritto in grande sopra la Foto 1 (max 40 caratteri, fortissimo, niente emoji) e slides[0].title è la riga piccola sotto il gancio (max 70 caratteri, slides[0].text vuoto).
+- Le altre slide: "title" max 45 caratteri e "text" max 140 caratteri, testo che va SOPRA la foto: breve e leggibile.
+- "label": etichetta sopra il gancio (max 26 caratteri, es. "NUOVO HOST") o "". "cta": lascialo vuoto salvo che il titolare chieda una slide finale.`
+    : kind === 'carousel'
     ? `- È un CAROSELLO GRAFICO: "hook" (gancio della prima slide, max 42 caratteri, fortissimo, niente emoji), "label" (etichetta sopra il gancio, max 30 caratteri, o ""), "slides" da 2 a 6 (${photoCount ? `una per foto, nello stesso ordine, ${photoCount} in tutto, poi eventuali altre` : '3-4'}; "title" max 55 caratteri, "text" max 180), "cta" per l'ultima slide ("title" max 45, "text" max 140, "button" max 26).`
     : '- Post con le foto del titolare: lascia "hook", "label", "slides" e "cta" vuoti.'
 }
 Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "", "label": "", "slides": [{"title": "", "text": ""}], "cta": {"title": "", "text": "", "button": ""}}`
   const result = await callAI(
-    [{ role: 'user', content: [`Indicazioni del titolare: ${brief}`, photoCount ? `Foto (${photoCount}, in ordine):\n${photoNotes || '(descrizione non disponibile)'}` : ''].filter(Boolean).join('\n\n') }],
+    [{ role: 'user', content: [`Indicazioni del titolare: ${brief}`, photoCount ? `Le sue foto (${photoCount}, in quest'ordine):\n${photoNotes || '(descrizione non disponibile)'}` : ''].filter(Boolean).join('\n\n') }],
     system,
     { feature: 'saas_post', temperature: 0.6, maxOutputTokens: 2500, workspaceId }
   )
@@ -186,8 +225,8 @@ Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "",
   const data = JSON.parse(json)
   const slides = (Array.isArray(data.slides) ? data.slides : [])
     .map((s: { title?: unknown; text?: unknown }) => ({ title: trim(s.title, 70), text: trim(s.text, 220) }))
-    .filter((s: Slide) => s.title)
-    .slice(0, 8)
+    .filter((s: Slide) => kind === 'photo_carousel' || s.title)
+    .slice(0, kind === 'photo_carousel' ? 10 : 8)
   const cta = data.cta || {}
   const caption = String(data.caption || '').trim().slice(0, 2200)
   if (!caption) throw new Error('l’AI non ha scritto la didascalia, riprova')
@@ -204,43 +243,120 @@ Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "",
 
 // --- Creazione, modifica, programmazione -----------------------------------------
 
-const toImage = (jpeg: Buffer) => ({ mimeType: 'image/jpeg', data: jpeg.toString('base64') })
+export type PhotoSlideInput = { title?: string; text?: string }
+
+/** Come e' fatto un carosello con le foto: serve per rifarlo quando il cliente chiede modifiche. */
+export type CarouselSource = {
+  photos: string[]
+  slides: { title: string; text: string }[]
+  hook: string
+  label: string
+  closing: { title: string; text: string; button: string } | null
+  mix: number
+}
+
+const sourceKey = (postId: string) => `ws_post_src:${postId}`
+
+async function saveSource(postId: string, source: CarouselSource) {
+  await supabaseAdmin
+    .from('app_settings')
+    .upsert({ key: sourceKey(postId), value: JSON.stringify(source), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+}
+
+export async function loadSource(postId: string): Promise<CarouselSource | null> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', sourceKey(postId)).maybeSingle()
+  try {
+    return data?.value ? (JSON.parse(data.value) as CarouselSource) : null
+  } catch {
+    return null
+  }
+}
+
+async function renderPhotoCarousel(workspaceId: string, source: CarouselSource): Promise<string[]> {
+  const brand = await workspaceBrand(workspaceId)
+  return createPhotoCarousel({
+    photos: source.photos,
+    slides: source.slides,
+    hook: source.hook,
+    label: source.label,
+    cta: source.closing,
+    palette: brand.palette,
+    handle: brand.handle,
+    logo: brand.logo,
+    mix: source.mix,
+    storage: { bucket: MEDIA_BUCKET, folder: `${workspaceId}/posts` },
+  })
+}
 
 /**
- * Crea un post in bozza. photos: le foto del cliente cosi' come sono (ritagliate
- * 4:5, o intere su sfondo sfocato); carousel: slide grafiche con i suoi colori,
- * con le sue foto dentro (le altre immagini le crea l'AI, se richiesto).
+ * Crea un post in bozza.
+ * - photos: le foto del cliente cosi' come sono (ritagliate 4:5, o intere su sfondo sfocato);
+ * - carousel con foto: UNA SLIDE PER FOTO, nell'ordine in cui le ha caricate, testo sopra
+ *   la foto e logo; slides (dall'assistente) = i testi esatti, uno per foto;
+ * - carousel senza foto: slide grafiche con i suoi colori e immagini create dall'AI.
  */
 export async function createPost(
   db: WorkspaceDb,
-  input: { brief: string; kind?: 'photos' | 'carousel'; images?: string[]; platforms?: PostPlatform[]; aiImages?: boolean; userId?: string | null }
+  input: {
+    brief: string
+    kind?: 'photos' | 'carousel'
+    images?: string[]
+    platforms?: PostPlatform[]
+    aiImages?: boolean
+    userId?: string | null
+    /** Descrizioni gia' lette delle foto (stesso ordine): si evita di rileggerle. */
+    photoNotes?: (string | null)[]
+    /** Testi esatti delle slide, uno per foto e nello stesso ordine. */
+    slides?: PhotoSlideInput[]
+    hook?: string
+    label?: string
+    /** Slide finale di invito (solo se chiesta). */
+    closing?: boolean
+  }
 ): Promise<PostRow> {
   if (!hasAIProvider()) throw new Error('AI non configurata')
   const images = (input.images || []).filter(isOurMedia).slice(0, 10)
   const kind = input.kind || (images.length ? 'photos' : 'carousel')
   if (kind === 'photos' && !images.length) throw new Error('per un post con foto carica almeno una foto (o chiedi un carosello grafico)')
 
-  const originals = await Promise.all(images.map(download))
-  const fitted = await Promise.all(originals.map(fitPostPhoto))
-  const notes = fitted.length ? await describeMedia(fitted.slice(0, 6).map(toImage)).catch(() => '') : ''
-  const texts = await writeTexts(db.workspaceId, input.brief, kind, notes, images.length)
+  const notes = images.length
+    ? input.photoNotes?.length === images.length && input.photoNotes.every(Boolean)
+      ? input.photoNotes
+      : await describePhotos(images)
+    : []
+  const mode = kind === 'carousel' && images.length ? 'photo_carousel' : kind
+  const texts = await writeTexts(db.workspaceId, input.brief, mode, numbered(notes), images.length)
 
   let media: string[]
-  if (kind === 'photos') {
+  let source: CarouselSource | null = null
+  if (mode === 'photos') {
+    const fitted = await Promise.all(images.map(async (url) => fitPostPhoto(await download(url))))
     media = await Promise.all(fitted.map((jpeg) => store(db.workspaceId, 'posts', jpeg)))
+  } else if (mode === 'photo_carousel') {
+    // I testi dati dall'assistente (seguendo le indicazioni del cliente) vincono su quelli scritti qui.
+    const given = input.slides || []
+    const closing = input.closing && images.length < 10 ? texts.cta : null
+    const photos = images.slice(0, closing ? 9 : 10)
+    source = {
+      photos,
+      slides: photos.map((_, k) => ({
+        title: trim(given[k]?.title ?? texts.slides[k]?.title ?? '', 90),
+        text: trim(given[k]?.text ?? texts.slides[k]?.text ?? '', 220),
+      })),
+      hook: trim(input.hook || texts.hook || texts.title, 60),
+      label: trim(input.label ?? texts.label, 30),
+      closing,
+      mix: Math.floor(Math.random() * PALETTE_MIXES),
+    }
+    media = await renderPhotoCarousel(db.workspaceId, source)
   } else {
     const brand = await workspaceBrand(db.workspaceId)
     const slides = texts.slides.length ? texts.slides : [{ title: texts.title, text: '' }]
-    // Con piu' foto la prima va in copertina, le altre nelle slide.
-    const cover = images.length > 1 ? images[0] : null
-    const slidePhotos = images.length > 1 ? images.slice(1) : images
-    while (slides.length < slidePhotos.length) slides.push({ title: texts.title, text: '' })
-    const carousel = await createCarousel(texts.title, slides, input.brief, cover, {
+    const carousel = await createCarousel(texts.title, slides, input.brief, null, {
       hook: texts.hook || texts.title,
       label: texts.label,
       cta: texts.cta,
       mix: Math.floor(Math.random() * PALETTE_MIXES),
-      photos: slidePhotos,
       onlyMyImages: input.aiImages === false,
       palette: brand.palette,
       handle: brand.handle,
@@ -256,7 +372,7 @@ export async function createPost(
     .from('workspace_posts')
     .insert({
       status: 'draft',
-      kind,
+      kind: mode === 'photos' ? 'photos' : 'carousel',
       title: texts.title,
       caption: texts.caption,
       facebook_text: texts.facebook,
@@ -267,7 +383,68 @@ export async function createPost(
     .select(POST_COLUMNS)
     .single()
   if (error || !data) throw new Error(`post non salvato: ${error?.message}`)
+  if (source) await saveSource(data.id as string, source)
   return data as PostRow
+}
+
+/**
+ * Modifica un carosello fatto con le foto e lo rifa': testi di singole slide
+ * (numerate da 1), ordine delle foto, gancio, slide finale.
+ */
+export async function editCarousel(
+  db: WorkspaceDb,
+  id: string,
+  changes: { slides?: { n: number; title?: string; text?: string }[]; order?: number[]; hook?: string; label?: string; closing?: boolean; remove?: number[] }
+): Promise<PostRow> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const source = await loadSource(id)
+  if (!source) throw new Error('questo post non è un carosello con le foto: creane uno nuovo')
+  let photos = [...source.photos]
+  let slides = [...source.slides]
+  for (const change of changes.slides || []) {
+    const k = Math.round(change.n) - 1
+    if (k < 0 || k >= slides.length) continue
+    slides[k] = { title: typeof change.title === 'string' ? trim(change.title, 90) : slides[k].title, text: typeof change.text === 'string' ? trim(change.text, 220) : slides[k].text }
+  }
+  if (changes.remove?.length) {
+    const drop = new Set(changes.remove.map((n) => Math.round(n) - 1))
+    photos = photos.filter((_, k) => !drop.has(k))
+    slides = slides.filter((_, k) => !drop.has(k))
+  }
+  if (changes.order?.length) {
+    const order = changes.order.map((n) => Math.round(n) - 1)
+    if (order.length !== photos.length || new Set(order).size !== photos.length || order.some((k) => k < 0 || k >= photos.length)) {
+      throw new Error(`l'ordine deve contenere una volta ciascuno i numeri da 1 a ${photos.length}`)
+    }
+    photos = order.map((k) => photos[k])
+    slides = order.map((k) => slides[k])
+  }
+  if (!photos.length) throw new Error('serve almeno una foto')
+  const next: CarouselSource = {
+    ...source,
+    photos,
+    slides,
+    hook: typeof changes.hook === 'string' ? trim(changes.hook, 60) : source.hook,
+    label: typeof changes.label === 'string' ? trim(changes.label, 30) : source.label,
+    closing: changes.closing === false ? null : changes.closing === true && !source.closing ? { title: 'Ti aspettiamo', text: 'Scrivici in Direct per informazioni.', button: 'Scrivici' } : source.closing,
+  }
+  const media = await renderPhotoCarousel(db.workspaceId, next)
+  await saveSource(id, next)
+  return updatePost(db, id, { media })
+}
+
+/** Testi attuali delle slide di un carosello con le foto (per l'assistente). */
+export async function carouselOutline(id: string) {
+  const source = await loadSource(id)
+  if (!source) return null
+  return {
+    gancio: source.hook,
+    etichetta: source.label,
+    slide: source.slides.map((s, k) => ({ n: k + 1, titolo: k === 0 ? `(copertina) ${s.title}` : s.title, testo: s.text })),
+    slide_finale: Boolean(source.closing),
+  }
 }
 
 /** Social collegati dove il post puo' uscire (Instagram per primo). */

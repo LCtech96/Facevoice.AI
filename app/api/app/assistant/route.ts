@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { loadChat, refreshPostActions, runClientAssistant, saveChat, type ChatTurn } from '@/lib/saas/assistant'
+import { describePhotos } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -33,7 +34,12 @@ export async function POST(req: NextRequest) {
   await saveChat(access.workspace.id, access.userId, [...history, userTurn])
   let reply: ChatTurn
   try {
-    const result = await runClientAssistant(access.db, access.userId, message, images, history)
+    // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
+    if (images.length) {
+      userTurn.imageNotes = await describePhotos(images)
+      await saveChat(access.workspace.id, access.userId, [...history, userTurn])
+    }
+    const result = await runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [])
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
     console.error('saas assistente:', error instanceof Error ? error.message : error)
