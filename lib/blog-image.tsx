@@ -150,7 +150,7 @@ const hookSize = (text: string) => (text.length <= 24 ? 132 : text.length <= 36 
  * Prima slide: foto (se c'e') in alto, GANCIO in caratteri grandi e, sotto, il
  * titolo dell'articolo in piccolo (se diverso dal gancio), poi "SCORRI".
  */
-function coverSlide(t: Theme, hook: string, title: string, n: number, photo: string | null) {
+function coverSlide(t: Theme, hook: string, title: string, n: number, photo: string | null, label = 'NOVITÀ SULL’INTELLIGENZA ARTIFICIALE') {
   const subtitle = title.trim() !== hook.trim() ? title : null
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: photo ? t.solid : t.bg, color: t.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
@@ -163,7 +163,7 @@ function coverSlide(t: Theme, hook: string, title: string, n: number, photo: str
       ) : null}
       <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: photo ? BRAND.ink : t.soft, display: 'flex' }}>{counter(1, n)}</div>
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', padding: '0 72px 64px' }}>
-        <div style={{ display: 'flex', fontSize: 26, color: t.label, letterSpacing: 3, marginBottom: 22 }}>NOVITÀ SULL’INTELLIGENZA ARTIFICIALE</div>
+        {label ? <div style={{ display: 'flex', fontSize: 26, color: t.label, letterSpacing: 3, marginBottom: 22 }}>{label.toUpperCase()}</div> : null}
         <div style={{ display: 'flex', fontSize: hookSize(hook), fontWeight: 800, lineHeight: 0.98, letterSpacing: -2.5 }}>{hook}</div>
         {subtitle ? <div style={{ display: 'flex', fontSize: 32, lineHeight: 1.3, color: t.soft, marginTop: 26 }}>{subtitle}</div> : null}
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: 44 }}>
@@ -179,9 +179,22 @@ function coverSlide(t: Theme, hook: string, title: string, n: number, photo: str
  * Slide di contenuto: titolo forte e testo breve. Con l'immagine si alternano
  * due impaginazioni (foto in alto a tutta larghezza, oppure riquadro in basso).
  */
-function contentSlide(t: Theme, slide: Slide, i: number, n: number, image: string | null) {
+function contentSlide(t: Theme, slide: Slide, i: number, n: number, image: string | null, mine = false) {
   const size = slide.title.length > 60 ? (image ? 60 : 70) : image ? 70 : 82
   const textSize = image ? 34 : 38
+  // Foto o screenshot di Luca: grande e intera al centro, testo sopra e sotto.
+  if (image && mine) {
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '52px 72px 60px' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 28, color: t.soft }}>{counter(i, n)}</div>
+        <div style={{ display: 'flex', fontSize: slide.title.length > 50 ? 54 : 64, fontWeight: 800, lineHeight: 1.05, letterSpacing: -1.5, marginTop: 18 }}>{slide.title}</div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={image} width={936} height={660} style={{ width: 936, height: 660, objectFit: 'cover', borderRadius: 32, marginTop: 30 }} />
+        <div style={{ display: 'flex', fontSize: 32, lineHeight: 1.38, color: t.soft, marginTop: 28, marginBottom: 'auto' }}>{slide.text}</div>
+        {footer(t)}
+      </div>
+    )
+  }
   if (image && i % 2 === 0) {
     return (
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.solid, color: t.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
@@ -215,18 +228,23 @@ function contentSlide(t: Theme, slide: Slide, i: number, n: number, image: strin
   )
 }
 
-/** Ultima slide: invito a leggere l'articolo e a contattarci. */
-function ctaSlide(t: Theme, i: number, n: number) {
+export type Cta = { title: string; text: string; button: string }
+const BLOG_CTA: Cta = {
+  title: 'Vuoi portare l’AI nella tua azienda?',
+  text: 'Leggi l’articolo completo sul nostro blog e scrivici: ti mostriamo cosa si può fare, in concreto.',
+  button: 'facevoice.ai/blog',
+}
+
+/** Ultima slide: invito a leggere l'articolo e a contattarci (o il testo scelto per il post). */
+function ctaSlide(t: Theme, i: number, n: number, cta: Cta = BLOG_CTA) {
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '56px 80px 70px' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 28, color: t.soft }}>{counter(i, n)}</div>
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', marginBottom: 'auto' }}>
-        <div style={{ display: 'flex', fontSize: 88, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.5 }}>Vuoi portare l’AI nella tua azienda?</div>
-        <div style={{ display: 'flex', fontSize: 40, lineHeight: 1.4, color: t.soft, marginTop: 40 }}>
-          Leggi l’articolo completo sul nostro blog e scrivici: ti mostriamo cosa si può fare, in concreto.
-        </div>
+        <div style={{ display: 'flex', fontSize: cta.title.length > 50 ? 74 : 88, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.5 }}>{cta.title}</div>
+        <div style={{ display: 'flex', fontSize: 40, lineHeight: 1.4, color: t.soft, marginTop: 40 }}>{cta.text}</div>
         <div style={{ display: 'flex', marginTop: 60 }}>
-          <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 36, fontWeight: 800, padding: '24px 60px', borderRadius: 999 }}>facevoice.ai/blog</div>
+          <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 36, fontWeight: 800, padding: '24px 60px', borderRadius: 999 }}>{cta.button}</div>
         </div>
       </div>
       {footer(t)}
@@ -252,11 +270,27 @@ async function aiImage(prompt: string, width: number, height: number, label: str
   }
 }
 
-async function photoFromUrl(url: string): Promise<string | null> {
+/**
+ * Foto da un indirizzo, nella misura chiesta. Se la forma e' molto diversa (es. uno
+ * screenshot verticale in un riquadro orizzontale) non si taglia: si mostra intera
+ * su uno sfondo sfocato della stessa immagine.
+ */
+async function photoFromUrl(url: string, width = W, height = 720): Promise<string | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) })
     if (!res.ok) return null
-    const jpeg = await sharp(Buffer.from(await res.arrayBuffer())).rotate().resize(W, 720, { fit: 'cover', position: 'attention' }).jpeg({ quality: 85 }).toBuffer()
+    const input = await sharp(Buffer.from(await res.arrayBuffer())).rotate().toBuffer()
+    const meta = await sharp(input).metadata()
+    const ratio = (meta.width || 1) / (meta.height || 1)
+    const target = width / height
+    let jpeg: Buffer
+    if (ratio / target > 1.35 || target / ratio > 1.35) {
+      const backdrop = await sharp(input).resize(width, height, { fit: 'cover' }).blur(40).modulate({ brightness: 0.7 }).toBuffer()
+      const front = await sharp(input).resize(width - 60, height - 60, { fit: 'inside' }).toBuffer()
+      jpeg = await sharp(backdrop).composite([{ input: front, gravity: 'center' }]).jpeg({ quality: 86 }).toBuffer()
+    } else {
+      jpeg = await sharp(input).resize(width, height, { fit: 'cover', position: 'attention' }).jpeg({ quality: 86 }).toBuffer()
+    }
     return `data:image/jpeg;base64,${jpeg.toString('base64')}`
   } catch {
     return null
@@ -283,6 +317,16 @@ export type CarouselOptions = {
   slideImages?: boolean
   /** Indicazioni di Luca sullo stile delle immagini (dalla super chat). */
   imageNotes?: string | null
+  /** Foto di Luca per le slide di contenuto (indirizzi, nello stesso ordine delle slide). */
+  photos?: (string | null)[]
+  /** Solo le foto di Luca: niente immagini AI nelle slide che non ne hanno una. */
+  onlyMyImages?: boolean
+  /** Etichetta sopra il gancio della copertina ('' per toglierla). */
+  label?: string
+  /** Testo dell'ultima slide (predefinito: invito al blog). */
+  cta?: Cta
+  /** Slide di contenuto al massimo (Instagram: 10 immagini in tutto). */
+  maxSlides?: number
 }
 
 /** Crea e carica il carosello; restituisce gli indirizzi pubblici delle slide (la prima e' la copertina). */
@@ -293,7 +337,7 @@ export async function createCarousel(
   ownPhotoUrl?: string | null,
   options: CarouselOptions = {}
 ): Promise<{ urls: string[]; photo: 'ai' | 'grafica' | 'esistente'; slideImages: number; mix: number }> {
-  const content = slides.slice(0, 4)
+  const content = slides.slice(0, Math.min(8, Math.max(1, options.maxSlides ?? 4)))
   const n = content.length + 2
   const mixIndex = (((options.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length
   const mix = MIXES[mixIndex]
@@ -303,19 +347,22 @@ export async function createCarousel(
 
   // Foto della copertina e delle slide, tutte insieme (in parallelo).
   const own = ownPhotoUrl ? await photoFromUrl(ownPhotoUrl) : null
+  const mine = content.map((_, k) => options.photos?.[k] || null)
   const [cover, ...images] = await Promise.all([
-    own ? Promise.resolve(own) : aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood) + notes, W, 720, 'foto della copertina'),
+    own ? Promise.resolve(own) : options.onlyMyImages ? Promise.resolve(null) : aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood) + notes, W, 720, 'foto della copertina'),
     ...content.map((slide, k) =>
-      options.slideImages === false
-        ? Promise.resolve(null)
-        : aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, (k + 2) % 2 === 0 ? W : 920, (k + 2) % 2 === 0 ? 560 : 500, `immagine della slide ${k + 2}`)
+      mine[k]
+        ? photoFromUrl(mine[k]!, 936, 660)
+        : options.slideImages === false || options.onlyMyImages
+          ? Promise.resolve(null)
+          : aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, (k + 2) % 2 === 0 ? W : 920, (k + 2) % 2 === 0 ? 560 : 500, `immagine della slide ${k + 2}`)
     ),
   ])
   const hook = options.hook?.trim() || title
   const nodes = [
-    coverSlide(coverTheme, hook, title, n, cover),
-    ...content.map((s, k) => contentSlide(themes[k], s, k + 2, n, images[k])),
-    ctaSlide(THEMES[mix.cta], n, n),
+    coverSlide(coverTheme, hook, title, n, cover, options.label),
+    ...content.map((s, k) => contentSlide(themes[k], s, k + 2, n, images[k], Boolean(mine[k] && images[k]))),
+    ctaSlide(THEMES[mix.cta], n, n, options.cta),
   ]
   const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
   const urls = await Promise.all(jpegs.map(upload))
@@ -326,14 +373,14 @@ export async function createCarousel(
 export async function renderCarouselForTest(
   title: string,
   slides: Slide[],
-  options: { hook?: string; mix?: number; cover?: string | null; images?: (string | null)[] } = {}
+  options: { hook?: string; mix?: number; cover?: string | null; images?: (string | null)[]; mine?: boolean; label?: string; cta?: Cta } = {}
 ): Promise<Buffer[]> {
   const n = slides.length + 2
   const mix = MIXES[(options.mix ?? 0) % MIXES.length]
   const nodes = [
-    coverSlide(THEMES[mix.cover], options.hook || title, title, n, options.cover ?? null),
-    ...slides.map((s, k) => contentSlide(THEMES[mix.content[k % mix.content.length]], s, k + 2, n, options.images?.[k] ?? null)),
-    ctaSlide(THEMES[mix.cta], n, n),
+    coverSlide(THEMES[mix.cover], options.hook || title, title, n, options.cover ?? null, options.label),
+    ...slides.map((s, k) => contentSlide(THEMES[mix.content[k % mix.content.length]], s, k + 2, n, options.images?.[k] ?? null, options.mine)),
+    ctaSlide(THEMES[mix.cta], n, n, options.cta),
   ]
   return Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
 }

@@ -17,16 +17,28 @@ export type Draft = {
   threadId?: string | null
 }
 
-export type SocialAction = {
-  kind: 'social_message'
-  platform: 'instagram' | 'facebook'
-  key: string
-  name: string
-  text: string
-  lastIncomingAt: string | null
-  state?: 'sending' | 'sent' | 'error'
-  error?: string
-}
+type ActionState = { state?: 'sending' | 'sent' | 'error'; error?: string }
+
+export type SocialAction =
+  | ({
+      kind: 'social_message'
+      platform: 'instagram' | 'facebook'
+      key: string
+      name: string
+      text: string
+      lastIncomingAt: string | null
+    } & ActionState)
+  | ({
+      /** Carosello creato dalla super chat, da pubblicare con il pulsante. */
+      kind: 'post_preview'
+      draftId: string
+      title: string
+      urls: string[]
+      caption: string
+      facebook: string
+      platforms?: ('instagram' | 'facebook')[]
+      published?: string[]
+    } & ActionState)
 
 export type Usage = { calls: number; input: number; output: number; cost: number; models: Record<string, number> }
 

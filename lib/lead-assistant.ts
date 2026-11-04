@@ -25,6 +25,7 @@ import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo }
 import { loadBlogAutoSettings, loadBlogAutoState, requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { SITE_URL } from '@/lib/seo/site'
+import { createPostDraft, loadPostDraft, publishPostDraft } from '@/lib/social-posts'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -59,15 +60,25 @@ export type AssistantResult = {
   actions?: SocialAction[]
 }
 
-export type SocialAction = {
-  kind: 'social_message'
-  platform: 'instagram' | 'facebook'
-  key: string
-  name: string
-  text: string
-  /** Ultimo messaggio ricevuto da quella persona: Meta permette risposte libere entro 24 ore. */
-  lastIncomingAt: string | null
-}
+export type SocialAction =
+  | {
+      kind: 'social_message'
+      platform: 'instagram' | 'facebook'
+      key: string
+      name: string
+      text: string
+      /** Ultimo messaggio ricevuto da quella persona: Meta permette risposte libere entro 24 ore. */
+      lastIncomingAt: string | null
+    }
+  | {
+      /** Carosello in bozza: Luca lo vede, puo' cambiare i testi e lo pubblica con un pulsante. */
+      kind: 'post_preview'
+      draftId: string
+      title: string
+      urls: string[]
+      caption: string
+      facebook: string
+    }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
 
@@ -602,7 +613,8 @@ async function sitePlatforms(leads: Lead[]): Promise<{ results: { lead: Lead; pl
 // ---------------------------------------------------------------------
 
 const AGENT_PROMPT = `Sei l'assistente operativo di Luca nella pagina "Ricerca clienti" di Facevoice AI. Luca ti chiede cose in linguaggio naturale e tu le porti a termine usando gli strumenti, anche in più passaggi. Sii proattivo: se per fare una cosa serve prima un'altra (es. analizzare i siti per trovare le email), falla senza chiedere.
-Se nella richiesta c'è "[Contenuto delle immagini allegate da Luca]", è la trascrizione degli screenshot o delle foto che Luca ti ha mandato: usala come se la vedessi (nomi, email, oggetti, importi, conversazioni) e per cercare le persone con list_conversations o list_leads.
+Se nella richiesta c'è "[Contenuto delle immagini allegate da Luca]", è la trascrizione degli screenshot o delle foto che Luca ti ha mandato: usala come se la vedessi (nomi, email, oggetti, importi, conversazioni) e per cercare le persone con list_conversations o list_leads. Le immagini stesse sono salvate e si possono usare nei caroselli (create_carousel).
+Non rispondere MAI "non posso" o "devi farlo tu" se c'è uno strumento che lo fa: usalo. Per post, caroselli, blog e contenuti hai gli strumenti della sezione "Contenuti di Facevoice".
 
 A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
 {"tool": "nome_strumento", "args": {...}}
@@ -660,6 +672,8 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" le sostituisce, "clear" le cancella. Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
 - "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → cambia il blog automatico (days: 0 = domenica … 6 = sabato; ora italiana). Metti solo i campi da cambiare.
 - "publish_blog_now": {} → scrive e pubblica SUBITO un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram. Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Ci vogliono alcuni minuti: arriva una notifica con l'esito.
+- "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi.
+- "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → pubblica un carosello creato prima. Usalo SOLO se Luca dice esplicitamente di pubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
 Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
@@ -702,6 +716,9 @@ export async function runAssistant(
 ): Promise<AssistantResult> {
   if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
+  // Foto e screenshot allegati da Luca (salvati come file pubblici): servono a create_carousel.
+  const attachedImages = [...new Set(message.match(/https:\/\/\S+\/blog-images\/chat\/[\w.-]+\.jpg/g) || [])]
+  const attachedNotes = message.split('[Contenuto delle immagini allegate da Luca]')[1]?.split('\n[')[0]?.trim() || ''
   const drafts = new Map(openDrafts.map((d) => [d.leadId, d]))
   const changed = new Map<string, Draft>()
   const removed = new Set<string>()
@@ -1188,6 +1205,45 @@ export async function runAssistant(
           }
           const saved = await saveBlogAutoSettings(patch)
           result = { salvato: true, impostazioni: saved }
+          break
+        }
+        case 'create_carousel': {
+          const brief = asText(args.brief)?.trim() || message
+          const given = Array.isArray(args.images) ? args.images.filter((u): u is string => typeof u === 'string' && u.startsWith('https://')) : []
+          const images = given.length ? given : attachedImages
+          reportStatus(images.length ? `Creo il carosello con ${images.length === 1 ? 'la tua immagine' : `le tue ${images.length} immagini`}…` : 'Creo il carosello…')
+          const draft = await createPostDraft({
+            brief,
+            photos: images,
+            imageNotes: asText(args.image_notes) || attachedNotes,
+            onlyMyImages: args.only_my_images === true,
+            hook: asText(args.hook),
+            slides: Array.isArray(args.slides)
+              ? (args.slides as { title?: unknown; text?: unknown }[]).map((x) => ({ title: String(x.title || ''), text: String(x.text || '') })).filter((x) => x.title)
+              : undefined,
+          })
+          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook })
+          result = {
+            creato: true,
+            draftId: draft.id,
+            slide: draft.urls.length,
+            gancio: draft.hook,
+            titoli: draft.slides.map((x) => x.title),
+            didascalia: draft.caption.slice(0, 400),
+            nota: 'l’anteprima con il pulsante Pubblica compare a Luca sotto la tua risposta: non è ancora pubblicato',
+          }
+          break
+        }
+        case 'publish_carousel': {
+          const id = asText(args.draftId) || ''
+          if (!(await loadPostDraft(id))) {
+            result = { errore: 'bozza non trovata: crea prima il carosello con create_carousel' }
+            break
+          }
+          const platforms = (Array.isArray(args.platforms) ? args.platforms : ['instagram', 'facebook']).filter((p): p is 'instagram' | 'facebook' => p === 'instagram' || p === 'facebook')
+          reportStatus('Pubblico il carosello…')
+          const done = await publishPostDraft(id, { platforms, caption: asText(args.caption) })
+          result = { stato: done.status, instagram: done.results?.instagram ? 'pubblicato' : null, facebook: done.results?.facebook ? 'pubblicato' : null, errori: done.results?.errors }
           break
         }
         case 'publish_blog_now': {
