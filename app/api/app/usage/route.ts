@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   saas_post: 'Testi dei post',
   saas_lettura_foto: 'Lettura delle foto',
   saas_recupero_testi: 'Recupero versioni',
+  saas_estrai_foto: 'Foto dagli screenshot',
 }
 
 // Cambio dollaro → euro (BCE tramite Frankfurter), tenuto per 12 ore; se non risponde

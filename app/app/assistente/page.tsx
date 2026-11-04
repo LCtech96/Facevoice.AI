@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Coins, Facebook, History, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Coins, Facebook, History, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
@@ -563,6 +563,15 @@ function PostCard({
     )
   }
 
+  /** La slide scelta e' uno screenshot con piu' foto: ogni foto diventa una slide a se'. */
+  const extract = async () => {
+    if (pos < 0 || !confirm('Estrarre le foto da questa slide? Ogni foto dello screenshot diventa una slide; le altre slide restano uguali.')) return
+    const n = pos
+    const current = changed ? await saveOrder() : post
+    if (!current) return
+    await act('extract', { slides: [n + 1], base: current.media })
+  }
+
   const toggle = (p: 'instagram' | 'facebook') => setPlatforms((list) => (list.includes(p) ? list.filter((x) => x !== p) : [...list, p]))
   const working = busy !== null || chatBusy
 
@@ -653,6 +662,15 @@ function PostCard({
                 <Trash2 className="h-3.5 w-3.5" /> Togli
               </button>
             )}
+            {arrange && single !== null && !isClosing && (
+              <button
+                onClick={extract}
+                disabled={working}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2.5 py-1.5 disabled:opacity-30"
+              >
+                {busy === 'extract' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scissors className="h-3.5 w-3.5" />} Estrai foto
+              </button>
+            )}
             {sequence.length > 1 && (
               <button
                 onClick={() => setSelected(allSelected ? [] : [...sequence])}
@@ -688,6 +706,7 @@ function PostCard({
             </button>
           </div>
           {busy === 'edit_slides' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Correggo solo {which}…</p>}
+          {busy === 'extract' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Cerco le foto nello screenshot e preparo una slide per ognuna (fino a un minuto)…</p>}
           {changed && busy !== 'edit_slides' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Se scrivi una correzione, prima salvo il nuovo ordine.</p>}
         </div>
       )}

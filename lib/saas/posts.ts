@@ -704,6 +704,9 @@ export async function editSlides(db: WorkspaceDb, id: string, numbers: number[],
   await keepBaseline(post, source)
   const done: string[] = []
 
+  // "Estrai le foto, e' uno screenshot": ogni foto dentro l'immagine diventa una slide.
+  if (WANTS_EXTRACT.test(request)) return extractPhotos(db, id, picked)
+
   // Post senza testi nelle slide (foto o carosello grafico): si modifica solo l'immagine scelta.
   if (!source || total !== source.photos.length + (source.closing ? 1 : 0)) {
     if (picked.length > 4) throw new Error('per modificare le immagini scegli al massimo 4 slide per volta')
@@ -730,7 +733,8 @@ Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che 
 - slide normale: "titolo" (max 45 caratteri), "testo" (max 140 caratteri);
 - copertina: "gancio" (titolo grande, max 40 caratteri, niente emoji), "etichetta" (max 26 caratteri), "sottotitolo" (max 70 caratteri);
 - slide finale: "titolo", "testo", "pulsante" (max 26 caratteri);
-- "foto": SOLO se la richiesta chiede di cambiare la foto o l'immagine (luce, colori, sfondo, togliere o aggiungere qualcosa), l'istruzione precisa per modificarla con l'AI; altrimenti ometti.
+- "foto": SOLO se la richiesta chiede di cambiare la foto o l'immagine (luce, colori, sfondo, togliere o aggiungere qualcosa), l'istruzione precisa per modificarla con l'AI; altrimenti ometti;
+- "estrai": true SOLO se chiede di tirare fuori, separare o estrarre le foto contenute nell'immagine (es. uno screenshot o un collage con piu' foto): ogni foto diventera' una slide. In quel caso non mettere altri campi.
 Se la richiesta riguarda solo il testo non toccare la foto, e viceversa. Scrivi nella lingua della richiesta. Niente markdown.
 Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
   const result = await callAI(
@@ -744,6 +748,8 @@ Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
   } catch {}
   const allowed = new Set(picked)
   const changes = (Array.isArray(answer.slide) ? answer.slide : []).filter((c) => allowed.has(Math.round(Number(c?.n))))
+  const toExtract = changes.filter((c) => c.estrai === true).map((c) => Math.round(Number(c.n)))
+  if (toExtract.length) return extractPhotos(db, id, toExtract)
   const str = (v: unknown, max: number) => (typeof v === 'string' ? trim(v, max) : undefined)
 
   const next: CarouselSource = { ...source, photos: [...source.photos], slides: source.slides.map((x) => ({ ...x })), closing: source.closing ? { ...source.closing } : null }
@@ -790,6 +796,203 @@ Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
   await saveSource(id, next)
   console.log(`saas slide: post ${id.slice(0, 8)} corrette solo le slide ${[...redo].map((k) => k + 1).join(',')} (scelte ${picked.join(',')})`)
   return { post: await updatePost(db, id, { media }), done: [...new Set(done)] }
+}
+
+// --- Foto dentro uno screenshot: una slide per ogni foto ------------------------------
+
+const WANTS_EXTRACT = /estra(i|rre|tte|gg)|scre+n?\s?sh?ot|screen\b|tira(re)? fuori|separa(re)? le (foto|immagini)|una slide per (ogni|ciascuna) (foto|immagine)/i
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/**
+ * Bordi veri di una foto vicino al riquadro dato dall'AI: tra la grafica dello screenshot
+ * (righe/colonne piatte, tutte dello stesso colore) e la foto (piena di dettagli). Si cerca
+ * al massimo il 3% piu' in la' o piu' in qua; se il passaggio non si vede si tiene il bordo.
+ */
+export function refineBox(gray: Uint8Array, W: number, H: number, box: Box): Box {
+  const std = (values: number[]) => {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length
+    return Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length)
+  }
+  const row = (y: number, x0: number, x1: number) => {
+    const v: number[] = []
+    for (let x = Math.max(0, x0); x < Math.min(W, x1); x += 2) v.push(gray[y * W + x])
+    return v.length ? std(v) : 0
+  }
+  const col = (x: number, y0: number, y1: number) => {
+    const v: number[] = []
+    for (let y = Math.max(0, y0); y < Math.min(H, y1); y += 2) v.push(gray[y * W + x])
+    return v.length ? std(v) : 0
+  }
+  const FLAT = 2.5
+  const DETAIL = 4.5
+  // Da fuori verso dentro: serve prima un tratto piatto (la grafica), poi il primo con dettagli.
+  const edge = (from: number, to: number, measure: (i: number) => number) => {
+    const step = from < to ? 1 : -1
+    let seenFlat = false
+    for (let i = from; step > 0 ? i <= to : i >= to; i += step) {
+      const m = measure(i)
+      if (m <= FLAT) seenFlat = true
+      else if (seenFlat && m >= DETAIL && measure(i + step) >= DETAIL) return i
+    }
+    return null
+  }
+  const mY = Math.max(3, Math.round(H * 0.03))
+  const mX = Math.max(3, Math.round(W * 0.03))
+  let { x, y, w, h } = box
+  const x1 = x + w
+  const y1 = y + h
+  const inner = (a: number, b: number) => [a + Math.round((b - a) * 0.1), b - Math.round((b - a) * 0.1)] as const
+  const [cx0, cx1] = inner(x, x1)
+  const top = edge(Math.max(0, y - mY), Math.min(H - 2, y + mY), (i) => row(i, cx0, cx1))
+  const bottom = edge(Math.min(H - 1, y1 + mY), Math.max(1, y1 - mY), (i) => row(i, cx0, cx1))
+  const ny0 = top ?? y
+  const ny1 = bottom !== null ? bottom + 1 : y1
+  const [cy0, cy1] = inner(ny0, ny1)
+  const left = edge(Math.max(0, x - mX), Math.min(W - 2, x + mX), (i) => col(i, cy0, cy1))
+  const right = edge(Math.min(W - 1, x1 + mX), Math.max(1, x1 - mX), (i) => col(i, cy0, cy1))
+  const nx0 = left ?? x
+  const nx1 = right !== null ? right + 1 : x1
+  x = nx0
+  y = ny0
+  w = Math.max(1, nx1 - nx0)
+  h = Math.max(1, ny1 - ny0)
+  return { x, y, w, h }
+}
+
+/** Foto dentro uno screenshot: riquadri dall'AI (0-1000), rifiniti sui bordi veri, in ordine di lettura. */
+async function findPhotos(image: Buffer, workspaceId: string): Promise<{ boxes: Box[]; notes: string[]; width: number; height: number }> {
+  const base = await sharp(image).rotate().toBuffer()
+  const meta = await sharp(base).metadata()
+  const width = meta.width || 0
+  const height = meta.height || 0
+  if (!width || !height) throw new Error('immagine non leggibile')
+  const preview = await sharp(base).resize(1600, 1600, { fit: 'inside' }).jpeg({ quality: 88 }).toBuffer()
+  const raw = await describeMedia(
+    [{ mimeType: 'image/jpeg', data: preview.toString('base64') }],
+    `Questa immagine e' uno screenshot (di un'app, di un sito o di una galleria) o un collage che contiene delle fotografie. Trova OGNI fotografia vera (stanze, esterni, persone, prodotti, paesaggi) e ignora icone, loghi, pulsanti, testi, mappe e avatar piccoli. Per ciascuna dai il riquadro piu' preciso possibile, bordo per bordo, in coordinate da 0 a 1000 nel formato [ymin, xmin, ymax, xmax], e in "cosa" una breve descrizione in italiano di quello che mostra. Rispondi SOLO con JSON: {"foto": [{"box_2d": [ymin, xmin, ymax, xmax], "cosa": ""}]}`,
+    'saas_estrai_foto',
+    workspaceId
+  )
+  let list: { box_2d?: unknown; cosa?: unknown }[] = []
+  try {
+    const json = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/)?.[0] || ''
+    const data = JSON.parse(json)
+    list = Array.isArray(data) ? data : Array.isArray(data?.foto) ? data.foto : []
+  } catch {}
+  // Analisi dei bordi su una copia piu' piccola (lato lungo 1200 px).
+  const scale = Math.min(1, 1200 / Math.max(width, height))
+  const gw = Math.max(1, Math.round(width * scale))
+  const gh = Math.max(1, Math.round(height * scale))
+  const gray = new Uint8Array(await sharp(base).resize(gw, gh, { fit: 'fill' }).greyscale().raw().toBuffer())
+  const found: { box: Box; note: string }[] = []
+  for (const item of list) {
+    const b = Array.isArray(item?.box_2d) ? (item.box_2d as unknown[]).map(Number) : []
+    if (b.length !== 4 || b.some((v) => !Number.isFinite(v))) continue
+    const [ymin, xmin, ymax, xmax] = b.map((v) => Math.min(1000, Math.max(0, v)))
+    if (xmax - xmin < 80 || ymax - ymin < 50) continue // troppo piccola: icona o miniatura
+    const rough: Box = { x: Math.round((xmin / 1000) * gw), y: Math.round((ymin / 1000) * gh), w: Math.round(((xmax - xmin) / 1000) * gw), h: Math.round(((ymax - ymin) / 1000) * gh) }
+    const fine = refineBox(gray, gw, gh, rough)
+    // 2 px in meno per lato: nessun filo della grafica dello screenshot sul bordo.
+    const pad = Math.ceil(2 / scale)
+    const box: Box = { x: Math.round(fine.x / scale) + pad, y: Math.round(fine.y / scale) + pad, w: Math.round(fine.w / scale) - 2 * pad, h: Math.round(fine.h / scale) - 2 * pad }
+    box.w = Math.min(box.w, width - box.x)
+    box.h = Math.min(box.h, height - box.y)
+    if (box.w < 60 || box.h < 60) continue
+    found.push({ box, note: typeof item.cosa === 'string' ? item.cosa.slice(0, 200) : '' })
+  }
+  // Niente doppioni (una foto dentro l'altra): resta la piu' grande.
+  const area = (b: Box) => b.w * b.h
+  const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))
+  const unique = found
+    .sort((a, b) => area(b.box) - area(a.box))
+    .filter((f, i, all) => !all.slice(0, i).some((g) => overlap(f.box, g.box) > 0.6 * area(f.box)))
+  // Ordine di lettura: dall'alto in basso, nella stessa riga da sinistra a destra.
+  unique.sort((a, b) => (Math.abs(a.box.y - b.box.y) < height * 0.04 ? a.box.x - b.box.x : a.box.y - b.box.y))
+  return { boxes: unique.map((f) => f.box), notes: unique.map((f) => f.note), width, height }
+}
+
+/** Foto ritagliata pronta per una slide: ingrandita con cura se piccola, 4:5 (intera su sfondo sfocato se serve). */
+async function slidePhotoFrom(image: Buffer, box: Box): Promise<Buffer> {
+  const crop = await sharp(image).rotate().extract({ left: box.x, top: box.y, width: box.w, height: box.h }).toBuffer()
+  const up = box.w < 1080 ? await sharp(crop).resize({ width: 1080, kernel: 'lanczos3' }).sharpen({ sigma: 0.6 }).toBuffer() : crop
+  return fitPostPhoto(up)
+}
+
+/**
+ * La slide scelta e' uno screenshot (o un collage) con piu' foto: ogni foto diventa una
+ * slide a se', al suo posto e nello stesso ordine. La prima tiene i testi della slide
+ * (o il gancio, se e' la copertina); per le altre l'AI scrive titolo e testo. Le altre
+ * slide restano com'erano: cambia solo il numero (es. "05 / 12").
+ */
+export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number[]): Promise<{ post: PostRow; done: string[] }> {
+  const done: string[] = []
+  // Dalla slide piu' in fondo: cosi' i numeri delle altre scelte non cambiano mentre si lavora.
+  for (const n of [...new Set(numbers)].sort((a, b) => b - a)) {
+    const post = await getPost(db, id)
+    if (!post) throw new Error('post non trovato')
+    if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+    const source = await loadSource(id)
+    await keepBaseline(post, source)
+    const k = Math.round(n) - 1
+    const photos = source ? source.photos : post.kind === 'photos' ? post.media : null
+    if (!photos) throw new Error('in questo carosello grafico non si possono estrarre le foto: crealo dalle foto')
+    if (k < 0 || k >= photos.length) throw new Error(`la slide ${n} non ha una foto da cui estrarre`)
+    const image = await download(photos[k])
+    const { boxes, notes } = await findPhotos(image, db.workspaceId)
+    if (boxes.length < 2) throw new Error(`nella slide ${n} non ho trovato più foto da separare${boxes.length ? ' (ce n’è una sola)' : ''}`)
+    const room = 10 - (photos.length - 1) - (source?.closing ? 1 : 0)
+    if (room < 2) throw new Error('il carosello ha già quasi 10 slide (il massimo di Instagram): togline qualcuna e riprova')
+    const taken = boxes.slice(0, room)
+    const urls = await Promise.all(taken.map(async (box) => store(db.workspaceId, 'uploads', await slidePhotoFrom(image, box))))
+    const skipped = boxes.length - taken.length
+
+    if (!source) {
+      // Post con le foto senza scritte: si sostituisce la foto con quelle estratte.
+      const media = [...post.media.slice(0, k), ...urls, ...post.media.slice(k + 1)]
+      await updatePost(db, id, { media })
+    } else {
+      // Testi delle nuove slide (dalla seconda foto estratta in poi), nel tono del carosello.
+      const extra = taken.length - 1
+      let written: { titolo?: string; testo?: string }[] = []
+      try {
+        const result = await callAI(
+          [
+            {
+              role: 'user',
+              content: `Carosello: gancio «${source.hook}». Slide di partenza: «${source.slides[k]?.title || ''}» ${source.slides[k]?.text || ''}\nAltre slide (per lo stile): ${source.slides
+                .filter((_, j) => j !== k)
+                .slice(0, 6)
+                .map((x) => `«${x.title}» ${x.text}`)
+                .join(' | ')}\n\nNuove foto (in ordine):\n${notes.slice(1, 1 + extra).map((note, j) => `${j + 1}. ${note || 'foto'}`).join('\n')}`,
+            },
+          ],
+          `Scrivi i testi di ${extra} nuove slide di un carosello Instagram, una per ogni foto indicata e nello stesso ordine, nello stile delle altre slide: "titolo" max 45 caratteri, "testo" max 140 caratteri, che parlino di quello che mostra la foto. Niente prezzi o promesse inventate, niente markdown. Rispondi SOLO con JSON: {"slide": [{"titolo": "", "testo": ""}]}`,
+          { feature: 'saas_slide', temperature: 0.5, maxOutputTokens: 900, workspaceId: db.workspaceId }
+        )
+        const data = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')
+        written = Array.isArray(data.slide) ? data.slide : []
+      } catch {}
+      const newSlides = Array.from({ length: extra }, (_, j) => ({
+        title: trim(written[j]?.titolo, 90) || trim(notes[j + 1], 45),
+        text: trim(written[j]?.testo, 220),
+      }))
+      const next: CarouselSource = {
+        ...source,
+        photos: [...source.photos.slice(0, k), ...urls, ...source.photos.slice(k + 1)],
+        slides: [...source.slides.slice(0, k), source.slides[k] || { title: '', text: '' }, ...newSlides, ...source.slides.slice(k + 1)],
+      }
+      // Cambia il numero di tutte le slide: si rifanno tutte (senza AI).
+      const media = await renderPhotoCarousel(db.workspaceId, next)
+      await saveSource(id, next)
+      await updatePost(db, id, { media })
+    }
+    done.push(`slide ${n}: ${taken.length} foto estratte dallo screenshot, ora sono le slide ${n}–${n + taken.length - 1}${skipped ? ` (${skipped} non messe: si arriva al massimo di 10 slide)` : ''}`)
+    console.log(`saas slide: post ${id.slice(0, 8)} slide ${n} -> ${taken.length} foto estratte`)
+  }
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  return { post, done }
 }
 
 /**

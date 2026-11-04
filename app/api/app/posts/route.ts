@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { arrangeSlides, cancelPost, deletePost, editSlides, extractPhotos, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Azioni che devono riguardare esattamente la versione che il cliente vede.
-const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'schedule', 'publish'])
+const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'schedule', 'publish'])
 
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
@@ -80,10 +80,25 @@ export async function PATCH(req: NextRequest) {
             access.db,
             access.userId,
             { text: instruction.trim().slice(0, 1500), target: { postId: id, slide: first, slides: numbers, thumb: before?.media[first - 1] } },
-            `Fatto: ${done.join(' · ')}. Le altre slide non sono cambiate.`,
+            `Fatto: ${done.join(' · ')}. ${done.some((d) => d.includes('estratte')) ? 'Le altre slide sono rimaste uguali, cambia solo il numero.' : 'Le altre slide non sono cambiate.'}`,
             post
           )
         }
+        break
+      }
+      case 'extract': {
+        // La slide e' uno screenshot con piu' foto: ogni foto diventa una slide.
+        const result = await withModel(() => extractPhotos(access.db, id, numbers.slice(0, 1)))
+        post = result.post
+        done = result.done
+        const n = numbers[0] || 1
+        turns = await logPostChange(
+          access.db,
+          access.userId,
+          { text: 'Estrai le foto da questo screenshot: una slide per ogni foto', target: { postId: id, slide: n, thumb: before?.media[n - 1] } },
+          `Fatto: ${done.join(' · ')}. Le altre slide sono rimaste uguali, cambia solo il numero.`,
+          post
+        )
         break
       }
       case 'restore': {
