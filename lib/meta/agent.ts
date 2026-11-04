@@ -266,15 +266,16 @@ async function agentPrompt(platform: SocialPlatform, publicComment: boolean) {
 }
 
 export function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
-  const secret = process.env.META_APP_SECRET?.trim()
-  if (!secret || !signatureHeader?.startsWith('sha256=')) return false
+  // Gli eventi degli account collegati con l'accesso di Instagram possono essere
+  // firmati con la chiave dell'app Instagram invece di quella dell'app Meta.
+  const secrets = [process.env.META_APP_SECRET, process.env.INSTAGRAM_APP_SECRET].map((s) => s?.trim()).filter(Boolean) as string[]
+  if (!secrets.length || !signatureHeader?.startsWith('sha256=')) return false
 
-  const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
-  const received = signatureHeader.slice('sha256='.length)
-
-  const a = Buffer.from(expected, 'hex')
-  const b = Buffer.from(received, 'hex')
-  return a.length === b.length && timingSafeEqual(a, b)
+  const received = Buffer.from(signatureHeader.slice('sha256='.length), 'hex')
+  return secrets.some((secret) => {
+    const expected = Buffer.from(createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex'), 'hex')
+    return expected.length === received.length && timingSafeEqual(expected, received)
+  })
 }
 
 async function getChannelSettings(platform: SocialPlatform) {
