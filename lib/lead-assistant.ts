@@ -22,6 +22,9 @@ import { inspectWebsite, platformOf } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { conversationKeyFor } from '@/lib/meta/identities'
 import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
+import { loadBlogAutoSettings, loadBlogAutoState, requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
+import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
+import { SITE_URL } from '@/lib/seo/site'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -652,6 +655,13 @@ Strumenti per le notifiche push (i dispositivi su cui arrivano gli avvisi di Mes
 - "remove_push_device": {"deviceIds": [...]} → smette di inviare notifiche a quei dispositivi. Usalo SOLO se Luca chiede esplicitamente di togliere/disattivare un dispositivo.
 Nella risposta descrivi i dispositivi in modo semplice (nome, tipo, da quando, ultima notifica ricevuta), con date e ore in italiano; non mostrare gli id se non servono.
 
+Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Facebook):
+- "content_settings": {} → come funziona ora: blog automatico acceso o spento, giorni e ora di pubblicazione, condivisione su Facebook e Instagram, ultimo articolo e com'è andato, e le INDICAZIONI di Luca salvate per i contenuti.
+- "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" le sostituisce, "clear" le cancella. Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
+- "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → cambia il blog automatico (days: 0 = domenica … 6 = sabato; ora italiana). Metti solo i campi da cambiare.
+- "publish_blog_now": {} → scrive e pubblica SUBITO un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram. Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Ci vogliono alcuni minuti: arriva una notifica con l'esito.
+Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
+
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
 Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
@@ -1138,6 +1148,54 @@ export async function runAssistant(
           }
           for (const id of ids) await removePushDevice(id)
           result = { rimossi: ids.map((id) => known.get(id)), nota: 'per riattivarlo, apri Messaggi da quel dispositivo e attiva le notifiche' }
+          break
+        }
+        case 'content_settings': {
+          const [settings, state, directions] = await Promise.all([loadBlogAutoSettings(), loadBlogAutoState(), loadContentDirections()])
+          const dayNames = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato']
+          result = {
+            blog_automatico: settings.enabled ? 'acceso' : 'spento',
+            giorni: settings.days.map((d) => dayNames[d]),
+            ora: settings.time,
+            condivisione: { facebook: settings.shareFacebook, instagram: settings.shareInstagram, copertina: settings.coverImage },
+            ultimo: { stato: state.lastStatus, nota: state.lastNote, articolo: state.lastPost, social: state.lastFacebook, aggiornato: state.updatedAt },
+            indicazioni: directions.text || '(nessuna)',
+            indicazioni_aggiornate: directions.updatedAt,
+          }
+          break
+        }
+        case 'set_content_directions': {
+          const mode = args.mode === 'replace' || args.mode === 'clear' ? args.mode : 'append'
+          const text = asText(args.text)?.trim() || ''
+          if (mode !== 'clear' && !text) {
+            result = { errore: 'scrivi le indicazioni in "text"' }
+            break
+          }
+          const saved = await saveContentDirections(text, mode)
+          result = { salvate: true, indicazioni: saved.text || '(nessuna)', nota: 'valgono dal prossimo articolo e carosello' }
+          break
+        }
+        case 'update_blog_schedule': {
+          const patch: Partial<BlogAutoSettings> = {}
+          if (typeof args.enabled === 'boolean') patch.enabled = args.enabled
+          if (Array.isArray(args.days)) patch.days = args.days.map(Number)
+          if (typeof args.time === 'string') patch.time = args.time
+          if (typeof args.shareFacebook === 'boolean') patch.shareFacebook = args.shareFacebook
+          if (typeof args.shareInstagram === 'boolean') patch.shareInstagram = args.shareInstagram
+          if (!Object.keys(patch).length) {
+            result = { errore: 'nessun campo da cambiare' }
+            break
+          }
+          const saved = await saveBlogAutoSettings(patch)
+          result = { salvato: true, impostazioni: saved }
+          break
+        }
+        case 'publish_blog_now': {
+          reportStatus('Avvio la scrittura dell’articolo…')
+          // Sul sito vero si chiama sempre il dominio; nelle anteprime la versione stessa.
+          const origin = process.env.VERCEL_ENV === 'production' ? SITE_URL : process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'
+          await requestBlogRun(origin, true)
+          result = { avviato: true, nota: 'articolo e carosello in preparazione: tra qualche minuto arriva la notifica con l’esito' }
           break
         }
         default:

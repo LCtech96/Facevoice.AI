@@ -43,7 +43,7 @@ export function slidesFromHeadings(content: string): Slide[] {
   return slides.slice(0, 4)
 }
 
-async function slidesFromAI(title: string, content: string): Promise<Slide[]> {
+async function slidesFromAI(title: string, content: string, directions?: string | null): Promise<Slide[]> {
   if (!hasAIProvider()) return []
   try {
     const result = await callAI(
@@ -51,7 +51,7 @@ async function slidesFromAI(title: string, content: string): Promise<Slide[]> {
       `Riassumi l'articolo in 3 o 4 slide per un carosello Instagram, in italiano.
 Ogni slide: un titolo forte (massimo 55 caratteri) e un testo chiaro (massimo 200 caratteri).
 Usa solo informazioni presenti nell'articolo: niente dati, nomi o numeri inventati. Niente emoji, niente hashtag, niente markdown.
-Rispondi SOLO con JSON: {"slides": [{"title": "...", "text": "..."}]}`,
+Rispondi SOLO con JSON: {"slides": [{"title": "...", "text": "..."}]}${directions ? `\n\nIndicazioni di Luca per i contenuti (seguile se riguardano le slide): ${directions}` : ''}`,
       { feature: 'blog_carosello', temperature: 0.4, maxOutputTokens: 1200 }
     )
     const json = (result.message || '').match(/\{[\s\S]*\}/)?.[0]
@@ -80,11 +80,39 @@ function slidesFromParagraphs(content: string): Slide[] {
 }
 
 /** Da 1 a 4 slide di contenuto (con copertina e chiusura il carosello ha sempre almeno 3 immagini). */
-export async function slidesFor(title: string, content: string): Promise<Slide[]> {
+export async function slidesFor(title: string, content: string, directions?: string | null): Promise<Slide[]> {
   const fromHeadings = slidesFromHeadings(content)
   if (fromHeadings.length >= 2) return fromHeadings
-  const fromAI = await slidesFromAI(title, content)
+  const fromAI = await slidesFromAI(title, content, directions)
   if (fromAI.length) return fromAI
   const fallback = slidesFromParagraphs(content)
   return fallback.length ? fallback : [{ title, text: clip(content) || 'Leggi l’articolo completo sul nostro blog.' }]
+}
+
+/**
+ * Gancio della prima slide: una frase breve e fortissima che fa fermare chi
+ * scorre, presa SOLO dai fatti dell'articolo (niente promesse false). Scritta in
+ * grande sulla copertina; se l'AI non risponde si usa il titolo.
+ */
+export async function coverHook(title: string, content: string, directions?: string | null): Promise<string | null> {
+  if (!hasAIProvider()) return null
+  try {
+    const result = await callAI(
+      [{ role: 'user', content: `Titolo: ${title}\n\nArticolo:\n${content.split(/\n\s*Fonti:/i)[0].slice(0, 5000)}` }],
+      `Scrivi il GANCIO della prima slide di un carosello Instagram, in italiano: una frase brevissima che fa fermare chi scorre e lo spinge a sfogliare.
+Regole:
+- Massimo 42 caratteri (spazi compresi). Meglio ancora 20-35.
+- Concreta e d'impatto: un numero, un contrasto, una domanda diretta o una conseguenza per le aziende. Niente frasi generiche come "Novità sull'AI".
+- Solo fatti presenti nell'articolo: niente dati, nomi o promesse inventati, niente clickbait falso.
+- Niente emoji, niente hashtag, niente virgolette, niente punto finale (punto di domanda o esclamativo ammessi).
+Rispondi SOLO con JSON: {"hook": "..."}${directions ? `\n\nIndicazioni di Luca per i contenuti (seguile se riguardano il gancio o il tono): ${directions}` : ''}`,
+      { feature: 'blog_carosello', temperature: 0.7, maxOutputTokens: 200 }
+    )
+    const json = (result.message || '').match(/\{[\s\S]*\}/)?.[0]
+    const hook = json ? String(JSON.parse(json).hook || '') : ''
+    const clean = hook.replace(/^["«“]|["»”]$/g, '').replace(/\.$/, '').replace(/\s+/g, ' ').trim()
+    return clean && clean.length <= 60 ? clean : null
+  } catch {
+    return null
+  }
 }
