@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text()
 
   if (!verifyMetaSignature(rawBody, req.headers.get('x-hub-signature-256'))) {
-    return new NextResponse('Invalid signature', { status: 401 })
+    return forwardUnverified(rawBody, req.headers.get('x-hub-signature-256'))
   }
 
   let payload: { object?: string }
@@ -56,4 +56,32 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ received: true })
+}
+
+/**
+ * Firma non riconosciuta con le chiavi del sito: puo' essere un evento degli
+ * Instagram dei clienti collegati con l'accesso di Instagram, firmato con la
+ * chiave dell'app Instagram. Il sito non lo elabora: lo passa cosi' com'e' alla
+ * beta, che ha la chiave e fa lei il controllo (e lo rifiuta se non e' di Meta).
+ */
+async function forwardUnverified(rawBody: string, signature: string | null) {
+  const forward = process.env.SAAS_WEBHOOK_FORWARD_URL?.trim()
+  let object = '?'
+  try {
+    object = String(JSON.parse(rawBody)?.object || '?')
+  } catch {}
+  if (!forward || !signature || (object !== 'instagram' && object !== 'page')) {
+    console.warn(`meta webhook: firma non valida (${object})`)
+    return new NextResponse('Invalid signature', { status: 401 })
+  }
+  const status = await fetch(forward, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': signature },
+    body: rawBody,
+    signal: AbortSignal.timeout(20_000),
+  })
+    .then((res) => res.status)
+    .catch(() => 502)
+  console.log(`meta webhook: ${object} con firma non del sito, girato alla beta (${status})`)
+  return status === 200 ? NextResponse.json({ received: true }) : new NextResponse('Invalid signature', { status: 401 })
 }
