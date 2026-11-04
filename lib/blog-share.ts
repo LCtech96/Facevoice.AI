@@ -4,7 +4,8 @@ import { publishInstagramCarousel, publishPagePhotos } from '@/lib/meta/graph'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { createCarousel } from '@/lib/blog-image'
-import { slidesFor } from '@/lib/blog-slides'
+import { coverHook, slidesFor } from '@/lib/blog-slides'
+import { loadContentDirections, nextPaletteMix } from '@/lib/content-directions'
 
 // Dopo ogni articolo pubblicato nel blog (automatico o scritto a mano):
 // 1) carosello di almeno 3 immagini con i colori Facevoice (copertina, una slide
@@ -67,6 +68,9 @@ export type ShareOutcome = {
   instagram: 'posted' | 'off' | 'failed'
   image: 'ai' | 'grafica' | 'esistente' | 'nessuna'
   slides: number
+  /** Slide di contenuto con la loro immagine. */
+  slideImages: number
+  hook: string | null
   errors: string[]
 }
 
@@ -77,17 +81,20 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
   const settings = await shareSettings()
   const path = `/blog/${post.slug || post.id}`
   const url = `${SITE_URL}${path}`
-  const outcome: ShareOutcome = { facebook: 'off', instagram: 'off', image: 'nessuna', slides: 0, errors: [] }
+  const outcome: ShareOutcome = { facebook: 'off', instagram: 'off', image: 'nessuna', slides: 0, slideImages: 0, hook: null, errors: [] }
 
   // 1) Carosello (serve a tutti e due i social; senza carosello non si pubblica sui social).
   let slides: string[] = []
   if (settings.shareFacebook || settings.shareInstagram || (settings.coverImage && !post.image_url)) {
     try {
-      const texts = await slidesFor(post.title, post.content)
-      const carousel = await createCarousel(post.title, texts, teaserOf(post.content, 800), post.image_url)
+      const directions = (await loadContentDirections()).text || null
+      const [texts, hook, mix] = await Promise.all([slidesFor(post.title, post.content, directions), coverHook(post.title, post.content, directions), nextPaletteMix()])
+      const carousel = await createCarousel(post.title, texts, teaserOf(post.content, 800), post.image_url, { hook, mix, imageNotes: directions })
       slides = carousel.urls
       outcome.image = carousel.photo
       outcome.slides = slides.length
+      outcome.slideImages = carousel.slideImages
+      outcome.hook = hook
       if (!post.image_url && settings.coverImage && (post.id || post.slug)) {
         const query = supabaseAdmin.from('blog_posts').update({ image_url: slides[0] })
         await (post.id ? query.eq('id', post.id) : query.eq('slug', post.slug!))
@@ -113,7 +120,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
   }
 
   console.log(
-    `blog share: "${post.title}" · carosello ${outcome.slides} slide (foto ${outcome.image}) · Facebook ${outcome.facebook} · Instagram ${outcome.instagram}${
+    `blog share: "${post.title}" · gancio "${outcome.hook || '(titolo)'}" · carosello ${outcome.slides} slide (foto ${outcome.image}, ${outcome.slideImages} slide con immagine) · Facebook ${outcome.facebook} · Instagram ${outcome.instagram}${
       outcome.errors.length ? ` · ${outcome.errors.join(' | ')}` : ''
     }`
   )

@@ -5,6 +5,7 @@ import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
 import { internalOrigin } from '@/lib/internal-origin'
 import { shareBlogPost } from '@/lib/blog-share'
+import { loadContentDirections } from '@/lib/content-directions'
 
 // Blog automatico: nei giorni scelti (es. martedi' e venerdi') il sito legge le
 // ultime notizie sull'intelligenza artificiale da testate vere (feed RSS), l'AI
@@ -249,7 +250,12 @@ export async function generateNewsPost(): Promise<GenerateResult> {
     .map((n, i) => `${i + 1}. [${n.source}, ${new Date(n.date).toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' })}] ${n.title}\n${n.summary}\nLink: ${n.link}`)
     .join('\n\n')
   const today = new Date().toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-  const result = await callAI([{ role: 'user', content: `Oggi è ${today}. Notizie:\n\n${list}` }], PROMPT, {
+  // Indicazioni di Luca dalla super chat (argomenti, taglio, tono): valgono finche' non cambiano.
+  const directions = (await loadContentDirections()).text.trim()
+  const prompt = directions
+    ? `${PROMPT}\n\nIndicazioni di Luca per i prossimi contenuti (seguile, ma senza mai inventare fatti e restando sulle notizie fornite):\n${directions}`
+    : PROMPT
+  const result = await callAI([{ role: 'user', content: `Oggi è ${today}. Notizie:\n\n${list}` }], prompt, {
     feature: 'blog_automatico',
     temperature: 0.5,
     maxOutputTokens: 4096,
@@ -298,11 +304,14 @@ export async function runBlogAuto(manual: boolean) {
       lastNote: null,
       lastPost: { title: result.title, url: result.url },
       lastFacebook: [
-        `carosello di ${share.slides} immagini (foto ${share.image})`,
+        `carosello di ${share.slides} immagini (foto ${share.image}, ${share.slideImages} slide con immagine)`,
+        share.hook ? `gancio: "${share.hook}"` : '',
         `Facebook ${share.facebook === 'posted' ? 'pubblicato' : share.facebook === 'failed' ? 'non riuscito' : 'spento'}`,
         `Instagram ${share.instagram === 'posted' ? 'pubblicato' : share.instagram === 'failed' ? 'non riuscito' : 'spento'}`,
         ...share.errors,
-      ].join(' · '),
+      ]
+        .filter(Boolean)
+        .join(' · '),
     })
     return result
   }
