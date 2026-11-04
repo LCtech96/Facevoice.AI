@@ -14,12 +14,15 @@ import {
   generateImage,
   getPost,
   listPosts,
+  loadSource,
   publishPost,
   romeLabel,
   romeLocalToDate,
   schedulePost,
   setWorkspaceBrand,
   updatePost,
+  arrangeModes,
+  type ArrangeMode,
   type PostPlatform,
   type PostRow,
 } from './posts'
@@ -33,7 +36,21 @@ export type ChatAction =
   | { kind: 'post'; post: PostView }
   | { kind: 'image'; url: string; note: string }
 
-export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'>
+export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'> & {
+  /** Slide spostabili o da togliere nell'anteprima (vedi ArrangeMode). */
+  arrange?: ArrangeMode
+  /** Versione precedente nella chat (com'era in quel momento): solo da guardare o riprendere. */
+  snapshot?: boolean
+  /** La versione precedente e' uguale a quella attuale. */
+  sameAsLive?: boolean
+}
+
+/** Aggiunge ai post se le slide si possono spostare o togliere. */
+export async function withArrange<T extends PostView>(posts: T[]): Promise<T[]> {
+  if (!posts.length) return posts
+  const modes = await arrangeModes(posts).catch(() => new Map<string, ArrangeMode>())
+  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null }))
+}
 
 export type ChatTurn = {
   role: 'user' | 'assistant'
@@ -42,7 +59,7 @@ export type ChatTurn = {
   /** Cosa mostra ogni foto allegata (stesso ordine), letto dall'AI. */
   imageNotes?: (string | null)[]
   /** Slide scelta dal cliente toccandola nell'anteprima (la richiesta riguarda quella). */
-  target?: { postId: string; slide: number; thumb?: string }
+  target?: { postId: string; slide: number; thumb?: string; slides?: number[] }
   actions?: ChatAction[]
   at: string
 }
@@ -81,16 +98,40 @@ export async function saveChat(workspaceId: string, userId: string, turns: ChatT
     .upsert({ key: chatKey(workspaceId, userId), value: JSON.stringify(turns.slice(-MAX_TURNS)), updated_at: new Date().toISOString() }, { onConflict: 'key' })
 }
 
-/** Stato aggiornato dei post mostrati nella chat (programmati, pubblicati…). */
+/**
+ * Post mostrati nella chat. Ogni anteprima resta COM'ERA in quel momento (una versione
+ * per ogni modifica, in ordine di tempo): solo l'ultima di ogni post e' quella "viva",
+ * aggiornata (stato, slide, orario) e modificabile. Le precedenti sono versioni da
+ * guardare o da riprendere; se sono uguali alla versione attuale lo si segnala.
+ */
 export async function refreshPostActions(db: WorkspaceDb, turns: ChatTurn[]): Promise<ChatTurn[]> {
-  const ids = [...new Set(turns.flatMap((t) => (t.actions || []).filter((a) => a.kind === 'post').map((a) => (a as { post: PostView }).post.id)))]
-  if (!ids.length) return turns
-  const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', ids)
-  const byId = new Map((data || []).map((p) => [p.id as string, p as PostView]))
-  return turns.map((t) => ({
+  const last = new Map<string, number>()
+  turns.forEach((t, i) => t.actions?.forEach((a) => a.kind === 'post' && last.set(a.post.id, i)))
+  if (!last.size) return turns
+  const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', [...last.keys()])
+  const byId = new Map((await withArrange((data || []) as PostView[])).map((p) => [p.id, p]))
+  return turns.map((t, i) => ({
     ...t,
-    actions: t.actions?.map((a) => (a.kind === 'post' && byId.has(a.post.id) ? { ...a, post: byId.get(a.post.id)! } : a)),
+    actions: t.actions?.map((a) => {
+      if (a.kind !== 'post') return a
+      const live = byId.get(a.post.id)
+      if (last.get(a.post.id) === i) return live ? { ...a, post: live } : a
+      const sameAsLive = Boolean(live && live.media.join('|') === a.post.media.join('|') && live.caption === a.post.caption)
+      return { ...a, post: { ...a.post, snapshot: true, sameAsLive } }
+    }),
   }))
+}
+
+/** Aggiunge alla chat una modifica fatta dall'anteprima (cosi' resta in cronologia). */
+export async function logPostChange(db: WorkspaceDb, userId: string, request: Omit<ChatTurn, 'role' | 'at'>, reply: string, post: PostRow): Promise<ChatTurn[]> {
+  const at = new Date().toISOString()
+  const turns: ChatTurn[] = [
+    ...(await loadChat(db.workspaceId, userId)),
+    { role: 'user', ...request, at },
+    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], at },
+  ]
+  await saveChat(db.workspaceId, userId, turns)
+  return refreshPostActions(db, turns)
 }
 
 const PROMPT = (name: string, now: string, channels: string, recent: string) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili. Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.
@@ -109,7 +150,7 @@ Strumenti:
   · "carousel" CON foto = UNA SLIDE PER FOTO, nell'ordine esatto delle foto (Foto 1 = slide 1 = copertina con il gancio in grande; Foto 2 = slide 2…), testo SOPRA la foto e il logo su ogni slide. Nessuna foto viene aggiunta o tolta. In "slides" metti un elemento per ogni foto, nello stesso ordine: per la Foto k scrivi titolo e testo della slide k seguendo ALLA LETTERA quello che il cliente ha chiesto per quella foto (slides[0].title = riga piccola sotto il gancio della copertina). "closing": true solo se chiede una slide finale in più.
   · "carousel" SENZA foto = slide grafiche con testi grandi, colori del marchio e immagini create dall'AI (ai_images false per evitarle).
   Se non passi "images" usa le foto allegate al messaggio, nel loro ordine. Ci vuole fino a un paio di minuti.
-- "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà: testi di singole slide (n = numero della slide, la copertina è 1), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere, gancio. Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima".
+- "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà: testi di singole slide (n = numero della slide, la copertina è 1), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere, gancio. Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima". In "slides" metti SOLO le slide da cambiare, con il loro numero esatto: non riscrivere le altre e non usare "order" o "remove" se il cliente non chiede di spostare o togliere slide.
 - "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto (prima di correggerlo).
 - "edit_slide_photo": {"post_id": "…", "n": 3, "instruction": "cosa cambiare nell'immagine"} → modifica con l'AI SOLO l'immagine della slide n (luce, colori, sfondo, togliere o aggiungere qualcosa) e rifà il post; nei caroselli con le foto il testo della slide resta com'è.
 Se nella richiesta c'è "[Slide selezionata dal cliente…]", il cliente ha toccato quella slide nell'anteprima e la richiesta riguarda SOLO quella: se chiede di cambiare scritte, titolo o testo usa edit_carousel su quel numero; se chiede di cambiare la foto o l'immagine usa edit_slide_photo; se chiede entrambe le cose, fai tutte e due. Non toccare le altre slide.
@@ -290,7 +331,9 @@ export async function runClientAssistant(
           break
         }
         case 'update_post': {
-          const media = asUrls(args.images)
+          // Le slide di un carosello con le foto si cambiano solo con edit_carousel /
+          // edit_slide_photo (altrimenti si perdono testi e numeri delle slide).
+          const media = target || (await loadSource(postId)) ? [] : asUrls(args.images)
           const post = await updatePost(db, postId, { caption: asText(args.caption), facebook: asText(args.facebook), platforms: asPlatforms(args.platforms), media: media.length ? media : undefined })
           showPost(post)
           result = { aggiornato: true, post_id: post.id }
@@ -344,20 +387,23 @@ export async function runClientAssistant(
                 .map((x) => ({ n: x.n as number, title: typeof x.title === 'string' ? x.title : undefined, text: typeof x.text === 'string' ? x.text : undefined }))
             : undefined
           const nums = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isFinite(n)) : undefined)
+          // Slide selezionata dal cliente: si cambia SOLO quella (niente ordine, slide tolte o finale).
+          const only = target && target.postId === postId ? target.slide : null
           const post = await editCarousel(db, postId, {
-            slides,
-            order: nums(args.order),
-            remove: nums(args.remove),
-            hook: asText(args.hook),
-            label: asText(args.label),
-            closing: typeof args.closing === 'boolean' ? args.closing : undefined,
+            slides: only ? slides?.filter((x) => Math.round(x.n) === only) : slides,
+            order: only ? undefined : nums(args.order),
+            remove: only ? undefined : nums(args.remove),
+            hook: !only || only === 1 ? asText(args.hook) : undefined,
+            label: !only || only === 1 ? asText(args.label) : undefined,
+            closing: only ? undefined : typeof args.closing === 'boolean' ? args.closing : undefined,
           })
           showPost(post)
           result = { rifatto: true, post_id: post.id, slide: (await carouselOutline(post.id))?.slide }
           break
         }
         case 'edit_slide_photo': {
-          const post = await editSlidePhoto(db, postId, Number(args.n) || target?.slide || 1, asText(args.instruction) || message)
+          const n = target && target.postId === postId ? target.slide : Number(args.n) || 1
+          const post = await editSlidePhoto(db, postId, n, asText(args.instruction) || message)
           showPost(post)
           result = { rifatto: true, post_id: post.id, slide: Number(args.n) || target?.slide }
           break

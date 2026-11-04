@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, Facebook, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Coins, Facebook, History, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
@@ -26,9 +26,14 @@ type Post = {
   publish_at: string | null
   results: { instagram?: string; facebook?: string; errors?: string[] }
   error_message: string | null
+  /** Slide spostabili o da togliere: 'closing' = l'ultima e' la slide finale e resta in fondo; null = no. */
+  arrange?: 'free' | 'closing' | null
+  /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
+  snapshot?: boolean
+  sameAsLive?: boolean
 }
 type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
-type Target = { postId: string; slide: number; thumb?: string }
+type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
@@ -101,9 +106,21 @@ export default function AssistantPage() {
       .catch(() => undefined)
   }, [load, appFetch])
 
+  // In fondo solo quando arriva un messaggio nuovo (non a ogni aggiornamento di un post).
+  const turnCount = turns?.length ?? 0
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [turns, busy])
+  }, [turnCount, busy])
+
+  // Tornando sulla pagina (es. dopo aver cambiato app) si aggiornano le anteprime dei post:
+  // stato, slide e orario devono essere quelli veri, non quelli di prima.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !busy) load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load, busy])
 
   // Richiesta ancora in corso (es. pagina riaperta): si aspetta la risposta.
   useEffect(() => {
@@ -170,8 +187,11 @@ export default function AssistantPage() {
     setTurns([])
   }
 
+  // Si aggiorna solo l'anteprima "viva" del post: le versioni precedenti restano com'erano.
   const updatePost = (post: Post) =>
-    setTurns((list) => (list || []).map((t) => ({ ...t, actions: t.actions?.map((a) => (a.kind === 'post' && a.post.id === post.id ? { ...a, post } : a)) })))
+    setTurns((list) =>
+      (list || []).map((t) => ({ ...t, actions: t.actions?.map((a) => (a.kind === 'post' && a.post.id === post.id && !a.post.snapshot ? { ...a, post } : a)) }))
+    )
 
   const instagram = connections.find((c) => c.platform === 'instagram' && c.status === 'connected')
   const needsPublish = instagram && !instagram.canPublish
@@ -179,9 +199,12 @@ export default function AssistantPage() {
   return (
     <div className="-mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col md:-mx-8 md:-my-10 md:min-h-[100dvh]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3 md:px-8">
-        <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
-          <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
+            <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
+          </h1>
+          <UsageButton />
+        </div>
         <button onClick={newChat} disabled={busy || !turns?.length} className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-40">
           <Plus className="h-4 w-4" /> Nuova chat
         </button>
@@ -232,7 +255,7 @@ export default function AssistantPage() {
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={turn.target.thumb} alt="" className="h-12 w-10 rounded object-cover" />
                       ) : null}
-                      Slide {turn.target.slide}
+                      {turn.target.slides && turn.target.slides.length > 1 ? `Slide ${turn.target.slides.join(', ')}` : `Slide ${turn.target.slide}`}
                     </div>
                   ) : null}
                   {turn.text && <p className="whitespace-pre-wrap break-words text-[15px]">{turn.text}</p>}
@@ -247,7 +270,11 @@ export default function AssistantPage() {
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
-                      <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onEditSlide={(target, prompt) => send(prompt, target)} />
+                      action.post.snapshot ? (
+                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} onTurns={setTurns} onReload={load} />
+                      ) : (
+                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onTurns={setTurns} />
+                      )
                     ) : (
                       <a key={k} href={action.url} target="_blank" rel="noopener noreferrer" className="mt-3 block w-full max-w-xs">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -358,23 +385,27 @@ function PostCard({
   canManage,
   busy: chatBusy,
   onChange,
-  onEditSlide,
+  onTurns,
 }: {
   post: Post
   canManage: boolean
   busy: boolean
   onChange: (post: Post) => void
-  onEditSlide: (target: Target, prompt: string) => Promise<boolean | undefined>
+  onTurns: (turns: Turn[]) => void
 }) {
   const { appFetch } = useWorkspace()
-  // Slide toccata: si scrive cosa cambiare solo in quella (testo o foto).
-  const [selected, setSelected] = useState<number | null>(null)
+  // Slide toccate (indici in post.media): la correzione riguarda SOLO queste.
+  const [selected, setSelected] = useState<number[]>([])
+  // Nuovo ordine non ancora salvato (indici in post.media; quelle tolte mancano).
+  const [order, setOrder] = useState<number[] | null>(null)
+  const thumbs = useRef(new Map<number, HTMLButtonElement>())
   const [slidePrompt, setSlidePrompt] = useState('')
   const [caption, setCaption] = useState(post.caption)
   const [platforms, setPlatforms] = useState(post.platforms)
   const [when, setWhen] = useState(toLocalInput(post.publish_at))
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const done = post.status === 'published' || post.status === 'publishing' || post.status === 'cancelled'
 
   useEffect(() => {
@@ -382,21 +413,155 @@ function PostCard({
     setPlatforms(post.platforms)
   }, [post.caption, post.platforms])
 
-  const act = async (action: string, extra: Record<string, unknown> = {}) => {
+  useEffect(() => {
+    setWhen(toLocalInput(post.publish_at))
+  }, [post.publish_at])
+
+  // Slide rifatte (ordine salvato o slide corrette): si riparte da quelle; dopo un
+  // salvataggio o una correzione restano selezionate le stesse slide.
+  const mediaKey = post.media.join('|')
+  const keepSelected = useRef<number[] | null>(null)
+  useEffect(() => {
+    setOrder(null)
+    setSelected(keepSelected.current ?? [])
+    keepSelected.current = null
+  }, [mediaKey])
+
+  const arrange = !done && canManage ? post.arrange ?? null : null
+  const sequence = order ?? post.media.map((_, i) => i)
+  const changed = order !== null
+  const closingIndex = arrange === 'closing' ? post.media.length - 1 : -1
+  // Posizioni (da 0) delle slide scelte, nell'ordine mostrato.
+  const positions = selected.map((i) => sequence.indexOf(i)).filter((p) => p >= 0).sort((a, b) => a - b)
+  const single = selected.length === 1 ? selected[0] : null
+  const pos = single === null ? -1 : sequence.indexOf(single)
+  const isClosing = single !== null && single === closingIndex
+  const canMoveLeft = Boolean(arrange) && pos > 0 && !isClosing
+  const canMoveRight = Boolean(arrange) && pos >= 0 && pos < sequence.length - 1 && !isClosing && sequence[pos + 1] !== closingIndex
+  const canRemove = Boolean(arrange) && selected.length > 0 && sequence.some((k) => !selected.includes(k) && k !== closingIndex)
+  const allSelected = sequence.length > 1 && positions.length === sequence.length
+  const numbers = positions.map((p) => p + 1)
+  const which = allSelected
+    ? 'tutte le slide'
+    : numbers.length === 1
+      ? `la slide ${numbers[0]}`
+      : `le slide ${numbers.slice(0, -1).join(', ')} e ${numbers[numbers.length - 1]}`
+
+  const toggleSlide = (i: number) => {
+    setNotice(null)
+    setSelected((list) => (list.includes(i) ? list.filter((x) => x !== i) : [...list, i]))
+  }
+  const rearrange = (next: number[]) => setOrder(next.length === post.media.length && next.every((k, j) => k === j) ? null : next)
+  const move = (step: -1 | 1) => {
+    if (single === null) return
+    const next = [...sequence]
+    ;[next[pos], next[pos + step]] = [next[pos + step], next[pos]]
+    rearrange(next)
+    requestAnimationFrame(() => thumbs.current.get(single)?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' }))
+  }
+  const remove = () => {
+    rearrange(sequence.filter((k) => !selected.includes(k)))
+    setSelected([])
+  }
+
+  const signature = (p: Post) => `${p.status}|${p.publish_at}|${p.media.join('|')}`
+
+  /** Dopo una connessione caduta: il server puo' aver finito lo stesso, si ricontrolla il post. */
+  const recheck = async (message: string): Promise<Post | null> => {
+    const before = signature(post)
+    setBusy('recheck')
+    setError(null)
+    let last: Post | null = null
+    for (let k = 0; k < 24; k++) {
+      await new Promise((r) => setTimeout(r, 5000))
+      const res = await appFetch(`/api/app/posts?id=${post.id}`).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      if (data?.post) last = data.post
+      if (last && last.status !== 'publishing' && signature(last) !== before) {
+        setBusy(null)
+        onChange(last)
+        return last
+      }
+      // Dopo mezzo minuto si smette, salvo una pubblicazione ancora in corso.
+      if (k >= 5 && last?.status !== 'publishing') break
+    }
+    setBusy(null)
+    if (last) onChange(last)
+    setError(message)
+    return null
+  }
+
+  type Result = { ok: boolean; post?: Post; done?: string[] }
+  const act = async (action: string, extra: Record<string, unknown> = {}): Promise<Result> => {
     setBusy(action)
     setError(null)
+    setNotice(null)
     const res = await appFetch('/api/app/posts', {
       method: 'PATCH',
-      body: JSON.stringify({ id: post.id, action, caption: caption !== post.caption ? caption : undefined, platforms, ...extra }),
+      body: JSON.stringify({
+        id: post.id,
+        action,
+        // Le slide che si vedono: il server non tocca un post diverso da questo.
+        base: post.media,
+        caption: caption !== post.caption ? caption : undefined,
+        platforms: platforms.join() !== post.platforms.join() ? platforms : undefined,
+        ...extra,
+      }),
     }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     setBusy(null)
+    if (!res?.ok) keepSelected.current = null
     if (data.post) onChange(data.post)
-    if (!res?.ok) setError(data.error || 'Operazione non riuscita, riprova.')
-    else if (action === 'delete') onChange({ ...post, status: 'cancelled' })
+    // La modifica e' entrata in cronologia: la chat mostra la nuova versione in fondo.
+    if (data.turns) onTurns(data.turns)
+    if (res?.ok) {
+      if (action === 'delete') onChange({ ...post, status: 'cancelled' })
+      return { ok: true, post: data.post, done: data.done }
+    }
+    const message = data.error || (res ? `Operazione non riuscita (errore ${res.status}), riprova.` : 'Connessione interrotta, riprova.')
+    // Nessuna risposta chiara (connessione caduta o tempo scaduto): si ricontrolla il post.
+    if (!data.error && action !== 'delete') {
+      const fresh = await recheck(message)
+      if (fresh) return { ok: true, post: fresh }
+      return { ok: false }
+    }
+    setError(message)
+    return { ok: false }
+  }
+
+  /** Salva il nuovo ordine (slide rifatte con i numeri giusti): torna il post aggiornato. */
+  const saveOrder = async (): Promise<Post | null> => {
+    if (!order) return post
+    keepSelected.current = positions
+    const result = await act('arrange', { slides: order.map((k) => k + 1) })
+    if (result.ok && result.post) return result.post
+    keepSelected.current = null
+    return null
+  }
+
+  /** Correzione delle SOLE slide scelte (le altre restano identiche); se l'ordine non e' salvato, prima si salva. */
+  const editSelected = async () => {
+    const chosen = positions
+    if (!chosen.length || !slidePrompt.trim()) return
+    const current = changed ? await saveOrder() : post
+    if (!current) return
+    keepSelected.current = chosen
+    const result = await act('edit_slides', { slides: chosen.map((p) => p + 1), instruction: slidePrompt, base: current.media })
+    if (!result.ok) return
+    const updated = Boolean(result.post && result.post.media.join('|') !== current.media.join('|'))
+    if (!updated) keepSelected.current = null
+    setSlidePrompt('')
+    setNotice(
+      result.done?.length
+        ? `Fatto: ${result.done.join(' · ')}. Le altre slide non sono cambiate.`
+        : updated
+          ? `Fatto: ho corretto solo ${which}.`
+          : 'Non ho cambiato niente: scrivi in modo più preciso cosa cambiare.'
+    )
   }
 
   const toggle = (p: 'instagram' | 'facebook') => setPlatforms((list) => (list.includes(p) ? list.filter((x) => x !== p) : [...list, p]))
+  const working = busy !== null || chatBusy
 
   return (
     <div className="mt-3 max-w-xl rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
@@ -408,41 +573,99 @@ function PostCard({
           }`}
         >
           {STATUS[post.status]}
-          {post.status === 'scheduled' && post.publish_at ? ` · ${whenLabel(post.publish_at)}` : ''}
         </span>
       </div>
       <div className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
-        {post.media.map((url, i) => (
-          <button
-            key={url}
-            type="button"
-            onClick={() => !done && canManage && setSelected((s) => (s === i ? null : i))}
-            aria-label={`Slide ${i + 1}${selected === i ? ' (selezionata)' : ''}`}
-            className="relative shrink-0 snap-start"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={url}
-              alt={`Immagine ${i + 1}`}
-              loading="lazy"
-              className={`h-52 w-[166px] rounded-lg object-cover ${selected === i ? 'ring-4 ring-[var(--accent-blue)]' : 'border border-[var(--border-color)]'}`}
-            />
-            <span className={`absolute left-1.5 top-1.5 rounded-full px-1.5 text-[11px] font-semibold ${selected === i ? 'bg-[var(--accent-blue)] text-white' : 'bg-black/55 text-white'}`}>{i + 1}</span>
-          </button>
-        ))}
+        {sequence.map((i, n) => {
+          const url = post.media[i]
+          const on = selected.includes(i)
+          return (
+            <button
+              key={url}
+              ref={(el) => {
+                if (el) thumbs.current.set(i, el)
+                else thumbs.current.delete(i)
+              }}
+              type="button"
+              onClick={() => !done && canManage && !working && toggleSlide(i)}
+              aria-label={`Slide ${n + 1}${on ? ' (selezionata)' : ''}`}
+              aria-pressed={on}
+              className="relative shrink-0 snap-start"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt={`Immagine ${n + 1}`}
+                loading="lazy"
+                className={`h-52 w-[166px] rounded-lg object-cover ${on ? 'ring-4 ring-[var(--accent-blue)]' : 'border border-[var(--border-color)]'} ${busy === 'arrange' || (busy === 'edit_slides' && on) ? 'opacity-50' : ''}`}
+              />
+              <span className={`absolute left-1.5 top-1.5 rounded-full px-1.5 text-[11px] font-semibold ${on ? 'bg-[var(--accent-blue)] text-white' : 'bg-black/55 text-white'}`}>{n + 1}</span>
+              {on && <Check className="absolute right-1.5 top-1.5 h-5 w-5 rounded-full bg-[var(--accent-blue)] p-0.5 text-white" />}
+            </button>
+          )
+        })}
       </div>
-      {!done && canManage && selected === null && post.media.length > 0 && (
-        <p className="mt-1 text-xs text-[var(--text-secondary)]">Tocca una slide per correggere solo quella.</p>
+      {changed && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-[var(--accent-blue)]/10 px-3 py-2 text-xs">
+          <span className="min-w-0 flex-1 text-[var(--text-secondary)]">
+            {busy === 'arrange' ? 'Rifaccio le slide con i numeri giusti…' : `Nuovo ordine, ${sequence.length} slide: salva per aggiornare i numeri sulle slide.`}
+          </span>
+          <button onClick={() => setOrder(null)} disabled={working} className="px-2 py-1.5 text-[var(--text-secondary)] disabled:opacity-40">
+            Annulla
+          </button>
+          <button onClick={saveOrder} disabled={working} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-1.5 font-semibold text-white disabled:opacity-50">
+            {busy === 'arrange' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Salva
+          </button>
+        </div>
       )}
-      {selected !== null && !done && canManage && (
+      {!done && canManage && !selected.length && !changed && post.media.length > 0 && (
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          Tocca una o più slide per correggere solo quelle{arrange ? ', spostarle o toglierle' : ''}.
+        </p>
+      )}
+      {notice && <p className="mt-1 text-xs text-[#34C759]">{notice}</p>}
+      {selected.length > 0 && !done && canManage && (
         <div className="mt-2 rounded-xl border border-[var(--accent-blue)] bg-[var(--background)] p-2">
-          <p className="mb-1 flex items-center justify-between text-xs text-[var(--text-secondary)]">
-            <span>
-              Cosa vuoi cambiare nella <b className="text-[var(--text-primary)]">slide {selected + 1}</b>? Il testo, la foto o entrambi.
-            </span>
-            <button onClick={() => setSelected(null)} aria-label="Chiudi">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+            {arrange &&
+              (isClosing ? (
+                <span className="text-[var(--text-secondary)]">La slide finale resta in fondo.</span>
+              ) : (
+                <span className={`inline-flex items-center rounded-full border border-[var(--border-color)] ${single === null ? 'opacity-40' : ''}`}>
+                  <button onClick={() => move(-1)} disabled={!canMoveLeft || working} aria-label="Sposta prima" className="p-1.5 disabled:opacity-30">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="px-1 text-[var(--text-secondary)]">Sposta</span>
+                  <button onClick={() => move(1)} disabled={!canMoveRight || working} aria-label="Sposta dopo" className="p-1.5 disabled:opacity-30">
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </span>
+              ))}
+            {arrange && (
+              <button
+                onClick={remove}
+                disabled={!canRemove || working}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2.5 py-1.5 text-[#FF3B30] disabled:opacity-30"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Togli
+              </button>
+            )}
+            {sequence.length > 1 && (
+              <button
+                onClick={() => setSelected(allSelected ? [] : [...sequence])}
+                disabled={working}
+                className="rounded-full border border-[var(--border-color)] px-2.5 py-1.5 text-[var(--text-secondary)] disabled:opacity-30"
+              >
+                {allSelected ? 'Nessuna' : 'Tutte'}
+              </button>
+            )}
+            <button onClick={() => setSelected([])} aria-label="Chiudi" className="ml-auto p-1 text-[var(--text-secondary)]">
               <X className="h-3.5 w-3.5" />
             </button>
+          </div>
+          <p className="mb-1 text-xs text-[var(--text-secondary)]">
+            Cosa vuoi cambiare in <b className="text-[var(--text-primary)]">{which}</b>? Il testo, la foto o entrambi.{' '}
+            {allSelected ? '' : 'Le altre slide restano identiche.'}
           </p>
           <div className="flex items-end gap-2">
             <textarea
@@ -453,20 +676,16 @@ function PostCard({
               className="flex-1 resize-none rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1.5 text-sm"
             />
             <button
-              onClick={async () => {
-                const ok = await onEditSlide({ postId: post.id, slide: selected + 1, thumb: post.media[selected] }, slidePrompt)
-                if (ok) {
-                  setSlidePrompt('')
-                  setSelected(null)
-                }
-              }}
-              disabled={chatBusy || !slidePrompt.trim()}
-              aria-label="Correggi la slide"
+              onClick={editSelected}
+              disabled={working || !slidePrompt.trim() || !positions.length}
+              aria-label="Correggi le slide scelte"
               className="rounded-full bg-[var(--accent-blue)] p-2 text-white disabled:opacity-40"
             >
-              {chatBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {busy === 'edit_slides' || busy === 'arrange' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             </button>
           </div>
+          {busy === 'edit_slides' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Correggo solo {which}…</p>}
+          {changed && busy !== 'edit_slides' && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Se scrivi una correzione, prima salvo il nuovo ordine.</p>}
         </div>
       )}
       <textarea
@@ -477,10 +696,33 @@ function PostCard({
         className="mt-2 w-full rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm"
       />
       {post.results?.errors?.length ? <p className="mt-1 text-xs text-[#FF3B30]">{post.results.errors.join(' · ')}</p> : null}
+      {busy === 'recheck' && (
+        <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Connessione interrotta: controllo se il server ha finito…
+        </p>
+      )}
       {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
 
       {!done && canManage && (
         <>
+          {post.status === 'scheduled' && post.publish_at && (
+            <div className="mt-2 rounded-xl border border-[var(--accent-blue)]/50 bg-[var(--accent-blue)]/10 p-2.5 text-sm">
+              <p>
+                <CalendarClock className="mr-1 inline h-4 w-4 text-[var(--accent-blue)]" />
+                Programmato per <b>{whenLabel(post.publish_at)}</b>.
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Cambia giorno e ora qui sotto, oppure togli solo la programmazione: il post resta in bozza.</p>
+              <button
+                onClick={async () => {
+                  if ((await act('unschedule')).ok) setNotice('Programmazione annullata: il post è in bozza.')
+                }}
+                disabled={working}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--background)] px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              >
+                {busy === 'unschedule' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Annulla programmazione
+              </button>
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
             {(['instagram', 'facebook'] as const).map((p) => {
               const Icon = p === 'instagram' ? Instagram : Facebook
@@ -502,24 +744,28 @@ function PostCard({
             </label>
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-            <button onClick={() => confirm('Eliminare questo post?') && act('delete')} disabled={busy !== null} aria-label="Elimina" className="mr-auto p-2 text-[var(--text-secondary)]">
-              <Trash2 className="h-4 w-4" />
-            </button>
-            {post.status === 'scheduled' && (
-              <button onClick={() => act('unschedule')} disabled={busy !== null} className="px-3 py-2 text-sm text-[var(--text-secondary)]">
-                Annulla programmazione
-              </button>
-            )}
             <button
-              onClick={() => act('schedule', { publishAt: new Date(when).toISOString() })}
-              disabled={busy !== null || !platforms.length || !caption.trim()}
+              onClick={() =>
+                confirm(post.status === 'scheduled' ? 'Eliminare il post? Per togliere solo la programmazione usa «Annulla programmazione».' : 'Eliminare questo post?') && act('delete')
+              }
+              disabled={working}
+              aria-label="Elimina il post"
+              className="mr-auto inline-flex items-center gap-1 p-2 text-xs text-[var(--text-secondary)]"
+            >
+              <Trash2 className="h-4 w-4" /> Elimina post
+            </button>
+            <button
+              onClick={async () => {
+                if ((await act('schedule', { publishAt: new Date(when).toISOString() })).ok) setNotice(post.status === 'scheduled' ? 'Orario cambiato.' : 'Post programmato.')
+              }}
+              disabled={working || changed || !platforms.length || !caption.trim()}
               className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-2 text-sm disabled:opacity-50"
             >
               {busy === 'schedule' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />} {post.status === 'scheduled' ? 'Cambia orario' : 'Programma'}
             </button>
             <button
               onClick={() => confirm('Pubblicare adesso?') && act('publish')}
-              disabled={busy !== null || !platforms.length || !caption.trim()}
+              disabled={working || changed || !platforms.length || !caption.trim()}
               className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               {busy === 'publish' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Pubblica ora
@@ -531,6 +777,192 @@ function PostCard({
         <p className="mt-2 inline-flex items-center gap-1 text-xs text-[#34C759]">
           <Check className="h-3.5 w-3.5" /> Pubblicato su {[post.results?.instagram && 'Instagram', post.results?.facebook && 'Facebook'].filter(Boolean).join(' e ')}
         </p>
+      )}
+    </div>
+  )
+}
+
+/** Versione precedente di un post, com'era in quel momento della chat: si guarda o si riprende. */
+function SnapshotCard({
+  post,
+  at,
+  canManage,
+  busy: chatBusy,
+  onTurns,
+  onReload,
+}: {
+  post: Post
+  at: string
+  canManage: boolean
+  busy: boolean
+  onTurns: (turns: Turn[]) => void
+  onReload: () => Promise<Turn[]>
+}) {
+  const { appFetch } = useWorkspace()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const label = new Date(at).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+  if (post.sameAsLive) {
+    return (
+      <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-1 text-xs text-[var(--text-secondary)]">
+        <History className="h-3.5 w-3.5" /> Versione del {label}: uguale a quella attuale (più sotto).
+      </p>
+    )
+  }
+
+  const restore = async () => {
+    if (!confirm('Riprendere questa versione? Diventa una nuova bozza; il post attuale resta com’è.')) return
+    setBusy(true)
+    setError(null)
+    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (data.turns) {
+      setBusy(false)
+      onTurns(data.turns)
+      return
+    }
+    if (data.error) {
+      setBusy(false)
+      setError(data.error)
+      return
+    }
+    // Connessione caduta: il server finisce lo stesso e scrive la nuova bozza nella chat.
+    setError('Connessione interrotta: controllo se la bozza è pronta…')
+    const count = (await onReload()).length
+    for (let k = 0; k < 8; k++) {
+      await new Promise((r) => setTimeout(r, 8000))
+      if ((await onReload()).length > count) {
+        setBusy(false)
+        setError(null)
+        return
+      }
+    }
+    setBusy(false)
+    setError('La bozza non è arrivata: riprova.')
+  }
+
+  return (
+    <div className="mt-3 max-w-xl rounded-2xl border border-dashed border-[var(--border-color)] p-3">
+      <div className="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]">
+        <span className="inline-flex items-center gap-1.5">
+          <History className="h-3.5 w-3.5" /> Versione del {label}
+        </span>
+        <span>{post.media.length} slide</span>
+      </div>
+      <div className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
+        {post.media.map((url, n) => (
+          <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="relative shrink-0 snap-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt={`Slide ${n + 1}`} loading="lazy" className="h-40 w-32 rounded-lg border border-[var(--border-color)] object-cover" />
+            <span className="absolute left-1.5 top-1.5 rounded-full bg-black/55 px-1.5 text-[11px] font-semibold text-white">{n + 1}</span>
+          </a>
+        ))}
+      </div>
+      <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-[var(--text-secondary)]">{post.caption}</p>
+      {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
+      {canManage && (
+        <button
+          onClick={restore}
+          disabled={busy || chatBusy}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} {busy ? 'Ripristino la versione…' : 'Riprendi questa versione'}
+        </button>
+      )}
+      {busy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Per le versioni di prima rileggo i testi delle slide: ci vuole fino a un minuto.</p>}
+    </div>
+  )
+}
+
+type Usage = {
+  updatedAt: string
+  today: { tokens: number; eur: number; calls: number }
+  month: { tokens: number; eur: number; calls: number }
+  byFeature: { feature: string; label: string; tokens: number; eur: number }[]
+}
+
+const euro = (value: number) =>
+  new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: value > 0 && value < 1 ? 3 : 2 }).format(value)
+const tokens = (value: number) => new Intl.NumberFormat('it-IT').format(value)
+
+/** Consumo dell'AI dello spazio (token ed euro), aggiornato ogni minuto. */
+function UsageButton() {
+  const { appFetch, workspace } = useWorkspace()
+  const [usage, setUsage] = useState<Usage | null>(null)
+  const [open, setOpen] = useState(false)
+
+  const refresh = useCallback(async () => {
+    const res = await appFetch('/api/app/usage').catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (data?.month) setUsage(data)
+  }, [appFetch])
+
+  useEffect(() => {
+    if (!workspace) return
+    refresh()
+    const timer = setInterval(() => document.visibilityState === 'visible' && refresh(), 60_000)
+    const onVisible = () => document.visibilityState === 'visible' && refresh()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refresh, workspace])
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => {
+          setOpen((o) => !o)
+          refresh()
+        }}
+        aria-label="Consumo dell’AI"
+        className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-1 text-xs font-semibold text-[var(--text-secondary)]"
+      >
+        <Coins className="h-3.5 w-3.5 text-[var(--accent-blue)]" />
+        {usage ? euro(usage.month.eur) : '…'}
+      </button>
+      {open && (
+        <div className="fixed inset-x-4 top-16 z-30 rounded-2xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-sm shadow-xl md:absolute md:inset-x-auto md:left-0 md:top-full md:mt-2 md:w-72">
+          <div className="flex items-center justify-between">
+            <b>Consumo dell’AI</b>
+            <button onClick={() => setOpen(false)} aria-label="Chiudi" className="p-1 text-[var(--text-secondary)]">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {usage ? (
+            <>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {([['Oggi', usage.today], ['Questo mese', usage.month]] as const).map(([name, t]) => (
+                  <div key={name} className="rounded-xl bg-[var(--background-secondary)] p-2">
+                    <p className="text-xs text-[var(--text-secondary)]">{name}</p>
+                    <p className="text-base font-bold">{euro(t.eur)}</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{tokens(t.tokens)} token</p>
+                  </div>
+                ))}
+              </div>
+              {usage.byFeature.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs">
+                  {usage.byFeature.slice(0, 6).map((f) => (
+                    <li key={f.feature} className="flex justify-between gap-2">
+                      <span className="truncate text-[var(--text-secondary)]">{f.label}</span>
+                      <span className="shrink-0">
+                        {tokens(f.tokens)} · {euro(f.eur)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                Aggiornato alle {new Date(usage.updatedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}, si aggiorna ogni minuto. Euro al cambio BCE del giorno; le
+                modifiche delle immagini con l’AI non sono ancora conteggiate.
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">Carico il consumo…</p>
+          )}
+        </div>
       )}
     </div>
   )

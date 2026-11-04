@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
     const result = await runWithStatus({ status: () => {}, model }, async () => {
       if (images.length) {
-        userTurn.imageNotes = await describePhotos(images)
+        userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn])
       }
       return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns)
-  return NextResponse.json({ turns })
+  return NextResponse.json({ turns: await refreshPostActions(access.db, turns) })
 }
 
 export async function DELETE(req: NextRequest) {

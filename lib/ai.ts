@@ -420,7 +420,7 @@ Niente commenti, niente consigli, niente risposta al cliente.`
  * Descrive foto e video ricevuti in Direct, per rispondere sapendo cosa e' stato
  * mandato. Gemini legge anche i video; Claude (riserva) solo le immagini.
  */
-export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, feature = 'lettura_media_direct'): Promise<string> {
+export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, feature = 'lettura_media_direct', workspaceId?: string): Promise<string> {
   if (!media.length) return ''
   if (geminiUsable()) {
     try {
@@ -428,6 +428,7 @@ export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, 
         temperature: 0.1,
         maxOutputTokens: 600,
         feature,
+        workspaceId,
       })
       if (result.message.trim()) return result.message.trim()
     } catch (error) {
@@ -453,7 +454,7 @@ export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, 
       },
     ],
   })
-  recordUsage({ feature, provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
+  recordUsage({ feature, workspaceId, provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
   return response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
