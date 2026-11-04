@@ -219,15 +219,24 @@ export async function publishPagePost(message: string, link?: string): Promise<S
 }
 
 /** Attende che Meta abbia elaborato un contenuto Instagram (FINISHED). */
-async function waitForInstagram(id: string, token: string): Promise<string | null> {
-  for (let i = 0; i < 15; i++) {
-    const res = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${encodeURIComponent(token)}`)
-    const status = (await res.json().catch(() => ({})))?.status_code
-    if (status === 'FINISHED') return null
-    if (status === 'ERROR' || status === 'EXPIRED') return `Instagram non ha accettato le immagini (${status})`
-    await new Promise((r) => setTimeout(r, 2000))
+/**
+ * Aspetta che Instagram abbia finito di elaborare un contenuto. Prima, dopo 30
+ * secondi si pubblicava comunque: con immagini piu' pesanti Instagram non era
+ * pronto e rispondeva "Media ID is not available". Ora si aspetta fino a
+ * `seconds` e, se non e' pronto, lo si dice.
+ */
+async function waitForInstagram(id: string, token: string, seconds = 90): Promise<string | null> {
+  const until = Date.now() + seconds * 1000
+  let last = ''
+  while (Date.now() < until) {
+    const res = await fetch(`${GRAPH}/${id}?fields=status_code,status&access_token=${encodeURIComponent(token)}`).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    last = data?.status_code || ''
+    if (last === 'FINISHED') return null
+    if (last === 'ERROR' || last === 'EXPIRED') return `Instagram non ha accettato le immagini (${last}${data?.status ? `: ${data.status}` : ''})`
+    await new Promise((r) => setTimeout(r, 3000))
   }
-  return null
+  return `Instagram non ha finito di elaborare le immagini in ${seconds} secondi (stato ${last || 'sconosciuto'})`
 }
 
 /**
@@ -246,11 +255,21 @@ export async function publishInstagramCarousel(imageUrls: string[], caption: str
     if (item.error || !item.raw?.id) return { error: item.error || 'immagine del carosello non accettata' }
     children.push(item.raw.id)
   }
+  // Ogni immagine deve essere pronta prima di creare il carosello.
+  for (const child of children) {
+    const childNotReady = await waitForInstagram(child, page.token, 60)
+    if (childNotReady) return { error: childNotReady }
+  }
   const carousel = await post(`${GRAPH}/${igId}/media`, page.token, { media_type: 'CAROUSEL', children: children.join(','), caption: caption.slice(0, 2200) })
   if (carousel.error || !carousel.raw?.id) return { error: carousel.error || 'carosello non creato' }
   const notReady = await waitForInstagram(carousel.raw.id, page.token)
   if (notReady) return { error: notReady }
-  const published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: carousel.raw.id })
+  // "Media ID is not available": a volte Instagram ha bisogno di qualche secondo in piu'.
+  let published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: carousel.raw.id })
+  for (let attempt = 0; attempt < 4 && published.error && /not available|not ready|try again/i.test(published.error); attempt++) {
+    await new Promise((r) => setTimeout(r, 6000))
+    published = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: carousel.raw.id })
+  }
   if (published.error) return { error: published.error }
   return { id: published.raw?.id }
 }
