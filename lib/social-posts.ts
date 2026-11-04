@@ -1,4 +1,5 @@
 import { callAI, hasAIProvider } from '@/lib/ai'
+import { limitHashtags } from '@/lib/hashtags'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createCarousel, type Cta, type Slide } from '@/lib/blog-image'
 import { loadContentDirections, nextPaletteMix } from '@/lib/content-directions'
@@ -37,7 +38,7 @@ Regole:
 - "label": etichetta breve sopra il gancio (max 34 caratteri, es. "CASO STUDIO", "NOVITÀ", "DIETRO LE QUINTE"), oppure "" se non serve.
 - "slides": da 2 a 8 slide (una per immagine di Luca, nello stesso ordine, se ci sono immagini; altrimenti 3-4). Ogni slide: "title" massimo 55 caratteri e "text" massimo 190 caratteri, chiari e utili.
 - "cta": ultima slide: "title" (max 50 caratteri), "text" (max 150), "button" (max 26, es. "Scrivici su WhatsApp", "facevoice.ai").
-- "caption": didascalia Instagram (max 1600 caratteri): apertura forte, 2-4 paragrafi brevi, invito all'azione, poi 5-8 hashtag pertinenti. I link non sono cliccabili su Instagram.
+- "caption": didascalia Instagram (max 1600 caratteri): apertura forte, 2-4 paragrafi brevi, invito all'azione, poi AL MASSIMO 5 hashtag pertinenti (Instagram non ne accetta di piu'). I link non sono cliccabili su Instagram.
 - "facebook": testo del post Facebook (max 1200 caratteri), simile alla didascalia ma senza hashtag in fondo; puoi mettere https://www.facevoice.ai.
 - "title": titolo interno breve del post.
 - Tono: chiaro, umano, professionale, in italiano (salvo diversa indicazione di Luca). Niente markdown.
@@ -76,7 +77,7 @@ async function planPost(brief: string, imageNotes: string, photoCount: number, d
     hook: trim(data.hook, 60) || slides[0].title,
     label: trim(data.label, 40),
     slides,
-    caption: String(data.caption || '').trim().slice(0, 2200),
+    caption: limitHashtags(String(data.caption || '').trim()).slice(0, 2200),
     facebook: String(data.facebook || data.caption || '').trim().slice(0, 5000),
     cta: {
       title: trim(cta.title, 70) || 'Vuoi fare lo stesso nella tua azienda?',
@@ -126,7 +127,7 @@ export async function createPostDraft(input: {
   const plan = await planPost(input.brief, input.imageNotes || '', photos.length, directions)
   if (input.slides?.length) plan.slides = input.slides.slice(0, 8)
   if (input.hook?.trim()) plan.hook = input.hook.trim().slice(0, 60)
-  if (input.caption?.trim()) plan.caption = input.caption.trim().slice(0, 2200)
+  if (input.caption?.trim()) plan.caption = limitHashtags(input.caption.trim()).slice(0, 2200)
   // Almeno una slide per ogni foto di Luca.
   while (plan.slides.length < slidePhotos.length) plan.slides.push({ title: plan.title, text: '' })
 
@@ -173,6 +174,8 @@ export async function publishPostDraft(
   const platforms = (options.platforms?.length ? options.platforms : (['instagram', 'facebook'] as const)).filter((p) => !previous[p])
   if (!platforms.length) return draft
   if (options.caption?.trim()) draft.caption = options.caption.trim().slice(0, 2200)
+  // Anche le bozze di prima: su Instagram al massimo 5 hashtag.
+  draft.caption = limitHashtags(draft.caption)
   if (options.facebook?.trim()) draft.facebook = options.facebook.trim().slice(0, 5000)
   draft.status = 'publishing'
   draft.updatedAt = new Date().toISOString()

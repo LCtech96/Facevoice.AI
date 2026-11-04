@@ -60,7 +60,8 @@ export const instagramCaption = (title: string, content: string) =>
     title,
     teaserOf(content, 700),
     'Articolo completo sul nostro blog: facevoice.ai/blog (link in bio).',
-    '#intelligenzaartificiale #AI #innovazione #digitale #aziende #FacevoiceAI',
+    // Al massimo 5 hashtag: Instagram non ne accetta di piu'.
+    '#intelligenzaartificiale #AI #innovazione #aziende #FacevoiceAI',
   ]
     .filter(Boolean)
     .join('\n\n')
