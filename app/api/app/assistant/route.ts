@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { asModelChoice, runWithStatus } from '@/lib/ai'
+import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
+import { usageSummary } from '@/lib/eur'
 import { loadChat, refreshPostActions, runClientAssistant, saveChat, type ChatTurn } from '@/lib/saas/assistant'
 import { describePhotos } from '@/lib/saas/posts'
 
@@ -44,14 +45,17 @@ export async function POST(req: NextRequest) {
   let reply: ChatTurn
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
-    const result = await runWithStatus({ status: () => {}, model }, async () => {
+    // Contatore dei token di questa richiesta: il costo si mostra sotto la risposta.
+    const tally = emptyTally()
+    const result = await runWithStatus({ status: () => {}, model, usage: tally }, async () => {
       if (images.length) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn])
       }
       return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
     })
-    reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
+    const usage = await usageSummary(tally)
+    reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), ...(usage.tokens ? { usage } : {}), at: new Date().toISOString() }
   } catch (error) {
     console.error('saas assistente:', error instanceof Error ? error.message : error)
     reply = { role: 'assistant', text: 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }

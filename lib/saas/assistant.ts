@@ -63,6 +63,8 @@ export type ChatTurn = {
   /** Slide scelta dal cliente toccandola nell'anteprima (la richiesta riguarda quella). */
   target?: { postId: string; slide: number; thumb?: string; slides?: number[] }
   actions?: ChatAction[]
+  /** Costo di questa risposta (token ed euro). */
+  usage?: { tokens: number; eur: number }
   at: string
 }
 
@@ -125,12 +127,19 @@ export async function refreshPostActions(db: WorkspaceDb, turns: ChatTurn[]): Pr
 }
 
 /** Aggiunge alla chat una modifica fatta dall'anteprima (cosi' resta in cronologia). */
-export async function logPostChange(db: WorkspaceDb, userId: string, request: Omit<ChatTurn, 'role' | 'at'>, reply: string, post: PostRow): Promise<ChatTurn[]> {
+export async function logPostChange(
+  db: WorkspaceDb,
+  userId: string,
+  request: Omit<ChatTurn, 'role' | 'at'>,
+  reply: string,
+  post: PostRow,
+  usage?: ChatTurn['usage']
+): Promise<ChatTurn[]> {
   const at = new Date().toISOString()
   const turns: ChatTurn[] = [
     ...(await loadChat(db.workspaceId, userId)),
     { role: 'user', ...request, at },
-    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], at },
+    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], ...(usage && usage.tokens ? { usage } : {}), at },
   ]
   await saveChat(db.workspaceId, userId, turns)
   return refreshPostActions(db, turns)
@@ -155,6 +164,7 @@ Strumenti:
 - "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà, tutto in UNA chiamata: testi di singole slide (n = numero della slide; per la copertina n 1 "title" è la riga piccola sotto il gancio, il gancio e l'etichetta si cambiano con "hook" e "label"; per la slide finale usa il suo numero con "title", "text" e "button"), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere. Per tradurre o riscrivere tutto il carosello metti tutte le slide in una sola chiamata, poi la didascalia con update_post (caption e facebook). Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima". In "slides" metti SOLO le slide da cambiare, con il loro numero esatto: non riscrivere le altre e non usare "order" o "remove" se il cliente non chiede di spostare o togliere slide.
 - "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto, copertina e slide finale comprese (prima di correggerlo).
 - "edit_slide_photo": {"post_id": "…", "n": 3, "instruction": "cosa cambiare nell'immagine"} → modifica con l'AI SOLO l'immagine della slide n (luce, colori, sfondo, togliere o aggiungere qualcosa) e rifà il post; nei caroselli con le foto il testo della slide resta com'è.
+Se nella richiesta c'è "[Testi attuali del post …]", hai già testi e didascalia di quel post: non chiamare post_outline per quel post. Fai le modifiche con meno passi possibile (di solito una chiamata per le slide e una per la didascalia), poi rispondi.
 Se nella richiesta c'è "[Slide selezionata dal cliente…]", il cliente ha toccato quella slide nell'anteprima e la richiesta riguarda SOLO quella: se chiede di cambiare scritte, titolo o testo usa edit_carousel su quel numero; se chiede di cambiare la foto o l'immagine usa edit_slide_photo; se chiede entrambe le cose, fai tutte e due. Non toccare le altre slide.
 - "edit_image": {"image": "url", "instruction": "cosa cambiare"} → modifica una foto con l'AI (luce, sfondo, colori, togliere oggetti, aggiungere una scritta…) e mostra il risultato. Per usarla in un post passala poi in "images" di create_post o update_post.
 - "generate_image": {"description": "cosa deve mostrare"} → crea un'immagine da zero.
@@ -216,6 +226,18 @@ async function messagesOverview(db: WorkspaceDb, args: Record<string, unknown>) 
   }
 }
 
+/**
+ * Testi attuali del post su cui si sta lavorando (quello toccato o l'ultimo carosello
+ * non pubblicato): cosi' l'assistente non spende un passo per leggerli con post_outline.
+ */
+async function focusNote(recent: PostRow[], targetId?: string) {
+  const post = (targetId && recent.find((p) => p.id === targetId)) || recent.find((p) => p.kind === 'carousel' && ['draft', 'scheduled', 'failed'].includes(p.status))
+  if (!post) return ''
+  const outline = await carouselOutline(post.id).catch(() => null)
+  if (!outline) return ''
+  return `[Testi attuali del post ${post.id} («${post.title || 'post'}», ${post.status}): ${JSON.stringify(outline.slide)}\nDidascalia attuale: ${post.caption.slice(0, 1500)}]`
+}
+
 /** Descrizione della slide toccata dal cliente: post, numero e testo attuale. */
 async function targetNote(target: { postId: string; slide: number }) {
   const outline = await carouselOutline(target.postId).catch(() => null)
@@ -257,6 +279,7 @@ export async function runClientAssistant(
       : '',
     earlierLines.length ? `[Foto mandate prima in questa conversazione]\n${earlierLines.join('\n')}` : '',
     target ? await targetNote(target) : '',
+    await focusNote(recent, target?.postId),
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -276,7 +299,8 @@ export async function runClientAssistant(
   const used: string[] = []
   const errors: string[] = []
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await callAI(transcript, system, { feature: 'saas_assistente', temperature: 0.3, maxOutputTokens: 3000, workspaceId: db.workspaceId })
+    // cache: dal secondo passo la parte gia' mandata (istruzioni e passi prima) costa circa un decimo.
+    const response = await callAI(transcript, system, { feature: 'saas_assistente', temperature: 0.3, maxOutputTokens: 3000, workspaceId: db.workspaceId, cache: true })
     const raw = response.message || ''
     const call = parseStep(raw)
     if (!call) return { reply: raw.trim() || 'Non ho capito, puoi riformulare?', actions }
@@ -315,7 +339,7 @@ export async function runClientAssistant(
             closing: args.closing === true,
           })
           showPost(post)
-          result = { creato: true, post_id: post.id, tipo: post.kind, immagini: post.media.length, titolo: post.title, didascalia: post.caption.slice(0, 300), slide: (await carouselOutline(post.id))?.slide }
+          result = { creato: true, post_id: post.id, tipo: post.kind, immagini: post.media.length, titolo: post.title }
           break
         }
         case 'edit_image': {
@@ -408,7 +432,7 @@ export async function runClientAssistant(
             closing: only ? undefined : typeof args.closing === 'boolean' ? args.closing : undefined,
           })
           showPost(post)
-          result = { rifatto: true, post_id: post.id, slide: (await carouselOutline(post.id))?.slide }
+          result = { rifatto: true, post_id: post.id, slide: post.media.length }
           break
         }
         case 'edit_slide_photo': {

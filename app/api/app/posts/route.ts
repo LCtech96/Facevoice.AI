@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { asModelChoice, runWithStatus } from '@/lib/ai'
+import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
+import { usageSummary } from '@/lib/eur'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
 import { arrangeSlides, cancelPost, deletePost, editSlides, extractPhotos, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
@@ -34,7 +35,9 @@ export async function PATCH(req: NextRequest) {
   const id = String(body.id || '')
   const action = String(body.action || '')
   // Modello scelto nella chat: vale anche per le correzioni e i ripristini dall'anteprima.
-  const withModel = <T,>(fn: () => Promise<T>) => runWithStatus({ status: () => {}, model: asModelChoice(body.model) }, fn)
+  // Contatore dei token: il costo della correzione si mostra in chat sotto la risposta.
+  const tally = emptyTally()
+  const withModel = <T,>(fn: () => Promise<T>) => runWithStatus({ status: () => {}, model: asModelChoice(body.model), usage: tally }, fn)
   const platforms = Array.isArray(body.platforms) ? (body.platforms.filter((p: unknown) => p === 'instagram' || p === 'facebook') as PostPlatform[]) : undefined
   try {
     // base: le slide che vedeva la pagina. Se nel frattempo sono cambiate (es. salvataggio
@@ -81,7 +84,8 @@ export async function PATCH(req: NextRequest) {
             access.userId,
             { text: instruction.trim().slice(0, 1500), target: { postId: id, slide: first, slides: numbers, thumb: before?.media[first - 1] } },
             `Fatto: ${done.join(' · ')}. ${done.some((d) => d.includes('estratte')) ? 'Le altre slide sono rimaste uguali, cambia solo il numero.' : 'Le altre slide non sono cambiate.'}`,
-            post
+            post,
+            await usageSummary(tally)
           )
         }
         break
@@ -107,7 +111,8 @@ export async function PATCH(req: NextRequest) {
           access.userId,
           { text: 'Estrai le foto da questo screenshot: una slide per ogni foto', target: { postId: id, slide: n, thumb: before?.media[n - 1] } },
           `Fatto: ${done.join(' · ')}. Le altre slide sono rimaste uguali, cambia solo il numero.`,
-          post
+          post,
+          await usageSummary(tally)
         )
         break
       }
@@ -128,7 +133,8 @@ export async function PATCH(req: NextRequest) {
             : result.editable
             ? 'Ecco una nuova bozza uguale a quella versione: puoi correggerla, programmarla o pubblicarla. Il post di prima resta com’è.'
             : 'Ecco una nuova bozza uguale a quella versione: puoi programmarla o pubblicarla. È di prima che salvassi le versioni, quindi i testi delle slide non si possono correggere uno per uno: per cambiarli ricrea il carosello dalle foto.',
-          post
+          post,
+          await usageSummary(tally)
         )
         break
       }

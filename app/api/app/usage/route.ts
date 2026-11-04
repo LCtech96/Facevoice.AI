@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { romeLocalToDate } from '@/lib/saas/posts'
+import { eurPerUsd } from '@/lib/eur'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,22 +17,6 @@ const LABELS: Record<string, string> = {
   saas_lettura_foto: 'Lettura delle foto',
   saas_recupero_testi: 'Recupero versioni',
   saas_estrai_foto: 'Foto dagli screenshot',
-}
-
-// Cambio dollaro → euro (BCE tramite Frankfurter), tenuto per 12 ore; se non risponde
-// si usa EUR_PER_USD o un valore indicativo.
-let rate: { value: number; at: number } | null = null
-async function eurPerUsd(): Promise<number> {
-  if (rate && Date.now() - rate.at < 12 * 3600_000) return rate.value
-  const fallback = Number(process.env.EUR_PER_USD) || 0.92
-  try {
-    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR', { signal: AbortSignal.timeout(3000) })
-    const value = Number((await res.json())?.rates?.EUR)
-    rate = { value: value > 0 ? value : fallback, at: Date.now() }
-  } catch {
-    rate = { value: fallback, at: Date.now() - 11 * 3600_000 }
-  }
-  return rate.value
 }
 
 const empty = () => ({ calls: 0, input: 0, output: 0, tokens: 0, usd: 0 })

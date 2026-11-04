@@ -40,6 +40,12 @@ type AIOptions = {
   feature?: string
   /** Spazio di lavoro a cui addebitare il consumo (default: Facevoice). */
   workspaceId?: string
+  /**
+   * Conversazione che si rimanda piu' volte (es. i passi dell'assistente): con Claude
+   * la parte gia' mandata si rilegge dalla cache a circa un decimo del prezzo.
+   * Per le chiamate singole no: la prima scrittura in cache costa il 25% in piu'.
+   */
+  cache?: boolean
 }
 
 // Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
@@ -67,11 +73,17 @@ function recordUsage(row: {
   outcome?: 'ok' | 'limit' | 'error'
   input?: number
   output?: number
+  /** Parte dell'input letta dalla cache (~0,1x) e scritta in cache (1,25x): gia' compresa in input. */
+  cacheRead?: number
+  cacheWrite?: number
 }) {
   const input = row.input || 0
   const output = row.output || 0
   const price = priceOf(row.model)
-  const cost = row.provider === 'claude' ? (input * price.input + output * price.output) / 1_000_000 : 0
+  const read = row.cacheRead || 0
+  const write = row.cacheWrite || 0
+  const plain = Math.max(0, input - read - write)
+  const cost = row.provider === 'claude' ? ((plain + read * 0.1 + write * 1.25) * price.input + output * price.output) / 1_000_000 : 0
   const tally = work.getStore()?.usage
   if (tally && (row.outcome || 'ok') === 'ok') {
     tally.calls++
@@ -198,6 +210,8 @@ async function callClaudeText(
     max_tokens: isHaiku ? Math.min(8192, Math.max(1024, options?.maxOutputTokens || 2048)) : 16000,
     ...(system ? { system } : {}),
     messages: toClaudeMessages(messages),
+    // Passi successivi della stessa conversazione: il prefisso gia' mandato si rilegge dalla cache.
+    ...(options?.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
     // Haiku accetta la temperatura; Sonnet/Opus 5.5 no, e con effort basso costano meno.
     ...(isHaiku
       ? options?.temperature !== undefined
@@ -217,6 +231,8 @@ async function callClaudeText(
     outcome: text && response.stop_reason !== 'refusal' ? 'ok' : 'error',
     input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0) + (response.usage.cache_read_input_tokens || 0),
     output: response.usage.output_tokens || 0,
+    cacheRead: response.usage.cache_read_input_tokens || 0,
+    cacheWrite: response.usage.cache_creation_input_tokens || 0,
   })
   if (response.stop_reason === 'refusal' || !text) throw new Error('Claude non ha restituito una risposta')
   return { message: text, provider: 'claude', model: response.model }

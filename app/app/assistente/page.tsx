@@ -36,7 +36,7 @@ type Post = {
 }
 type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
-type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
+type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; usage?: { tokens: number; eur: number }; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
 
@@ -270,6 +270,11 @@ export default function AssistantPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
+                  {turn.usage && (
+                    <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-secondary)]">
+                      <Coins className="h-3 w-3" /> {tokens(turn.usage.tokens)} token · {euro(turn.usage.eur)}
+                    </p>
+                  )}
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
                       action.post.snapshot ? (
