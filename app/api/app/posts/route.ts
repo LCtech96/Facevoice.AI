@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
+import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
 import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
@@ -32,6 +33,8 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const id = String(body.id || '')
   const action = String(body.action || '')
+  // Modello scelto nella chat: vale anche per le correzioni e i ripristini dall'anteprima.
+  const withModel = <T,>(fn: () => Promise<T>) => runWithStatus({ status: () => {}, model: asModelChoice(body.model) }, fn)
   const platforms = Array.isArray(body.platforms) ? (body.platforms.filter((p: unknown) => p === 'instagram' || p === 'facebook') as PostPlatform[]) : undefined
   try {
     // base: le slide che vedeva la pagina. Se nel frattempo sono cambiate (es. salvataggio
@@ -68,7 +71,7 @@ export async function PATCH(req: NextRequest) {
       case 'edit_slides': {
         // Correzione delle sole slide scelte (numeri da 1): le altre restano identiche.
         const instruction = String(body.instruction || '')
-        const result = await editSlides(access.db, id, numbers, instruction)
+        const result = await withModel(() => editSlides(access.db, id, numbers, instruction))
         post = result.post
         done = result.done
         if (done.length) {
@@ -87,7 +90,7 @@ export async function PATCH(req: NextRequest) {
         // Versione precedente (dalla chat) ripresa come nuova bozza.
         const media = Array.isArray(body.media) ? (body.media as unknown[]).filter((u): u is string => typeof u === 'string') : []
         const chatPhotos = (await loadChat(access.workspace.id, access.userId)).flatMap((t) => (t.role === 'user' ? t.images || [] : []))
-        const result = await restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId, chatPhotos)
+        const result = await withModel(() => restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId, chatPhotos))
         post = result.post
         const at = typeof body.at === 'string' ? new Date(body.at) : null
         const label = at && !Number.isNaN(at.getTime()) ? at.toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''

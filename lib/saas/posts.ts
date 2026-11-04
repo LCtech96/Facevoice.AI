@@ -95,6 +95,25 @@ export async function uploadWorkspaceImage(workspaceId: string, input: Buffer): 
   return store(workspaceId, 'uploads', jpeg)
 }
 
+/**
+ * Immagine dall'AI di Gemini (l'unica che crea e modifica le foto): sul piano gratuito
+ * a volte risponde "limite di richieste al minuto". Si aspetta e si riprova da soli
+ * (fino a due volte, circa un minuto) invece di far fallire la correzione.
+ */
+async function geminiImage(prompt: string, reference?: { mimeType: string; data: string }) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await generateGeminiImage(prompt, reference)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/rate limit|429|limiti di richieste|resource.?exhausted/i.test(message)) throw error
+      if (attempt >= 2) throw new Error('il servizio che modifica le foto è al limite di richieste per adesso: riprova tra qualche minuto')
+      console.warn(`saas immagine: limite di Gemini, riprovo tra ${attempt ? 40 : 20} secondi`)
+      await new Promise((r) => setTimeout(r, attempt ? 40_000 : 20_000))
+    }
+  }
+}
+
 /** Modifica una foto con l'AI (es. "togli lo sfondo", "luce piu' calda", "aggiungi una scritta"). */
 export async function editImage(workspaceId: string, url: string, instruction: string): Promise<string> {
   if (!getGeminiApiKey()) throw new Error('modifica delle immagini non disponibile (manca la chiave Gemini)')
@@ -102,7 +121,7 @@ export async function editImage(workspaceId: string, url: string, instruction: s
   const prompt = `Edit the attached photo following this instruction from a small business owner (in Italian): "${instruction.slice(0, 600)}".
 Keep the same subject, people, products and composition unless the instruction asks otherwise. Photorealistic, high quality, suitable for an Instagram post.
 If the instruction asks for text in the image, write it exactly as requested and spell it correctly; otherwise add no text, no logos and no watermarks.`
-  const { imageUrl } = await generateGeminiImage(prompt, { mimeType: 'image/jpeg', data: original.toString('base64') })
+  const { imageUrl } = await geminiImage(prompt, { mimeType: 'image/jpeg', data: original.toString('base64') })
   const base64 = imageUrl.replace(/^data:[^;]+;base64,/, '')
   if (!base64) throw new Error('l’AI non ha restituito l’immagine')
   const jpeg = await sharp(Buffer.from(base64, 'base64')).rotate().jpeg({ quality: 88 }).toBuffer()
@@ -112,7 +131,7 @@ If the instruction asks for text in the image, write it exactly as requested and
 /** Immagine creata da zero dall'AI (es. "una foto di un piatto di pasta su un tavolo in terrazza"). */
 export async function generateImage(workspaceId: string, description: string): Promise<string> {
   if (!getGeminiApiKey()) throw new Error('creazione delle immagini non disponibile (manca la chiave Gemini)')
-  const { imageUrl } = await generateGeminiImage(
+  const { imageUrl } = await geminiImage(
     `Photorealistic image for an Instagram post of a small business. ${description.slice(0, 800)}
 Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`
   )

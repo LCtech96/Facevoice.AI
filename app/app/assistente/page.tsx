@@ -271,9 +271,9 @@ export default function AssistantPage() {
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
                       action.post.snapshot ? (
-                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} onTurns={setTurns} onReload={load} />
+                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} model={model} onTurns={setTurns} onReload={load} />
                       ) : (
-                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onTurns={setTurns} />
+                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} model={model} onChange={updatePost} onTurns={setTurns} />
                       )
                     ) : (
                       <a key={k} href={action.url} target="_blank" rel="noopener noreferrer" className="mt-3 block w-full max-w-xs">
@@ -384,12 +384,14 @@ function PostCard({
   post,
   canManage,
   busy: chatBusy,
+  model,
   onChange,
   onTurns,
 }: {
   post: Post
   canManage: boolean
   busy: boolean
+  model: string
   onChange: (post: Post) => void
   onTurns: (turns: Turn[]) => void
 }) {
@@ -503,6 +505,7 @@ function PostCard({
         action,
         // Le slide che si vedono: il server non tocca un post diverso da questo.
         base: post.media,
+        model,
         caption: caption !== post.caption ? caption : undefined,
         platforms: platforms.join() !== post.platforms.join() ? platforms : undefined,
         ...extra,
@@ -788,6 +791,7 @@ function SnapshotCard({
   at,
   canManage,
   busy: chatBusy,
+  model,
   onTurns,
   onReload,
 }: {
@@ -795,6 +799,7 @@ function SnapshotCard({
   at: string
   canManage: boolean
   busy: boolean
+  model: string
   onTurns: (turns: Turn[]) => void
   onReload: () => Promise<Turn[]>
 }) {
@@ -815,7 +820,7 @@ function SnapshotCard({
     if (!confirm('Riprendere questa versione? Diventa una nuova bozza; il post attuale resta com’è.')) return
     setBusy(true)
     setError(null)
-    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at }) }).catch(() => null)
+    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at, model }) }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (data.turns) {
       setBusy(false)
