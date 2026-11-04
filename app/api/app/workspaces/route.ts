@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createWorkspace, membershipsOf, userFromRequest } from '@/lib/workspace'
+import { createWorkspace, membershipsOf, renameWorkspace, requireWorkspace, userFromRequest } from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
 
 // Spazi di lavoro dell'utente collegato: elenco e creazione del primo spazio
-// (dopo la registrazione) o di uno nuovo.
+// (dopo la registrazione) o di uno nuovo, cambio del nome.
 
 export async function GET(req: NextRequest) {
   const user = await userFromRequest(req)
@@ -31,5 +31,19 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : 'Spazio non creato, riprova.'
     console.error('app workspace create:', message)
     return NextResponse.json({ error: message.startsWith('spazio non creato') ? 'Spazio non creato, riprova.' : message }, { status: 400 })
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  const access = await requireWorkspace(req, 'admin')
+  if (access instanceof NextResponse) return access
+  const body = await req.json().catch(() => ({}))
+  try {
+    const name = await renameWorkspace(access.workspace.id, typeof body.name === 'string' ? body.name : '')
+    return NextResponse.json({ name })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    console.error('app workspace rename:', message)
+    return NextResponse.json({ error: message.startsWith('nome non salvato') || !message ? 'Nome non salvato, riprova.' : message }, { status: 400 })
   }
 }

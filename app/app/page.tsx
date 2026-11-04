@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
-import { Facebook, Globe, Instagram, Mail, MessageCircle } from 'lucide-react'
+import { Check, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, Pencil, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 
 // Panoramica dello spazio di lavoro: stato dei canali e primi passi.
@@ -18,8 +18,32 @@ const CHANNELS: Record<string, { label: string; icon: typeof Mail; soon: string 
 }
 
 export default function OverviewPage() {
-  const { workspace, appFetch } = useWorkspace()
+  const { workspace, appFetch, reload } = useWorkspace()
   const [channels, setChannels] = useState<Channel[] | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const canRename = workspace?.role === 'owner' || workspace?.role === 'admin'
+
+  const startEdit = () => {
+    setName(workspace?.name || '')
+    setNameError(null)
+    setEditing(true)
+  }
+
+  const saveName = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!name.trim() || name.trim() === workspace?.name) return setEditing(false)
+    setSaving(true)
+    setNameError(null)
+    const res = await appFetch('/api/app/workspaces', { method: 'PATCH', body: JSON.stringify({ name }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setSaving(false)
+    if (!res?.ok) return setNameError(data.error || 'Nome non salvato, riprova.')
+    await reload()
+    setEditing(false)
+  }
 
   useEffect(() => {
     let alive = true
@@ -38,7 +62,35 @@ export default function OverviewPage() {
 
   return (
     <div>
-      <h1 translate="no" className="text-3xl font-extrabold">{workspace?.name}</h1>
+      {editing ? (
+        <form onSubmit={saveName} className="flex items-center gap-2">
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            aria-label="Nome della tua attività"
+            translate="no"
+            className="min-w-0 flex-1 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-3 py-2 text-2xl font-extrabold text-[var(--text-primary)]"
+          />
+          <button type="submit" disabled={saving || !name.trim()} aria-label="Salva il nome" className="rounded-full bg-[var(--accent-blue)] p-2 text-white disabled:opacity-50">
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+          </button>
+          <button type="button" onClick={() => setEditing(false)} aria-label="Annulla" className="p-2 text-[var(--text-secondary)]">
+            <X className="h-5 w-5" />
+          </button>
+        </form>
+      ) : (
+        <div className="flex items-center gap-3">
+          <h1 translate="no" className="min-w-0 truncate text-3xl font-extrabold">{workspace?.name}</h1>
+          {canRename && (
+            <button onClick={startEdit} aria-label="Modifica il nome dell’attività" title="Modifica il nome" className="shrink-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+              <Pencil className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+      )}
+      {nameError && <p className="mt-2 text-sm text-[#ff6b6b]">{nameError}</p>}
       <p className="mt-2 text-[var(--text-secondary)]">
         {connected ? `${connected} ${connected === 1 ? 'canale collegato' : 'canali collegati'}.` : 'Nessun canale collegato: inizia da qui sotto.'}
       </p>

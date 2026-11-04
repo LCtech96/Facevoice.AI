@@ -17,7 +17,8 @@ export async function GET(req: NextRequest) {
     .select('id, direction, body, subject, status, origin, error_message, contact_name, created_at')
     .eq('platform', platform)
     .eq('contact_id', contact)
-    .neq('status', 'rejected')
+    // Le righe senza stato (messaggi ricevuti) vanno tenute: neq da solo le scarterebbe.
+    .or('status.is.null,status.neq.rejected')
     .order('created_at', { ascending: true })
     .limit(200)
   if (error) return NextResponse.json({ error: 'Messaggi non disponibili, riprova.' }, { status: 500 })

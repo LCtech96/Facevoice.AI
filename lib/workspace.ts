@@ -64,6 +64,15 @@ export async function requireWorkspace(
   return access
 }
 
+/** Nuovo nome dell'attivita' (usato anche come firma nelle risposte email). */
+export async function renameWorkspace(workspaceId: string, rawName: string): Promise<string> {
+  const name = rawName.replace(/\s+/g, ' ').trim().slice(0, 80)
+  if (!name) throw new Error('Scrivi il nome della tua attività.')
+  const { error } = await supabaseAdmin.from('workspaces').update({ name }).eq('id', workspaceId)
+  if (error) throw new Error(`nome non salvato: ${error.message}`)
+  return name
+}
+
 /** Canali di partenza di uno spazio nuovo: tutti scollegati, risposte da approvare. */
 export const STARTER_CHANNELS = ['instagram', 'facebook', 'whatsapp', 'email', 'web'] as const
 

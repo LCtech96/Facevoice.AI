@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
   let query = access.db
     .from('social_messages')
     .select('id, platform, contact_id, contact_name, direction, body, subject, status, read_at, created_at')
-    .neq('status', 'rejected')
+    // Le righe senza stato (messaggi ricevuti) vanno tenute: neq da solo le scarterebbe.
+    .or('status.is.null,status.neq.rejected')
     .order('created_at', { ascending: false })
     .limit(600)
   if (platform) query = query.eq('platform', platform)
