@@ -11,7 +11,7 @@ import { readInstructions, workspaceName } from './responder'
 // Post dei clienti: foto caricate (anche modificate con l'AI) o caroselli
 // grafici con i loro colori, testi scritti dall'AI con il tono delle loro
 // istruzioni, pubblicazione subito o programmata (giorno e ora) su Instagram e
-// Facebook. Tabella scheduled_posts, immagini nel bucket workspace-media.
+// Facebook. Tabella workspace_posts, immagini nel bucket workspace-media.
 
 export const MEDIA_BUCKET = 'workspace-media'
 export type PostPlatform = 'instagram' | 'facebook'
@@ -253,7 +253,7 @@ export async function createPost(
   }
 
   const { data, error } = await db
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .insert({
       status: 'draft',
       kind,
@@ -278,12 +278,12 @@ export async function defaultPlatforms(db: WorkspaceDb): Promise<PostPlatform[]>
 }
 
 export async function getPost(db: WorkspaceDb, id: string): Promise<PostRow | null> {
-  const { data } = await db.from('scheduled_posts').select(POST_COLUMNS).eq('id', id).maybeSingle()
+  const { data } = await db.from('workspace_posts').select(POST_COLUMNS).eq('id', id).maybeSingle()
   return (data as PostRow | null) ?? null
 }
 
 export async function listPosts(db: WorkspaceDb, options: { status?: PostStatus[]; limit?: number } = {}): Promise<PostRow[]> {
-  let query = db.from('scheduled_posts').select(POST_COLUMNS).order('created_at', { ascending: false }).limit(options.limit || 30)
+  let query = db.from('workspace_posts').select(POST_COLUMNS).order('created_at', { ascending: false }).limit(options.limit || 30)
   if (options.status?.length) query = query.in('status', options.status)
   const { data } = await query
   return (data || []) as PostRow[]
@@ -307,7 +307,7 @@ export async function updatePost(db: WorkspaceDb, id: string, patch: { caption?:
     if (!list.length) throw new Error('serve almeno un’immagine')
     update.media = list
   }
-  const { data, error } = await db.from('scheduled_posts').update(update).eq('id', id).select(POST_COLUMNS).single()
+  const { data, error } = await db.from('workspace_posts').update(update).eq('id', id).select(POST_COLUMNS).single()
   if (error || !data) throw new Error(`post non aggiornato: ${error?.message}`)
   return data as PostRow
 }
@@ -322,7 +322,7 @@ export async function schedulePost(db: WorkspaceDb, id: string, publishAt: Date,
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato o in pubblicazione')
   await assertPublishable(db, platforms?.length ? platforms : post.platforms)
   const { data, error } = await db
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .update({ status: 'scheduled', publish_at: publishAt.toISOString(), error_message: null, ...(platforms?.length ? { platforms } : {}), updated_at: new Date().toISOString() })
     .eq('id', id)
     .select(POST_COLUMNS)
@@ -333,7 +333,7 @@ export async function schedulePost(db: WorkspaceDb, id: string, publishAt: Date,
 
 export async function cancelPost(db: WorkspaceDb, id: string): Promise<PostRow> {
   const { data, error } = await db
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .update({ status: 'draft', publish_at: null, updated_at: new Date().toISOString() })
     .eq('id', id)
     .in('status', ['scheduled', 'failed'])
@@ -344,7 +344,7 @@ export async function cancelPost(db: WorkspaceDb, id: string): Promise<PostRow> 
 }
 
 export async function deletePost(db: WorkspaceDb, id: string) {
-  const { error } = await db.from('scheduled_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id).neq('status', 'publishing')
+  const { error } = await db.from('workspace_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id).neq('status', 'publishing')
   if (error) throw new Error(`post non eliminato: ${error.message}`)
 }
 
@@ -366,7 +366,7 @@ async function assertPublishable(db: WorkspaceDb, platforms: PostPlatform[]) {
 /** Pubblica adesso (o quando arriva l'ora, dal cron). Si pubblica solo dove non e' gia' uscito. */
 export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow> {
   const { data: claimed } = await db
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .update({ status: 'publishing', updated_at: new Date().toISOString() })
     .eq('id', id)
     .in('status', ['draft', 'scheduled', 'failed'])
@@ -393,7 +393,7 @@ export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow>
   }
   const ok = post.platforms.every((p) => results[p])
   const { data } = await db
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .update({ status: ok ? 'published' : 'failed', results, error_message: results.errors?.length ? results.errors.join(' · ').slice(0, 1000) : null, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select(POST_COLUMNS)
@@ -405,14 +405,14 @@ export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow>
 /** Dal cron (ogni minuto): post programmati arrivati all'ora, pochi per volta. */
 export async function publishDuePosts(max = 4): Promise<number> {
   const { data, error } = await supabaseAdmin
-    .from('scheduled_posts')
+    .from('workspace_posts')
     .select('id, workspace_id')
     .eq('status', 'scheduled')
     .lte('publish_at', new Date().toISOString())
     .order('publish_at', { ascending: true })
     .limit(max)
   if (error) {
-    if (!/scheduled_posts|does not exist/i.test(error.message)) console.error('saas post programmati:', error.message)
+    if (!/workspace_posts|does not exist/i.test(error.message)) console.error('saas post programmati:', error.message)
     return 0
   }
   let done = 0

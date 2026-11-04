@@ -16,7 +16,7 @@ export const WORKSPACE_TABLES = [
   'ai_knowledge',
   'ai_usage',
   'channel_connections',
-  'scheduled_posts',
+  'workspace_posts',
 ] as const
 
 export type WorkspaceTable = (typeof WORKSPACE_TABLES)[number]

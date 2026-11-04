@@ -72,7 +72,7 @@ export async function saveChat(workspaceId: string, userId: string, turns: ChatT
 export async function refreshPostActions(db: WorkspaceDb, turns: ChatTurn[]): Promise<ChatTurn[]> {
   const ids = [...new Set(turns.flatMap((t) => (t.actions || []).filter((a) => a.kind === 'post').map((a) => (a as { post: PostView }).post.id)))]
   if (!ids.length) return turns
-  const { data } = await db.from('scheduled_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', ids)
+  const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', ids)
   const byId = new Map((data || []).map((p) => [p.id as string, p as PostView]))
   return turns.map((t) => ({
     ...t,

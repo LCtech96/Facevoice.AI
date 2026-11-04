@@ -1162,7 +1162,7 @@ CREATE POLICY "workspace_instructions_members" ON public.workspace_instructions
 -- 15. SAAS: POST DEI CLIENTI (vedi migrations/2026-11-05_saas_posts.sql)
 -- ---------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS public.scheduled_posts (
+CREATE TABLE IF NOT EXISTS public.workspace_posts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id  UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
   -- draft (da controllare) | scheduled (programmato) | publishing | published | failed | cancelled
@@ -1183,13 +1183,13 @@ CREATE TABLE IF NOT EXISTS public.scheduled_posts (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_posts_due ON public.scheduled_posts (publish_at) WHERE status = 'scheduled';
-CREATE INDEX IF NOT EXISTS idx_scheduled_posts_workspace ON public.scheduled_posts (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_posts_due ON public.workspace_posts (publish_at) WHERE status = 'scheduled';
+CREATE INDEX IF NOT EXISTS idx_workspace_posts_workspace ON public.workspace_posts (workspace_id, created_at DESC);
 
-ALTER TABLE public.scheduled_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workspace_posts ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "scheduled_posts_members" ON public.scheduled_posts;
-CREATE POLICY "scheduled_posts_members" ON public.scheduled_posts
+DROP POLICY IF EXISTS "workspace_posts_members" ON public.workspace_posts;
+CREATE POLICY "workspace_posts_members" ON public.workspace_posts
   FOR SELECT USING (public.is_workspace_member(workspace_id));
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
