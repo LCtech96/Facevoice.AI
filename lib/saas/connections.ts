@@ -76,6 +76,15 @@ export async function readConnectionSecret<T>(connectionId: string): Promise<T> 
   return openSecret<T>(data.ciphertext as string)
 }
 
+/** Sostituisce le credenziali cifrate di un collegamento (es. token rinnovato). */
+export async function updateConnectionSecret(connectionId: string, secret: unknown) {
+  const { error } = await supabaseAdmin
+    .from('channel_secrets')
+    .update({ ciphertext: sealSecret(secret), updated_at: new Date().toISOString() })
+    .eq('connection_id', connectionId)
+  if (error) throw new Error(`credenziali non aggiornate: ${error.message}`)
+}
+
 export async function updateConnection(db: WorkspaceDb, id: string, patch: Partial<Pick<Connection, 'status' | 'last_error' | 'meta' | 'display_name'>>) {
   const { error } = await db.from('channel_connections').update(patch).eq('id', id)
   if (error) console.error('connection update:', error.message)

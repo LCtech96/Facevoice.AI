@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
       status: c.status,
       error: c.last_error,
       lastSync: (c.meta as { last_sync_at?: string })?.last_sync_at || null,
+      via: (c.meta as { via?: string })?.via || null,
     })),
   })
 }

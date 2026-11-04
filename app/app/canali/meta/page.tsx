@@ -8,13 +8,13 @@ import { useWorkspace } from '@/components/app/WorkspaceContext'
 
 // Collegamento di Pagina Facebook e Instagram professionale con il login di Meta.
 
-type Connection = { id: string; platform: string; account: string; name: string | null; status: string; error: string | null }
+type Connection = { id: string; platform: string; account: string; name: string | null; status: string; error: string | null; via: string | null }
 
 function MetaChannels() {
   const { appFetch, workspace } = useWorkspace()
   const params = useSearchParams()
   const [connections, setConnections] = useState<Connection[] | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'meta' | 'instagram' | null>(null)
   const [error, setError] = useState<string | null>(params.get('error'))
   const ok = params.get('ok')
   const skipped = params.get('skipped')
@@ -30,20 +30,25 @@ function MetaChannels() {
     load()
   }, [load])
 
-  const connect = async () => {
-    setBusy(true)
+  const connect = async (kind: 'meta' | 'instagram') => {
+    setBusy(kind)
     setError(null)
-    const res = await appFetch('/api/app/meta/start', { method: 'POST' }).catch(() => null)
+    const res = await appFetch(kind === 'instagram' ? '/api/app/instagram/start' : '/api/app/meta/start', { method: 'POST' }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (!res?.ok || !data.url) {
-      setBusy(false)
+      setBusy(null)
       return setError(data.error || 'Connessione non riuscita, riprova.')
     }
     window.location.href = data.url
   }
 
-  const disconnect = async (id: string) => {
-    if (!confirm('Scollegare questa Pagina (e il suo Instagram)? I messaggi già ricevuti restano nell’omnichat.')) return
+  const disconnect = async (c: Connection) => {
+    const question =
+      c.via === 'instagram_login'
+        ? 'Scollegare questo Instagram? I messaggi già ricevuti restano nell’omnichat.'
+        : 'Scollegare questa Pagina (e il suo Instagram)? I messaggi già ricevuti restano nell’omnichat.'
+    if (!confirm(question)) return
+    const id = c.id
     await appFetch(`/api/app/channels/meta?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null)
     await load()
   }
@@ -58,8 +63,8 @@ function MetaChannels() {
         <Instagram className="h-7 w-7 text-[var(--accent-blue)]" /> Facebook e Instagram
       </h1>
       <p className="mt-2 text-[var(--text-secondary)]">
-        Collega la Pagina Facebook della tua attività e l’account Instagram professionale collegato: i messaggi di Messenger e Direct arrivano
-        nell’omnichat e l’AI risponde con le tue istruzioni.
+        Collega la Pagina Facebook della tua attività e il tuo Instagram professionale: i messaggi di Messenger e Direct arrivano
+        nell’omnichat e l’AI risponde con le tue istruzioni. Se usi solo Instagram puoi collegarlo direttamente, senza Pagina Facebook.
       </p>
 
       {ok && (
@@ -84,11 +89,14 @@ function MetaChannels() {
               <p translate="no" className="truncate font-semibold">
                 {c.name || c.account}
               </p>
-              <p className="text-xs text-[var(--text-secondary)]">{c.platform === 'instagram' ? 'Instagram (Direct)' : 'Pagina Facebook (Messenger)'}</p>
+              <p className="text-xs text-[var(--text-secondary)]">
+                {c.platform === 'instagram' ? (c.via === 'instagram_login' ? 'Instagram (Direct, accesso Instagram)' : 'Instagram (Direct)') : 'Pagina Facebook (Messenger)'}
+              </p>
+              {c.status !== 'connected' && c.error && <p className="text-xs text-[#FF9500]">{c.error}</p>}
             </div>
             <CheckCircle2 className={`h-5 w-5 ${c.status === 'connected' ? 'text-[#34C759]' : 'text-[#FF9500]'}`} />
-            {canManage && c.platform === 'facebook' && (
-              <button onClick={() => disconnect(c.id)} aria-label="Scollega" className="text-[var(--text-secondary)] hover:text-[#ff6b6b]">
+            {canManage && (c.platform === 'facebook' || c.via === 'instagram_login') && (
+              <button onClick={() => disconnect(c)} aria-label="Scollega" className="text-[var(--text-secondary)] hover:text-[#ff6b6b]">
                 <Trash2 className="h-4 w-4" />
               </button>
             )}
@@ -97,14 +105,24 @@ function MetaChannels() {
       })}
 
       {canManage && (
-        <button
-          onClick={connect}
-          disabled={busy}
-          className="mt-8 flex w-full items-center justify-center gap-2 rounded-full bg-[#1877F2] px-6 py-3 font-bold text-white disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Facebook className="h-5 w-5" />}
-          {connections?.length ? 'Collega un’altra Pagina' : 'Collega Facebook e Instagram'}
-        </button>
+        <div className="mt-8 space-y-3">
+          <button
+            onClick={() => connect('meta')}
+            disabled={busy !== null}
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-[#1877F2] px-6 py-3 font-bold text-white disabled:opacity-50"
+          >
+            {busy === 'meta' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Facebook className="h-5 w-5" />}
+            {connections?.some((c) => c.platform === 'facebook') ? 'Collega un’altra Pagina' : 'Collega Facebook e Instagram'}
+          </button>
+          <button
+            onClick={() => connect('instagram')}
+            disabled={busy !== null}
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#F58529] via-[#DD2A7B] to-[#8134AF] px-6 py-3 font-bold text-white disabled:opacity-50"
+          >
+            {busy === 'instagram' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Instagram className="h-5 w-5" />}
+            Collega solo Instagram
+          </button>
+        </div>
       )}
 
       <div className="mt-6 space-y-2 text-sm text-[var(--text-secondary)]">
@@ -112,6 +130,7 @@ function MetaChannels() {
         <p>• Una Pagina Facebook di cui sei amministratore.</p>
         <p>• Per Instagram: un account professionale (aziendale o creator) collegato a quella Pagina.</p>
         <p>• Nella finestra di Facebook scegli la Pagina e l’Instagram da collegare e conferma i permessi.</p>
+        <p>• “Collega solo Instagram”: accedi con il tuo Instagram professionale (aziendale o creator), anche senza Pagina Facebook.</p>
         <p className="text-xs">Puoi scollegare la Pagina in qualsiasi momento, da qui o dalle impostazioni di Facebook.</p>
       </div>
     </div>

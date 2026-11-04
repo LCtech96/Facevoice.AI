@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { deleteConnection, listConnections, readConnectionSecret, setChannelState } from '@/lib/saas/connections'
 import { GRAPH, metaConfig, type MetaSecret } from '@/lib/saas/meta'
+import { unsubscribeInstagramLogin } from '@/lib/saas/instagram'
 
 export const dynamic = 'force-dynamic'
 
-// Scollega una Pagina Facebook (e il suo Instagram) dallo spazio di lavoro.
+// Scollega una Pagina Facebook (e il suo Instagram), o un Instagram collegato
+// con l'accesso di Instagram, dallo spazio di lavoro.
 
 export async function DELETE(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
@@ -14,6 +16,13 @@ export async function DELETE(req: NextRequest) {
   const all = [...(await listConnections(access.db, 'facebook')), ...(await listConnections(access.db, 'instagram'))]
   const target = all.find((c) => c.id === id)
   if (!target) return NextResponse.json({ error: 'Collegamento non trovato' }, { status: 404 })
+
+  if ((target.meta as { via?: string }).via === 'instagram_login') {
+    await unsubscribeInstagramLogin(target)
+    await deleteConnection(access.db, target.id)
+    if (!all.some((c) => c.platform === 'instagram' && c.id !== target.id)) await setChannelState(access.db, 'instagram', { status: 'not_connected', handle: null })
+    return NextResponse.json({ ok: true })
+  }
 
   const pageId = target.platform === 'facebook' ? target.external_id : String((target.meta as { pageId?: string }).pageId || '')
   const linked = all.filter((c) => c.external_id === pageId || (c.meta as { pageId?: string }).pageId === pageId)

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { connectionOwner, readConnectionSecret, saveConnection, setChannelState, type Connection } from './connections'
+import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginText } from './instagram'
 
 // Facebook e Instagram dei clienti: collegamento con "Facebook Login for
 // Business" (configurazione con token di sistema che non scade), Pagine e
@@ -151,6 +152,9 @@ export async function connectionForAccount(platform: 'facebook' | 'instagram', a
 
 /** Messaggio di risposta (Messenger o Direct) con il token della Pagina del cliente. */
 export async function sendMetaText(connection: Connection, recipientId: string, text: string): Promise<{ id: string }> {
+  // Instagram collegato con l'accesso di Instagram: altra API, altro token.
+  const igSecret = await instagramLoginSecret(connection)
+  if (igSecret) return sendInstagramLoginText(connection, igSecret, recipientId, text)
   const secret = await readConnectionSecret<MetaSecret>(connection.id)
   const data = await graph<{ message_id?: string }>(`/me/messages`, {
     method: 'POST',
@@ -163,6 +167,8 @@ export async function sendMetaText(connection: Connection, recipientId: string, 
 /** Nome visibile di chi scrive, con il token della Pagina del cliente. */
 export async function contactName(connection: Connection, contactId: string): Promise<string | null> {
   try {
+    const igSecret = await instagramLoginSecret(connection)
+    if (igSecret) return await instagramLoginContactName(connection, igSecret, contactId)
     const secret = await readConnectionSecret<MetaSecret>(connection.id)
     const fields = connection.platform === 'instagram' ? 'name,username' : 'name'
     const data = await graph<{ name?: string; username?: string }>(`/${contactId}?fields=${fields}&access_token=${encodeURIComponent(secret.pageToken)}`)
