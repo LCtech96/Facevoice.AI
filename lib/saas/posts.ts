@@ -298,9 +298,11 @@ export async function loadSource(postId: string): Promise<CarouselSource | null>
   }
 }
 
-async function renderPhotoCarousel(workspaceId: string, source: CarouselSource): Promise<string[]> {
+/** keep: file delle slide da tenere identiche (stesso indice), null = da rifare. */
+async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, keep?: (string | null)[]): Promise<string[]> {
   const brand = await workspaceBrand(workspaceId)
   return createPhotoCarousel({
+    keep,
     photos: source.photos,
     slides: source.slides,
     hook: source.hook,
@@ -460,6 +462,112 @@ export async function editCarousel(
   const media = await renderPhotoCarousel(db.workspaceId, next)
   await saveSource(id, next)
   return updatePost(db, id, { media })
+}
+
+/**
+ * Correzione delle SOLE slide scelte dal cliente (n da 1), con una sola chiamata
+ * all'AI che vede solo quelle slide. Si cambiano testo e/o foto di quelle e basta:
+ * le altre restano gli stessi identici file (non si rifanno), niente riordino,
+ * niente slide tolte o aggiunte.
+ */
+export async function editSlides(db: WorkspaceDb, id: string, numbers: number[], instruction: string): Promise<{ post: PostRow; done: string[] }> {
+  const request = instruction.trim().slice(0, 1500)
+  if (!request) throw new Error('scrivi cosa cambiare nella slide')
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const total = post.media.length
+  const picked = [...new Set(numbers.map((n) => Math.round(n)))].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b)
+  if (!picked.length) throw new Error(`scegli le slide da correggere (da 1 a ${total})`)
+  const source = await loadSource(id)
+  const done: string[] = []
+
+  // Post senza testi nelle slide (foto o carosello grafico): si modifica solo l'immagine scelta.
+  if (!source || total !== source.photos.length + (source.closing ? 1 : 0)) {
+    if (picked.length > 4) throw new Error('per modificare le immagini scegli al massimo 4 slide per volta')
+    const media = [...post.media]
+    for (const n of picked) {
+      const edited = await editImage(db.workspaceId, media[n - 1], request)
+      media[n - 1] = await store(db.workspaceId, 'posts', await fitPostPhoto(await download(edited)))
+      done.push(`slide ${n}: immagine modificata`)
+    }
+    return { post: await updatePost(db, id, { media }), done }
+  }
+
+  const count = source.photos.length
+  const current = picked.map((n) => {
+    const k = n - 1
+    if (k >= count && source.closing) return { n, slide_finale: true, titolo: source.closing.title, testo: source.closing.text, pulsante: source.closing.button }
+    const s = source.slides[k] || { title: '', text: '' }
+    return k === 0
+      ? { n, copertina: true, gancio: source.hook, etichetta: source.label, sottotitolo: s.title }
+      : { n, titolo: s.title, testo: s.text }
+  })
+  const system = `Correggi SOLO le slide di un carosello Instagram indicate qui sotto, seguendo la richiesta del titolare. Le altre slide non esistono per te: non nominarle e non cambiarle.
+Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che restano uguali):
+- slide normale: "titolo" (max 45 caratteri), "testo" (max 140 caratteri);
+- copertina: "gancio" (titolo grande, max 40 caratteri, niente emoji), "etichetta" (max 26 caratteri), "sottotitolo" (max 70 caratteri);
+- slide finale: "titolo", "testo", "pulsante" (max 26 caratteri);
+- "foto": SOLO se la richiesta chiede di cambiare la foto o l'immagine (luce, colori, sfondo, togliere o aggiungere qualcosa), l'istruzione precisa per modificarla con l'AI; altrimenti ometti.
+Se la richiesta riguarda solo il testo non toccare la foto, e viceversa. Scrivi nella lingua della richiesta. Niente markdown.
+Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
+  const result = await callAI(
+    [{ role: 'user', content: `Slide da correggere (stato attuale):\n${JSON.stringify(current)}\n\nRichiesta del titolare: ${request}` }],
+    system,
+    { feature: 'saas_slide', temperature: 0.3, maxOutputTokens: 900, workspaceId: db.workspaceId }
+  )
+  let answer: { slide?: Record<string, unknown>[] } = {}
+  try {
+    answer = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')
+  } catch {}
+  const allowed = new Set(picked)
+  const changes = (Array.isArray(answer.slide) ? answer.slide : []).filter((c) => allowed.has(Math.round(Number(c?.n))))
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? trim(v, max) : undefined)
+
+  const next: CarouselSource = { ...source, photos: [...source.photos], slides: source.slides.map((x) => ({ ...x })), closing: source.closing ? { ...source.closing } : null }
+  const redo = new Set<number>()
+  const photoEdits: { k: number; instruction: string }[] = []
+  for (const c of changes) {
+    const n = Math.round(Number(c.n))
+    const k = n - 1
+    if (k >= count && next.closing) {
+      const title = str(c.titolo, 60), text = str(c.testo, 160), button = str(c.pulsante, 30)
+      if (title !== undefined || text !== undefined || button !== undefined) {
+        next.closing = { title: title ?? next.closing.title, text: text ?? next.closing.text, button: button ?? next.closing.button }
+        redo.add(k)
+        done.push(`slide ${n}: testo cambiato`)
+      }
+      continue
+    }
+    if (k >= count) continue
+    const before = JSON.stringify([next.slides[k], k === 0 ? [next.hook, next.label] : null])
+    if (k === 0) {
+      next.hook = str(c.gancio, 60) ?? next.hook
+      next.label = str(c.etichetta, 30) ?? next.label
+      const sub = str(c.sottotitolo, 90) ?? str(c.titolo, 90)
+      if (sub !== undefined) next.slides[0] = { ...next.slides[0], title: sub }
+    } else {
+      next.slides[k] = { title: str(c.titolo, 90) ?? next.slides[k].title, text: str(c.testo, 220) ?? next.slides[k].text }
+    }
+    if (JSON.stringify([next.slides[k], k === 0 ? [next.hook, next.label] : null]) !== before) {
+      redo.add(k)
+      done.push(`slide ${n}: testo cambiato`)
+    }
+    const photo = str(c.foto, 600)
+    if (photo) photoEdits.push({ k, instruction: photo })
+  }
+  if (photoEdits.length > 4) throw new Error('per modificare le foto scegli al massimo 4 slide per volta')
+  for (const edit of photoEdits) {
+    next.photos[edit.k] = await editImage(db.workspaceId, next.photos[edit.k], edit.instruction)
+    redo.add(edit.k)
+    done.push(`slide ${edit.k + 1}: foto modificata`)
+  }
+  if (!redo.size) return { post, done: [] }
+  // Si rifanno solo le slide cambiate: le altre restano gli stessi file.
+  const media = await renderPhotoCarousel(db.workspaceId, next, post.media.map((url, k) => (redo.has(k) ? null : url)))
+  await saveSource(id, next)
+  console.log(`saas slide: post ${id.slice(0, 8)} corrette solo le slide ${[...redo].map((k) => k + 1).join(',')} (scelte ${picked.join(',')})`)
+  return { post: await updatePost(db, id, { media }), done: [...new Set(done)] }
 }
 
 /**
@@ -633,6 +741,8 @@ export async function cancelPost(db: WorkspaceDb, id: string): Promise<PostRow> 
 }
 
 export async function deletePost(db: WorkspaceDb, id: string) {
+  const post = await getPost(db, id)
+  if (post?.status === 'published') throw new Error('il post è già uscito su Instagram: per toglierlo eliminalo dall’app di Instagram')
   const { error } = await db.from('workspace_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id).neq('status', 'publishing')
   if (error) throw new Error(`post non eliminato: ${error.message}`)
 }

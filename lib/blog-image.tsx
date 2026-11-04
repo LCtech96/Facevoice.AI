@@ -523,15 +523,22 @@ export async function createPhotoCarousel(input: {
   storage?: { bucket: string; folder: string }
   /** Salvataggio delle slide al posto di quello standard (es. archivio dei clienti con diagnosi). */
   save?: (jpeg: Buffer) => Promise<string>
+  /**
+   * Slide da NON rifare (stesso indice delle slide, finale compresa): se c'e' un indirizzo
+   * si tiene quel file cosi' com'e'. Serve per correggere solo alcune slide.
+   */
+  keep?: (string | null)[]
 }): Promise<string[]> {
   const photos = input.photos.slice(0, input.cta ? 9 : 10)
   if (!photos.length) throw new Error('nessuna foto per il carosello')
   const themes = themesFor(input.palette || BRAND, input.handle ?? '')
   const mix = MIXES[(((input.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length]
   const accentTheme = themes[mix.cover]
+  const kept = (k: number) => input.keep?.[k] || null
   const [logo, ...fitted] = await Promise.all([
     logoData(input.logo),
-    ...photos.map(async (url) => {
+    ...photos.map(async (url, k) => {
+      if (kept(k)) return null
       const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
       if (!res.ok) throw new Error(`foto non scaricata (${res.status})`)
       // A tutta pagina (ritaglio sulla parte piu' interessante): il testo va sopra la foto.
@@ -541,9 +548,14 @@ export async function createPhotoCarousel(input: {
   ])
   const n = photos.length + (input.cta ? 1 : 0)
   const nodes = photos.map((_, k) =>
-    photoSlide(accentTheme, fitted[k], input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null)
+    kept(k) ? null : photoSlide(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null)
   )
-  if (input.cta) nodes.push(ctaSlide(themes[mix.cta], n, n, input.cta))
-  const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
-  return Promise.all(jpegs.map((jpeg) => (input.save ? input.save(jpeg) : upload(jpeg, input.storage))))
+  if (input.cta) nodes.push(kept(photos.length) ? null : ctaSlide(themes[mix.cta], n, n, input.cta))
+  return Promise.all(
+    nodes.map(async (node, k) => {
+      if (!node) return kept(k)!
+      const jpeg = await toJpeg(await render(node))
+      return input.save ? input.save(jpeg) : upload(jpeg, input.storage)
+    })
+  )
 }

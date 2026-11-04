@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { postView, withArrange } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, getPost, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -23,30 +23,44 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ posts: await withArrange(posts.map(postView)) })
 }
 
+// Azioni che devono riguardare esattamente la versione che il cliente vede.
+const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'schedule', 'publish'])
+
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   const id = String(body.id || '')
+  const action = String(body.action || '')
   const platforms = Array.isArray(body.platforms) ? (body.platforms.filter((p: unknown) => p === 'instagram' || p === 'facebook') as PostPlatform[]) : undefined
   try {
-    if (typeof body.caption === 'string' || typeof body.facebook === 'string' || platforms) {
+    // base: le slide che vedeva la pagina. Se nel frattempo sono cambiate (es. salvataggio
+    // finito dopo una connessione caduta) non si tocca niente: si rimanda l'ultima versione,
+    // cosi' non si pubblica o modifica mai un post diverso da quello mostrato.
+    if (NEEDS_BASE.has(action) && Array.isArray(body.base)) {
+      const current = await getPost(access.db, id)
+      if (current && body.base.join('|') !== current.media.join('|')) {
+        return NextResponse.json(
+          { error: 'Il post era già cambiato: questa è l’ultima versione. Controllala e riprova.', post: await view(current) },
+          { status: 409 }
+        )
+      }
+    }
+    if (action !== 'delete' && action !== 'unschedule' && (typeof body.caption === 'string' || typeof body.facebook === 'string' || platforms)) {
       await updatePost(access.db, id, { caption: body.caption, facebook: body.facebook, platforms })
     }
     let post
-    switch (body.action) {
-      case 'arrange': {
+    let done: string[] | undefined
+    switch (action) {
+      case 'arrange':
         // slides: numeri delle slide attuali nel nuovo ordine (quelle che mancano si tolgono).
-        // base: le slide che vedeva la pagina; se nel frattempo sono cambiate (es. salvataggio
-        // finito dopo una connessione caduta) si rimanda l'ultima versione invece di sbagliare.
-        const current = await getPost(access.db, id)
-        if (current && Array.isArray(body.base) && body.base.join('|') !== current.media.join('|')) {
-          return NextResponse.json(
-            { error: 'Le slide erano già state aggiornate: questa è l’ultima versione. Se serve, spostale di nuovo.', post: await view(current) },
-            { status: 409 }
-          )
-        }
         post = await arrangeSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [])
+        break
+      case 'edit_slides': {
+        // Correzione delle sole slide scelte (numeri da 1): le altre restano identiche.
+        const result = await editSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [], String(body.instruction || ''))
+        post = result.post
+        done = result.done
         break
       }
       case 'schedule':
@@ -66,10 +80,12 @@ export async function PATCH(req: NextRequest) {
         post = await getPost(access.db, id)
     }
     if (!post) return NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
-    return NextResponse.json({ post: await view(post) })
+    return NextResponse.json({ post: await view(post), ...(done ? { done } : {}) })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Operazione non riuscita'
-    console.error(`saas post ${id.slice(0, 8)} (${body.action || 'modifica'}): ${message}`)
-    return NextResponse.json({ error: message || 'Operazione non riuscita' }, { status: 400 })
+    console.error(`saas post ${id.slice(0, 8)} (${action || 'modifica'}): ${message}`)
+    // Con l'errore si manda lo stato attuale del post: la pagina si rimette in pari.
+    const current = await getPost(access.db, id).catch(() => null)
+    return NextResponse.json({ error: message || 'Operazione non riuscita', ...(current ? { post: await view(current) } : {}) }, { status: 400 })
   }
 }
