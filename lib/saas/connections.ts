@@ -44,15 +44,17 @@ export async function connectionOwner(platform: ConnectionPlatform, externalId: 
 
 /**
  * L'account e' gia' collegato a un altro spazio: si puo' spostare qui?
- * Si', se chi collega e' amministratore anche dell'altro spazio (sposta anche i
- * messaggi di quell'account) oppure se li' il collegamento non e' piu' attivo.
- * Il login appena fatto dimostra comunque che controlla l'account.
+ * - chi collega e' amministratore anche dell'altro spazio: si sposta con i messaggi;
+ * - li' il collegamento non e' piu' attivo, oppure chi collega ha appena fatto
+ *   l'accesso con quell'account (proven: prova che lo controlla, come per Meta):
+ *   si sposta il collegamento, i messaggi restano nello spazio di prima.
  */
 export async function takeOverConnection(
   platform: ConnectionPlatform,
   externalId: string,
   workspaceId: string,
-  userId: string
+  userId: string,
+  options: { proven?: boolean } = {}
 ): Promise<{ ok: true } | { ok: false; ownerName: string | null }> {
   const { data: current } = await supabaseAdmin
     .from('channel_connections')
@@ -69,7 +71,7 @@ export async function takeOverConnection(
   ])
   const sameAdmin = member?.role === 'owner' || member?.role === 'admin'
   const inactive = current.status === 'disconnected' || current.status === 'expired'
-  if (!sameAdmin && !inactive) return { ok: false, ownerName: member ? ((space?.name as string) ?? null) : null }
+  if (!sameAdmin && !inactive && !options.proven) return { ok: false, ownerName: member ? ((space?.name as string) ?? null) : null }
 
   // Spostamento fra spazi: unico punto in cui si scrive su due spazi insieme.
   const { error } = await supabaseAdmin.from('channel_connections').update({ workspace_id: workspaceId }).eq('id', current.id)
@@ -90,7 +92,7 @@ export async function takeOverConnection(
     .eq('platform', platform)
     .neq('status', 'disconnected')
   if (!count) await setChannelState(workspaceDbFor(from), platform, { status: 'not_connected', handle: null })
-  console.log(`collegamento ${platform} spostato fra spazi (${sameAdmin ? 'stesso amministratore' : 'non più attivo'})`)
+  console.log(`collegamento ${platform} spostato fra spazi (${sameAdmin ? 'stesso amministratore' : inactive ? 'non più attivo' : 'accesso con l’account'})`)
   return { ok: true }
 }
 

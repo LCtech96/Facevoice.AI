@@ -98,7 +98,7 @@ export async function connectFromCode(
       result.skipped.push(`${page.name} (è la Pagina di Facevoice)`)
       continue
     }
-    const pageTakeOver = await takeOverConnection('facebook', page.id, workspaceId, userId)
+    const pageTakeOver = await takeOverConnection('facebook', page.id, workspaceId, userId, { proven: true })
     if (!pageTakeOver.ok) {
       result.skipped.push(`${page.name} (già collegata ${pageTakeOver.ownerName ? `allo spazio «${pageTakeOver.ownerName}»` : 'a uno spazio di un’altra persona'})`)
       continue
@@ -116,7 +116,7 @@ export async function connectFromCode(
 
     const ig = page.instagram_business_account
     if (ig?.id) {
-      const igTakeOver = await takeOverConnection('instagram', ig.id, workspaceId, userId)
+      const igTakeOver = await takeOverConnection('instagram', ig.id, workspaceId, userId, { proven: true })
       if (!igTakeOver.ok) {
         result.skipped.push(`@${ig.username || ig.id} (già collegato ${igTakeOver.ownerName ? `allo spazio «${igTakeOver.ownerName}»` : 'a uno spazio di un’altra persona'})`)
       } else {

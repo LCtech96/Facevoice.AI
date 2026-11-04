@@ -121,7 +121,7 @@ export async function connectInstagramFromCode(
     const own = await facevoiceAccountIds().catch(() => null)
     if (own?.has(igUserId)) return { username, skipped: `${username || igUserId} (è l’Instagram di Facevoice)` }
   }
-  const takeOver = await takeOverConnection('instagram', igUserId, workspaceId, userId)
+  const takeOver = await takeOverConnection('instagram', igUserId, workspaceId, userId, { proven: true })
   if (!takeOver.ok) {
     const where = takeOver.ownerName ? `allo spazio «${takeOver.ownerName}»` : 'a uno spazio di un’altra persona'
     return { username, skipped: `${username || igUserId} (già collegato ${where})` }
