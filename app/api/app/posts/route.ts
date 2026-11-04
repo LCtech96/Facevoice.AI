@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
+import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
 import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
@@ -46,7 +46,9 @@ export async function PATCH(req: NextRequest) {
         )
       }
     }
-    if (action !== 'delete' && action !== 'unschedule' && (typeof body.caption === 'string' || typeof body.facebook === 'string' || platforms)) {
+    // Didascalia e social si salvano solo per le azioni sul post stesso (non per eliminare,
+    // annullare la programmazione o riprendere una versione, che crea una nuova bozza).
+    if (!['delete', 'unschedule', 'restore'].includes(action) && (typeof body.caption === 'string' || typeof body.facebook === 'string' || platforms)) {
       await updatePost(access.db, id, { caption: body.caption, facebook: body.facebook, platforms })
     }
     let post
@@ -84,7 +86,8 @@ export async function PATCH(req: NextRequest) {
       case 'restore': {
         // Versione precedente (dalla chat) ripresa come nuova bozza.
         const media = Array.isArray(body.media) ? (body.media as unknown[]).filter((u): u is string => typeof u === 'string') : []
-        const result = await restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId)
+        const chatPhotos = (await loadChat(access.workspace.id, access.userId)).flatMap((t) => (t.role === 'user' ? t.images || [] : []))
+        const result = await restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId, chatPhotos)
         post = result.post
         const at = typeof body.at === 'string' ? new Date(body.at) : null
         const label = at && !Number.isNaN(at.getTime()) ? at.toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
@@ -92,7 +95,9 @@ export async function PATCH(req: NextRequest) {
           access.db,
           access.userId,
           { text: `Riprendi la versione${label ? ` del ${label}` : ' precedente'}` },
-          result.editable
+          result.rebuilt
+            ? 'Ecco una nuova bozza identica a quella versione. Ho riletto i testi delle slide e ritrovato le foto di partenza: puoi correggere le slide una per una, spostarle, toglierle, programmare o pubblicare. Il post di prima resta com’è.'
+            : result.editable
             ? 'Ecco una nuova bozza uguale a quella versione: puoi correggerla, programmarla o pubblicarla. Il post di prima resta com’è.'
             : 'Ecco una nuova bozza uguale a quella versione: puoi programmarla o pubblicarla. È di prima che salvassi le versioni, quindi i testi delle slide non si possono correggere uno per uno: per cambiarli ricrea il carosello dalle foto.',
           post

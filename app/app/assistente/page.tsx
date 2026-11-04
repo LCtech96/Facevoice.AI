@@ -254,7 +254,7 @@ export default function AssistantPage() {
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
                       action.post.snapshot ? (
-                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} onTurns={setTurns} />
+                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} onTurns={setTurns} onReload={load} />
                       ) : (
                         <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onTurns={setTurns} />
                       )
@@ -749,7 +749,21 @@ function PostCard({
 }
 
 /** Versione precedente di un post, com'era in quel momento della chat: si guarda o si riprende. */
-function SnapshotCard({ post, at, canManage, busy: chatBusy, onTurns }: { post: Post; at: string; canManage: boolean; busy: boolean; onTurns: (turns: Turn[]) => void }) {
+function SnapshotCard({
+  post,
+  at,
+  canManage,
+  busy: chatBusy,
+  onTurns,
+  onReload,
+}: {
+  post: Post
+  at: string
+  canManage: boolean
+  busy: boolean
+  onTurns: (turns: Turn[]) => void
+  onReload: () => Promise<Turn[]>
+}) {
   const { appFetch } = useWorkspace()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -769,9 +783,29 @@ function SnapshotCard({ post, at, canManage, busy: chatBusy, onTurns }: { post: 
     setError(null)
     const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at }) }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
+    if (data.turns) {
+      setBusy(false)
+      onTurns(data.turns)
+      return
+    }
+    if (data.error) {
+      setBusy(false)
+      setError(data.error)
+      return
+    }
+    // Connessione caduta: il server finisce lo stesso e scrive la nuova bozza nella chat.
+    setError('Connessione interrotta: controllo se la bozza è pronta…')
+    const count = (await onReload()).length
+    for (let k = 0; k < 8; k++) {
+      await new Promise((r) => setTimeout(r, 8000))
+      if ((await onReload()).length > count) {
+        setBusy(false)
+        setError(null)
+        return
+      }
+    }
     setBusy(false)
-    if (data.turns) onTurns(data.turns)
-    else setError(data.error || 'Versione non ripresa, riprova.')
+    setError('La bozza non è arrivata: riprova.')
   }
 
   return (
@@ -799,9 +833,10 @@ function SnapshotCard({ post, at, canManage, busy: chatBusy, onTurns }: { post: 
           disabled={busy || chatBusy}
           className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
         >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} Riprendi questa versione
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} {busy ? 'Ripristino la versione…' : 'Riprendi questa versione'}
         </button>
       )}
+      {busy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Per le versioni di prima rileggo i testi delle slide: ci vuole fino a un minuto.</p>}
     </div>
   )
 }

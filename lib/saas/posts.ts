@@ -496,6 +496,118 @@ async function recordVersion(post: PostRow, source: CarouselSource | null) {
   }
 }
 
+// --- Recupero di una versione salvata senza testi ----------------------------------
+
+const SLIDE_W = 1080
+const SLIDE_H = 1350
+
+/**
+ * Fascia centrale (y 290-510) di una slide o di una foto ritagliata come nelle slide:
+ * li' non ci sono ombre, logo, numero ne' testi, quindi e' uguale alla foto di partenza.
+ */
+async function middleBand(input: Buffer, isPhoto: boolean): Promise<Buffer> {
+  const full = isPhoto
+    ? await sharp(input).rotate().resize(SLIDE_W, SLIDE_H, { fit: 'cover', position: 'attention' }).toBuffer()
+    : await sharp(input).resize(SLIDE_W, SLIDE_H, { fit: 'fill' }).toBuffer()
+  return sharp(full).extract({ left: 0, top: 290, width: SLIDE_W, height: 220 }).resize(72, 16, { fit: 'fill' }).greyscale().raw().toBuffer()
+}
+
+function bandDistance(a: Buffer, b: Buffer) {
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i])
+  return sum / a.length
+}
+
+/** Per ogni slide la foto da cui e' fatta (indice in photos), o null se nessuna combacia (es. slide finale). */
+export async function matchSlidePhotos(slides: Buffer[], photos: Buffer[]): Promise<{ index: number | null; distance: number }[]> {
+  const bands = await Promise.all(photos.map((p) => middleBand(p, true).catch(() => null)))
+  const out: { index: number | null; distance: number }[] = []
+  for (const slide of slides) {
+    const band = await middleBand(slide, false)
+    let best = -1
+    let distance = Infinity
+    bands.forEach((b, j) => {
+      if (!b) return
+      const d = bandDistance(band, b)
+      if (d < distance) {
+        distance = d
+        best = j
+      }
+    })
+    out.push({ index: best >= 0 && distance < 8 ? best : null, distance: Math.round(distance * 10) / 10 })
+  }
+  return out
+}
+
+const READ_PROMPTS = {
+  cover: `Questa e' la copertina di un carosello Instagram. Trascrivi ESATTAMENTE i testi che vedi, senza correggerli ne' tradurli: "etichetta" = la riga piccola in maiuscolo sopra il titolo (o ""), "titolo" = il titolo grande, "sotto" = la riga piccola sotto il titolo (o ""). Ignora il pulsante SCORRI, il numero tipo "01 / 10", il nome @account e il logo. Rispondi SOLO con JSON: {"etichetta": "", "titolo": "", "sotto": ""}`,
+  slide: `Questa e' una slide di un carosello Instagram. Trascrivi ESATTAMENTE i testi che vedi, senza correggerli ne' tradurli: "titolo" = il titolo in grassetto, "testo" = il testo piu' piccolo sotto il titolo (o ""). Ignora il numero tipo "03 / 10", il nome @account e il logo. Rispondi SOLO con JSON: {"titolo": "", "testo": ""}`,
+  closing: `Questa e' l'ultima slide di un carosello Instagram. Trascrivi ESATTAMENTE i testi che vedi: "titolo" = il titolo grande, "testo" = il testo sotto, "pulsante" = il testo dentro il pulsante. Ignora il numero, il nome @account e il logo. Rispondi SOLO con JSON: {"titolo": "", "testo": "", "pulsante": ""}`,
+}
+
+/** Testi scritti su una slide, letti dall'AI (per le versioni salvate senza testi). */
+async function readSlideTexts(slide: Buffer, kind: keyof typeof READ_PROMPTS, workspaceId: string): Promise<Record<string, string> | null> {
+  const small = await sharp(slide).resize(720, 900, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer()
+  const raw = await describeMedia([{ mimeType: 'image/jpeg', data: small.toString('base64') }], READ_PROMPTS[kind], 'saas_recupero_testi', workspaceId)
+  try {
+    const data = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '')
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(data)) if (typeof v === 'string') out[k] = v.replace(/\s+/g, ' ').trim()
+    return (kind === 'cover' ? out.titolo : out.titolo || out.testo) ? out : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Ricostruisce i testi e le foto di una versione salvata senza testi (prima delle
+ * versioni): per ogni slide si trova la foto di partenza tra quelle del post e quelle
+ * mandate in chat (confronto della fascia centrale, senza AI) e si leggono i testi.
+ * Se qualcosa non torna con certezza non si inventa niente: null.
+ */
+async function rebuildSource(db: WorkspaceDb, original: PostRow, media: string[], candidates: string[]): Promise<CarouselSource | null> {
+  const current = await loadSource(original.id)
+  const pool = [...new Set([...(current?.photos || []), ...candidates])].filter(isOurMedia).slice(0, 30)
+  if (!pool.length) return null
+  const [slides, photos] = await Promise.all([Promise.all(media.map((u) => download(u))), Promise.all(pool.map((u) => download(u).catch(() => null)))])
+  const usable = photos.map((b, i) => (b ? i : -1)).filter((i) => i >= 0)
+  const matches = await matchSlidePhotos(slides, usable.map((i) => photos[i]!))
+  const chosen: string[] = []
+  let closing = false
+  for (const [k, m] of matches.entries()) {
+    if (m.index !== null) chosen.push(pool[usable[m.index]])
+    else if (k === media.length - 1 && k > 0) closing = true
+    else {
+      console.log(`saas versione: slide ${k + 1} senza foto corrispondente (distanza ${m.distance})`)
+      return null
+    }
+  }
+  const kinds = media.map((_, k): keyof typeof READ_PROMPTS => (k === 0 ? 'cover' : closing && k === media.length - 1 ? 'closing' : 'slide'))
+  const texts: (Record<string, string> | null)[] = new Array(media.length).fill(null)
+  let next = 0
+  const worker = async () => {
+    while (next < media.length) {
+      const k = next++
+      texts[k] = await readSlideTexts(slides[k], kinds[k], db.workspaceId).catch(() => null)
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  if (texts.some((t) => !t)) {
+    console.log(`saas versione: testi non letti per le slide ${texts.map((t, k) => (t ? null : k + 1)).filter(Boolean).join(',')}`)
+    return null
+  }
+  const cover = texts[0]!
+  const end = closing ? texts[media.length - 1]! : null
+  return {
+    photos: chosen,
+    slides: chosen.map((_, k) => (k === 0 ? { title: trim(cover.sotto, 90), text: '' } : { title: trim(texts[k]!.titolo, 90), text: trim(texts[k]!.testo, 220) })),
+    hook: trim(cover.titolo, 60) || current?.hook || '',
+    label: trim(cover.etichetta, 30),
+    closing: end ? { title: trim(end.titolo, 60), text: trim(end.testo, 160), button: trim(end.pulsante, 30) || 'Scrivici' } : null,
+    mix: current?.mix ?? 0,
+  }
+}
+
 /** Prima di cambiare un post nato prima delle versioni: si conserva com'e' adesso. */
 async function keepBaseline(post: PostRow, source: CarouselSource | null) {
   if (!(await loadVersions(post.id)).length) await recordVersion(post, source)
@@ -506,14 +618,34 @@ async function keepBaseline(post: PostRow, source: CarouselSource | null) {
  * bozza: il post di partenza e la cronologia restano come sono. Se la versione e'
  * stata salvata con i testi, la bozza si puo' correggere, spostare e togliere come prima.
  */
-export async function restoreVersion(db: WorkspaceDb, id: string, media: string[], caption: string | undefined, userId?: string | null): Promise<{ post: PostRow; editable: boolean }> {
+export async function restoreVersion(
+  db: WorkspaceDb,
+  id: string,
+  media: string[],
+  caption: string | undefined,
+  userId?: string | null,
+  /** Foto mandate in chat: servono per ricostruire i testi delle versioni salvate senza. */
+  candidates: string[] = []
+): Promise<{ post: PostRow; editable: boolean; rebuilt: boolean }> {
   const post = await getPost(db, id)
   if (!post) throw new Error('post non trovato')
   const own = `/storage/v1/object/public/${MEDIA_BUCKET}/${db.workspaceId}/`
   const slides = media.filter((u) => isOurMedia(u) && u.includes(own)).slice(0, 10)
   if (!slides.length || slides.length !== media.length) throw new Error('versione non valida')
   const version = (await loadVersions(id)).find((v) => v.media.join('|') === slides.join('|')) || null
-  const source = version?.source && version.source.photos.length + (version.source.closing ? 1 : 0) === slides.length ? version.source : null
+  const fits = (src: CarouselSource | null | undefined) => Boolean(src && src.photos.length + (src.closing ? 1 : 0) === slides.length)
+  let source = fits(version?.source) ? version!.source : null
+  let rebuilt = false
+  if (!source && post.kind === 'carousel') {
+    const found = await rebuildSource(db, post, slides, candidates).catch((error) => {
+      console.error('saas versione: ricostruzione non riuscita:', error instanceof Error ? error.message : error)
+      return null
+    })
+    if (fits(found)) {
+      source = found
+      rebuilt = true
+    }
+  }
   const { data, error } = await db
     .from('workspace_posts')
     .insert({
@@ -531,7 +663,7 @@ export async function restoreVersion(db: WorkspaceDb, id: string, media: string[
   if (error || !data) throw new Error(`versione non ripresa: ${error?.message}`)
   if (source) await saveSource(data.id as string, source)
   await recordVersion(data as PostRow, source)
-  return { post: data as PostRow, editable: Boolean(source) || post.kind === 'photos' }
+  return { post: data as PostRow, editable: Boolean(source) || post.kind === 'photos', rebuilt }
 }
 
 /**
