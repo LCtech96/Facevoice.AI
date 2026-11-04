@@ -35,10 +35,20 @@ export async function PATCH(req: NextRequest) {
     }
     let post
     switch (body.action) {
-      case 'arrange':
+      case 'arrange': {
         // slides: numeri delle slide attuali nel nuovo ordine (quelle che mancano si tolgono).
+        // base: le slide che vedeva la pagina; se nel frattempo sono cambiate (es. salvataggio
+        // finito dopo una connessione caduta) si rimanda l'ultima versione invece di sbagliare.
+        const current = await getPost(access.db, id)
+        if (current && Array.isArray(body.base) && body.base.join('|') !== current.media.join('|')) {
+          return NextResponse.json(
+            { error: 'Le slide erano già state aggiornate: questa è l’ultima versione. Se serve, spostale di nuovo.', post: await view(current) },
+            { status: 409 }
+          )
+        }
         post = await arrangeSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [])
         break
+      }
       case 'schedule':
         post = await schedulePost(access.db, id, new Date(String(body.publishAt || '')), platforms)
         break

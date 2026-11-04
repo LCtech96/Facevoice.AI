@@ -397,6 +397,7 @@ function PostCard({
     }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     setBusy(null)
+    if (!res?.ok) keepSelected.current = null
     if (data.post) onChange(data.post)
     const message = res?.ok ? null : data.error || (res ? `Operazione non riuscita (errore ${res.status}), riprova.` : 'Connessione interrotta, riprova.')
     setError(message)
@@ -429,7 +430,7 @@ function PostCard({
   const saveOrder = async (): Promise<Post | null> => {
     if (!order) return post
     keepSelected.current = pos >= 0 ? pos : null
-    const result = await act('arrange', { slides: order.map((k) => k + 1) })
+    const result = await act('arrange', { slides: order.map((k) => k + 1), base: post.media })
     if (result.ok && result.post) {
       setOrder(null)
       return result.post
