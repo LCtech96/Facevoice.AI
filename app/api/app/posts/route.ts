@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { postView } from '@/lib/saas/assistant'
-import { cancelPost, deletePost, getPost, listPosts, publishPost, schedulePost, updatePost, type PostPlatform } from '@/lib/saas/posts'
+import { postView, withArrange } from '@/lib/saas/assistant'
+import { arrangeSlides, cancelPost, deletePost, getPost, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Post dello spazio: elenco o un post (GET ?id=), e dai pulsanti dell'anteprima
-// modifica, programma, annulla, pubblica ora, elimina (PATCH).
+// modifica, sposta o togli slide, programma, annulla, pubblica ora, elimina (PATCH).
+
+const view = async (post: PostRow) => (await withArrange([postView(post)]))[0]
 
 export async function GET(req: NextRequest) {
   const access = await requireWorkspace(req)
@@ -15,10 +17,10 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id')
   if (id) {
     const post = await getPost(access.db, id)
-    return post ? NextResponse.json({ post: postView(post) }) : NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
+    return post ? NextResponse.json({ post: await view(post) }) : NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
   }
   const posts = (await listPosts(access.db, { limit: 40 })).filter((p) => p.status !== 'cancelled')
-  return NextResponse.json({ posts: posts.map(postView) })
+  return NextResponse.json({ posts: await withArrange(posts.map(postView)) })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -33,6 +35,10 @@ export async function PATCH(req: NextRequest) {
     }
     let post
     switch (body.action) {
+      case 'arrange':
+        // slides: numeri delle slide attuali nel nuovo ordine (quelle che mancano si tolgono).
+        post = await arrangeSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [])
+        break
       case 'schedule':
         post = await schedulePost(access.db, id, new Date(String(body.publishAt || '')), platforms)
         break
@@ -41,7 +47,7 @@ export async function PATCH(req: NextRequest) {
         break
       case 'publish':
         post = await publishPost(access.db, id)
-        if (post.status !== 'published') return NextResponse.json({ error: post.error_message || 'Pubblicazione non riuscita', post: postView(post) }, { status: 502 })
+        if (post.status !== 'published') return NextResponse.json({ error: post.error_message || 'Pubblicazione non riuscita', post: await view(post) }, { status: 502 })
         break
       case 'delete':
         await deletePost(access.db, id)
@@ -50,7 +56,7 @@ export async function PATCH(req: NextRequest) {
         post = await getPost(access.db, id)
     }
     if (!post) return NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
-    return NextResponse.json({ post: postView(post) })
+    return NextResponse.json({ post: await view(post) })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Operazione non riuscita' }, { status: 400 })
   }

@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns)
-  return NextResponse.json({ turns })
+  return NextResponse.json({ turns: await refreshPostActions(access.db, turns) })
 }
 
 export async function DELETE(req: NextRequest) {

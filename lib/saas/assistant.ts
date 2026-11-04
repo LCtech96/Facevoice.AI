@@ -20,6 +20,8 @@ import {
   schedulePost,
   setWorkspaceBrand,
   updatePost,
+  arrangeModes,
+  type ArrangeMode,
   type PostPlatform,
   type PostRow,
 } from './posts'
@@ -33,7 +35,17 @@ export type ChatAction =
   | { kind: 'post'; post: PostView }
   | { kind: 'image'; url: string; note: string }
 
-export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'>
+export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'> & {
+  /** Slide spostabili o da togliere nell'anteprima (vedi ArrangeMode). */
+  arrange?: ArrangeMode
+}
+
+/** Aggiunge ai post se le slide si possono spostare o togliere. */
+export async function withArrange<T extends PostView>(posts: T[]): Promise<T[]> {
+  if (!posts.length) return posts
+  const modes = await arrangeModes(posts).catch(() => new Map<string, ArrangeMode>())
+  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null }))
+}
 
 export type ChatTurn = {
   role: 'user' | 'assistant'
@@ -86,7 +98,7 @@ export async function refreshPostActions(db: WorkspaceDb, turns: ChatTurn[]): Pr
   const ids = [...new Set(turns.flatMap((t) => (t.actions || []).filter((a) => a.kind === 'post').map((a) => (a as { post: PostView }).post.id)))]
   if (!ids.length) return turns
   const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', ids)
-  const byId = new Map((data || []).map((p) => [p.id as string, p as PostView]))
+  const byId = new Map((await withArrange((data || []) as PostView[])).map((p) => [p.id, p]))
   return turns.map((t) => ({
     ...t,
     actions: t.actions?.map((a) => (a.kind === 'post' && byId.has(a.post.id) ? { ...a, post: byId.get(a.post.id)! } : a)),

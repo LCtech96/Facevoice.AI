@@ -462,6 +462,64 @@ export async function editCarousel(
 }
 
 /**
+ * Si possono spostare o togliere le slide dall'anteprima?
+ * - 'free': si' (foto senza scritte, o carosello con le foto senza slide finale);
+ * - 'closing': si', ma l'ultima e' la slide finale e resta in fondo;
+ * - null: no (carosello grafico: i numeri sono disegnati nelle immagini e non si rifa').
+ */
+export type ArrangeMode = 'free' | 'closing' | null
+
+export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<Map<string, ArrangeMode>> {
+  const keys = posts.filter((p) => p.kind === 'carousel').map((p) => sourceKey(p.id))
+  const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
+  const sources = new Map<string, CarouselSource>()
+  for (const row of data || []) {
+    try {
+      sources.set(row.key as string, JSON.parse(row.value as string) as CarouselSource)
+    } catch {}
+  }
+  return new Map(
+    posts.map((p) => {
+      if (p.kind === 'photos') return [p.id, 'free']
+      const source = sources.get(sourceKey(p.id))
+      return [p.id, source ? (source.closing ? 'closing' : 'free') : null]
+    })
+  )
+}
+
+/**
+ * Nuovo ordine delle slide dall'anteprima: sequence = numeri delle slide attuali
+ * (da 1) nell'ordine voluto; quelle che mancano si tolgono. Nei caroselli con le
+ * foto si rifanno le slide (numeri "02 / 05" giusti, la nuova prima diventa la
+ * copertina con il gancio); la slide finale resta in fondo.
+ */
+export async function arrangeSlides(db: WorkspaceDb, id: string, sequence: number[]): Promise<PostRow> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const total = post.media.length
+  const seq = sequence.map((n) => Math.round(n) - 1)
+  if (!seq.length || new Set(seq).size !== seq.length || seq.some((k) => !(k >= 0 && k < total))) {
+    throw new Error(`ordine non valido: usa i numeri da 1 a ${total}, una volta ciascuno`)
+  }
+  if (seq.length === total && seq.every((k, j) => k === j)) return post
+  const source = await loadSource(id)
+  if (source) {
+    const count = source.photos.length
+    const kept = seq.filter((k) => k < count)
+    if (!kept.length) throw new Error('serve almeno una foto')
+    const remaining = source.photos.map((_, k) => k).filter((k) => kept.includes(k))
+    return editCarousel(db, id, {
+      remove: source.photos.map((_, k) => k).filter((k) => !kept.includes(k)).map((k) => k + 1),
+      order: kept.map((k) => remaining.indexOf(k) + 1),
+      closing: source.closing && !seq.includes(count) ? false : undefined,
+    })
+  }
+  if (post.kind === 'photos') return updatePost(db, id, { media: seq.map((k) => post.media[k]) })
+  throw new Error('in questo carosello grafico i numeri sono disegnati nelle immagini: per cambiare le slide chiedi all’assistente di rifarlo')
+}
+
+/**
  * Corregge con l'AI l'immagine di UNA slide (n da 1) e rifa' il post:
  * - carosello con le foto: si modifica la foto originale e si rifa' la slide con il suo testo;
  * - post con foto o carosello grafico: si modifica l'immagine della slide cosi' com'e'.
