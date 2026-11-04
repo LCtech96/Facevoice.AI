@@ -521,6 +521,8 @@ export async function createPhotoCarousel(input: {
   logo?: string | null
   mix?: number
   storage?: { bucket: string; folder: string }
+  /** Salvataggio delle slide al posto di quello standard (es. archivio dei clienti con diagnosi). */
+  save?: (jpeg: Buffer) => Promise<string>
 }): Promise<string[]> {
   const photos = input.photos.slice(0, input.cta ? 9 : 10)
   if (!photos.length) throw new Error('nessuna foto per il carosello')
@@ -543,5 +545,5 @@ export async function createPhotoCarousel(input: {
   )
   if (input.cta) nodes.push(ctaSlide(themes[mix.cta], n, n, input.cta))
   const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
-  return Promise.all(jpegs.map((jpeg) => upload(jpeg, input.storage)))
+  return Promise.all(jpegs.map((jpeg) => (input.save ? input.save(jpeg) : upload(jpeg, input.storage))))
 }

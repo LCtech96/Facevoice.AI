@@ -310,7 +310,8 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource):
     handle: brand.handle,
     logo: brand.logo,
     mix: source.mix,
-    storage: { bucket: MEDIA_BUCKET, folder: `${workspaceId}/posts` },
+    // Stesso salvataggio delle foto: tempo massimo e motivo nei log se l'archivio rifiuta.
+    save: (jpeg) => store(workspaceId, 'posts', jpeg),
   })
 }
 
@@ -509,11 +510,14 @@ export async function arrangeSlides(db: WorkspaceDb, id: string, sequence: numbe
     const kept = seq.filter((k) => k < count)
     if (!kept.length) throw new Error('serve almeno una foto')
     const remaining = source.photos.map((_, k) => k).filter((k) => kept.includes(k))
-    return editCarousel(db, id, {
+    const started = Date.now()
+    const updated = await editCarousel(db, id, {
       remove: source.photos.map((_, k) => k).filter((k) => !kept.includes(k)).map((k) => k + 1),
       order: kept.map((k) => remaining.indexOf(k) + 1),
       closing: source.closing && !seq.includes(count) ? false : undefined,
     })
+    console.log(`saas slide: nuovo ordine post ${id.slice(0, 8)} [${sequence.join(',')}] rifatto in ${((Date.now() - started) / 1000).toFixed(1)}s`)
+    return updated
   }
   if (post.kind === 'photos') return updatePost(db, id, { media: seq.map((k) => post.media[k]) })
   throw new Error('in questo carosello grafico i numeri sono disegnati nelle immagini: per cambiare le slide chiedi all’assistente di rifarlo')

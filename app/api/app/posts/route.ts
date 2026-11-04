@@ -58,6 +58,8 @@ export async function PATCH(req: NextRequest) {
     if (!post) return NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
     return NextResponse.json({ post: await view(post) })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Operazione non riuscita' }, { status: 400 })
+    const message = error instanceof Error ? error.message : 'Operazione non riuscita'
+    console.error(`saas post ${id.slice(0, 8)} (${body.action || 'modifica'}): ${message}`)
+    return NextResponse.json({ error: message || 'Operazione non riuscita' }, { status: 400 })
   }
 }

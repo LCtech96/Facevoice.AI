@@ -388,7 +388,7 @@ function PostCard({
     setSelected(null)
   }
 
-  const act = async (action: string, extra: Record<string, unknown> = {}): Promise<{ ok: boolean; post?: Post }> => {
+  const act = async (action: string, extra: Record<string, unknown> = {}): Promise<{ ok: boolean; post?: Post; lost?: boolean; message?: string | null }> => {
     setBusy(action)
     setError(null)
     const res = await appFetch('/api/app/posts', {
@@ -398,9 +398,31 @@ function PostCard({
     const data = res ? await res.json().catch(() => ({})) : {}
     setBusy(null)
     if (data.post) onChange(data.post)
-    if (!res?.ok) setError(data.error || 'Operazione non riuscita, riprova.')
-    else if (action === 'delete') onChange({ ...post, status: 'cancelled' })
-    return { ok: Boolean(res?.ok), post: data.post }
+    const message = res?.ok ? null : data.error || (res ? `Operazione non riuscita (errore ${res.status}), riprova.` : 'Connessione interrotta, riprova.')
+    setError(message)
+    if (res?.ok && action === 'delete') onChange({ ...post, status: 'cancelled' })
+    // lost: nessuna risposta chiara dal server (connessione caduta o tempo scaduto).
+    return { ok: Boolean(res?.ok), post: data.post, lost: !res?.ok && !data.error, message }
+  }
+
+  /** Dopo una connessione caduta: il server puo' aver finito lo stesso, si ricontrolla il post. */
+  const recheck = async (message: string): Promise<Post | null> => {
+    setBusy('arrange')
+    setError(null)
+    for (let k = 0; k < 6; k++) {
+      await new Promise((r) => setTimeout(r, 5000))
+      const res = await appFetch(`/api/app/posts?id=${post.id}`).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      if (data?.post && data.post.media.join('|') !== mediaKey) {
+        setBusy(null)
+        setError(null)
+        onChange(data.post)
+        return data.post
+      }
+    }
+    setBusy(null)
+    setError(message)
+    return null
   }
 
   /** Salva il nuovo ordine (slide rifatte con i numeri giusti): torna il post aggiornato. */
@@ -412,6 +434,8 @@ function PostCard({
       setOrder(null)
       return result.post
     }
+    const saved = result.lost ? await recheck(result.message || 'Nuovo ordine non salvato, riprova.') : null
+    if (saved) return saved
     keepSelected.current = null
     return null
   }
