@@ -298,7 +298,16 @@ export type CarouselSource = {
   label: string
   closing: { title: string; text: string; button: string } | null
   mix: number
+  /** Versione della grafica con cui sono state fatte le slide (vedi SLIDE_STYLE). */
+  style?: number
 }
+
+/**
+ * Versione della grafica delle slide con le foto. 2 = ombra sempre scura sotto il testo
+ * (con il tema chiaro veniva bianca e il testo non si leggeva). Un carosello fatto con una
+ * grafica vecchia, alla prima modifica, si rifa' tutto: mai slide con grafiche diverse.
+ */
+export const SLIDE_STYLE = 2
 
 const sourceKey = (postId: string) => `ws_post_src:${postId}`
 
@@ -320,8 +329,11 @@ export async function loadSource(postId: string): Promise<CarouselSource | null>
 /** keep: file delle slide da tenere identiche (stesso indice), null = da rifare. */
 async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, keep?: (string | null)[]): Promise<string[]> {
   const brand = await workspaceBrand(workspaceId)
+  // Grafica vecchia: si rifanno tutte le slide (chi chiama salva poi la nuova versione).
+  const outdated = (source.style ?? 1) < SLIDE_STYLE
+  source.style = SLIDE_STYLE
   return createPhotoCarousel({
-    keep,
+    keep: outdated ? undefined : keep,
     photos: source.photos,
     slides: source.slides,
     hook: source.hook,
@@ -734,7 +746,8 @@ Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che 
 - copertina: "gancio" (titolo grande, max 40 caratteri, niente emoji), "etichetta" (max 26 caratteri), "sottotitolo" (max 70 caratteri);
 - slide finale: "titolo", "testo", "pulsante" (max 26 caratteri);
 - "foto": SOLO se la richiesta chiede di cambiare la foto o l'immagine (luce, colori, sfondo, togliere o aggiungere qualcosa), l'istruzione precisa per modificarla con l'AI; altrimenti ometti;
-- "estrai": true SOLO se chiede di tirare fuori, separare o estrarre le foto contenute nell'immagine (es. uno screenshot o un collage con piu' foto): ogni foto diventera' una slide. In quel caso non mettere altri campi.
+- "estrai": true SOLO se chiede di tirare fuori, separare o estrarre le foto contenute nell'immagine (es. uno screenshot o un collage con piu' foto): ogni foto diventera' una slide. In quel caso non mettere altri campi;
+- "grafica": true se il problema riguarda la grafica della slide e non la foto (sfumatura, ombra o fondo sotto il testo, contrasto, scritte poco leggibili): in quel caso NON mettere "foto".
 Se la richiesta riguarda solo il testo non toccare la foto, e viceversa. Scrivi nella lingua della richiesta. Niente markdown.
 Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
   const result = await callAI(
@@ -750,6 +763,12 @@ Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
   const changes = (Array.isArray(answer.slide) ? answer.slide : []).filter((c) => allowed.has(Math.round(Number(c?.n))))
   const toExtract = changes.filter((c) => c.estrai === true).map((c) => Math.round(Number(c.n)))
   if (toExtract.length) return extractPhotos(db, id, toExtract)
+  // Problema di grafica (es. ombra chiara sotto il testo): si rifanno le slide, la foto non si tocca.
+  if (changes.some((c) => c.grafica === true)) {
+    const restyled = await restyleSlides(db, id)
+    if (restyled.done.length) return restyled
+    for (const c of changes) delete c.foto
+  }
   const str = (v: unknown, max: number) => (typeof v === 'string' ? trim(v, max) : undefined)
 
   const next: CarouselSource = { ...source, photos: [...source.photos], slides: source.slides.map((x) => ({ ...x })), closing: source.closing ? { ...source.closing } : null }
@@ -1003,7 +1022,7 @@ export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number
  */
 export type ArrangeMode = 'free' | 'closing' | null
 
-export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<Map<string, ArrangeMode>> {
+export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string> }> {
   const keys = posts.filter((p) => p.kind === 'carousel').map((p) => sourceKey(p.id))
   const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
   const sources = new Map<string, CarouselSource>()
@@ -1012,13 +1031,36 @@ export async function arrangeModes(posts: { id: string; kind: string }[]): Promi
       sources.set(row.key as string, JSON.parse(row.value as string) as CarouselSource)
     } catch {}
   }
-  return new Map(
+  const modes = new Map<string, ArrangeMode>(
     posts.map((p) => {
       if (p.kind === 'photos') return [p.id, 'free']
       const source = sources.get(sourceKey(p.id))
       return [p.id, source ? (source.closing ? 'closing' : 'free') : null]
     })
   )
+  // Caroselli fatti con una grafica vecchia (es. ombra chiara sotto il testo).
+  const outdated = new Set(
+    posts.filter((p) => {
+      const source = sources.get(sourceKey(p.id))
+      return Boolean(source) && (source!.style ?? 1) < SLIDE_STYLE
+    }).map((p) => p.id)
+  )
+  return { modes, outdated }
+}
+
+/** Rifa' tutte le slide con la grafica attuale: stessi testi e stesse foto, nessuna AI. */
+export async function restyleSlides(db: WorkspaceDb, id: string): Promise<{ post: PostRow; done: string[] }> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const source = await loadSource(id)
+  if (!source) throw new Error('questo carosello non si può rifare: è fatto senza i testi separati')
+  if ((source.style ?? 1) >= SLIDE_STYLE) return { post, done: [] }
+  await keepBaseline(post, source)
+  const next: CarouselSource = { ...source }
+  const media = await renderPhotoCarousel(db.workspaceId, next)
+  await saveSource(id, next)
+  return { post: await updatePost(db, id, { media }), done: ['tutte le slide rifatte con la grafica nuova: ombra scura sotto il testo, scritte più leggibili (testi e foto sono gli stessi)'] }
 }
 
 /**

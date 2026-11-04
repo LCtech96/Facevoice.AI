@@ -39,6 +39,8 @@ export type ChatAction =
 export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'> & {
   /** Slide spostabili o da togliere nell'anteprima (vedi ArrangeMode). */
   arrange?: ArrangeMode
+  /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
+  restyle?: boolean
   /** Versione precedente nella chat (com'era in quel momento): solo da guardare o riprendere. */
   snapshot?: boolean
   /** La versione precedente e' uguale a quella attuale. */
@@ -48,8 +50,8 @@ export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'capti
 /** Aggiunge ai post se le slide si possono spostare o togliere. */
 export async function withArrange<T extends PostView>(posts: T[]): Promise<T[]> {
   if (!posts.length) return posts
-  const modes = await arrangeModes(posts).catch(() => new Map<string, ArrangeMode>())
-  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null }))
+  const { modes, outdated } = await arrangeModes(posts).catch(() => ({ modes: new Map<string, ArrangeMode>(), outdated: new Set<string>() }))
+  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null, restyle: outdated.has(p.id) }))
 }
 
 export type ChatTurn = {

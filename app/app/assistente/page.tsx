@@ -28,6 +28,8 @@ type Post = {
   error_message: string | null
   /** Slide spostabili o da togliere: 'closing' = l'ultima e' la slide finale e resta in fondo; null = no. */
   arrange?: 'free' | 'closing' | null
+  /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
+  restyle?: boolean
   /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
   snapshot?: boolean
   sameAsLive?: boolean
@@ -617,6 +619,20 @@ function PostCard({
           )
         })}
       </div>
+      {post.restyle && !done && canManage && !changed && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-[var(--accent-blue)]/10 px-3 py-2 text-xs">
+          <span className="min-w-0 flex-1 text-[var(--text-secondary)]">
+            {busy === 'restyle' ? 'Rifaccio le slide con la grafica nuova…' : 'Grafica migliorata: ombra scura sotto il testo, scritte più leggibili. Testi e foto restano gli stessi.'}
+          </span>
+          <button
+            onClick={() => act('restyle')}
+            disabled={working}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+          >
+            {busy === 'restyle' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Aggiorna le slide
+          </button>
+        </div>
+      )}
       {changed && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-[var(--accent-blue)]/10 px-3 py-2 text-xs">
           <span className="min-w-0 flex-1 text-[var(--text-secondary)]">

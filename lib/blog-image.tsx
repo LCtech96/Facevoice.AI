@@ -63,6 +63,20 @@ const rgb = (hex: string) => {
   return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) || 0).join(', ')
 }
 const alpha = (hex: string, a: number) => `rgba(${rgb(hex)}, ${a})`
+/** Luminosita' percepita da 0 (nero) a 1 (bianco). */
+const lightness = (hex: string) => {
+  const [r, g, b] = rgb(hex).split(', ').map(Number)
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+}
+/**
+ * Ombra sotto il testo delle slide con le foto: il testo e' chiaro, quindi l'ombra
+ * dev'essere SEMPRE scura, anche con i temi chiari (prima con "chiaro" veniva bianca
+ * e il testo non si leggeva). Si usa il colore piu' scuro del tema, o quasi nero.
+ */
+const textShade = (t: { solid: string; ink: string }) => {
+  const darkest = lightness(t.solid) <= lightness(t.ink) ? t.solid : t.ink
+  return lightness(darkest) <= 0.3 ? darkest : '#0b0d12'
+}
 
 function themesFor(p: Palette, handle = '@facevoice.ai') {
   const glowBg = (base: string, end: string, at = '85% 0%', strength = 0.35) =>
@@ -481,7 +495,7 @@ function photoSlide(
       <img src={photo} width={W} height={H} style={{ position: 'absolute', top: 0, left: 0, width: W, height: H, objectFit: 'cover' }} />
       {/* Ombra in alto (logo e numero leggibili) e in basso (testo). */}
       <div style={{ position: 'absolute', top: 0, left: 0, width: W, height: 260, display: 'flex', background: 'linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 100%)' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: 0, width: W, height: 820, display: 'flex', background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, ${alpha(t.solid, 0.55)} 38%, ${alpha(t.solid, 0.92)} 100%)` }} />
+      <div style={{ position: 'absolute', bottom: 0, left: 0, width: W, height: 820, display: 'flex', background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, ${alpha(textShade(t), 0.6)} 38%, ${alpha(textShade(t), 0.94)} 100%)` }} />
       {logo ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={logo.src} width={logo.width} height={logo.height} style={{ position: 'absolute', top: 48, left: 56, width: logo.width, height: logo.height }} />

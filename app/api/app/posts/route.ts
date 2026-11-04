@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, editSlides, extractPhotos, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { arrangeSlides, cancelPost, deletePost, editSlides, extractPhotos, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Azioni che devono riguardare esattamente la versione che il cliente vede.
-const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'schedule', 'publish'])
+const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'schedule', 'publish'])
 
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
@@ -83,6 +83,16 @@ export async function PATCH(req: NextRequest) {
             `Fatto: ${done.join(' · ')}. ${done.some((d) => d.includes('estratte')) ? 'Le altre slide sono rimaste uguali, cambia solo il numero.' : 'Le altre slide non sono cambiate.'}`,
             post
           )
+        }
+        break
+      }
+      case 'restyle': {
+        // Slide rifatte con la grafica attuale (stessi testi e foto, nessuna AI).
+        const result = await restyleSlides(access.db, id)
+        post = result.post
+        done = result.done
+        if (done.length) {
+          turns = await logPostChange(access.db, access.userId, { text: 'Aggiorna la grafica delle slide' }, `Fatto: ${done.join(' · ')}.`, post)
         }
         break
       }
