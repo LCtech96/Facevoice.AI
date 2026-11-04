@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { listConnections } from '@/lib/saas/connections'
+import { canPublish } from '@/lib/saas/publish'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
       error: c.last_error,
       lastSync: (c.meta as { last_sync_at?: string })?.last_sync_at || null,
       via: (c.meta as { via?: string })?.via || null,
+      canPublish: c.platform === 'instagram' || c.platform === 'facebook' ? canPublish(c) : false,
     })),
   })
 }

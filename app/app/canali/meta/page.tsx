@@ -37,7 +37,9 @@ function MetaChannels() {
   const connect = async (kind: 'meta' | 'instagram') => {
     setBusy(kind)
     setError(null)
-    const res = await appFetch(kind === 'instagram' ? '/api/app/instagram/start' : '/api/app/meta/start', { method: 'POST' }).catch(() => null)
+    // ?publish=1 (dall'Assistente AI): si chiede anche il permesso di pubblicare i post.
+    const igStart = `/api/app/instagram/start${params.get('publish') === '1' ? '?publish=1' : ''}`
+    const res = await appFetch(kind === 'instagram' ? igStart : '/api/app/meta/start', { method: 'POST' }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (!res?.ok || !data.url) {
       setBusy(null)

@@ -7,6 +7,7 @@ import { blogAutoTick } from '@/lib/blog-auto'
 import { sendDueOutreachReplies } from '@/lib/outreach-reply'
 import { syncAllWorkspaces } from '@/lib/saas/sync'
 import { renewInstagramTokens } from '@/lib/saas/instagram'
+import { publishDuePosts } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -27,6 +28,8 @@ export async function GET(req: NextRequest) {
     blogAutoTick(req.nextUrl.origin).catch((error) => console.error('blog auto:', error)),
     // Caselle email dei clienti del SaaS.
     syncAllWorkspaces(4).catch((error) => console.error('saas sync:', error)),
+    // Post programmati dei clienti del SaaS.
+    publishDuePosts().catch((error) => console.error('saas post programmati:', error)),
     // Token di 60 giorni degli Instagram collegati con l'accesso di Instagram.
     renewInstagramTokens().catch((error) => console.error('instagram renew:', error)),
     sendDueOutreachReplies().catch((error) => console.error('outreach replies:', error)),

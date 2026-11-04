@@ -31,12 +31,15 @@ export function instagramConfig() {
 
 export const instagramCallbackUrl = (origin: string) => `${origin}/api/app/instagram/callback`
 
-export function instagramLoginUrl(origin: string, state: string): string {
+/** Permesso in piu' per pubblicare i post (chiesto solo quando il cliente vuole pubblicare). */
+export const PUBLISH_SCOPE = 'instagram_business_content_publish'
+
+export function instagramLoginUrl(origin: string, state: string, options: { publish?: boolean } = {}): string {
   const params = new URLSearchParams({
     client_id: instagramConfig().appId,
     redirect_uri: instagramCallbackUrl(origin),
     response_type: 'code',
-    scope: SCOPES.join(','),
+    scope: [...SCOPES, ...(options.publish ? [PUBLISH_SCOPE] : [])].join(','),
     state,
     enable_fb_login: '0',
     force_reauth: 'true',

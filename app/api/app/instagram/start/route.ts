@@ -11,5 +11,7 @@ export async function POST(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
   if (access instanceof NextResponse) return access
   if (!instagramConfig().ready) return NextResponse.json({ error: 'Il collegamento con Instagram non è ancora configurato.' }, { status: 503 })
-  return NextResponse.json({ url: instagramLoginUrl(req.nextUrl.origin, signState(access.workspace.id, access.userId)) })
+  // publish=1: si chiede anche il permesso di pubblicare i post (Assistente AI).
+  const publish = req.nextUrl.searchParams.get('publish') === '1'
+  return NextResponse.json({ url: instagramLoginUrl(req.nextUrl.origin, signState(access.workspace.id, access.userId), { publish }) })
 }

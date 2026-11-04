@@ -12,6 +12,16 @@ import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 // hanno la loro immagine (se la generazione riesce, altrimenti solo grafica).
 // Tutto in JPEG (l'unico formato accettato da Instagram).
 
+export type Palette = {
+  night: string
+  navy: string
+  deep: string
+  blue: string
+  blueLight: string
+  ink: string
+}
+
+/** Palette Facevoice. I clienti della piattaforma possono avere la loro (vedi themesFor). */
 export const BRAND = {
   night: '#050a16',
   navy: '#060f1c',
@@ -43,49 +53,53 @@ type Theme = {
   label: string
   /** Atmosfera delle foto AI generate per questa slide. */
   mood: string
+  /** Firma in fondo a ogni slide (es. @facevoice.ai). */
+  handle: string
 }
 
-const glowBg = (base: string, end: string, at = '85% 0%', strength = 0.35) =>
-  `radial-gradient(circle at ${at}, rgba(42, 101, 254, ${strength}) 0%, rgba(42, 101, 254, 0) 55%), linear-gradient(180deg, ${base} 0%, ${end} 100%)`
+const rgb = (hex: string) => {
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.padEnd(6, '0').slice(0, 6)
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) || 0).join(', ')
+}
+const alpha = (hex: string, a: number) => `rgba(${rgb(hex)}, ${a})`
 
-const DARK_MOOD = 'dark and moody, deep navy blue tones with electric blue (#2A65FE) light accents'
-const LIGHT_MOOD = 'bright and airy, warm off-white (#F8F8F0) and soft periwinkle blue (#A9C1FF) tones with electric blue (#2A65FE) accents'
+function themesFor(p: Palette, handle = '@facevoice.ai') {
+  const glowBg = (base: string, end: string, at = '85% 0%', strength = 0.35) =>
+    `radial-gradient(circle at ${at}, ${alpha(p.blue, strength)} 0%, ${alpha(p.blue, 0)} 55%), linear-gradient(180deg, ${base} 0%, ${end} 100%)`
+  const dark = `dark and moody, deep ${p.night} and ${p.deep} tones with ${p.blue} light accents`
+  const light = `bright and airy, warm off-white (${p.ink}) and soft ${p.blueLight} tones with ${p.blue} accents`
+  const inkSoft = alpha(p.ink, 0.74)
+  return {
+    notte: { bg: glowBg(p.navy, p.night), solid: p.night, ink: p.ink, soft: inkSoft, accent: p.blue, onAccent: p.ink, label: p.blueLight, mood: dark, handle },
+    profondo: { bg: glowBg(p.deep, p.night, '10% 100%', 0.5), solid: p.night, ink: p.ink, soft: inkSoft, accent: p.blueLight, onAccent: p.night, label: p.blueLight, mood: dark, handle },
+    blu: {
+      bg: `linear-gradient(165deg, ${p.blue} 0%, ${p.blue} 55%, ${p.deep} 140%)`,
+      solid: p.blue,
+      ink: p.ink,
+      soft: alpha(p.ink, 0.88),
+      accent: p.night,
+      onAccent: p.ink,
+      label: p.ink,
+      mood: `vivid ${p.blue} dominant tones with deep ${p.night} shadows`,
+      handle,
+    },
+    chiaro: { bg: p.ink, solid: p.ink, ink: p.night, soft: alpha(p.night, 0.72), accent: p.blue, onAccent: p.ink, label: p.blue, mood: light, handle },
+    azzurro: {
+      bg: `linear-gradient(180deg, ${p.blueLight} 0%, ${p.ink} 160%)`,
+      solid: p.blueLight,
+      ink: p.night,
+      soft: alpha(p.night, 0.76),
+      accent: p.night,
+      onAccent: p.ink,
+      label: p.deep,
+      mood: light,
+      handle,
+    },
+  } satisfies Record<string, Theme>
+}
 
-const THEMES = {
-  notte: { bg: glowBg(BRAND.navy, BRAND.night), solid: BRAND.night, ink: BRAND.ink, soft: BRAND.inkSoft, accent: BRAND.blue, onAccent: BRAND.ink, label: BRAND.blueLight, mood: DARK_MOOD },
-  profondo: {
-    bg: glowBg(BRAND.deep, BRAND.night, '10% 100%', 0.5),
-    solid: BRAND.night,
-    ink: BRAND.ink,
-    soft: BRAND.inkSoft,
-    accent: BRAND.blueLight,
-    onAccent: BRAND.night,
-    label: BRAND.blueLight,
-    mood: DARK_MOOD,
-  },
-  blu: {
-    bg: `linear-gradient(165deg, ${BRAND.blue} 0%, ${BRAND.blue} 55%, ${BRAND.deep} 140%)`,
-    solid: BRAND.blue,
-    ink: BRAND.ink,
-    soft: 'rgba(248, 248, 240, 0.88)',
-    accent: BRAND.night,
-    onAccent: BRAND.ink,
-    label: BRAND.ink,
-    mood: 'vivid electric blue (#2A65FE) dominant tones with deep navy shadows',
-  },
-  chiaro: { bg: BRAND.ink, solid: BRAND.ink, ink: BRAND.night, soft: 'rgba(5, 10, 22, 0.72)', accent: BRAND.blue, onAccent: BRAND.ink, label: BRAND.blue, mood: LIGHT_MOOD },
-  azzurro: {
-    bg: `linear-gradient(180deg, ${BRAND.blueLight} 0%, ${BRAND.ink} 160%)`,
-    solid: BRAND.blueLight,
-    ink: BRAND.night,
-    soft: 'rgba(5, 10, 22, 0.76)',
-    accent: BRAND.night,
-    onAccent: BRAND.ink,
-    label: BRAND.deep,
-    mood: LIGHT_MOOD,
-  },
-} satisfies Record<string, Theme>
-
+const THEMES = themesFor(BRAND)
 type ThemeName = keyof typeof THEMES
 /** Combinazioni: [copertina, slide di contenuto (si ripetono), chiusura]. */
 const MIXES: { cover: ThemeName; content: ThemeName[]; cta: ThemeName }[] = [
@@ -96,8 +110,8 @@ const MIXES: { cover: ThemeName; content: ThemeName[]; cta: ThemeName }[] = [
 ]
 export const PALETTE_MIXES = MIXES.length
 
-const IMAGE_PROMPT = (title: string, summary: string, mood: string) =>
-  `Editorial photo-style image for a business blog article about artificial intelligence news.
+const IMAGE_PROMPT = (title: string, summary: string, mood: string, subject = 'a business blog article about artificial intelligence news') =>
+  `Editorial photo-style image for ${subject}.
 Article title (Italian): "${title}"
 Topic summary: ${summary.slice(0, 600)}
 Style: cinematic, ${mood}, premium tech-magazine look, shallow depth of field. Portrait 4:5.
@@ -139,9 +153,8 @@ async function render(node: React.ReactElement): Promise<Buffer> {
 
 const counter = (i: number, n: number) => `${String(i).padStart(2, '0')} / ${String(n).padStart(2, '0')}`
 
-const footer = (t: Theme) => (
-  <div style={{ display: 'flex', justifyContent: 'center', fontSize: 30, color: t.soft, letterSpacing: 0.5 }}>@facevoice.ai</div>
-)
+const footer = (t: Theme) =>
+  t.handle ? <div style={{ display: 'flex', justifyContent: 'center', fontSize: 30, color: t.soft, letterSpacing: 0.5 }}>{t.handle}</div> : <div style={{ display: 'flex' }} />
 
 /** Gancio grande: piu' corto e', piu' grande si scrive. */
 const hookSize = (text: string) => (text.length <= 24 ? 132 : text.length <= 36 ? 118 : text.length <= 50 ? 102 : text.length <= 70 ? 88 : 74)
@@ -319,11 +332,12 @@ async function photoFromUrl(url: string, width = W, height = 720): Promise<strin
 export const toJpeg = (input: Buffer) =>
   sharp(input).rotate().resize(W, H, { fit: 'cover', position: 'attention' }).flatten({ background: BRAND.night }).jpeg({ quality: 88 }).toBuffer()
 
-async function upload(jpeg: Buffer): Promise<string> {
-  const path = `auto/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
-  const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: false })
+async function upload(jpeg: Buffer, storage?: { bucket: string; folder: string }): Promise<string> {
+  const bucket = storage?.bucket || BUCKET
+  const path = `${storage?.folder || 'auto'}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+  const { error } = await supabaseAdmin.storage.from(bucket).upload(path, jpeg, { contentType: 'image/jpeg', upsert: false })
   if (error) throw new Error(`caricamento immagine non riuscito: ${error.message}`)
-  return supabaseAdmin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+  return supabaseAdmin.storage.from(bucket).getPublicUrl(path).data.publicUrl
 }
 
 export type CarouselOptions = {
@@ -347,6 +361,13 @@ export type CarouselOptions = {
   maxSlides?: number
   /** Secondi al massimo per generare le immagini AI (poi le slide restano solo grafica). */
   imageSeconds?: number
+  /** Colori e firma di un cliente della piattaforma (predefiniti: quelli di Facevoice). */
+  palette?: Palette
+  handle?: string
+  /** Di cosa parla il post, per le foto AI (predefinito: notizie AI del blog). */
+  subject?: string
+  /** Cartella di salvataggio (bucket e percorso) per i post dei clienti. */
+  storage?: { bucket: string; folder: string }
 }
 
 /** Crea e carica il carosello; restituisce gli indirizzi pubblici delle slide (la prima e' la copertina). */
@@ -361,8 +382,9 @@ export async function createCarousel(
   const n = content.length + 2
   const mixIndex = (((options.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length
   const mix = MIXES[mixIndex]
-  const coverTheme = THEMES[mix.cover]
-  const themes = content.map((_, k) => THEMES[mix.content[k % mix.content.length]])
+  const themeSet = options.palette || options.handle !== undefined ? themesFor(options.palette || BRAND, options.handle ?? '@facevoice.ai') : THEMES
+  const coverTheme = themeSet[mix.cover]
+  const themes = content.map((_, k) => themeSet[mix.content[k % mix.content.length]])
   const notes = options.imageNotes?.trim() ? `\nExtra art direction from the brand owner: ${options.imageNotes.trim().slice(0, 400)}` : ''
 
   // Foto di Luca subito (in parallelo); le immagini AI una alla volta, prima la
@@ -372,7 +394,7 @@ export async function createCarousel(
   const mine = content.map((_, k) => options.photos?.[k] || null)
   const minePhotos = await Promise.all(mine.map((url) => (url ? photoFromUrl(url, 936, 660) : Promise.resolve(null))))
   const deadline = Date.now() + (options.imageSeconds ?? 150) * 1000
-  const cover = own ?? (options.onlyMyImages ? null : await aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood) + notes, W, 720, 'foto della copertina', deadline))
+  const cover = own ?? (options.onlyMyImages ? null : await aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood, options.subject) + notes, W, 720, 'foto della copertina', deadline))
   const images: (string | null)[] = []
   for (const [k, slide] of content.entries()) {
     if (minePhotos[k]) images.push(minePhotos[k])
@@ -383,10 +405,10 @@ export async function createCarousel(
   const nodes = [
     coverSlide(coverTheme, hook, title, n, cover, options.label),
     ...content.map((s, k) => contentSlide(themes[k], s, k + 2, n, images[k], Boolean(mine[k] && images[k]))),
-    ctaSlide(THEMES[mix.cta], n, n, options.cta),
+    ctaSlide(themeSet[mix.cta], n, n, options.cta),
   ]
   const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
-  const urls = await Promise.all(jpegs.map(upload))
+  const urls = await Promise.all(jpegs.map((jpeg) => upload(jpeg, options.storage)))
   return { urls, photo: own ? 'esistente' : cover ? 'ai' : 'grafica', slideImages: images.filter(Boolean).length, mix: mixIndex }
 }
 
@@ -404,4 +426,22 @@ export async function renderCarouselForTest(
     ctaSlide(THEMES[mix.cta], n, n, options.cta),
   ]
   return Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
+}
+
+/**
+ * Foto di un cliente pronta per un post Instagram (4:5, 1080x1350, JPEG): se la
+ * forma e' simile si ritaglia, altrimenti (es. foto orizzontale o screenshot) si
+ * mostra intera su uno sfondo sfocato della stessa foto, senza tagliare niente.
+ */
+export async function fitPostPhoto(input: Buffer): Promise<Buffer> {
+  const rotated = await sharp(input).rotate().toBuffer()
+  const meta = await sharp(rotated).metadata()
+  const ratio = (meta.width || 1) / (meta.height || 1)
+  const target = W / H
+  if (ratio / target <= 1.18 && target / ratio <= 1.18) {
+    return sharp(rotated).resize(W, H, { fit: 'cover', position: 'attention' }).flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toBuffer()
+  }
+  const backdrop = await sharp(rotated).resize(W, H, { fit: 'cover' }).blur(45).modulate({ brightness: 0.75 }).toBuffer()
+  const front = await sharp(rotated).resize(W - 40, H - 40, { fit: 'inside' }).toBuffer()
+  return sharp(backdrop).composite([{ input: front, gravity: 'center' }]).flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toBuffer()
 }
