@@ -68,7 +68,7 @@ export type ChatTurn = {
 
 const chatKey = (workspaceId: string, userId: string) => `ws_chat:${workspaceId}:${userId}`
 const MAX_TURNS = 40
-const MAX_STEPS = 6
+const MAX_STEPS = 8
 
 export const postView = (p: PostRow): PostView => ({
   id: p.id,
@@ -152,8 +152,8 @@ Strumenti:
   · "carousel" CON foto = UNA SLIDE PER FOTO, nell'ordine esatto delle foto (Foto 1 = slide 1 = copertina con il gancio in grande; Foto 2 = slide 2…), testo SOPRA la foto e il logo su ogni slide. Nessuna foto viene aggiunta o tolta. In "slides" metti un elemento per ogni foto, nello stesso ordine: per la Foto k scrivi titolo e testo della slide k seguendo ALLA LETTERA quello che il cliente ha chiesto per quella foto (slides[0].title = riga piccola sotto il gancio della copertina). "closing": true solo se chiede una slide finale in più.
   · "carousel" SENZA foto = slide grafiche con testi grandi, colori del marchio e immagini create dall'AI (ai_images false per evitarle).
   Se non passi "images" usa le foto allegate al messaggio, nel loro ordine. Ci vuole fino a un paio di minuti.
-- "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà: testi di singole slide (n = numero della slide, la copertina è 1), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere, gancio. Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima". In "slides" metti SOLO le slide da cambiare, con il loro numero esatto: non riscrivere le altre e non usare "order" o "remove" se il cliente non chiede di spostare o togliere slide.
-- "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto (prima di correggerlo).
+- "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà, tutto in UNA chiamata: testi di singole slide (n = numero della slide; per la copertina n 1 "title" è la riga piccola sotto il gancio, il gancio e l'etichetta si cambiano con "hook" e "label"; per la slide finale usa il suo numero con "title", "text" e "button"), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere. Per tradurre o riscrivere tutto il carosello metti tutte le slide in una sola chiamata, poi la didascalia con update_post (caption e facebook). Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima". In "slides" metti SOLO le slide da cambiare, con il loro numero esatto: non riscrivere le altre e non usare "order" o "remove" se il cliente non chiede di spostare o togliere slide.
+- "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto, copertina e slide finale comprese (prima di correggerlo).
 - "edit_slide_photo": {"post_id": "…", "n": 3, "instruction": "cosa cambiare nell'immagine"} → modifica con l'AI SOLO l'immagine della slide n (luce, colori, sfondo, togliere o aggiungere qualcosa) e rifà il post; nei caroselli con le foto il testo della slide resta com'è.
 Se nella richiesta c'è "[Slide selezionata dal cliente…]", il cliente ha toccato quella slide nell'anteprima e la richiesta riguarda SOLO quella: se chiede di cambiare scritte, titolo o testo usa edit_carousel su quel numero; se chiede di cambiare la foto o l'immagine usa edit_slide_photo; se chiede entrambe le cose, fai tutte e due. Non toccare le altre slide.
 - "edit_image": {"image": "url", "instruction": "cosa cambiare"} → modifica una foto con l'AI (luce, sfondo, colori, togliere oggetti, aggiungere una scritta…) e mostra il risultato. Per usarla in un post passala poi in "images" di create_post o update_post.
@@ -220,7 +220,7 @@ async function messagesOverview(db: WorkspaceDb, args: Record<string, unknown>) 
 async function targetNote(target: { postId: string; slide: number }) {
   const outline = await carouselOutline(target.postId).catch(() => null)
   const slide = outline?.slide.find((x) => x.n === target.slide)
-  return `[Slide selezionata dal cliente: post_id ${target.postId}, slide ${target.slide}${slide ? ` — titolo attuale «${slide.titolo}», testo attuale «${slide.testo}»` : ''}${target.slide === 1 && outline ? ` — gancio attuale «${outline.gancio}»` : ''}]`
+  return `[Slide selezionata dal cliente: post_id ${target.postId}, slide ${target.slide}${slide ? ` — testi attuali ${JSON.stringify(slide)}` : ''}]`
 }
 
 /** Una richiesta del cliente: passi con gli strumenti, poi la risposta (con anteprime). */
@@ -272,8 +272,11 @@ export async function runClientAssistant(
     else actions.push(action)
   }
 
+  // Strumenti usati ed errori: se i passi finiscono si sa perche' (nei log e nella risposta).
+  const used: string[] = []
+  const errors: string[] = []
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await callAI(transcript, system, { feature: 'saas_assistente', temperature: 0.3, maxOutputTokens: 1500, workspaceId: db.workspaceId })
+    const response = await callAI(transcript, system, { feature: 'saas_assistente', temperature: 0.3, maxOutputTokens: 3000, workspaceId: db.workspaceId })
     const raw = response.message || ''
     const call = parseStep(raw)
     if (!call) return { reply: raw.trim() || 'Non ho capito, puoi riformulare?', actions }
@@ -386,7 +389,12 @@ export async function runClientAssistant(
           const slides = Array.isArray(args.slides)
             ? (args.slides as { n?: unknown; title?: unknown; text?: unknown }[])
                 .filter((x) => typeof x?.n === 'number')
-                .map((x) => ({ n: x.n as number, title: typeof x.title === 'string' ? x.title : undefined, text: typeof x.text === 'string' ? x.text : undefined }))
+                .map((x) => ({
+                  n: x.n as number,
+                  title: typeof x.title === 'string' ? x.title : undefined,
+                  text: typeof x.text === 'string' ? x.text : undefined,
+                  button: typeof (x as { button?: unknown }).button === 'string' ? ((x as { button?: string }).button as string) : undefined,
+                }))
             : undefined
           const nums = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isFinite(n)) : undefined)
           // Slide selezionata dal cliente: si cambia SOLO quella (niente ordine, slide tolte o finale).
@@ -422,9 +430,18 @@ export async function runClientAssistant(
       }
     } catch (error) {
       result = { errore: error instanceof Error ? error.message : 'errore' }
+      errors.push(`${call.tool}: ${(result as { errore: string }).errore}`)
+      console.warn(`saas assistente: ${call.tool} non riuscito: ${(result as { errore: string }).errore}`)
     }
+    used.push(String(call.tool))
     transcript.push({ role: 'assistant', content: JSON.stringify({ tool: call.tool, args }) })
     transcript.push({ role: 'user', content: `Risultato di ${call.tool}: ${JSON.stringify(result).slice(0, 8000)}` })
   }
-  return { reply: actions.length ? 'Ecco qui sotto.' : 'Non sono riuscito a finire: riprova con una richiesta più semplice.', actions }
+  console.warn(`saas assistente: passi finiti (${used.join(' > ')})${errors.length ? ` · errori: ${errors.join(' | ')}` : ''}`)
+  return {
+    reply: actions.length
+      ? 'Ecco qui sotto quello che ho fatto finora.'
+      : `Non sono riuscito a finire${errors.length ? ` (${errors[errors.length - 1].slice(0, 200)})` : ''}. Se vuoi cambiare i testi delle slide, toccale (anche «Tutte») e scrivi la correzione lì.`,
+    actions,
+  }
 }

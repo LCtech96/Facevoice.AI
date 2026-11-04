@@ -455,7 +455,7 @@ export async function createPost(
 export async function editCarousel(
   db: WorkspaceDb,
   id: string,
-  changes: { slides?: { n: number; title?: string; text?: string }[]; order?: number[]; hook?: string; label?: string; closing?: boolean; remove?: number[] }
+  changes: { slides?: { n: number; title?: string; text?: string; button?: string }[]; order?: number[]; hook?: string; label?: string; closing?: boolean; remove?: number[] }
 ): Promise<PostRow> {
   const post = await getPost(db, id)
   if (!post) throw new Error('post non trovato')
@@ -465,8 +465,18 @@ export async function editCarousel(
   await keepBaseline(post, source)
   let photos = [...source.photos]
   let slides = [...source.slides]
+  let closing = source.closing ? { ...source.closing } : null
   for (const change of changes.slides || []) {
     const k = Math.round(change.n) - 1
+    // Slide finale (l'ultima, dopo le foto): titolo, testo e pulsante.
+    if (closing && k === slides.length) {
+      closing = {
+        title: typeof change.title === 'string' ? trim(change.title, 60) : closing.title,
+        text: typeof change.text === 'string' ? trim(change.text, 160) : closing.text,
+        button: typeof change.button === 'string' ? trim(change.button, 30) : closing.button,
+      }
+      continue
+    }
     if (k < 0 || k >= slides.length) continue
     slides[k] = { title: typeof change.title === 'string' ? trim(change.title, 90) : slides[k].title, text: typeof change.text === 'string' ? trim(change.text, 220) : slides[k].text }
   }
@@ -490,7 +500,7 @@ export async function editCarousel(
     slides,
     hook: typeof changes.hook === 'string' ? trim(changes.hook, 60) : source.hook,
     label: typeof changes.label === 'string' ? trim(changes.label, 30) : source.label,
-    closing: changes.closing === false ? null : changes.closing === true && !source.closing ? { title: 'Ti aspettiamo', text: 'Scrivici in Direct per informazioni.', button: 'Scrivici' } : source.closing,
+    closing: changes.closing === false ? null : changes.closing === true && !closing ? { title: 'Ti aspettiamo', text: 'Scrivici in Direct per informazioni.', button: 'Scrivici' } : closing,
   }
   const media = await renderPhotoCarousel(db.workspaceId, next)
   await saveSource(id, next)
@@ -732,6 +742,8 @@ export async function editSlides(db: WorkspaceDb, id: string, numbers: number[],
   }
 
   const count = source.photos.length
+  // La didascalia si tocca solo se la richiesta la nomina (es. "traduci tutto, anche la didascalia").
+  const wantsCaption = /didascali|caption|descrizion|testo del post|testo sotto il post/i.test(request)
   const current = picked.map((n) => {
     const k = n - 1
     if (k >= count && source.closing) return { n, slide_finale: true, titolo: source.closing.title, testo: source.closing.text, pulsante: source.closing.button }
@@ -749,13 +761,18 @@ Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che 
 - "estrai": true SOLO se chiede di tirare fuori, separare o estrarre le foto contenute nell'immagine (es. uno screenshot o un collage con piu' foto): ogni foto diventera' una slide. In quel caso non mettere altri campi;
 - "grafica": true se il problema riguarda la grafica della slide e non la foto (sfumatura, ombra o fondo sotto il testo, contrasto, scritte poco leggibili): in quel caso NON mettere "foto".
 Se la richiesta riguarda solo il testo non toccare la foto, e viceversa. Scrivi nella lingua della richiesta. Niente markdown.
-Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
+${wantsCaption ? `Se la richiesta chiede di cambiare anche la didascalia (descrizione) del post, aggiungi "didascalia" (la nuova didascalia Instagram completa, hashtag adattati) e "facebook" (lo stesso testo per Facebook, senza la fila di hashtag).\n` : ''}Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]${wantsCaption ? ', "didascalia": "", "facebook": ""' : ''}}`
   const result = await callAI(
-    [{ role: 'user', content: `Slide da correggere (stato attuale):\n${JSON.stringify(current)}\n\nRichiesta del titolare: ${request}` }],
+    [
+      {
+        role: 'user',
+        content: `Slide da correggere (stato attuale):\n${JSON.stringify(current)}${wantsCaption ? `\n\nDidascalia attuale:\n${post.caption}\n\nTesto Facebook attuale:\n${post.facebook_text || post.caption}` : ''}\n\nRichiesta del titolare: ${request}`,
+      },
+    ],
     system,
-    { feature: 'saas_slide', temperature: 0.3, maxOutputTokens: 900, workspaceId: db.workspaceId }
+    { feature: 'saas_slide', temperature: 0.3, maxOutputTokens: Math.min(4000, 600 + 180 * picked.length + (wantsCaption ? 1600 : 0)), workspaceId: db.workspaceId }
   )
-  let answer: { slide?: Record<string, unknown>[] } = {}
+  let answer: { slide?: Record<string, unknown>[]; didascalia?: unknown; facebook?: unknown } = {}
   try {
     answer = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')
   } catch {}
@@ -809,12 +826,22 @@ Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]}`
     redo.add(edit.k)
     done.push(`slide ${edit.k + 1}: foto modificata`)
   }
-  if (!redo.size) return { post, done: [] }
-  // Si rifanno solo le slide cambiate: le altre restano gli stessi file.
-  const media = await renderPhotoCarousel(db.workspaceId, next, post.media.map((url, k) => (redo.has(k) ? null : url)))
-  await saveSource(id, next)
-  console.log(`saas slide: post ${id.slice(0, 8)} corrette solo le slide ${[...redo].map((k) => k + 1).join(',')} (scelte ${picked.join(',')})`)
-  return { post: await updatePost(db, id, { media }), done: [...new Set(done)] }
+  const caption = wantsCaption && typeof answer.didascalia === 'string' && answer.didascalia.trim() ? answer.didascalia.trim() : null
+  const facebook = caption && typeof answer.facebook === 'string' && answer.facebook.trim() ? answer.facebook.trim() : caption
+  if (!redo.size && !caption) return { post, done: [] }
+  let updated = post
+  if (redo.size) {
+    // Si rifanno solo le slide cambiate: le altre restano gli stessi file.
+    const media = await renderPhotoCarousel(db.workspaceId, next, post.media.map((url, k) => (redo.has(k) ? null : url)))
+    await saveSource(id, next)
+    console.log(`saas slide: post ${id.slice(0, 8)} corrette solo le slide ${[...redo].map((k) => k + 1).join(',')} (scelte ${picked.join(',')})`)
+    updated = await updatePost(db, id, { media })
+  }
+  if (caption) {
+    updated = await updatePost(db, id, { caption, facebook: facebook || caption })
+    done.push('didascalia cambiata')
+  }
+  return { post: updated, done: [...new Set(done)] }
 }
 
 // --- Foto dentro uno screenshot: una slide per ogni foto ------------------------------
@@ -1128,10 +1155,12 @@ export async function carouselOutline(id: string) {
   const source = await loadSource(id)
   if (!source) return null
   return {
-    gancio: source.hook,
-    etichetta: source.label,
-    slide: source.slides.map((s, k) => ({ n: k + 1, titolo: k === 0 ? `(copertina) ${s.title}` : s.title, testo: s.text })),
-    slide_finale: Boolean(source.closing),
+    slide: [
+      ...source.slides.map((s, k) =>
+        k === 0 ? { n: 1, copertina: true, gancio: source.hook, etichetta: source.label, sottotitolo: s.title } : { n: k + 1, titolo: s.title, testo: s.text }
+      ),
+      ...(source.closing ? [{ n: source.slides.length + 1, slide_finale: true, titolo: source.closing.title, testo: source.closing.text, pulsante: source.closing.button }] : []),
+    ],
   }
 }
 
