@@ -156,8 +156,8 @@ export default function AssistantPage() {
   return (
     <div className="-mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col md:-mx-8 md:-my-10 md:min-h-[100dvh]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3 md:px-8">
-        <h1 className="flex items-center gap-2 text-2xl font-extrabold">
-          <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> Assistente AI
+        <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
+          <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
         </h1>
         <button onClick={newChat} disabled={busy || !turns?.length} className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-40">
           <Plus className="h-4 w-4" /> Nuova chat
