@@ -25,7 +25,8 @@ type Post = {
   error_message: string | null
 }
 type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
-type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; actions?: Action[]; at: string }
+type Target = { postId: string; slide: number; thumb?: string }
+type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
 
@@ -117,24 +118,29 @@ export default function AssistantPage() {
   const uploading = attachments.some((a) => !a.url && !a.error)
   const ready = attachments.filter((a) => a.url).map((a) => a.url!)
 
-  const send = async (text = input) => {
+  /** target: slide toccata nell'anteprima (la richiesta riguarda solo quella). */
+  const send = async (text = input, target?: Target) => {
     const message = text.trim()
-    if ((!message && !ready.length) || busy || uploading) return
+    if ((!message && !ready.length) || busy || uploading) return false
     if (dictation.listening) dictation.stop()
     setBusy(true)
     setError(null)
-    setInput('')
+    if (!target) setInput('')
     const sentAttachments = attachments
     setAttachments([])
-    setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, at: new Date().toISOString() }])
-    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready }) }).catch(() => null)
+    setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, ...(target ? { target } : {}), at: new Date().toISOString() }])
+    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, ...(target ? { target } : {}) }) }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(false)
-    if (res?.ok && data?.turns) return setTurns(data.turns)
+    if (res?.ok && data?.turns) {
+      setTurns(data.turns)
+      return true
+    }
     if (res?.status === 409 || !res) {
       // Connessione caduta o lavoro gia' in corso: la risposta arriva salvata sul server.
       setError(data?.error || 'Sto ancora lavorando: la risposta compare qui tra poco.')
-      return load()
+      load()
+      return true
     }
     setError(data?.error || 'Richiesta non riuscita, riprova.')
     setAttachments(sentAttachments)
@@ -203,6 +209,15 @@ export default function AssistantPage() {
                       ))}
                     </div>
                   ) : null}
+                  {turn.target ? (
+                    <div className="mb-2 flex items-center justify-end gap-2 text-xs text-[var(--text-secondary)]">
+                      {turn.target.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={turn.target.thumb} alt="" className="h-12 w-10 rounded object-cover" />
+                      ) : null}
+                      Slide {turn.target.slide}
+                    </div>
+                  ) : null}
                   {turn.text && <p className="whitespace-pre-wrap break-words text-[15px]">{turn.text}</p>}
                 </div>
               </div>
@@ -215,7 +230,7 @@ export default function AssistantPage() {
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
-                      <PostCard key={action.post.id} post={action.post} canManage={canManage} onChange={updatePost} />
+                      <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onEditSlide={(target, prompt) => send(prompt, target)} />
                     ) : (
                       <a key={k} href={action.url} target="_blank" rel="noopener noreferrer" className="mt-3 block w-full max-w-xs">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -304,8 +319,23 @@ export default function AssistantPage() {
 }
 
 /** Anteprima di un post: immagini, testi modificabili, social, giorno e ora, Programma / Pubblica ora. */
-function PostCard({ post, canManage, onChange }: { post: Post; canManage: boolean; onChange: (post: Post) => void }) {
+function PostCard({
+  post,
+  canManage,
+  busy: chatBusy,
+  onChange,
+  onEditSlide,
+}: {
+  post: Post
+  canManage: boolean
+  busy: boolean
+  onChange: (post: Post) => void
+  onEditSlide: (target: Target, prompt: string) => Promise<boolean | undefined>
+}) {
   const { appFetch } = useWorkspace()
+  // Slide toccata: si scrive cosa cambiare solo in quella (testo o foto).
+  const [selected, setSelected] = useState<number | null>(null)
+  const [slidePrompt, setSlidePrompt] = useState('')
   const [caption, setCaption] = useState(post.caption)
   const [platforms, setPlatforms] = useState(post.platforms)
   const [when, setWhen] = useState(toLocalInput(post.publish_at))
@@ -349,12 +379,62 @@ function PostCard({ post, canManage, onChange }: { post: Post; canManage: boolea
       </div>
       <div className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
         {post.media.map((url, i) => (
-          <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 snap-start">
+          <button
+            key={url}
+            type="button"
+            onClick={() => !done && canManage && setSelected((s) => (s === i ? null : i))}
+            aria-label={`Slide ${i + 1}${selected === i ? ' (selezionata)' : ''}`}
+            className="relative shrink-0 snap-start"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt={`Immagine ${i + 1}`} loading="lazy" className="h-52 w-[166px] rounded-lg border border-[var(--border-color)] object-cover" />
-          </a>
+            <img
+              src={url}
+              alt={`Immagine ${i + 1}`}
+              loading="lazy"
+              className={`h-52 w-[166px] rounded-lg object-cover ${selected === i ? 'ring-4 ring-[var(--accent-blue)]' : 'border border-[var(--border-color)]'}`}
+            />
+            <span className={`absolute left-1.5 top-1.5 rounded-full px-1.5 text-[11px] font-semibold ${selected === i ? 'bg-[var(--accent-blue)] text-white' : 'bg-black/55 text-white'}`}>{i + 1}</span>
+          </button>
         ))}
       </div>
+      {!done && canManage && selected === null && post.media.length > 0 && (
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">Tocca una slide per correggere solo quella.</p>
+      )}
+      {selected !== null && !done && canManage && (
+        <div className="mt-2 rounded-xl border border-[var(--accent-blue)] bg-[var(--background)] p-2">
+          <p className="mb-1 flex items-center justify-between text-xs text-[var(--text-secondary)]">
+            <span>
+              Cosa vuoi cambiare nella <b className="text-[var(--text-primary)]">slide {selected + 1}</b>? Il testo, la foto o entrambi.
+            </span>
+            <button onClick={() => setSelected(null)} aria-label="Chiudi">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </p>
+          <div className="flex items-end gap-2">
+            <textarea
+              value={slidePrompt}
+              onChange={(e) => setSlidePrompt(e.target.value)}
+              rows={2}
+              placeholder="Es. «scrivi: Vista mare dal balcone» oppure «rendi la foto più luminosa»"
+              className="flex-1 resize-none rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1.5 text-sm"
+            />
+            <button
+              onClick={async () => {
+                const ok = await onEditSlide({ postId: post.id, slide: selected + 1, thumb: post.media[selected] }, slidePrompt)
+                if (ok) {
+                  setSlidePrompt('')
+                  setSelected(null)
+                }
+              }}
+              disabled={chatBusy || !slidePrompt.trim()}
+              aria-label="Correggi la slide"
+              className="rounded-full bg-[var(--accent-blue)] p-2 text-white disabled:opacity-40"
+            >
+              {chatBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+      )}
       <textarea
         value={caption}
         onChange={(e) => setCaption(e.target.value)}

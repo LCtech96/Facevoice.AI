@@ -9,6 +9,7 @@ import {
   carouselOutline,
   createPost,
   editCarousel,
+  editSlidePhoto,
   editImage,
   generateImage,
   getPost,
@@ -40,6 +41,8 @@ export type ChatTurn = {
   images?: string[]
   /** Cosa mostra ogni foto allegata (stesso ordine), letto dall'AI. */
   imageNotes?: (string | null)[]
+  /** Slide scelta dal cliente toccandola nell'anteprima (la richiesta riguarda quella). */
+  target?: { postId: string; slide: number; thumb?: string }
   actions?: ChatAction[]
   at: string
 }
@@ -108,6 +111,8 @@ Strumenti:
   Se non passi "images" usa le foto allegate al messaggio, nel loro ordine. Ci vuole fino a un paio di minuti.
 - "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà: testi di singole slide (n = numero della slide, la copertina è 1), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere, gancio. Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima".
 - "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto (prima di correggerlo).
+- "edit_slide_photo": {"post_id": "…", "n": 3, "instruction": "cosa cambiare nell'immagine"} → modifica con l'AI SOLO l'immagine della slide n (luce, colori, sfondo, togliere o aggiungere qualcosa) e rifà il post; nei caroselli con le foto il testo della slide resta com'è.
+Se nella richiesta c'è "[Slide selezionata dal cliente…]", il cliente ha toccato quella slide nell'anteprima e la richiesta riguarda SOLO quella: se chiede di cambiare scritte, titolo o testo usa edit_carousel su quel numero; se chiede di cambiare la foto o l'immagine usa edit_slide_photo; se chiede entrambe le cose, fai tutte e due. Non toccare le altre slide.
 - "edit_image": {"image": "url", "instruction": "cosa cambiare"} → modifica una foto con l'AI (luce, sfondo, colori, togliere oggetti, aggiungere una scritta…) e mostra il risultato. Per usarla in un post passala poi in "images" di create_post o update_post.
 - "generate_image": {"description": "cosa deve mostrare"} → crea un'immagine da zero.
 - "update_post": {"post_id": "…", "caption": "…", "facebook": "…", "platforms": ["instagram","facebook"], "images": ["url", ...]} → cambia testi, social o immagini di un post non ancora pubblicato.
@@ -168,6 +173,13 @@ async function messagesOverview(db: WorkspaceDb, args: Record<string, unknown>) 
   }
 }
 
+/** Descrizione della slide toccata dal cliente: post, numero e testo attuale. */
+async function targetNote(target: { postId: string; slide: number }) {
+  const outline = await carouselOutline(target.postId).catch(() => null)
+  const slide = outline?.slide.find((x) => x.n === target.slide)
+  return `[Slide selezionata dal cliente: post_id ${target.postId}, slide ${target.slide}${slide ? ` — titolo attuale «${slide.titolo}», testo attuale «${slide.testo}»` : ''}${target.slide === 1 && outline ? ` — gancio attuale «${outline.gancio}»` : ''}]`
+}
+
 /** Una richiesta del cliente: passi con gli strumenti, poi la risposta (con anteprime). */
 export async function runClientAssistant(
   db: WorkspaceDb,
@@ -175,7 +187,8 @@ export async function runClientAssistant(
   message: string,
   images: string[],
   history: ChatTurn[],
-  imageNotes: (string | null)[] = []
+  imageNotes: (string | null)[] = [],
+  target?: { postId: string; slide: number } | null
 ): Promise<{ reply: string; actions: ChatAction[] }> {
   if (!hasAIProvider()) return { reply: 'L’assistente non è disponibile in questo momento.', actions: [] }
   const [name, connections, recent] = await Promise.all([workspaceName(db.workspaceId), listConnections(db).catch(() => []), listPosts(db, { limit: 8 }).catch(() => [])])
@@ -200,6 +213,7 @@ export async function runClientAssistant(
       ? `[Foto allegate a questo messaggio, nell'ordine in cui le ha caricate]\n${images.map((url, k) => `Foto ${k + 1}: ${url}\n   mostra: ${imageNotes[k] || '(descrizione non disponibile)'}`).join('\n')}`
       : '',
     earlierLines.length ? `[Foto mandate prima in questa conversazione]\n${earlierLines.join('\n')}` : '',
+    target ? await targetNote(target) : '',
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -223,7 +237,7 @@ export async function runClientAssistant(
     if (call.reply !== undefined && !call.tool) return { reply: call.reply, actions }
 
     const args = call.args || {}
-    const postId = asText(args.post_id) || lastPost()?.post.id || ''
+    const postId = asText(args.post_id) || target?.postId || lastPost()?.post.id || ''
     let result: unknown
     try {
       switch (call.tool) {
@@ -340,6 +354,12 @@ export async function runClientAssistant(
           })
           showPost(post)
           result = { rifatto: true, post_id: post.id, slide: (await carouselOutline(post.id))?.slide }
+          break
+        }
+        case 'edit_slide_photo': {
+          const post = await editSlidePhoto(db, postId, Number(args.n) || target?.slide || 1, asText(args.instruction) || message)
+          showPost(post)
+          result = { rifatto: true, post_id: post.id, slide: Number(args.n) || target?.slide }
           break
         }
         case 'post_outline': {

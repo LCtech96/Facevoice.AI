@@ -435,6 +435,30 @@ export async function editCarousel(
   return updatePost(db, id, { media })
 }
 
+/**
+ * Corregge con l'AI l'immagine di UNA slide (n da 1) e rifa' il post:
+ * - carosello con le foto: si modifica la foto originale e si rifa' la slide con il suo testo;
+ * - post con foto o carosello grafico: si modifica l'immagine della slide cosi' com'e'.
+ */
+export async function editSlidePhoto(db: WorkspaceDb, id: string, n: number, instruction: string): Promise<PostRow> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const k = Math.round(n) - 1
+  const source = await loadSource(id)
+  if (source && k >= 0 && k < source.photos.length) {
+    const edited = await editImage(db.workspaceId, source.photos[k], instruction)
+    const next = { ...source, photos: source.photos.map((url, j) => (j === k ? edited : url)) }
+    const media = await renderPhotoCarousel(db.workspaceId, next)
+    await saveSource(id, next)
+    return updatePost(db, id, { media })
+  }
+  if (k < 0 || k >= post.media.length) throw new Error(`il post ha ${post.media.length} immagini: scegli un numero da 1 a ${post.media.length}`)
+  const edited = await editImage(db.workspaceId, post.media[k], instruction)
+  const fitted = await store(db.workspaceId, 'posts', await fitPostPhoto(await download(edited)))
+  return updatePost(db, id, { media: post.media.map((url, j) => (j === k ? fitted : url)) })
+}
+
 /** Testi attuali delle slide di un carosello con le foto (per l'assistente). */
 export async function carouselOutline(id: string) {
   const source = await loadSource(id)

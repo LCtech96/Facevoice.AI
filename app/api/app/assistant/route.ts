@@ -23,13 +23,19 @@ export async function POST(req: NextRequest) {
   const message = String(body.message || '').trim().slice(0, 3000)
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)
   if (!message && !images.length) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
+  // Slide toccata nell'anteprima: la richiesta riguarda solo quella.
+  const slide = Number(body.target?.slide)
+  const target =
+    typeof body.target?.postId === 'string' && /^[0-9a-f-]{36}$/i.test(body.target.postId) && Number.isInteger(slide) && slide >= 1 && slide <= 10
+      ? { postId: body.target.postId as string, slide, thumb: typeof body.target.thumb === 'string' && body.target.thumb.startsWith('https://') ? body.target.thumb : undefined }
+      : null
 
   const history = await loadChat(access.workspace.id, access.userId)
   const last = history[history.length - 1]
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < 4 * 60_000) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta un momento.' }, { status: 409 })
   }
-  const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), at: new Date().toISOString() }
+  const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }
   // La richiesta si salva subito: se la pagina si chiude, la risposta arriva lo stesso.
   await saveChat(access.workspace.id, access.userId, [...history, userTurn])
   let reply: ChatTurn
@@ -39,7 +45,7 @@ export async function POST(req: NextRequest) {
       userTurn.imageNotes = await describePhotos(images)
       await saveChat(access.workspace.id, access.userId, [...history, userTurn])
     }
-    const result = await runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [])
+    const result = await runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
     console.error('saas assistente:', error instanceof Error ? error.message : error)
