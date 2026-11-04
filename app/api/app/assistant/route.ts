@@ -2,20 +2,42 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
 import { usageSummary } from '@/lib/eur'
-import { loadChat, refreshPostActions, runClientAssistant, saveChat, type ChatTurn } from '@/lib/saas/assistant'
-import { describePhotos } from '@/lib/saas/posts'
+import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
+import { describePhotos, getPost } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-// Assistente AI dell'area clienti: conversazione (GET), nuova richiesta con le
-// foto gia' caricate (POST), nuova conversazione (DELETE).
+// Assistente AI dell'area clienti: conversazione (GET, anche ?chat=<id> o ?post=<id> per
+// riaprire la chat in cui si e' lavorato a un post), nuova richiesta con le foto gia'
+// caricate (POST), nuova conversazione (DELETE: le altre restano salvate).
 
 export async function GET(req: NextRequest) {
   const access = await requireWorkspace(req)
   if (access instanceof NextResponse) return access
-  const turns = await refreshPostActions(access.db, await loadChat(access.workspace.id, access.userId))
-  return NextResponse.json({ turns })
+  const ws = access.workspace.id
+  const params = req.nextUrl.searchParams
+  let chatId: string
+  const postId = params.get('post')
+  if (postId && /^[0-9a-f-]{36}$/i.test(postId)) {
+    // Dai contenuti programmati: la chat in cui si e' lavorato a quel post; se non c'e'
+    // piu', una chat nuova che parte dal post.
+    const found = await chatForPost(ws, access.userId, postId)
+    if (found) chatId = await openChat(ws, access.userId, found)
+    else {
+      const post = await getPost(access.db, postId)
+      chatId = await startChat(ws, access.userId)
+      if (post) {
+        await saveChat(ws, access.userId, [{ role: 'assistant', text: 'Ecco il post da modificare: tocca le slide per correggerle, poi programmalo di nuovo.', actions: [{ kind: 'post', post: postView(post) }], at: new Date().toISOString() }], chatId)
+      }
+    }
+  } else if (params.get('chat')) {
+    chatId = await openChat(ws, access.userId, String(params.get('chat')))
+  } else {
+    chatId = (await loadChatIndex(ws, access.userId)).current
+  }
+  const turns = await refreshPostActions(access.db, await loadChat(ws, access.userId, chatId))
+  return NextResponse.json({ turns, chatId })
 }
 
 export async function POST(req: NextRequest) {
@@ -34,14 +56,16 @@ export async function POST(req: NextRequest) {
       ? { postId: body.target.postId as string, slide, thumb: typeof body.target.thumb === 'string' && body.target.thumb.startsWith('https://') ? body.target.thumb : undefined }
       : null
 
-  const history = await loadChat(access.workspace.id, access.userId)
+  // Chat aperta nella pagina: le risposte vanno li' anche se intanto se n'e' aperta un'altra.
+  const chatId = typeof body.chatId === 'string' ? body.chatId : (await loadChatIndex(access.workspace.id, access.userId)).current
+  const history = await loadChat(access.workspace.id, access.userId, chatId)
   const last = history[history.length - 1]
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < 4 * 60_000) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta un momento.' }, { status: 409 })
   }
   const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }
   // La richiesta si salva subito: se la pagina si chiude, la risposta arriva lo stesso.
-  await saveChat(access.workspace.id, access.userId, [...history, userTurn])
+  await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
   let reply: ChatTurn
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
@@ -50,7 +74,7 @@ export async function POST(req: NextRequest) {
     const result = await runWithStatus({ status: () => {}, model, usage: tally }, async () => {
       if (images.length) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
-        await saveChat(access.workspace.id, access.userId, [...history, userTurn])
+        await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
       return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
     })
@@ -61,13 +85,14 @@ export async function POST(req: NextRequest) {
     reply = { role: 'assistant', text: 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
   }
   const turns = [...history, userTurn, reply]
-  await saveChat(access.workspace.id, access.userId, turns)
-  return NextResponse.json({ turns: await refreshPostActions(access.db, turns) })
+  await saveChat(access.workspace.id, access.userId, turns, chatId)
+  return NextResponse.json({ turns: await refreshPostActions(access.db, turns), chatId })
 }
 
 export async function DELETE(req: NextRequest) {
   const access = await requireWorkspace(req)
   if (access instanceof NextResponse) return access
-  await saveChat(access.workspace.id, access.userId, [])
-  return NextResponse.json({ turns: [] })
+  // Nuova chat: quella di prima resta salvata (si riapre dai contenuti programmati).
+  const chatId = await startChat(access.workspace.id, access.userId)
+  return NextResponse.json({ turns: [], chatId })
 }

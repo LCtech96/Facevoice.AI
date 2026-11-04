@@ -92,9 +92,26 @@ export default function AssistantPage() {
   const canManage = workspace?.role !== 'member'
   const dictation = useDictation((text) => setInput((v) => (v ? `${v} ${text}` : text)))
 
+  // Chat aperta: ogni chat resta salvata; da "Contenuti programmati" si arriva con
+  // ?post=<id> (la chat in cui si e' lavorato a quel post) o ?chat=<id>.
+  const [chatId, setChatId] = useState<string | null>(null)
+  const chatRef = useRef<string | null>(null)
   const load = useCallback(async () => {
-    const res = await appFetch('/api/app/assistant').catch(() => null)
+    let query = chatRef.current ? `?chat=${encodeURIComponent(chatRef.current)}` : ''
+    if (!chatRef.current && typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const post = params.get('post')
+      const chat = params.get('chat')
+      if (post) query = `?post=${encodeURIComponent(post)}`
+      else if (chat) query = `?chat=${encodeURIComponent(chat)}`
+      if (post || chat) window.history.replaceState(null, '', '/app/assistente')
+    }
+    const res = await appFetch(`/api/app/assistant${query}`).catch(() => null)
     const data = res?.ok ? await res.json() : null
+    if (data?.chatId) {
+      chatRef.current = data.chatId
+      setChatId(data.chatId)
+    }
     if (data) setTurns(data.turns || [])
     else setTurns((t) => t ?? [])
     return (data?.turns || []) as Turn[]
@@ -165,7 +182,7 @@ export default function AssistantPage() {
     const sentAttachments = attachments
     setAttachments([])
     setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, ...(target ? { target } : {}), at: new Date().toISOString() }])
-    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, model, ...(target ? { target } : {}) }) }).catch(() => null)
+    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, model, chatId: chatRef.current, ...(target ? { target } : {}) }) }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(false)
     if (res?.ok && data?.turns) {
@@ -184,8 +201,13 @@ export default function AssistantPage() {
   }
 
   const newChat = async () => {
-    if (busy || !turns?.length || !confirm('Iniziare una nuova conversazione? I post creati restano.')) return
-    await appFetch('/api/app/assistant', { method: 'DELETE' }).catch(() => null)
+    if (busy || !turns?.length || !confirm('Iniziare una nuova conversazione? Questa resta salvata: la ritrovi da «Contenuti programmati».')) return
+    const res = await appFetch('/api/app/assistant', { method: 'DELETE' }).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (data?.chatId) {
+      chatRef.current = data.chatId
+      setChatId(data.chatId)
+    }
     setTurns([])
   }
 
@@ -278,9 +300,9 @@ export default function AssistantPage() {
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
                       action.post.snapshot ? (
-                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} model={model} onTurns={setTurns} onReload={load} />
+                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} model={model} chatId={chatId} onTurns={setTurns} onReload={load} />
                       ) : (
-                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} model={model} onChange={updatePost} onTurns={setTurns} />
+                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} model={model} chatId={chatId} onChange={updatePost} onTurns={setTurns} />
                       )
                     ) : (
                       <a key={k} href={action.url} target="_blank" rel="noopener noreferrer" className="mt-3 block w-full max-w-xs">
@@ -392,6 +414,7 @@ function PostCard({
   canManage,
   busy: chatBusy,
   model,
+  chatId,
   onChange,
   onTurns,
 }: {
@@ -399,6 +422,7 @@ function PostCard({
   canManage: boolean
   busy: boolean
   model: string
+  chatId: string | null
   onChange: (post: Post) => void
   onTurns: (turns: Turn[]) => void
 }) {
@@ -514,6 +538,7 @@ function PostCard({
         // Le slide che si vedono: il server non tocca un post diverso da questo.
         base: post.media,
         model,
+        chatId,
         caption: caption !== post.caption ? caption : undefined,
         platforms: platforms.join() !== post.platforms.join() ? platforms : undefined,
         ...extra,
@@ -877,6 +902,7 @@ function SnapshotCard({
   canManage,
   busy: chatBusy,
   model,
+  chatId,
   onTurns,
   onReload,
 }: {
@@ -885,6 +911,7 @@ function SnapshotCard({
   canManage: boolean
   busy: boolean
   model: string
+  chatId: string | null
   onTurns: (turns: Turn[]) => void
   onReload: () => Promise<Turn[]>
 }) {
@@ -905,7 +932,7 @@ function SnapshotCard({
     if (!confirm('Riprendere questa versione? Diventa una nuova bozza; il post attuale resta com’è.')) return
     setBusy(true)
     setError(null)
-    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at, model }) }).catch(() => null)
+    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at, model, chatId }) }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (data.turns) {
       setBusy(false)

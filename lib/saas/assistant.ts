@@ -68,7 +68,46 @@ export type ChatTurn = {
   at: string
 }
 
-const chatKey = (workspaceId: string, userId: string) => `ws_chat:${workspaceId}:${userId}`
+// Conversazioni per persona e spazio: un indice (ws_chats:<spazio>:<utente>) con le chat e
+// quella aperta. "Nuova chat" non cancella niente: crea una chat nuova e le vecchie restano
+// salvate (si riaprono, per esempio, da "Contenuti programmati"). La chat di prima delle
+// chat multiple e' "legacy" e resta nella sua chiave di sempre.
+const LEGACY_CHAT = 'legacy'
+const MAX_CHATS = 60
+const chatKey = (workspaceId: string, userId: string, chatId = LEGACY_CHAT) =>
+  chatId === LEGACY_CHAT ? `ws_chat:${workspaceId}:${userId}` : `ws_chat:${workspaceId}:${userId}:${chatId}`
+const indexKey = (workspaceId: string, userId: string) => `ws_chats:${workspaceId}:${userId}`
+
+export type ChatInfo = { id: string; title: string; createdAt: string; updatedAt: string }
+type ChatIndex = { current: string; chats: ChatInfo[] }
+
+async function readSetting(key: string): Promise<unknown> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', key).maybeSingle()
+  try {
+    return data?.value ? JSON.parse(data.value) : null
+  } catch {
+    return null
+  }
+}
+
+async function writeSetting(key: string, value: unknown) {
+  await supabaseAdmin.from('app_settings').upsert({ key, value: JSON.stringify(value), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+}
+
+export async function loadChatIndex(workspaceId: string, userId: string): Promise<ChatIndex> {
+  const saved = (await readSetting(indexKey(workspaceId, userId))) as ChatIndex | null
+  if (saved && typeof saved.current === 'string' && Array.isArray(saved.chats) && saved.chats.length) return saved
+  const now = new Date().toISOString()
+  return { current: LEGACY_CHAT, chats: [{ id: LEGACY_CHAT, title: 'Chat', createdAt: now, updatedAt: now }] }
+}
+
+/** La chat indicata se esiste, altrimenti quella aperta. */
+async function resolveChat(workspaceId: string, userId: string, chatId?: string | null) {
+  const index = await loadChatIndex(workspaceId, userId)
+  const id = chatId && index.chats.some((c) => c.id === chatId) ? chatId : index.current
+  return { index, id }
+}
+
 const MAX_TURNS = 40
 const MAX_STEPS = 8
 
@@ -86,20 +125,53 @@ export const postView = (p: PostRow): PostView => ({
   error_message: p.error_message,
 })
 
-export async function loadChat(workspaceId: string, userId: string): Promise<ChatTurn[]> {
-  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', chatKey(workspaceId, userId)).maybeSingle()
-  try {
-    const turns = data?.value ? (JSON.parse(data.value) as ChatTurn[]) : []
-    return Array.isArray(turns) ? turns : []
-  } catch {
-    return []
-  }
+export async function loadChat(workspaceId: string, userId: string, chatId?: string | null): Promise<ChatTurn[]> {
+  const { id } = await resolveChat(workspaceId, userId, chatId)
+  const turns = await readSetting(chatKey(workspaceId, userId, id))
+  return Array.isArray(turns) ? (turns as ChatTurn[]) : []
 }
 
-export async function saveChat(workspaceId: string, userId: string, turns: ChatTurn[]) {
-  await supabaseAdmin
-    .from('app_settings')
-    .upsert({ key: chatKey(workspaceId, userId), value: JSON.stringify(turns.slice(-MAX_TURNS)), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+export async function saveChat(workspaceId: string, userId: string, turns: ChatTurn[], chatId?: string | null) {
+  const { index, id } = await resolveChat(workspaceId, userId, chatId)
+  await writeSetting(chatKey(workspaceId, userId, id), turns.slice(-MAX_TURNS))
+  // Titolo della chat: il primo post o la prima richiesta.
+  const firstPost = turns.flatMap((t) => t.actions || []).find((a) => a.kind === 'post') as { post: PostView } | undefined
+  const firstAsk = turns.find((t) => t.role === 'user' && t.text.trim())?.text
+  const title = (firstPost?.post.title || firstAsk || 'Chat').replace(/\s+/g, ' ').trim().slice(0, 70)
+  const now = new Date().toISOString()
+  const chats = index.chats.map((c) => (c.id === id ? { ...c, title, updatedAt: now } : c))
+  await writeSetting(indexKey(workspaceId, userId), { ...index, chats })
+}
+
+/** "Nuova chat": se ne apre una nuova, le altre restano salvate. */
+export async function startChat(workspaceId: string, userId: string): Promise<string> {
+  const index = await loadChatIndex(workspaceId, userId)
+  const current = index.chats.find((c) => c.id === index.current)
+  // La chat aperta e' ancora vuota: si usa quella.
+  if (current && !(await loadChat(workspaceId, userId, current.id)).length) return current.id
+  const id = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  const now = new Date().toISOString()
+  await writeSetting(indexKey(workspaceId, userId), { current: id, chats: [{ id, title: 'Nuova chat', createdAt: now, updatedAt: now }, ...index.chats].slice(0, MAX_CHATS) })
+  return id
+}
+
+/** Riapre una chat salvata (diventa quella aperta). */
+export async function openChat(workspaceId: string, userId: string, chatId: string): Promise<string> {
+  const index = await loadChatIndex(workspaceId, userId)
+  if (!index.chats.some((c) => c.id === chatId)) return index.current
+  if (index.current !== chatId) await writeSetting(indexKey(workspaceId, userId), { ...index, current: chatId })
+  return chatId
+}
+
+/** La chat (la piu' recente) in cui si e' lavorato a un post, o null. */
+export async function chatForPost(workspaceId: string, userId: string, postId: string): Promise<string | null> {
+  const index = await loadChatIndex(workspaceId, userId)
+  const recent = [...index.chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30)
+  for (const chat of recent) {
+    const turns = await loadChat(workspaceId, userId, chat.id)
+    if (turns.some((t) => t.actions?.some((a) => a.kind === 'post' && a.post.id === postId))) return chat.id
+  }
+  return null
 }
 
 /**
@@ -133,15 +205,17 @@ export async function logPostChange(
   request: Omit<ChatTurn, 'role' | 'at'>,
   reply: string,
   post: PostRow,
-  usage?: ChatTurn['usage']
+  usage?: ChatTurn['usage'],
+  /** Chat aperta nella pagina (se manca: quella aperta per ultima). */
+  chatId?: string | null
 ): Promise<ChatTurn[]> {
   const at = new Date().toISOString()
   const turns: ChatTurn[] = [
-    ...(await loadChat(db.workspaceId, userId)),
+    ...(await loadChat(db.workspaceId, userId, chatId)),
     { role: 'user', ...request, at },
     { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], ...(usage && usage.tokens ? { usage } : {}), at },
   ]
-  await saveChat(db.workspaceId, userId, turns)
+  await saveChat(db.workspaceId, userId, turns, chatId)
   return refreshPostActions(db, turns)
 }
 

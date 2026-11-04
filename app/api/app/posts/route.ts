@@ -34,6 +34,8 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const id = String(body.id || '')
   const action = String(body.action || '')
+  // Chat aperta nella pagina: le modifiche dall'anteprima entrano in quella.
+  const chatId = typeof body.chatId === 'string' ? body.chatId : null
   // Modello scelto nella chat: vale anche per le correzioni e i ripristini dall'anteprima.
   // Contatore dei token: il costo della correzione si mostra in chat sotto la risposta.
   const tally = emptyTally()
@@ -68,7 +70,7 @@ export async function PATCH(req: NextRequest) {
         // slides: numeri delle slide attuali nel nuovo ordine (quelle che mancano si tolgono).
         post = await arrangeSlides(access.db, id, numbers)
         if (before && post.media.join('|') !== before.media.join('|')) {
-          turns = await logPostChange(access.db, access.userId, { text: `Nuovo ordine delle slide: ${numbers.join(', ')}` }, `Ho salvato il nuovo ordine: ${post.media.length} slide, con i numeri aggiornati.`, post)
+          turns = await logPostChange(access.db, access.userId, { text: `Nuovo ordine delle slide: ${numbers.join(', ')}` }, `Ho salvato il nuovo ordine: ${post.media.length} slide, con i numeri aggiornati.`, post, undefined, chatId)
         }
         break
       case 'edit_slides': {
@@ -85,7 +87,8 @@ export async function PATCH(req: NextRequest) {
             { text: instruction.trim().slice(0, 1500), target: { postId: id, slide: first, slides: numbers, thumb: before?.media[first - 1] } },
             `Fatto: ${done.join(' · ')}. ${done.some((d) => d.includes('estratte')) ? 'Le altre slide sono rimaste uguali, cambia solo il numero.' : 'Le altre slide non sono cambiate.'}`,
             post,
-            await usageSummary(tally)
+            await usageSummary(tally),
+            chatId
           )
         }
         break
@@ -96,7 +99,7 @@ export async function PATCH(req: NextRequest) {
         const result = await withModel(() => editCaption(access.db, id, instruction))
         post = result.post
         done = result.done
-        turns = await logPostChange(access.db, access.userId, { text: `Didascalia: ${instruction.trim().slice(0, 600)}` }, `Fatto: ${done.join(' · ')}. Le slide non sono cambiate.`, post, await usageSummary(tally))
+        turns = await logPostChange(access.db, access.userId, { text: `Didascalia: ${instruction.trim().slice(0, 600)}` }, `Fatto: ${done.join(' · ')}. Le slide non sono cambiate.`, post, await usageSummary(tally), chatId)
         break
       }
       case 'restyle': {
@@ -105,7 +108,7 @@ export async function PATCH(req: NextRequest) {
         post = result.post
         done = result.done
         if (done.length) {
-          turns = await logPostChange(access.db, access.userId, { text: 'Aggiorna la grafica delle slide' }, `Fatto: ${done.join(' · ')}.`, post)
+          turns = await logPostChange(access.db, access.userId, { text: 'Aggiorna la grafica delle slide' }, `Fatto: ${done.join(' · ')}.`, post, undefined, chatId)
         }
         break
       }
@@ -121,14 +124,15 @@ export async function PATCH(req: NextRequest) {
           { text: 'Estrai le foto da questo screenshot: una slide per ogni foto', target: { postId: id, slide: n, thumb: before?.media[n - 1] } },
           `Fatto: ${done.join(' · ')}. Le altre slide sono rimaste uguali, cambia solo il numero.`,
           post,
-          await usageSummary(tally)
+          await usageSummary(tally),
+          chatId
         )
         break
       }
       case 'restore': {
         // Versione precedente (dalla chat) ripresa come nuova bozza.
         const media = Array.isArray(body.media) ? (body.media as unknown[]).filter((u): u is string => typeof u === 'string') : []
-        const chatPhotos = (await loadChat(access.workspace.id, access.userId)).flatMap((t) => (t.role === 'user' ? t.images || [] : []))
+        const chatPhotos = (await loadChat(access.workspace.id, access.userId, chatId)).flatMap((t) => (t.role === 'user' ? t.images || [] : []))
         const result = await withModel(() => restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId, chatPhotos))
         post = result.post
         const at = typeof body.at === 'string' ? new Date(body.at) : null
@@ -143,7 +147,8 @@ export async function PATCH(req: NextRequest) {
             ? 'Ecco una nuova bozza uguale a quella versione: puoi correggerla, programmarla o pubblicarla. Il post di prima resta com’è.'
             : 'Ecco una nuova bozza uguale a quella versione: puoi programmarla o pubblicarla. È di prima che salvassi le versioni, quindi i testi delle slide non si possono correggere uno per uno: per cambiarli ricrea il carosello dalle foto.',
           post,
-          await usageSummary(tally)
+          await usageSummary(tally),
+          chatId
         )
         break
       }

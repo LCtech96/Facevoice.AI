@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, LayoutGrid, Loader2, LogOut, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
+import { Bot, CalendarClock, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
 import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
@@ -149,6 +149,14 @@ function Frame({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
+        <Link
+          href="/app/programmati"
+          className={`mt-4 flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
+            active('/app/programmati') ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+          }`}
+        >
+          <CalendarClock className="h-4 w-4" /> Contenuti programmati
+        </Link>
         <LanguageSwitch className="mt-auto self-start" />
         <button onClick={signOut} className="mt-3 flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
           <LogOut className="h-4 w-4" /> Esci
@@ -175,9 +183,7 @@ function Frame({ children }: { children: ReactNode }) {
         )}
         <div className="flex shrink-0 items-center gap-3">
           <LanguageSwitch />
-          <button onClick={signOut} aria-label="Esci" className="text-[var(--text-secondary)]">
-            <LogOut className="h-5 w-5" />
-          </button>
+          <HeaderMenu onSignOut={signOut} />
         </div>
       </header>
 
@@ -190,6 +196,45 @@ function Frame({ children }: { children: ReactNode }) {
           </Link>
         ))}
       </nav>
+    </div>
+  )
+}
+
+/** Menu ☰ della barra in alto (telefono): contenuti programmati ed esci. */
+function HeaderMenu({ onSignOut }: { onSignOut: () => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const pathname = usePathname()
+
+  useEffect(() => setOpen(false), [pathname])
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent | TouchEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('touchstart', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('touchstart', close)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open} className="text-[var(--text-secondary)]">
+        <Menu className="h-6 w-6" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-2 w-56 overflow-hidden rounded-2xl border border-[var(--border-color)] bg-[var(--background)] shadow-xl">
+          <Link href="/app/programmati" className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
+            <CalendarClock className="h-4 w-4 text-[var(--accent-blue)]" /> Contenuti programmati
+          </Link>
+          <button onClick={onSignOut} className="flex w-full items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-left text-sm text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]">
+            <LogOut className="h-4 w-4" /> Esci
+          </button>
+        </div>
+      )}
     </div>
   )
 }
