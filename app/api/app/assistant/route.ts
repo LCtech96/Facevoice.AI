@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
+import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { loadChat, refreshPostActions, runClientAssistant, saveChat, type ChatTurn } from '@/lib/saas/assistant'
 import { describePhotos } from '@/lib/saas/posts'
 
@@ -21,6 +22,8 @@ export async function POST(req: NextRequest) {
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   const message = String(body.message || '').trim().slice(0, 3000)
+  // Modello scelto dal cliente nella chat: vale per tutta la richiesta.
+  const model = asModelChoice(body.model)
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)
   if (!message && !images.length) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
   // Slide toccata nell'anteprima: la richiesta riguarda solo quella.
@@ -41,11 +44,13 @@ export async function POST(req: NextRequest) {
   let reply: ChatTurn
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
-    if (images.length) {
-      userTurn.imageNotes = await describePhotos(images)
-      await saveChat(access.workspace.id, access.userId, [...history, userTurn])
-    }
-    const result = await runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
+    const result = await runWithStatus({ status: () => {}, model }, async () => {
+      if (images.length) {
+        userTurn.imageNotes = await describePhotos(images)
+        await saveChat(access.workspace.id, access.userId, [...history, userTurn])
+      }
+      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
+    })
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
     console.error('saas assistente:', error instanceof Error ? error.message : error)

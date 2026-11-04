@@ -6,6 +6,9 @@ import { ArrowUp, CalendarClock, Check, Facebook, ImagePlus, Instagram, Loader2,
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
+import { AI_MODEL_CHOICES } from '@/lib/ai-models'
+
+const MODEL_KEY = 'fv_app_assistant_model'
 
 // Assistente AI dell'area clienti: chat (anche a voce) con le foto allegate.
 // Crea i post, modifica le immagini, li programma a giorno e ora o li pubblica
@@ -63,6 +66,20 @@ export default function AssistantPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connections, setConnections] = useState<Connection[]>([])
+  // Modello AI scelto: resta per le prossime volte.
+  const [model, setModel] = useState<string>('auto')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MODEL_KEY)
+      if (saved && AI_MODEL_CHOICES.some((m) => m.id === saved)) setModel(saved)
+    } catch {}
+  }, [])
+  const chooseModel = (id: string) => {
+    setModel(id)
+    try {
+      localStorage.setItem(MODEL_KEY, id)
+    } catch {}
+  }
   const fileRef = useRef<HTMLInputElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const canManage = workspace?.role !== 'member'
@@ -129,7 +146,7 @@ export default function AssistantPage() {
     const sentAttachments = attachments
     setAttachments([])
     setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, ...(target ? { target } : {}), at: new Date().toISOString() }])
-    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, ...(target ? { target } : {}) }) }).catch(() => null)
+    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, model, ...(target ? { target } : {}) }) }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(false)
     if (res?.ok && data?.turns) {
@@ -274,6 +291,23 @@ export default function AssistantPage() {
               ))}
             </div>
           )}
+          <label className="relative mb-1.5 flex max-w-full items-center gap-1 px-1 text-[11px] text-[var(--text-secondary)]">
+            <Sparkles className="h-3 w-3 shrink-0" />
+            <select
+              value={model}
+              onChange={(e) => chooseModel(e.target.value)}
+              disabled={busy}
+              aria-label="Modello AI"
+              className="w-full min-w-0 appearance-none overflow-hidden text-ellipsis whitespace-nowrap bg-transparent pr-4 font-medium text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+            >
+              {AI_MODEL_CHOICES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} · {m.hint}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-1" aria-hidden="true">▾</span>
+          </label>
           <div className="flex items-end gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-2">
             <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
             <button onClick={() => fileRef.current?.click()} disabled={attachments.length >= 10} aria-label="Allega foto" className="p-2 text-[var(--text-secondary)] disabled:opacity-40">
