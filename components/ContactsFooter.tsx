@@ -68,6 +68,12 @@ export default function ContactsFooter() {
 
         <div className="mt-8 pt-6 border-t border-[var(--border-color)]">
           <Link
+            href="/piattaforma"
+            className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors mr-5"
+          >
+            Piattaforma
+          </Link>
+          <Link
             href="/faq"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors mr-5"
           >

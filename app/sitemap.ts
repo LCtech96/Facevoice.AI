@@ -28,6 +28,7 @@ const STATIC_PAGES: Array<{
   { path: '/lavora-con-noi', priority: 0.5, changeFrequency: 'yearly' },
   { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/privacy/cancellazione-dati', priority: 0.2, changeFrequency: 'yearly' },
+  { path: '/piattaforma', priority: 0.6, changeFrequency: 'monthly' },
   { path: '/termini', priority: 0.2, changeFrequency: 'yearly' },
 ]
 
