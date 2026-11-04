@@ -409,6 +409,7 @@ function PostCard({
   const [order, setOrder] = useState<number[] | null>(null)
   const thumbs = useRef(new Map<number, HTMLButtonElement>())
   const [slidePrompt, setSlidePrompt] = useState('')
+  const [captionPrompt, setCaptionPrompt] = useState('')
   const [caption, setCaption] = useState(post.caption)
   const [platforms, setPlatforms] = useState(post.platforms)
   const [when, setWhen] = useState(toLocalInput(post.publish_at))
@@ -568,6 +569,12 @@ function PostCard({
           ? `Fatto: ho corretto solo ${which}.`
           : 'Non ho cambiato niente: scrivi in modo più preciso cosa cambiare.'
     )
+  }
+
+  /** Solo la didascalia, con una chiamata breve all'AI (es. "traduci in inglese"). */
+  const editCaptionAI = async () => {
+    if (!captionPrompt.trim() || busy !== null || chatBusy || caption !== post.caption) return
+    if ((await act('edit_caption', { instruction: captionPrompt })).ok) setCaptionPrompt('')
   }
 
   /** La slide scelta e' uno screenshot con piu' foto: ogni foto diventa una slide a se'. */
@@ -738,6 +745,44 @@ function PostCard({
         rows={5}
         className="mt-2 w-full rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm"
       />
+      {!done && canManage && (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          {caption !== post.caption && (
+            <>
+              <button
+                onClick={async () => {
+                  if ((await act('save')).ok) setNotice('Didascalia salvata.')
+                }}
+                disabled={working || !caption.trim()}
+                className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {busy === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Salva testo
+              </button>
+              <button onClick={() => setCaption(post.caption)} disabled={working} className="text-xs text-[var(--text-secondary)]">
+                Annulla
+              </button>
+            </>
+          )}
+          {/* Didascalia con l'AI: una chiamata breve, solo sul testo (niente chat, niente slide). */}
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--background)] py-1 pl-3 pr-1">
+            <input
+              value={captionPrompt}
+              onChange={(e) => setCaptionPrompt(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && editCaptionAI()}
+              placeholder="Didascalia con l’AI: «traduci in inglese», «più corta»…"
+              className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+            />
+            <button
+              onClick={editCaptionAI}
+              disabled={working || !captionPrompt.trim() || caption !== post.caption}
+              aria-label="Cambia la didascalia con l’AI"
+              className="rounded-full bg-[var(--accent-blue)] p-1.5 text-white disabled:opacity-40"
+            >
+              {busy === 'edit_caption' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+      )}
       {post.results?.errors?.length ? <p className="mt-1 text-xs text-[#FF3B30]">{post.results.errors.join(' · ')}</p> : null}
       {busy === 'recheck' && (
         <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">

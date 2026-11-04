@@ -17,6 +17,7 @@ const LABELS: Record<string, string> = {
   saas_lettura_foto: 'Lettura delle foto',
   saas_recupero_testi: 'Recupero versioni',
   saas_estrai_foto: 'Foto dagli screenshot',
+  saas_didascalia: 'Didascalie',
 }
 
 const empty = () => ({ calls: 0, input: 0, output: 0, tokens: 0, usd: 0 })

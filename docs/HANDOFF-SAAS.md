@@ -22,8 +22,9 @@ che e' fatto, come si lavora e cosa manca.
 ## Branch e pubblicazione
 
 - `main` = sito vero (www.facevoice.ai). Le correzioni del sito si fanno su
-  `claude/cool-wright-vsg5p4`, poi `git merge --no-ff` in `main` e push (Vercel pubblica da solo),
-  poi `main` si unisce in `saas`.
+  `claude/cool-wright-vsg5p4`, poi `git merge --no-ff` in `main` e push (Vercel pubblica da solo).
+- **`main` e `saas` restano separati (decisione di Luca, 4/11): NON unire `main` in `saas` né il
+  contrario finché Luca non lo dice.** Se una correzione serve in tutti e due, si fa due volte.
 - `saas` = piattaforma clienti in anteprima: **https://beta.facevoice.ai** (alias del branch).
   Tutto il lavoro SaaS va qui, non su main.
 - Vercel: progetto `prj_GPeCYvrnpOS9glnoPUwuVH9AjVrx`, team `team_OoURXyOfNV0MkB2dLeeFqGvj`.

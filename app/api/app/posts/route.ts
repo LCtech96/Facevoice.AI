@@ -3,7 +3,7 @@ import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
 import { usageSummary } from '@/lib/eur'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, editSlides, extractPhotos, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { arrangeSlides, cancelPost, deletePost, editCaption, editSlides, extractPhotos, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -88,6 +88,15 @@ export async function PATCH(req: NextRequest) {
             await usageSummary(tally)
           )
         }
+        break
+      }
+      case 'edit_caption': {
+        // Solo la didascalia, con una chiamata breve all'AI (es. "traduci in inglese").
+        const instruction = String(body.instruction || '')
+        const result = await withModel(() => editCaption(access.db, id, instruction))
+        post = result.post
+        done = result.done
+        turns = await logPostChange(access.db, access.userId, { text: `Didascalia: ${instruction.trim().slice(0, 600)}` }, `Fatto: ${done.join(' · ')}. Le slide non sono cambiate.`, post, await usageSummary(tally))
         break
       }
       case 'restyle': {

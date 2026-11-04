@@ -234,6 +234,39 @@ const numbered = (notes: (string | null)[]) => notes.map((n, k) => `Foto ${k + 1
 
 // --- Testi dei post --------------------------------------------------------------
 
+/** Instagram accetta al massimo 5 hashtag per post: si tengono i primi 5, gli altri si tolgono. */
+export function limitHashtags(text: string, max = 5): string {
+  let seen = 0
+  const out = text.replace(/(^|\s)#[\p{L}\p{N}_]+/gu, (match) => (++seen <= max ? match : ''))
+  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim()
+}
+
+/**
+ * Didascalia cambiata con l'AI dall'anteprima (es. "traduci in inglese", "piu' corta"):
+ * una sola chiamata breve che vede solo la didascalia, niente chat e niente slide.
+ */
+export async function editCaption(db: WorkspaceDb, id: string, instruction: string): Promise<{ post: PostRow; done: string[] }> {
+  const request = instruction.trim().slice(0, 600)
+  if (!request) throw new Error('scrivi cosa cambiare nella didascalia')
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const result = await callAI(
+    [{ role: 'user', content: `Didascalia Instagram attuale:\n${post.caption}\n\nTesto Facebook attuale:\n${post.facebook_text || post.caption}\n\nRichiesta: ${request}` }],
+    `Cambi SOLO la didascalia di un post seguendo la richiesta (es. traduzione, piu' corta, altro tono). Mantieni il senso, gli emoji e i link come sono, salvo che la richiesta dica altro; niente informazioni inventate. Al massimo 5 hashtag (adattati se traduci). "facebook" e' lo stesso testo senza la fila di hashtag. Niente markdown.
+Rispondi SOLO con JSON: {"didascalia": "", "facebook": ""}`,
+    { feature: 'saas_didascalia', temperature: 0.3, maxOutputTokens: 1800, workspaceId: db.workspaceId }
+  )
+  let data: { didascalia?: unknown; facebook?: unknown } = {}
+  try {
+    data = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')
+  } catch {}
+  const caption = typeof data.didascalia === 'string' ? data.didascalia.trim() : ''
+  if (!caption) throw new Error('l’AI non ha riscritto la didascalia, riprova')
+  const facebook = typeof data.facebook === 'string' && data.facebook.trim() ? data.facebook.trim() : caption
+  return { post: await updatePost(db, id, { caption, facebook }), done: ['didascalia cambiata (Instagram e Facebook)'] }
+}
+
 type Texts = { title: string; caption: string; facebook: string; hook: string; label: string; slides: Slide[]; cta: Cta }
 
 const trim = (value: unknown, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -246,7 +279,7 @@ ${voice ? `Informazioni e tono dell'attività (dalle sue istruzioni):\n${voice}\
 Regole:
 - Usa solo le informazioni del titolare, delle sue istruzioni e di quello che si vede nelle foto: niente prezzi, date, offerte o promesse inventate.
 - Scrivi nella lingua delle indicazioni del titolare (di solito italiano). Niente markdown.
-- "caption": didascalia Instagram (max 1500 caratteri): prima riga che aggancia, 1-3 paragrafi brevi, invito all'azione, poi 4-8 hashtag pertinenti.
+- "caption": didascalia Instagram (max 1500 caratteri): prima riga che aggancia, 1-3 paragrafi brevi, invito all'azione, poi AL MASSIMO 5 hashtag pertinenti (Instagram non ne accetta di piu').
 - "facebook": testo per Facebook (max 1000 caratteri), come la didascalia ma senza la fila di hashtag.
 - "title": titolo interno breve.
 ${
@@ -273,7 +306,7 @@ Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "",
     .filter((s: Slide) => kind === 'photo_carousel' || s.title)
     .slice(0, kind === 'photo_carousel' ? 10 : 8)
   const cta = data.cta || {}
-  const caption = String(data.caption || '').trim().slice(0, 2200)
+  const caption = limitHashtags(String(data.caption || '').trim()).slice(0, 2200)
   if (!caption) throw new Error('l’AI non ha scritto la didascalia, riprova')
   return {
     title: trim(data.title, 120) || brief.slice(0, 80),
@@ -1189,7 +1222,7 @@ export async function updatePost(db: WorkspaceDb, id: string, patch: { caption?:
   if (!post) throw new Error('post non trovato')
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato o in pubblicazione')
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  if (typeof patch.caption === 'string') update.caption = patch.caption.trim().slice(0, 2200)
+  if (typeof patch.caption === 'string') update.caption = limitHashtags(patch.caption.trim()).slice(0, 2200)
   if (typeof patch.facebook === 'string') update.facebook_text = patch.facebook.trim().slice(0, 5000)
   if (patch.platforms) {
     const list = patch.platforms.filter((p) => p === 'instagram' || p === 'facebook')
@@ -1284,7 +1317,7 @@ export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow>
       const account = await accountFor(db, platform)
       if (!account) throw new Error('account non collegato')
       results[platform] =
-        platform === 'instagram' ? await publishInstagram(account, post.media, post.caption) : await publishFacebook(account, post.media, post.facebook_text || post.caption)
+        platform === 'instagram' ? await publishInstagram(account, post.media, limitHashtags(post.caption)) : await publishFacebook(account, post.media, post.facebook_text || post.caption)
     } catch (error) {
       results.errors!.push(`${platform === 'instagram' ? 'Instagram' : 'Facebook'}: ${error instanceof Error ? error.message : 'non riuscito'}`)
     }
