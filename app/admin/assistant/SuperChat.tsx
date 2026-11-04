@@ -166,13 +166,27 @@ export default function SuperChat() {
     if (!ok && attached.length) setImages(attached)
   }
 
-  const updateAction = (turnId: string, index: number, patch: Partial<SocialAction>) => {
+  const updateAction = (turnId: string, index: number, patch: Record<string, unknown>) => {
     const turn = turns.find((t) => t.id === turnId)
     if (!turn?.actions) return
-    updateActions(turnId, turn.actions.map((a, i) => (i === index ? { ...a, ...patch } : a)))
+    updateActions(turnId, turn.actions.map((a, i) => (i === index ? ({ ...a, ...patch } as SocialAction) : a)))
   }
 
-  const sendAction = async (turnId: string, index: number, action: SocialAction) => {
+  const publishPost = async (turnId: string, index: number, action: Extract<SocialAction, { kind: 'post_preview' }>) => {
+    const platforms = action.platforms?.length ? action.platforms : ['instagram', 'facebook']
+    updateAction(turnId, index, { state: 'sending', error: undefined })
+    const res = await authFetch('/api/admin/social-post', {
+      method: 'POST',
+      body: JSON.stringify({ draftId: action.draftId, caption: action.caption, facebook: action.facebook, platforms }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    const results = data.draft?.results || {}
+    const published = [results.instagram && 'Instagram', results.facebook && 'Facebook'].filter(Boolean) as string[]
+    if (res?.ok) updateAction(turnId, index, { state: 'sent', published })
+    else updateAction(turnId, index, { state: 'error', error: data.error || 'Pubblicazione non riuscita', published })
+  }
+
+  const sendAction = async (turnId: string, index: number, action: Extract<SocialAction, { kind: 'social_message' }>) => {
     updateAction(turnId, index, { state: 'sending', error: undefined })
     const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(action.key)}`, {
       method: 'POST',
@@ -264,14 +278,23 @@ export default function SuperChat() {
                       {usageLine(turn.usage) && (
                         <p className="mt-1 text-[11px] text-[var(--text-secondary)] opacity-80">{usageLine(turn.usage)}</p>
                       )}
-                      {turn.actions?.map((action, i) => (
-                        <ActionCard
-                          key={i}
-                          action={action}
-                          onChange={(text) => updateAction(turn.id, i, { text })}
-                          onSend={() => sendAction(turn.id, i, action)}
-                        />
-                      ))}
+                      {turn.actions?.map((action, i) =>
+                        action.kind === 'post_preview' ? (
+                          <PostPreviewCard
+                            key={i}
+                            action={action}
+                            onChange={(patch) => updateAction(turn.id, i, patch)}
+                            onPublish={() => publishPost(turn.id, i, action)}
+                          />
+                        ) : (
+                          <ActionCard
+                            key={i}
+                            action={action}
+                            onChange={(text) => updateAction(turn.id, i, { text })}
+                            onSend={() => sendAction(turn.id, i, action)}
+                          />
+                        )
+                      )}
                     </div>
                   </div>
                 )
@@ -512,7 +535,76 @@ export default function SuperChat() {
   )
 }
 
-function ActionCard({ action, onChange, onSend }: { action: SocialAction; onChange: (text: string) => void; onSend: () => void }) {
+type PostPreview = Extract<SocialAction, { kind: 'post_preview' }>
+
+/** Anteprima di un carosello creato dalla super chat: slide, testi modificabili, Pubblica. */
+function PostPreviewCard({ action, onChange, onPublish }: { action: PostPreview; onChange: (patch: Partial<PostPreview>) => void; onPublish: () => void }) {
+  const platforms = action.platforms?.length ? action.platforms : (['instagram', 'facebook'] as const)
+  const done = action.state === 'sent'
+  const toggle = (p: 'instagram' | 'facebook') => {
+    const next = platforms.includes(p) ? platforms.filter((x) => x !== p) : [...platforms, p]
+    onChange({ platforms: next as PostPreview['platforms'] })
+  }
+  return (
+    <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-3">
+      <p className="text-sm font-medium text-[var(--text-primary)]">Carosello: {action.title}</p>
+      <div className="mt-2 flex gap-2 overflow-x-auto pb-2 snap-x">
+        {action.urls.map((url, i) => (
+          <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 snap-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt={`Slide ${i + 1}`} className="h-56 w-[180px] rounded-lg object-cover border border-[var(--border-color)]" loading="lazy" />
+          </a>
+        ))}
+      </div>
+      <label className="mt-1 block text-xs text-[var(--text-secondary)]">Didascalia Instagram</label>
+      <textarea
+        value={action.caption}
+        onChange={(e) => onChange({ caption: e.target.value })}
+        disabled={done || action.state === 'sending'}
+        rows={5}
+        className="mt-1 w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
+      />
+      <label className="mt-2 block text-xs text-[var(--text-secondary)]">Testo Facebook</label>
+      <textarea
+        value={action.facebook}
+        onChange={(e) => onChange({ facebook: e.target.value })}
+        disabled={done || action.state === 'sending'}
+        rows={4}
+        className="mt-1 w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
+      />
+      {action.error && <p className="mt-1 text-xs text-[#FF3B30]">{action.error}</p>}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3 text-sm text-[var(--text-primary)]">
+          {(['instagram', 'facebook'] as const).map((p) => {
+            const Icon = p === 'instagram' ? Instagram : Facebook
+            return (
+              <label key={p} className="inline-flex items-center gap-1.5">
+                <input type="checkbox" checked={platforms.includes(p)} onChange={() => toggle(p)} disabled={done || action.state === 'sending'} />
+                <Icon className="w-4 h-4" />
+              </label>
+            )
+          })}
+        </div>
+        {done ? (
+          <span className="inline-flex items-center gap-1 text-xs text-[#34C759]">
+            <Check className="w-3.5 h-3.5" /> Pubblicato{action.published?.length ? ` su ${action.published.join(' e ')}` : ''}
+          </span>
+        ) : (
+          <button
+            onClick={onPublish}
+            disabled={action.state === 'sending' || !platforms.length || !action.caption.trim()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-blue)] text-white text-xs font-medium disabled:opacity-50"
+          >
+            {action.state === 'sending' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Pubblica
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ActionCard({ action, onChange, onSend }: { action: Extract<SocialAction, { kind: 'social_message' }>; onChange: (text: string) => void; onSend: () => void }) {
   const Icon = action.platform === 'instagram' ? Instagram : Facebook
   const old = action.lastIncomingAt ? Date.now() - new Date(action.lastIncomingAt).getTime() > 24 * 3600_000 : true
   return (

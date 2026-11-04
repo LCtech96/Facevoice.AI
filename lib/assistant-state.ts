@@ -3,6 +3,7 @@ import { emptyTally, readImages, reportStatus, runWithStatus, type AIModelChoice
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
 import { overBudget, type Budget } from '@/lib/assistant-budget'
+import sharp from 'sharp'
 
 // Conversazioni dell'assistente salvate sul server (una per pagina: "leads" e
 // "super"). Ogni richiesta diventa un lavoro che prosegue anche se la pagina
@@ -25,6 +26,8 @@ export type Turn = {
   imageKeys?: string[]
   /** Cosa c'e' nelle immagini, letto dall'AI: resta nella conversazione. */
   imageText?: string
+  /** Le stesse immagini salvate come file pubblici: usabili nei post e nei caroselli. */
+  imageUrls?: string[]
 }
 
 export type Job = {
@@ -160,41 +163,73 @@ export async function recoverStaleJob(scope: Scope, state: AssistantState): Prom
 
 export const IMAGE_PREFIX = 'assistant_image:'
 
+const CHAT_BUCKET = 'blog-images'
+
+/** Salva un'immagine della chat come JPEG pubblico (per usarla nei caroselli e nei post). */
+async function storeChatImage(image: ImageInput): Promise<string | null> {
+  try {
+    const jpeg = await sharp(Buffer.from(image.data, 'base64')).rotate().jpeg({ quality: 90 }).toBuffer()
+    const path = `chat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+    const { error } = await supabaseAdmin.storage.from(CHAT_BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: false })
+    if (error) throw new Error(error.message)
+    return supabaseAdmin.storage.from(CHAT_BUCKET).getPublicUrl(path).data.publicUrl
+  } catch (error) {
+    console.warn('super chat: immagine non salvata:', error instanceof Error ? error.message : error)
+    return null
+  }
+}
+
+/** Testo che accompagna la richiesta: cosa c'e' nelle immagini e dove sono salvate. */
+function imageNote(text: string | undefined, urls: string[] | undefined, earlier: string[]) {
+  return [
+    text ? `[Contenuto delle immagini allegate da Luca]\n${text}` : '',
+    urls?.length ? `[Immagini allegate da Luca in questa richiesta, utilizzabili nei post e nei caroselli (in quest'ordine)]\n${urls.join('\n')}` : '',
+    earlier.length ? `[Immagini mandate da Luca prima in questa chat, ancora utilizzabili]\n${earlier.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 /**
  * Immagini allegate all'ultima richiesta: si leggono una volta sola (all'inizio del
- * lavoro), il testo letto resta nella conversazione e le immagini intere si cancellano.
+ * lavoro), il testo letto resta nella conversazione e le immagini intere si salvano
+ * come file pubblici (per i caroselli), poi si tolgono dalle impostazioni.
  */
 async function withImages(scope: Scope, jobId: string, start: AssistantState, message: string): Promise<string> {
   // Nei giri successivi job.original contiene gia' il testo delle immagini.
   if ((start.job?.round ?? 0) > 0) return message
-  const turn = [...start.turns].reverse().find((t) => t.role === 'user')
+  const userTurns = start.turns.filter((t) => t.role === 'user')
+  const turn = userTurns[userTurns.length - 1]
   if (!turn) return message
-  if (turn.imageText) return `${message}\n\n[Contenuto delle immagini allegate da Luca]\n${turn.imageText}`
-  if (!turn.imageKeys?.length) return message
+  const earlier = userTurns.slice(-6, -1).flatMap((t) => t.imageUrls || [])
+  const join = (note: string) => (note ? `${message}\n\n${note}` : message)
+  if (turn.imageText || !turn.imageKeys?.length) return join(imageNote(turn.imageText, turn.imageUrls, earlier))
 
   reportStatus(turn.imageKeys.length > 1 ? 'Guardo le immagini…' : 'Guardo l’immagine…')
   const keys = turn.imageKeys.map((k) => `${IMAGE_PREFIX}${k}`)
   const { data } = await supabaseAdmin.from('app_settings').select('key, value').in('key', keys)
-  const images: ImageInput[] = (data || [])
-    .map((row) => row.value.match(/^data:([^;]+);base64,(.+)$/))
+  const images: ImageInput[] = keys
+    .map((key) => (data || []).find((row) => row.key === key)?.value?.match(/^data:([^;]+);base64,(.+)$/))
     .filter((m): m is RegExpMatchArray => Boolean(m))
     .map((m) => ({ mimeType: m[1], data: m[2] }))
   let text = ''
-  try {
-    text = await readImages(images, turn.text)
-  } catch (error) {
-    text = `(non sono riuscito a leggere le immagini: ${error instanceof Error ? error.message : 'errore'})`
-  }
+  const [read, urls] = await Promise.all([
+    readImages(images, turn.text).catch((error) => `(non sono riuscito a leggere le immagini: ${error instanceof Error ? error.message : 'errore'})`),
+    Promise.all(images.map(storeChatImage)).then((list) => list.filter((u): u is string => Boolean(u))),
+  ])
+  text = read
+  const note = imageNote(text.slice(0, 8000), urls, earlier)
   await updateState(scope, (s) => {
     const t = s.turns.find((x) => x.id === turn.id)
     if (!t) return false
     t.imageText = text.slice(0, 8000)
+    if (urls.length) t.imageUrls = urls
     delete t.imageKeys
     // I giri successivi ripartono da job.original: deve contenere anche le immagini lette.
-    if (s.job?.id === jobId) s.job.original = `${s.job.original}\n\n[Contenuto delle immagini allegate da Luca]\n${t.imageText}`
+    if (s.job?.id === jobId) s.job.original = `${s.job.original}\n\n${note}`
   }).catch(() => undefined)
   await supabaseAdmin.from('app_settings').delete().in('key', keys)
-  return `${message}\n\n[Contenuto delle immagini allegate da Luca]\n${text}`
+  return join(note)
 }
 
 function addTally(a: UsageTally, b: UsageTally): UsageTally {
