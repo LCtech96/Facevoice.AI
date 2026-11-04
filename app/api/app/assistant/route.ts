@@ -3,7 +3,7 @@ import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
 import { usageSummary } from '@/lib/eur'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
-import { describePhotos, getPost } from '@/lib/saas/posts'
+import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -28,7 +28,21 @@ export async function GET(req: NextRequest) {
       const post = await getPost(access.db, postId)
       chatId = await startChat(ws, access.userId)
       if (post) {
-        await saveChat(ws, access.userId, [{ role: 'assistant', text: 'Ecco il post da modificare: tocca le slide per correggerle, poi programmalo di nuovo.', actions: [{ kind: 'post', post: postView(post) }], at: new Date().toISOString() }], chatId)
+        // La chat di prima non c'e' piu' (es. cancellata prima che le chat restassero salvate):
+        // si riparte dal post con tutte le sue versioni salvate, da guardare o riprendere.
+        const view = postView(post)
+        const versions = (await postVersions(post.id)).filter((v) => v.media.join('|') !== post.media.join('|') || v.caption !== post.caption)
+        const seed: ChatTurn[] = versions.map((v) => ({ role: 'assistant', text: 'Versione salvata di questo post.', actions: [{ kind: 'post', post: { ...view, media: v.media, caption: v.caption } }], at: v.at }))
+        seed.push({
+          role: 'assistant',
+          text:
+            post.status === 'published'
+              ? `Ecco il post pubblicato${versions.length ? ' e, sopra, le sue versioni salvate: con «Riprendi questa versione» ne fai una nuova bozza' : ''}.`
+              : 'Ecco il post da modificare: tocca le slide per correggerle, poi programmalo di nuovo.',
+          actions: [{ kind: 'post', post: view }],
+          at: new Date().toISOString(),
+        })
+        await saveChat(ws, access.userId, seed, chatId)
       }
     }
   } else if (params.get('chat')) {

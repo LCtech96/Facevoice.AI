@@ -547,6 +547,11 @@ type PostVersion = { at: string; media: string[]; caption: string; facebook: str
 
 const versionsKey = (postId: string) => `ws_post_ver:${postId}`
 
+/** Versioni salvate di un post (slide, didascalia e ora), dalla piu' vecchia. */
+export async function postVersions(postId: string): Promise<{ at: string; media: string[]; caption: string }[]> {
+  return (await loadVersions(postId)).map((v) => ({ at: v.at, media: v.media, caption: v.caption }))
+}
+
 async function loadVersions(postId: string): Promise<PostVersion[]> {
   const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', versionsKey(postId)).maybeSingle()
   try {

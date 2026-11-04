@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { CalendarClock, Check, Facebook, Instagram, Loader2, PencilLine } from 'lucide-react'
+import { CalendarClock, Check, Facebook, Instagram, Loader2, MessageSquareText, PencilLine } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 
-// Contenuti programmati: elenco dei post in uscita. Da qui si cambia SOLO giorno e ora;
-// per modificare il contenuto si toglie la programmazione e si riapre la chat in cui si
-// era lavorato a quel post (le chat restano tutte salvate).
+// Contenuti programmati: i post in uscita (si cambia SOLO giorno e ora; per modificare il
+// contenuto si toglie la programmazione e si riapre la chat in cui si era lavorato al post)
+// e, nella scheda "Pubblicati", quelli gia' usciti, con la loro chat da riaprire.
 
 type Post = {
   id: string
@@ -32,33 +32,62 @@ export default function ScheduledPage() {
   const { appFetch, workspace } = useWorkspace()
   const [posts, setPosts] = useState<Post[] | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+  const [tab, setTab] = useState<'upcoming' | 'published'>('upcoming')
   const canManage = workspace?.role !== 'member'
 
   const load = useCallback(async () => {
     const res = await appFetch('/api/app/posts').catch(() => null)
     const data = res?.ok ? await res.json().catch(() => null) : null
-    const list = ((data?.posts || []) as Post[])
-      .filter((p) => p.status === 'scheduled' || p.status === 'publishing' || (p.status === 'failed' && p.publish_at))
-      .sort((a, b) => (a.publish_at || '').localeCompare(b.publish_at || ''))
-    setPosts(list)
+    setPosts((data?.posts || []) as Post[])
   }, [appFetch])
 
   useEffect(() => {
     load()
   }, [load])
 
+  const upcoming = (posts || [])
+    .filter((p) => p.status === 'scheduled' || p.status === 'publishing' || (p.status === 'failed' && p.publish_at))
+    .sort((a, b) => (a.publish_at || '').localeCompare(b.publish_at || ''))
+  // Pubblicati: i piu' recenti prima (l'elenco arriva gia' dal piu' nuovo).
+  const published = (posts || []).filter((p) => p.status === 'published')
+  const shown = tab === 'upcoming' ? upcoming : published
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-3xl font-extrabold">Contenuti programmati</h1>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">I post in uscita. Tocca un post per cambiare giorno e ora, o per modificarlo.</p>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          {tab === 'upcoming' ? 'I post in uscita. Tocca un post per cambiare giorno e ora, o per modificarlo.' : 'I post già usciti. Tocca un post per riaprire la sua chat.'}
+        </p>
+      </div>
+      <div className="inline-flex rounded-full border border-[var(--border-color)] p-1 text-sm">
+        {(
+          [
+            ['upcoming', 'In uscita', upcoming.length],
+            ['published', 'Pubblicati', published.length],
+          ] as const
+        ).map(([id, label, count]) => (
+          <button
+            key={id}
+            onClick={() => {
+              setTab(id)
+              setOpen(null)
+            }}
+            className={`rounded-full px-4 py-1.5 ${tab === id ? 'bg-[var(--accent-blue)] font-semibold text-white' : 'text-[var(--text-secondary)]'}`}
+          >
+            {label}
+            {posts ? ` (${count})` : ''}
+          </button>
+        ))}
       </div>
       {posts === null ? (
         <Loader2 className="h-5 w-5 animate-spin text-[var(--text-secondary)]" />
-      ) : !posts.length ? (
-        <p className="text-sm text-[var(--text-secondary)]">Nessun contenuto programmato. Li programmi dall’Assistente, sotto l’anteprima del post.</p>
+      ) : !shown.length ? (
+        <p className="text-sm text-[var(--text-secondary)]">
+          {tab === 'upcoming' ? 'Nessun contenuto programmato. Li programmi dall’Assistente, sotto l’anteprima del post.' : 'Nessun post pubblicato per ora.'}
+        </p>
       ) : (
-        posts.map((post) => (
+        shown.map((post) => (
           <ScheduledCard
             key={post.id}
             post={post}
@@ -115,8 +144,8 @@ function ScheduledCard({ post, open, canManage, onToggle, onChange }: { post: Po
         ) : null}
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{post.title || 'Post'}</p>
-          <p className={`mt-0.5 text-sm ${post.status === 'failed' ? 'text-[#FF3B30]' : 'text-[var(--accent-blue)]'}`}>
-            {post.status === 'failed' ? 'Non pubblicato' : post.status === 'publishing' ? 'In pubblicazione…' : 'Programmato'}
+          <p className={`mt-0.5 text-sm ${post.status === 'failed' ? 'text-[#FF3B30]' : post.status === 'published' ? 'text-[#34C759]' : 'text-[var(--accent-blue)]'}`}>
+            {post.status === 'failed' ? 'Non pubblicato' : post.status === 'publishing' ? 'In pubblicazione…' : post.status === 'published' ? 'Pubblicato' : 'Programmato'}
             {post.publish_at ? ` · ${whenLabel(post.publish_at)}` : ''}
           </p>
           <p className="mt-1 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -139,7 +168,15 @@ function ScheduledCard({ post, open, canManage, onToggle, onChange }: { post: Po
           {post.status === 'failed' && post.error_message && <p className="mt-2 text-xs text-[#FF3B30]">{post.error_message}</p>}
           {error && <p className="mt-2 text-xs text-[#FF3B30]">{error}</p>}
           {notice && <p className="mt-2 text-xs text-[#34C759]">{notice}</p>}
-          {canManage && post.status !== 'publishing' && (
+          {post.status === 'published' && (
+            <button
+              onClick={() => router.push(`/app/assistente?post=${post.id}`)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-1.5 text-sm font-semibold text-white"
+            >
+              <MessageSquareText className="h-4 w-4" /> Apri la chat
+            </button>
+          )}
+          {canManage && post.status !== 'publishing' && post.status !== 'published' && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]">
                 <CalendarClock className="h-4 w-4" />
