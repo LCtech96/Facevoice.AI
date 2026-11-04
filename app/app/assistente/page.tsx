@@ -354,11 +354,14 @@ function PostCard({
     setPlatforms(post.platforms)
   }, [post.caption, post.platforms])
 
-  // Slide rifatte (nuovo ordine salvato o slide corretta): si riparte da quelle.
+  // Slide rifatte (nuovo ordine salvato o slide corretta): si riparte da quelle;
+  // dopo il salvataggio dell'ordine resta selezionata la stessa slide.
   const mediaKey = post.media.join('|')
+  const keepSelected = useRef<number | null>(null)
   useEffect(() => {
     setOrder(null)
-    setSelected(null)
+    setSelected(keepSelected.current)
+    keepSelected.current = null
   }, [mediaKey])
 
   const arrange = !done && canManage ? post.arrange ?? null : null
@@ -385,7 +388,7 @@ function PostCard({
     setSelected(null)
   }
 
-  const act = async (action: string, extra: Record<string, unknown> = {}) => {
+  const act = async (action: string, extra: Record<string, unknown> = {}): Promise<{ ok: boolean; post?: Post }> => {
     setBusy(action)
     setError(null)
     const res = await appFetch('/api/app/posts', {
@@ -397,12 +400,31 @@ function PostCard({
     if (data.post) onChange(data.post)
     if (!res?.ok) setError(data.error || 'Operazione non riuscita, riprova.')
     else if (action === 'delete') onChange({ ...post, status: 'cancelled' })
-    return Boolean(res?.ok)
+    return { ok: Boolean(res?.ok), post: data.post }
   }
 
-  const saveOrder = async () => {
-    if (order && (await act('arrange', { slides: order.map((k) => k + 1) }))) {
+  /** Salva il nuovo ordine (slide rifatte con i numeri giusti): torna il post aggiornato. */
+  const saveOrder = async (): Promise<Post | null> => {
+    if (!order) return post
+    keepSelected.current = pos >= 0 ? pos : null
+    const result = await act('arrange', { slides: order.map((k) => k + 1) })
+    if (result.ok && result.post) {
       setOrder(null)
+      return result.post
+    }
+    keepSelected.current = null
+    return null
+  }
+
+  /** Correzione della slide scelta; se l'ordine non e' salvato, prima si salva. */
+  const editSelected = async () => {
+    if (selected === null || pos < 0) return
+    const n = pos
+    const current = changed ? await saveOrder() : post
+    if (!current) return
+    const ok = await onEditSlide({ postId: post.id, slide: n + 1, thumb: current.media[n] }, slidePrompt)
+    if (ok) {
+      setSlidePrompt('')
       setSelected(null)
     }
   }
@@ -500,45 +522,34 @@ function PostCard({
               </button>
             </div>
           )}
-          {changed ? (
-            <p className="text-xs text-[var(--text-secondary)]">Salva il nuovo ordine, poi potrai correggere testi e foto della slide.</p>
-          ) : (
-            <>
-              <p className="mb-1 flex items-center justify-between text-xs text-[var(--text-secondary)]">
-                <span>
-                  Cosa vuoi cambiare nella <b className="text-[var(--text-primary)]">slide {pos + 1}</b>? Il testo, la foto o entrambi.
-                </span>
-                {!arrange && (
-                  <button onClick={() => setSelected(null)} aria-label="Chiudi">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </p>
-              <div className="flex items-end gap-2">
-                <textarea
-                  value={slidePrompt}
-                  onChange={(e) => setSlidePrompt(e.target.value)}
-                  rows={2}
-                  placeholder="Es. «scrivi: Vista mare dal balcone» oppure «rendi la foto più luminosa»"
-                  className="flex-1 resize-none rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1.5 text-sm"
-                />
-                <button
-                  onClick={async () => {
-                    const ok = await onEditSlide({ postId: post.id, slide: selected + 1, thumb: post.media[selected] }, slidePrompt)
-                    if (ok) {
-                      setSlidePrompt('')
-                      setSelected(null)
-                    }
-                  }}
-                  disabled={chatBusy || !slidePrompt.trim()}
-                  aria-label="Correggi la slide"
-                  className="rounded-full bg-[var(--accent-blue)] p-2 text-white disabled:opacity-40"
-                >
-                  {chatBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                </button>
-              </div>
-            </>
-          )}
+          <p className="mb-1 flex items-center justify-between text-xs text-[var(--text-secondary)]">
+            <span>
+              Cosa vuoi cambiare nella <b className="text-[var(--text-primary)]">slide {pos + 1}</b>? Il testo, la foto o entrambi.
+            </span>
+            {!arrange && (
+              <button onClick={() => setSelected(null)} aria-label="Chiudi">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </p>
+          <div className="flex items-end gap-2">
+            <textarea
+              value={slidePrompt}
+              onChange={(e) => setSlidePrompt(e.target.value)}
+              rows={2}
+              placeholder="Es. «scrivi: Vista mare dal balcone» oppure «rendi la foto più luminosa»"
+              className="flex-1 resize-none rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1.5 text-sm"
+            />
+            <button
+              onClick={editSelected}
+              disabled={chatBusy || busy !== null || !slidePrompt.trim()}
+              aria-label="Correggi la slide"
+              className="rounded-full bg-[var(--accent-blue)] p-2 text-white disabled:opacity-40"
+            >
+              {chatBusy || busy === 'arrange' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            </button>
+          </div>
+          {changed && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Se scrivi una correzione, prima salvo il nuovo ordine.</p>}
         </div>
       )}
       <textarea
