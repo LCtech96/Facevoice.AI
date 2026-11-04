@@ -44,12 +44,14 @@ export function instagramLoginUrl(origin: string, state: string): string {
   return `https://www.instagram.com/oauth/authorize?${params}`
 }
 
-async function igFetch<T>(url: string, init?: RequestInit): Promise<T> {
+async function igFetch<T>(url: string, init?: RequestInit, step = ''): Promise<T> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) })
   const data = await res.json().catch(() => ({}))
   if (!res.ok || data?.error) {
     const message = data?.error?.message || data?.error_message || `Instagram HTTP ${res.status}`
-    throw new Error(message)
+    // Nei log: quale passaggio, codice e tipo dell'errore (mai token o chiavi).
+    const detail = [data?.error?.type || data?.error_type, data?.error?.code ?? data?.code, data?.error?.error_subcode].filter((v) => v != null).join('/')
+    throw new Error(`${step ? `[${step}] ` : ''}${message}${detail ? ` (${detail})` : ''} HTTP ${res.status}`)
   }
   return data as T
 }
@@ -71,15 +73,29 @@ export async function connectInstagramFromCode(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: appId, client_secret: appSecret, grant_type: 'authorization_code', redirect_uri: instagramCallbackUrl(origin), code }),
-  })
+  }, 'codice')
   const shortToken = short.access_token || short.data?.[0]?.access_token
   if (!shortToken) throw new Error('Instagram non ha restituito il token')
 
-  const long = await igFetch<{ access_token: string; expires_in?: number }>(
-    `https://graph.instagram.com/access_token?${new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: appSecret, access_token: shortToken })}`
+  // Token di 60 giorni: la guida indica GET, ma Meta a volte accetta solo POST.
+  const exchange = new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: appSecret, access_token: shortToken })
+  const long = await igFetch<{ access_token: string; expires_in?: number }>(`https://graph.instagram.com/access_token?${exchange}`, undefined, 'token 60 giorni').catch(
+    (error) => {
+      console.warn('instagram exchange GET:', error instanceof Error ? error.message : error)
+      return igFetch<{ access_token: string; expires_in?: number }>(
+        'https://graph.instagram.com/access_token',
+        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: exchange },
+        'token 60 giorni POST'
+      )
+    }
   )
-  const profile = await igFetch<{ user_id?: string | number; id?: string; username?: string; name?: string; profile_picture_url?: string; account_type?: string }>(
-    `${IG_GRAPH}/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${encodeURIComponent(long.access_token)}`
+  type Profile = { user_id?: string | number; id?: string; username?: string; name?: string; profile_picture_url?: string; account_type?: string }
+  const auth = encodeURIComponent(long.access_token)
+  const profile = await igFetch<Profile>(`${IG_GRAPH}/me?fields=user_id,username,name,profile_picture_url,account_type&access_token=${auth}`, undefined, 'profilo').catch(
+    (error) => {
+      console.warn('instagram profile:', error instanceof Error ? error.message : error)
+      return igFetch<Profile>(`https://graph.instagram.com/me?fields=user_id,username&access_token=${auth}`, undefined, 'profilo base')
+    }
   )
   // user_id e' l'id dell'account professionale, lo stesso che arriva nei webhook.
   const igUserId = String(profile.user_id || profile.id || '')
@@ -116,8 +132,13 @@ export async function connectInstagramFromCode(
 
 /** Rinnova il token (valido almeno 24 ore e non ancora scaduto) e salva quello nuovo. */
 async function renew(connection: Connection, secret: InstagramSecret): Promise<InstagramSecret> {
-  const data = await igFetch<{ access_token: string; expires_in?: number }>(
-    `https://graph.instagram.com/refresh_access_token?${new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: secret.token })}`
+  const params = new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: secret.token })
+  const data = await igFetch<{ access_token: string; expires_in?: number }>(`https://graph.instagram.com/refresh_access_token?${params}`, undefined, 'rinnovo').catch(() =>
+    igFetch<{ access_token: string; expires_in?: number }>(
+      'https://graph.instagram.com/refresh_access_token',
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params },
+      'rinnovo POST'
+    )
   )
   const now = Date.now()
   const next: InstagramSecret = {
