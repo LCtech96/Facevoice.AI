@@ -333,6 +333,8 @@ export type CarouselSource = {
   mix: number
   /** Versione della grafica con cui sono state fatte le slide (vedi SLIDE_STYLE). */
   style?: number
+  /** Numero della slide in alto a destra ("03 / 08"): false se il cliente l'ha tolto. */
+  counter?: boolean
 }
 
 /**
@@ -367,6 +369,7 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, 
   source.style = SLIDE_STYLE
   return createPhotoCarousel({
     keep: outdated ? undefined : keep,
+    counter: source.counter !== false,
     photos: source.photos,
     slides: source.slides,
     hook: source.hook,
@@ -745,6 +748,29 @@ export async function restoreVersion(
   return { post: data as PostRow, editable: Boolean(source) || post.kind === 'photos', rebuilt }
 }
 
+/** "Togli/rimuovi i numeri" -> false, "rimetti/mostra i numeri" -> true, altrimenti null. */
+function wantsCounter(request: string): boolean | null {
+  // Solo i numeri delle slide (non "il numero di telefono"): il resto lo capisce l'AI.
+  if (!/numer(etti|ini|azione)|numeri (in alto|delle slide|di pagina|a destra|sulle slide)|numero (della|delle|sulle) slide|numero di pagina|contator|\d{1,2}\s?\/\s?\d{1,2}/i.test(request)) return null
+  if (/(togli|rimuov|elimin|nascond|cancell|senza|leva|via)/i.test(request)) return false
+  if (/(rimett|mostr|aggiung|metti|ripristin)/i.test(request)) return true
+  return null
+}
+
+/** Numero delle slide tolto o rimesso: vale per tutto il carosello (si rifanno tutte, senza AI). */
+async function setCounter(db: WorkspaceDb, id: string, post: PostRow, source: CarouselSource, show: boolean): Promise<{ post: PostRow; done: string[] }> {
+  if ((source.counter !== false) === show && (source.style ?? 1) >= SLIDE_STYLE) {
+    return { post, done: [show ? 'i numeri delle slide ci sono già' : 'i numeri delle slide sono già tolti'] }
+  }
+  const next: CarouselSource = { ...source, counter: show }
+  const media = await renderPhotoCarousel(db.workspaceId, next)
+  await saveSource(id, next)
+  return {
+    post: await updatePost(db, id, { media }),
+    done: [show ? 'numeri rimessi su tutte le slide (es. «03 / 08»)' : 'numeri in alto a destra tolti da tutte le slide (testi e foto sono gli stessi)'],
+  }
+}
+
 /**
  * Correzione delle SOLE slide scelte dal cliente (n da 1), con una sola chiamata
  * all'AI che vede solo quelle slide. Si cambiano testo e/o foto di quelle e basta:
@@ -766,6 +792,10 @@ export async function editSlides(db: WorkspaceDb, id: string, numbers: number[],
 
   // "Estrai le foto, e' uno screenshot": ogni foto dentro l'immagine diventa una slide.
   if (WANTS_EXTRACT.test(request)) return extractPhotos(db, id, picked)
+
+  // "Togli i numeri in alto a destra" / "rimetti i numeri": grafica di tutto il carosello, senza AI.
+  const counterWish = source ? wantsCounter(request) : null
+  if (source && counterWish !== null) return setCounter(db, id, post, source, counterWish)
 
   // Post senza testi nelle slide (foto o carosello grafico): si modifica solo l'immagine scelta.
   if (!source || total !== source.photos.length + (source.closing ? 1 : 0)) {
@@ -797,7 +827,8 @@ Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che 
 - slide finale: "titolo", "testo", "pulsante" (max 26 caratteri);
 - "foto": SOLO se la richiesta chiede di cambiare la foto o l'immagine (luce, colori, sfondo, togliere o aggiungere qualcosa), l'istruzione precisa per modificarla con l'AI; altrimenti ometti;
 - "estrai": true SOLO se chiede di tirare fuori, separare o estrarre le foto contenute nell'immagine (es. uno screenshot o un collage con piu' foto): ogni foto diventera' una slide. In quel caso non mettere altri campi;
-- "grafica": true se il problema riguarda la grafica della slide e non la foto (sfumatura, ombra o fondo sotto il testo, contrasto, scritte poco leggibili): in quel caso NON mettere "foto".
+- "grafica": true se il problema riguarda la grafica della slide e non la foto (sfumatura, ombra o fondo sotto il testo, contrasto, scritte poco leggibili): in quel caso NON mettere "foto";
+- "numeri": false se chiede di togliere il numero della slide in alto a destra (es. "03 / 08"), true se chiede di rimetterlo. Non e' una modifica della foto.
 Se la richiesta riguarda solo il testo non toccare la foto, e viceversa. Scrivi nella lingua della richiesta. Niente markdown.
 ${wantsCaption ? `Se la richiesta chiede di cambiare anche la didascalia (descrizione) del post, aggiungi "didascalia" (la nuova didascalia Instagram completa, hashtag adattati) e "facebook" (lo stesso testo per Facebook, senza la fila di hashtag).\n` : ''}Rispondi SOLO con JSON: {"slide": [{"n": 2, "titolo": "…"}]${wantsCaption ? ', "didascalia": "", "facebook": ""' : ''}}`
   const result = await callAI(
@@ -816,6 +847,9 @@ ${wantsCaption ? `Se la richiesta chiede di cambiare anche la didascalia (descri
   } catch {}
   const allowed = new Set(picked)
   const changes = (Array.isArray(answer.slide) ? answer.slide : []).filter((c) => allowed.has(Math.round(Number(c?.n))))
+  if (changes.some((c) => c.numeri === false || c.numeri === true)) {
+    return setCounter(db, id, post, source, changes.find((c) => typeof c.numeri === 'boolean')!.numeri as boolean)
+  }
   const toExtract = changes.filter((c) => c.estrai === true).map((c) => Math.round(Number(c.n)))
   if (toExtract.length) return extractPhotos(db, id, toExtract)
   // Problema di grafica (es. ombra chiara sotto il testo): si rifanno le slide, la foto non si tocca.

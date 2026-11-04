@@ -263,10 +263,11 @@ const BLOG_CTA: Cta = {
 }
 
 /** Ultima slide: invito a leggere l'articolo e a contattarci (o il testo scelto per il post). */
-function ctaSlide(t: Theme, i: number, n: number, cta: Cta = BLOG_CTA) {
+function ctaSlide(t: Theme, i: number, n: number, cta: Cta = BLOG_CTA, showCounter = true) {
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '56px 80px 70px' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 28, color: t.soft }}>{counter(i, n)}</div>
+      {/* Senza numero resta lo spazio (la pagina non si sposta). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 28, color: t.soft }}>{showCounter ? counter(i, n) : '\u00a0'}</div>
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', marginBottom: 'auto' }}>
         <div style={{ display: 'flex', fontSize: cta.title.length > 50 ? 74 : 88, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.5 }}>{cta.title}</div>
         <div style={{ display: 'flex', fontSize: 40, lineHeight: 1.4, color: t.soft, marginTop: 40 }}>{cta.text}</div>
@@ -486,7 +487,8 @@ function photoSlide(
   i: number,
   n: number,
   logo: { src: string; width: number; height: number } | null,
-  cover: { hook: string; label: string } | null
+  cover: { hook: string; label: string } | null,
+  showCounter = true
 ) {
   const titleSize = cover ? hookSize(cover.hook) : slide.title.length > 50 ? 60 : slide.title.length > 30 ? 70 : 80
   return (
@@ -500,7 +502,7 @@ function photoSlide(
         // eslint-disable-next-line @next/next/no-img-element
         <img src={logo.src} width={logo.width} height={logo.height} style={{ position: 'absolute', top: 48, left: 56, width: logo.width, height: logo.height }} />
       ) : null}
-      <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: BRAND.ink, display: 'flex' }}>{counter(i, n)}</div>
+      {showCounter ? <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: BRAND.ink, display: 'flex' }}>{counter(i, n)}</div> : null}
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', padding: '0 72px 56px', position: 'relative' }}>
         {cover?.label ? <div style={{ display: 'flex', fontSize: 26, color: t.label === t.ink ? BRAND.ink : t.label, letterSpacing: 3, marginBottom: 20 }}>{cover.label.toUpperCase()}</div> : null}
         {!cover ? <div style={{ display: 'flex', width: 110, height: 10, borderRadius: 5, background: t.accent, marginBottom: 30 }} /> : null}
@@ -537,6 +539,8 @@ export async function createPhotoCarousel(input: {
   storage?: { bucket: string; folder: string }
   /** Salvataggio delle slide al posto di quello standard (es. archivio dei clienti con diagnosi). */
   save?: (jpeg: Buffer) => Promise<string>
+  /** Numero della slide in alto a destra (es. "03 / 08"); false per toglierlo. */
+  counter?: boolean
   /**
    * Slide da NON rifare (stesso indice delle slide, finale compresa): se c'e' un indirizzo
    * si tiene quel file cosi' com'e'. Serve per correggere solo alcune slide.
@@ -562,9 +566,9 @@ export async function createPhotoCarousel(input: {
   ])
   const n = photos.length + (input.cta ? 1 : 0)
   const nodes = photos.map((_, k) =>
-    kept(k) ? null : photoSlide(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null)
+    kept(k) ? null : photoSlide(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null, input.counter !== false)
   )
-  if (input.cta) nodes.push(kept(photos.length) ? null : ctaSlide(themes[mix.cta], n, n, input.cta))
+  if (input.cta) nodes.push(kept(photos.length) ? null : ctaSlide(themes[mix.cta], n, n, input.cta, input.counter !== false))
   return Promise.all(
     nodes.map(async (node, k) => {
       if (!node) return kept(k)!

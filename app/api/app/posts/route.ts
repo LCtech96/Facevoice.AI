@@ -85,7 +85,7 @@ export async function PATCH(req: NextRequest) {
             access.db,
             access.userId,
             { text: instruction.trim().slice(0, 1500), target: { postId: id, slide: first, slides: numbers, thumb: before?.media[first - 1] } },
-            `Fatto: ${done.join(' · ')}. ${done.some((d) => d.includes('estratte')) ? 'Le altre slide sono rimaste uguali, cambia solo il numero.' : 'Le altre slide non sono cambiate.'}`,
+            `Fatto: ${done.join(' · ')}.${done.some((d) => d.includes('tutte le slide')) ? '' : done.some((d) => d.includes('estratte')) ? ' Le altre slide sono rimaste uguali, cambia solo il numero.' : ' Le altre slide non sono cambiate.'}`,
             post,
             await usageSummary(tally),
             chatId
