@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Coins, Facebook, History, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
@@ -25,9 +25,12 @@ type Post = {
   error_message: string | null
   /** Slide spostabili o da togliere: 'closing' = l'ultima e' la slide finale e resta in fondo; null = no. */
   arrange?: 'free' | 'closing' | null
+  /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
+  snapshot?: boolean
+  sameAsLive?: boolean
 }
 type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
-type Target = { postId: string; slide: number; thumb?: string }
+type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
@@ -167,8 +170,11 @@ export default function AssistantPage() {
     setTurns([])
   }
 
+  // Si aggiorna solo l'anteprima "viva" del post: le versioni precedenti restano com'erano.
   const updatePost = (post: Post) =>
-    setTurns((list) => (list || []).map((t) => ({ ...t, actions: t.actions?.map((a) => (a.kind === 'post' && a.post.id === post.id ? { ...a, post } : a)) })))
+    setTurns((list) =>
+      (list || []).map((t) => ({ ...t, actions: t.actions?.map((a) => (a.kind === 'post' && a.post.id === post.id && !a.post.snapshot ? { ...a, post } : a)) }))
+    )
 
   const instagram = connections.find((c) => c.platform === 'instagram' && c.status === 'connected')
   const needsPublish = instagram && !instagram.canPublish
@@ -176,9 +182,12 @@ export default function AssistantPage() {
   return (
     <div className="-mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col md:-mx-8 md:-my-10 md:min-h-[100dvh]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3 md:px-8">
-        <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
-          <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
+            <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
+          </h1>
+          <UsageButton />
+        </div>
         <button onClick={newChat} disabled={busy || !turns?.length} className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-40">
           <Plus className="h-4 w-4" /> Nuova chat
         </button>
@@ -229,7 +238,7 @@ export default function AssistantPage() {
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={turn.target.thumb} alt="" className="h-12 w-10 rounded object-cover" />
                       ) : null}
-                      Slide {turn.target.slide}
+                      {turn.target.slides && turn.target.slides.length > 1 ? `Slide ${turn.target.slides.join(', ')}` : `Slide ${turn.target.slide}`}
                     </div>
                   ) : null}
                   {turn.text && <p className="whitespace-pre-wrap break-words text-[15px]">{turn.text}</p>}
@@ -244,7 +253,11 @@ export default function AssistantPage() {
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
-                      <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} />
+                      action.post.snapshot ? (
+                        <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} onTurns={setTurns} />
+                      ) : (
+                        <PostCard key={action.post.id} post={action.post} canManage={canManage} busy={busy} onChange={updatePost} onTurns={setTurns} />
+                      )
                     ) : (
                       <a key={k} href={action.url} target="_blank" rel="noopener noreferrer" className="mt-3 block w-full max-w-xs">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -333,7 +346,19 @@ export default function AssistantPage() {
 }
 
 /** Anteprima di un post: immagini, testi modificabili, social, giorno e ora, Programma / Pubblica ora. */
-function PostCard({ post, canManage, busy: chatBusy, onChange }: { post: Post; canManage: boolean; busy: boolean; onChange: (post: Post) => void }) {
+function PostCard({
+  post,
+  canManage,
+  busy: chatBusy,
+  onChange,
+  onTurns,
+}: {
+  post: Post
+  canManage: boolean
+  busy: boolean
+  onChange: (post: Post) => void
+  onTurns: (turns: Turn[]) => void
+}) {
   const { appFetch } = useWorkspace()
   // Slide toccate (indici in post.media): la correzione riguarda SOLO queste.
   const [selected, setSelected] = useState<number[]>([])
@@ -453,6 +478,8 @@ function PostCard({ post, canManage, busy: chatBusy, onChange }: { post: Post; c
     setBusy(null)
     if (!res?.ok) keepSelected.current = null
     if (data.post) onChange(data.post)
+    // La modifica e' entrata in cronologia: la chat mostra la nuova versione in fondo.
+    if (data.turns) onTurns(data.turns)
     if (res?.ok) {
       if (action === 'delete') onChange({ ...post, status: 'cancelled' })
       return { ok: true, post: data.post, done: data.done }
@@ -716,6 +743,157 @@ function PostCard({ post, canManage, busy: chatBusy, onChange }: { post: Post; c
         <p className="mt-2 inline-flex items-center gap-1 text-xs text-[#34C759]">
           <Check className="h-3.5 w-3.5" /> Pubblicato su {[post.results?.instagram && 'Instagram', post.results?.facebook && 'Facebook'].filter(Boolean).join(' e ')}
         </p>
+      )}
+    </div>
+  )
+}
+
+/** Versione precedente di un post, com'era in quel momento della chat: si guarda o si riprende. */
+function SnapshotCard({ post, at, canManage, busy: chatBusy, onTurns }: { post: Post; at: string; canManage: boolean; busy: boolean; onTurns: (turns: Turn[]) => void }) {
+  const { appFetch } = useWorkspace()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const label = new Date(at).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+  if (post.sameAsLive) {
+    return (
+      <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-1 text-xs text-[var(--text-secondary)]">
+        <History className="h-3.5 w-3.5" /> Versione del {label}: uguale a quella attuale (più sotto).
+      </p>
+    )
+  }
+
+  const restore = async () => {
+    if (!confirm('Riprendere questa versione? Diventa una nuova bozza; il post attuale resta com’è.')) return
+    setBusy(true)
+    setError(null)
+    const res = await appFetch('/api/app/posts', { method: 'PATCH', body: JSON.stringify({ id: post.id, action: 'restore', media: post.media, caption: post.caption, at }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setBusy(false)
+    if (data.turns) onTurns(data.turns)
+    else setError(data.error || 'Versione non ripresa, riprova.')
+  }
+
+  return (
+    <div className="mt-3 max-w-xl rounded-2xl border border-dashed border-[var(--border-color)] p-3">
+      <div className="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]">
+        <span className="inline-flex items-center gap-1.5">
+          <History className="h-3.5 w-3.5" /> Versione del {label}
+        </span>
+        <span>{post.media.length} slide</span>
+      </div>
+      <div className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
+        {post.media.map((url, n) => (
+          <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="relative shrink-0 snap-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt={`Slide ${n + 1}`} loading="lazy" className="h-40 w-32 rounded-lg border border-[var(--border-color)] object-cover" />
+            <span className="absolute left-1.5 top-1.5 rounded-full bg-black/55 px-1.5 text-[11px] font-semibold text-white">{n + 1}</span>
+          </a>
+        ))}
+      </div>
+      <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-[var(--text-secondary)]">{post.caption}</p>
+      {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
+      {canManage && (
+        <button
+          onClick={restore}
+          disabled={busy || chatBusy}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} Riprendi questa versione
+        </button>
+      )}
+    </div>
+  )
+}
+
+type Usage = {
+  updatedAt: string
+  today: { tokens: number; eur: number; calls: number }
+  month: { tokens: number; eur: number; calls: number }
+  byFeature: { feature: string; label: string; tokens: number; eur: number }[]
+}
+
+const euro = (value: number) =>
+  new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: value > 0 && value < 1 ? 3 : 2 }).format(value)
+const tokens = (value: number) => new Intl.NumberFormat('it-IT').format(value)
+
+/** Consumo dell'AI dello spazio (token ed euro), aggiornato ogni minuto. */
+function UsageButton() {
+  const { appFetch, workspace } = useWorkspace()
+  const [usage, setUsage] = useState<Usage | null>(null)
+  const [open, setOpen] = useState(false)
+
+  const refresh = useCallback(async () => {
+    const res = await appFetch('/api/app/usage').catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (data?.month) setUsage(data)
+  }, [appFetch])
+
+  useEffect(() => {
+    if (!workspace) return
+    refresh()
+    const timer = setInterval(() => document.visibilityState === 'visible' && refresh(), 60_000)
+    const onVisible = () => document.visibilityState === 'visible' && refresh()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refresh, workspace])
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => {
+          setOpen((o) => !o)
+          refresh()
+        }}
+        aria-label="Consumo dell’AI"
+        className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-1 text-xs font-semibold text-[var(--text-secondary)]"
+      >
+        <Coins className="h-3.5 w-3.5 text-[var(--accent-blue)]" />
+        {usage ? euro(usage.month.eur) : '…'}
+      </button>
+      {open && (
+        <div className="fixed inset-x-4 top-16 z-30 rounded-2xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-sm shadow-xl md:absolute md:inset-x-auto md:left-0 md:top-full md:mt-2 md:w-72">
+          <div className="flex items-center justify-between">
+            <b>Consumo dell’AI</b>
+            <button onClick={() => setOpen(false)} aria-label="Chiudi" className="p-1 text-[var(--text-secondary)]">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {usage ? (
+            <>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {([['Oggi', usage.today], ['Questo mese', usage.month]] as const).map(([name, t]) => (
+                  <div key={name} className="rounded-xl bg-[var(--background-secondary)] p-2">
+                    <p className="text-xs text-[var(--text-secondary)]">{name}</p>
+                    <p className="text-base font-bold">{euro(t.eur)}</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{tokens(t.tokens)} token</p>
+                  </div>
+                ))}
+              </div>
+              {usage.byFeature.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs">
+                  {usage.byFeature.slice(0, 6).map((f) => (
+                    <li key={f.feature} className="flex justify-between gap-2">
+                      <span className="truncate text-[var(--text-secondary)]">{f.label}</span>
+                      <span className="shrink-0">
+                        {tokens(f.tokens)} · {euro(f.eur)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
+                Aggiornato alle {new Date(usage.updatedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}, si aggiorna ogni minuto. Euro al cambio BCE del giorno; le
+                modifiche delle immagini con l’AI non sono ancora conteggiate.
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">Carico il consumo…</p>
+          )}
+        </div>
       )}
     </div>
   )

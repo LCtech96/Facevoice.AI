@@ -39,6 +39,10 @@ export type ChatAction =
 export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'caption' | 'facebook_text' | 'media' | 'platforms' | 'publish_at' | 'results' | 'error_message'> & {
   /** Slide spostabili o da togliere nell'anteprima (vedi ArrangeMode). */
   arrange?: ArrangeMode
+  /** Versione precedente nella chat (com'era in quel momento): solo da guardare o riprendere. */
+  snapshot?: boolean
+  /** La versione precedente e' uguale a quella attuale. */
+  sameAsLive?: boolean
 }
 
 /** Aggiunge ai post se le slide si possono spostare o togliere. */
@@ -55,7 +59,7 @@ export type ChatTurn = {
   /** Cosa mostra ogni foto allegata (stesso ordine), letto dall'AI. */
   imageNotes?: (string | null)[]
   /** Slide scelta dal cliente toccandola nell'anteprima (la richiesta riguarda quella). */
-  target?: { postId: string; slide: number; thumb?: string }
+  target?: { postId: string; slide: number; thumb?: string; slides?: number[] }
   actions?: ChatAction[]
   at: string
 }
@@ -94,16 +98,40 @@ export async function saveChat(workspaceId: string, userId: string, turns: ChatT
     .upsert({ key: chatKey(workspaceId, userId), value: JSON.stringify(turns.slice(-MAX_TURNS)), updated_at: new Date().toISOString() }, { onConflict: 'key' })
 }
 
-/** Stato aggiornato dei post mostrati nella chat (programmati, pubblicati…). */
+/**
+ * Post mostrati nella chat. Ogni anteprima resta COM'ERA in quel momento (una versione
+ * per ogni modifica, in ordine di tempo): solo l'ultima di ogni post e' quella "viva",
+ * aggiornata (stato, slide, orario) e modificabile. Le precedenti sono versioni da
+ * guardare o da riprendere; se sono uguali alla versione attuale lo si segnala.
+ */
 export async function refreshPostActions(db: WorkspaceDb, turns: ChatTurn[]): Promise<ChatTurn[]> {
-  const ids = [...new Set(turns.flatMap((t) => (t.actions || []).filter((a) => a.kind === 'post').map((a) => (a as { post: PostView }).post.id)))]
-  if (!ids.length) return turns
-  const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', ids)
+  const last = new Map<string, number>()
+  turns.forEach((t, i) => t.actions?.forEach((a) => a.kind === 'post' && last.set(a.post.id, i)))
+  if (!last.size) return turns
+  const { data } = await db.from('workspace_posts').select('id, status, kind, title, caption, facebook_text, media, platforms, publish_at, results, error_message').in('id', [...last.keys()])
   const byId = new Map((await withArrange((data || []) as PostView[])).map((p) => [p.id, p]))
-  return turns.map((t) => ({
+  return turns.map((t, i) => ({
     ...t,
-    actions: t.actions?.map((a) => (a.kind === 'post' && byId.has(a.post.id) ? { ...a, post: byId.get(a.post.id)! } : a)),
+    actions: t.actions?.map((a) => {
+      if (a.kind !== 'post') return a
+      const live = byId.get(a.post.id)
+      if (last.get(a.post.id) === i) return live ? { ...a, post: live } : a
+      const sameAsLive = Boolean(live && live.media.join('|') === a.post.media.join('|') && live.caption === a.post.caption)
+      return { ...a, post: { ...a.post, snapshot: true, sameAsLive } }
+    }),
   }))
+}
+
+/** Aggiunge alla chat una modifica fatta dall'anteprima (cosi' resta in cronologia). */
+export async function logPostChange(db: WorkspaceDb, userId: string, request: Omit<ChatTurn, 'role' | 'at'>, reply: string, post: PostRow): Promise<ChatTurn[]> {
+  const at = new Date().toISOString()
+  const turns: ChatTurn[] = [
+    ...(await loadChat(db.workspaceId, userId)),
+    { role: 'user', ...request, at },
+    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], at },
+  ]
+  await saveChat(db.workspaceId, userId, turns)
+  return refreshPostActions(db, turns)
 }
 
 const PROMPT = (name: string, now: string, channels: string, recent: string) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili. Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.

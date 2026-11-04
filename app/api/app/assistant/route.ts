@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
     if (images.length) {
-      userTurn.imageNotes = await describePhotos(images)
+      userTurn.imageNotes = await describePhotos(images, access.workspace.id)
       await saveChat(access.workspace.id, access.userId, [...history, userTurn])
     }
     const result = await runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)

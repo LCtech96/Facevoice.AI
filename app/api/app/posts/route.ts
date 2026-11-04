@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { postView, withArrange } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
+import { arrangeSlides, cancelPost, deletePost, editSlides, getPost, restoreVersion, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -51,16 +51,52 @@ export async function PATCH(req: NextRequest) {
     }
     let post
     let done: string[] | undefined
+    // Modifiche dall'anteprima: si aggiungono alla chat, cosi' ogni versione resta in cronologia.
+    let turns: ChatTurn[] | undefined
+    const numbers = Array.isArray(body.slides) ? (body.slides as unknown[]).map(Number).filter(Number.isFinite).slice(0, 10) : []
+    const before = NEEDS_BASE.has(action) ? await getPost(access.db, id) : null
     switch (action) {
       case 'arrange':
         // slides: numeri delle slide attuali nel nuovo ordine (quelle che mancano si tolgono).
-        post = await arrangeSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [])
+        post = await arrangeSlides(access.db, id, numbers)
+        if (before && post.media.join('|') !== before.media.join('|')) {
+          turns = await logPostChange(access.db, access.userId, { text: `Nuovo ordine delle slide: ${numbers.join(', ')}` }, `Ho salvato il nuovo ordine: ${post.media.length} slide, con i numeri aggiornati.`, post)
+        }
         break
       case 'edit_slides': {
         // Correzione delle sole slide scelte (numeri da 1): le altre restano identiche.
-        const result = await editSlides(access.db, id, Array.isArray(body.slides) ? body.slides.map(Number).filter(Number.isFinite).slice(0, 10) : [], String(body.instruction || ''))
+        const instruction = String(body.instruction || '')
+        const result = await editSlides(access.db, id, numbers, instruction)
         post = result.post
         done = result.done
+        if (done.length) {
+          const first = Math.max(1, Math.min(numbers[0] || 1, post.media.length))
+          turns = await logPostChange(
+            access.db,
+            access.userId,
+            { text: instruction.trim().slice(0, 1500), target: { postId: id, slide: first, slides: numbers, thumb: before?.media[first - 1] } },
+            `Fatto: ${done.join(' · ')}. Le altre slide non sono cambiate.`,
+            post
+          )
+        }
+        break
+      }
+      case 'restore': {
+        // Versione precedente (dalla chat) ripresa come nuova bozza.
+        const media = Array.isArray(body.media) ? (body.media as unknown[]).filter((u): u is string => typeof u === 'string') : []
+        const result = await restoreVersion(access.db, id, media, typeof body.caption === 'string' ? body.caption : undefined, access.userId)
+        post = result.post
+        const at = typeof body.at === 'string' ? new Date(body.at) : null
+        const label = at && !Number.isNaN(at.getTime()) ? at.toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+        turns = await logPostChange(
+          access.db,
+          access.userId,
+          { text: `Riprendi la versione${label ? ` del ${label}` : ' precedente'}` },
+          result.editable
+            ? 'Ecco una nuova bozza uguale a quella versione: puoi correggerla, programmarla o pubblicarla. Il post di prima resta com’è.'
+            : 'Ecco una nuova bozza uguale a quella versione: puoi programmarla o pubblicarla. È di prima che salvassi le versioni, quindi i testi delle slide non si possono correggere uno per uno: per cambiarli ricrea il carosello dalle foto.',
+          post
+        )
         break
       }
       case 'schedule':
@@ -80,7 +116,7 @@ export async function PATCH(req: NextRequest) {
         post = await getPost(access.db, id)
     }
     if (!post) return NextResponse.json({ error: 'Post non trovato' }, { status: 404 })
-    return NextResponse.json({ post: await view(post), ...(done ? { done } : {}) })
+    return NextResponse.json({ post: await view(post), ...(done ? { done } : {}), ...(turns ? { turns } : {}) })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Operazione non riuscita'
     console.error(`saas post ${id.slice(0, 8)} (${action || 'modifica'}): ${message}`)

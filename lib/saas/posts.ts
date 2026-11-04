@@ -193,7 +193,7 @@ export async function setWorkspaceBrand(workspaceId: string, input: { dark?: str
 const PHOTO_PROMPT = `Descrivi questa foto in italiano, in una o due frasi asciutte, per chi deve scrivere un post social: cosa mostra (ambiente, stanza, oggetti, persone, prodotto, luogo), dettagli utili (es. "camera matrimoniale con armadio bianco", "bagno con doccia e mobile in legno", "giardino con palme", "terrazza con tavolo e vista mare") e il testo leggibile se c'e'. Niente commenti.`
 
 /** Descrizione di ogni foto, una per una e nello stesso ordine (null se non riesce). */
-export async function describePhotos(urls: string[]): Promise<(string | null)[]> {
+export async function describePhotos(urls: string[], workspaceId?: string): Promise<(string | null)[]> {
   const out: (string | null)[] = new Array(urls.length).fill(null)
   let next = 0
   const worker = async () => {
@@ -201,7 +201,7 @@ export async function describePhotos(urls: string[]): Promise<(string | null)[]>
       const k = next++
       try {
         const small = await sharp(await download(urls[k])).rotate().resize(768, 768, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
-        out[k] = (await describeMedia([{ mimeType: 'image/jpeg', data: small.toString('base64') }], PHOTO_PROMPT, 'saas_lettura_foto')).replace(/\s+/g, ' ').trim().slice(0, 400) || null
+        out[k] = (await describeMedia([{ mimeType: 'image/jpeg', data: small.toString('base64') }], PHOTO_PROMPT, 'saas_lettura_foto', workspaceId)).replace(/\s+/g, ' ').trim().slice(0, 400) || null
       } catch {
         out[k] = null
       }
@@ -351,7 +351,7 @@ export async function createPost(
   const notes = images.length
     ? input.photoNotes?.length === images.length && input.photoNotes.every(Boolean)
       ? input.photoNotes
-      : await describePhotos(images)
+      : await describePhotos(images, db.workspaceId)
     : []
   const mode = kind === 'carousel' && images.length ? 'photo_carousel' : kind
   const texts = await writeTexts(db.workspaceId, input.brief, mode, numbered(notes), images.length)
@@ -413,6 +413,7 @@ export async function createPost(
     .single()
   if (error || !data) throw new Error(`post non salvato: ${error?.message}`)
   if (source) await saveSource(data.id as string, source)
+  await recordVersion(data as PostRow, source)
   return data as PostRow
 }
 
@@ -430,6 +431,7 @@ export async function editCarousel(
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
   const source = await loadSource(id)
   if (!source) throw new Error('questo post non è un carosello con le foto: creane uno nuovo')
+  await keepBaseline(post, source)
   let photos = [...source.photos]
   let slides = [...source.slides]
   for (const change of changes.slides || []) {
@@ -464,6 +466,74 @@ export async function editCarousel(
   return updatePost(db, id, { media })
 }
 
+// --- Versioni ----------------------------------------------------------------------
+
+/** Una versione del post: le slide di quel momento, la didascalia e i testi per rifarle. */
+type PostVersion = { at: string; media: string[]; caption: string; facebook: string | null; source: CarouselSource | null }
+
+const versionsKey = (postId: string) => `ws_post_ver:${postId}`
+
+async function loadVersions(postId: string): Promise<PostVersion[]> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', versionsKey(postId)).maybeSingle()
+  try {
+    const list = data?.value ? JSON.parse(data.value) : []
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+async function recordVersion(post: PostRow, source: CarouselSource | null) {
+  try {
+    const sig = post.media.join('|')
+    const list = (await loadVersions(post.id)).filter((v) => v.media.join('|') !== sig)
+    list.push({ at: new Date().toISOString(), media: post.media, caption: post.caption, facebook: post.facebook_text, source })
+    await supabaseAdmin
+      .from('app_settings')
+      .upsert({ key: versionsKey(post.id), value: JSON.stringify(list.slice(-30)), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  } catch (error) {
+    console.error('saas versioni post:', error instanceof Error ? error.message : error)
+  }
+}
+
+/** Prima di cambiare un post nato prima delle versioni: si conserva com'e' adesso. */
+async function keepBaseline(post: PostRow, source: CarouselSource | null) {
+  if (!(await loadVersions(post.id)).length) await recordVersion(post, source)
+}
+
+/**
+ * Riprende una versione precedente (le slide di quel momento, dalla chat) come NUOVA
+ * bozza: il post di partenza e la cronologia restano come sono. Se la versione e'
+ * stata salvata con i testi, la bozza si puo' correggere, spostare e togliere come prima.
+ */
+export async function restoreVersion(db: WorkspaceDb, id: string, media: string[], caption: string | undefined, userId?: string | null): Promise<{ post: PostRow; editable: boolean }> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  const own = `/storage/v1/object/public/${MEDIA_BUCKET}/${db.workspaceId}/`
+  const slides = media.filter((u) => isOurMedia(u) && u.includes(own)).slice(0, 10)
+  if (!slides.length || slides.length !== media.length) throw new Error('versione non valida')
+  const version = (await loadVersions(id)).find((v) => v.media.join('|') === slides.join('|')) || null
+  const source = version?.source && version.source.photos.length + (version.source.closing ? 1 : 0) === slides.length ? version.source : null
+  const { data, error } = await db
+    .from('workspace_posts')
+    .insert({
+      status: 'draft',
+      kind: post.kind,
+      title: post.title,
+      caption: (version?.caption ?? caption ?? post.caption).slice(0, 2200),
+      facebook_text: version?.facebook ?? post.facebook_text,
+      media: slides,
+      platforms: post.platforms,
+      created_by: userId || null,
+    })
+    .select(POST_COLUMNS)
+    .single()
+  if (error || !data) throw new Error(`versione non ripresa: ${error?.message}`)
+  if (source) await saveSource(data.id as string, source)
+  await recordVersion(data as PostRow, source)
+  return { post: data as PostRow, editable: Boolean(source) || post.kind === 'photos' }
+}
+
 /**
  * Correzione delle SOLE slide scelte dal cliente (n da 1), con una sola chiamata
  * all'AI che vede solo quelle slide. Si cambiano testo e/o foto di quelle e basta:
@@ -480,6 +550,7 @@ export async function editSlides(db: WorkspaceDb, id: string, numbers: number[],
   const picked = [...new Set(numbers.map((n) => Math.round(n)))].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b)
   if (!picked.length) throw new Error(`scegli le slide da correggere (da 1 a ${total})`)
   const source = await loadSource(id)
+  await keepBaseline(post, source)
   const done: string[] = []
 
   // Post senza testi nelle slide (foto o carosello grafico): si modifica solo l'immagine scelta.
@@ -642,6 +713,7 @@ export async function editSlidePhoto(db: WorkspaceDb, id: string, n: number, ins
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
   const k = Math.round(n) - 1
   const source = await loadSource(id)
+  await keepBaseline(post, source)
   if (source && k >= 0 && k < source.photos.length) {
     const edited = await editImage(db.workspaceId, source.photos[k], instruction)
     const next = { ...source, photos: source.photos.map((url, j) => (j === k ? edited : url)) }
@@ -706,6 +778,8 @@ export async function updatePost(db: WorkspaceDb, id: string, patch: { caption?:
   }
   const { data, error } = await db.from('workspace_posts').update(update).eq('id', id).select(POST_COLUMNS).single()
   if (error || !data) throw new Error(`post non aggiornato: ${error?.message}`)
+  // Ogni nuova versione delle slide si conserva (con i testi per poterla riprendere).
+  if (patch.media) await recordVersion(data as PostRow, await loadSource(id))
   return data as PostRow
 }
 
