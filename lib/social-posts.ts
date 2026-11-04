@@ -131,6 +131,8 @@ export async function createPostDraft(input: {
   while (plan.slides.length < slidePhotos.length) plan.slides.push({ title: plan.title, text: '' })
 
   const carousel = await createCarousel(plan.title, plan.slides, input.brief, coverPhoto, {
+    // Il giro della super chat dura ~4 minuti: alle immagini AI ne lasciamo meno di 2.
+    imageSeconds: 100,
     hook: plan.hook,
     mix: await nextPaletteMix(),
     imageNotes: directions || null,
@@ -165,16 +167,18 @@ export async function publishPostDraft(
 ): Promise<PostDraft> {
   const draft = await loadPostDraft(id)
   if (!draft) throw new Error('bozza non trovata')
-  if (draft.status === 'published') return draft
   if (draft.status === 'publishing' && Date.now() - new Date(draft.updatedAt).getTime() < 5 * 60_000) throw new Error('pubblicazione già in corso')
-  const platforms = options.platforms?.length ? options.platforms : (['instagram', 'facebook'] as const)
+  // Si pubblica solo dove non e' gia' uscito (es. Instagram fallito, Facebook riuscito).
+  const previous = draft.results || {}
+  const platforms = (options.platforms?.length ? options.platforms : (['instagram', 'facebook'] as const)).filter((p) => !previous[p])
+  if (!platforms.length) return draft
   if (options.caption?.trim()) draft.caption = options.caption.trim().slice(0, 2200)
   if (options.facebook?.trim()) draft.facebook = options.facebook.trim().slice(0, 5000)
   draft.status = 'publishing'
   draft.updatedAt = new Date().toISOString()
   await save(draft)
 
-  const results: NonNullable<PostDraft['results']> = { errors: [] }
+  const results: NonNullable<PostDraft['results']> = { instagram: previous.instagram, facebook: previous.facebook, errors: [] }
   if (platforms.includes('instagram')) {
     const sent = await publishInstagramCarousel(draft.urls, draft.caption)
     if (sent.error) results.errors!.push(`Instagram: ${sent.error}`)
@@ -190,5 +194,54 @@ export async function publishPostDraft(
   draft.updatedAt = new Date().toISOString()
   await save(draft)
   console.log(`super chat post "${draft.title}": ${draft.status}${results.errors?.length ? ` (${results.errors.join(' | ')})` : ''}`)
+  return draft
+}
+
+/** Carosello gia' pubblicato (es. dal blog): salvato come bozza per poterlo ripubblicare dove non e' uscito. */
+export async function recordCarousel(input: {
+  title: string
+  hook: string | null
+  slides: Slide[]
+  caption: string
+  facebook: string
+  urls: string[]
+  results: NonNullable<PostDraft['results']>
+}): Promise<PostDraft> {
+  const now = new Date().toISOString()
+  const draft: PostDraft = {
+    id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+    title: input.title,
+    hook: input.hook || input.title,
+    slides: input.slides,
+    caption: input.caption,
+    facebook: input.facebook,
+    urls: input.urls,
+    photos: [],
+    status: input.results.instagram || input.results.facebook ? 'published' : input.results.errors?.length ? 'error' : 'draft',
+    results: input.results,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await save(draft).catch((error) => console.warn('carosello non salvato:', error instanceof Error ? error.message : error))
+  return draft
+}
+
+/** Ultimi caroselli (creati dalla super chat o dal blog), dal piu' recente. */
+export async function recentPostDrafts(limit = 10): Promise<PostDraft[]> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value, updated_at').like('key', `${PREFIX}%`).order('updated_at', { ascending: false }).limit(limit)
+  return (data || []).flatMap((row) => {
+    try {
+      return [JSON.parse(row.value) as PostDraft]
+    } catch {
+      return []
+    }
+  })
+}
+
+/** Bozza nuova da un carosello gia' pronto (immagini e testi dati). */
+export async function draftFromCarousel(input: { title: string; hook: string; slides: Slide[]; caption: string; facebook: string; urls: string[] }): Promise<PostDraft> {
+  const now = new Date().toISOString()
+  const draft: PostDraft = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, ...input, photos: [], status: 'draft', createdAt: now, updatedAt: now }
+  await save(draft)
   return draft
 }

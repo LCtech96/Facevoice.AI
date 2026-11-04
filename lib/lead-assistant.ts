@@ -24,7 +24,8 @@ import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo }
 import { loadBlogAutoSettings, loadBlogAutoState, requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { SITE_URL } from '@/lib/seo/site'
-import { createPostDraft, loadPostDraft, publishPostDraft } from '@/lib/social-posts'
+import { createPostDraft, loadPostDraft, publishPostDraft, recentPostDrafts } from '@/lib/social-posts'
+import { carouselDraftFromBlogPost } from '@/lib/blog-share'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -77,6 +78,7 @@ export type SocialAction =
       urls: string[]
       caption: string
       facebook: string
+      platforms?: ('instagram' | 'facebook')[]
     }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
@@ -672,7 +674,10 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → cambia il blog automatico (days: 0 = domenica … 6 = sabato; ora italiana). Metti solo i campi da cambiare.
 - "publish_blog_now": {} → scrive e pubblica SUBITO un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram. Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Ci vogliono alcuni minuti: arriva una notifica con l'esito.
 - "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi.
-- "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → pubblica un carosello creato prima. Usalo SOLO se Luca dice esplicitamente di pubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
+- "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → pubblica un carosello creato prima (anche quelli del blog), solo dove non è già uscito. Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
+- "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
+- "show_post": {"draftId": "..."} → mostra a Luca l'anteprima di un carosello già creato con il pulsante Pubblica (per ripubblicarlo dove non è uscito).
+- "carousel_from_blog": {"slug": "opzionale, senza = ultimo articolo"} → rifà da zero il carosello di un articolo già pubblicato nel blog (nuove immagini, nuovo gancio, colori diversi) e lo mostra in anteprima con il pulsante Pubblica.
 Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
@@ -1243,6 +1248,40 @@ export async function runAssistant(
           reportStatus('Pubblico il carosello…')
           const done = await publishPostDraft(id, { platforms, caption: asText(args.caption) })
           result = { stato: done.status, instagram: done.results?.instagram ? 'pubblicato' : null, facebook: done.results?.facebook ? 'pubblicato' : null, errori: done.results?.errors }
+          break
+        }
+        case 'recent_posts': {
+          const list = await recentPostDrafts(Math.min(20, asNumber(args.limit) || 10))
+          result = {
+            caroselli: list.map((d) => ({
+              draftId: d.id,
+              titolo: d.title,
+              creato: d.createdAt,
+              stato: d.status,
+              instagram: d.results?.instagram ? 'pubblicato' : 'non pubblicato',
+              facebook: d.results?.facebook ? 'pubblicato' : 'non pubblicato',
+              errori: d.results?.errors?.length ? d.results.errors : undefined,
+              slide: d.urls.length,
+            })),
+          }
+          break
+        }
+        case 'show_post': {
+          const draft = await loadPostDraft(asText(args.draftId) || '')
+          if (!draft) {
+            result = { errore: 'carosello non trovato: usa recent_posts' }
+            break
+          }
+          const missing = (['instagram', 'facebook'] as const).filter((p) => !draft.results?.[p])
+          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook, ...(missing.length ? { platforms: [...missing] } : {}) })
+          result = { mostrato: true, da_pubblicare_su: missing }
+          break
+        }
+        case 'carousel_from_blog': {
+          reportStatus('Rifaccio il carosello dell’articolo, con immagini nuove…')
+          const draft = await carouselDraftFromBlogPost(asText(args.slug))
+          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook })
+          result = { creato: true, draftId: draft.id, slide: draft.urls.length, gancio: draft.hook, nota: 'anteprima con Pubblica mostrata a Luca, non ancora pubblicato' }
           break
         }
         case 'publish_blog_now': {

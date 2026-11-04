@@ -255,18 +255,36 @@ function ctaSlide(t: Theme, i: number, n: number, cta: Cta = BLOG_CTA) {
 const withTimeout = <T,>(promise: Promise<T>, ms: number) =>
   Promise.race([promise, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`tempo scaduto (${ms / 1000}s)`)), ms))])
 
-/** Immagine generata dall'AI, ridotta e in JPEG (data URL), o null se non riesce. */
-async function aiImage(prompt: string, width: number, height: number, label: string): Promise<string | null> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Immagine generata dall'AI, ridotta e in JPEG (data URL), o null se non riesce.
+ * Il piano gratuito di Gemini accetta poche immagini al minuto: se si supera il
+ * limite si aspetta e si riprova, finche' c'e' tempo (deadline).
+ */
+async function aiImage(prompt: string, width: number, height: number, label: string, deadline = Date.now() + 90_000): Promise<string | null> {
   if (!getGeminiApiKey()) return null
-  try {
-    const { imageUrl } = await withTimeout(generateGeminiImage(prompt), 90_000)
-    const base64 = imageUrl.replace(/^data:[^;]+;base64,/, '')
-    if (!base64) return null
-    const jpeg = await sharp(Buffer.from(base64, 'base64')).resize(width, height, { fit: 'cover', position: 'attention' }).jpeg({ quality: 84 }).toBuffer()
-    return `data:image/jpeg;base64,${jpeg.toString('base64')}`
-  } catch (error) {
-    console.warn(`blog image: ${label} non riuscita:`, error instanceof Error ? error.message : error)
-    return null
+  for (let attempt = 0; ; attempt++) {
+    const left = deadline - Date.now()
+    if (left < 15_000) {
+      console.warn(`blog image: ${label} saltata (tempo finito)`)
+      return null
+    }
+    try {
+      const { imageUrl } = await withTimeout(generateGeminiImage(prompt), Math.min(90_000, left))
+      const base64 = imageUrl.replace(/^data:[^;]+;base64,/, '')
+      if (!base64) return null
+      const jpeg = await sharp(Buffer.from(base64, 'base64')).resize(width, height, { fit: 'cover', position: 'attention' }).jpeg({ quality: 84 }).toBuffer()
+      return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (/rate limit|limite|429|quota|resource.?exhausted/i.test(message) && attempt < 4) {
+        await sleep(Math.min(20_000 * (attempt + 1), Math.max(0, deadline - Date.now() - 15_000)))
+        continue
+      }
+      console.warn(`blog image: ${label} non riuscita:`, message)
+      return null
+    }
   }
 }
 
@@ -327,6 +345,8 @@ export type CarouselOptions = {
   cta?: Cta
   /** Slide di contenuto al massimo (Instagram: 10 immagini in tutto). */
   maxSlides?: number
+  /** Secondi al massimo per generare le immagini AI (poi le slide restano solo grafica). */
+  imageSeconds?: number
 }
 
 /** Crea e carica il carosello; restituisce gli indirizzi pubblici delle slide (la prima e' la copertina). */
@@ -345,19 +365,20 @@ export async function createCarousel(
   const themes = content.map((_, k) => THEMES[mix.content[k % mix.content.length]])
   const notes = options.imageNotes?.trim() ? `\nExtra art direction from the brand owner: ${options.imageNotes.trim().slice(0, 400)}` : ''
 
-  // Foto della copertina e delle slide, tutte insieme (in parallelo).
+  // Foto di Luca subito (in parallelo); le immagini AI una alla volta, prima la
+  // copertina: tutte insieme superavano il limite al minuto di Gemini e non ne
+  // usciva nessuna. Tempo massimo per le immagini AI: imageSeconds.
   const own = ownPhotoUrl ? await photoFromUrl(ownPhotoUrl) : null
   const mine = content.map((_, k) => options.photos?.[k] || null)
-  const [cover, ...images] = await Promise.all([
-    own ? Promise.resolve(own) : options.onlyMyImages ? Promise.resolve(null) : aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood) + notes, W, 720, 'foto della copertina'),
-    ...content.map((slide, k) =>
-      mine[k]
-        ? photoFromUrl(mine[k]!, 936, 660)
-        : options.slideImages === false || options.onlyMyImages
-          ? Promise.resolve(null)
-          : aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, (k + 2) % 2 === 0 ? W : 920, (k + 2) % 2 === 0 ? 560 : 500, `immagine della slide ${k + 2}`)
-    ),
-  ])
+  const minePhotos = await Promise.all(mine.map((url) => (url ? photoFromUrl(url, 936, 660) : Promise.resolve(null))))
+  const deadline = Date.now() + (options.imageSeconds ?? 150) * 1000
+  const cover = own ?? (options.onlyMyImages ? null : await aiImage(IMAGE_PROMPT(title, summary, coverTheme.mood) + notes, W, 720, 'foto della copertina', deadline))
+  const images: (string | null)[] = []
+  for (const [k, slide] of content.entries()) {
+    if (minePhotos[k]) images.push(minePhotos[k])
+    else if (options.slideImages === false || options.onlyMyImages) images.push(null)
+    else images.push(await aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, (k + 2) % 2 === 0 ? W : 920, (k + 2) % 2 === 0 ? 560 : 500, `immagine della slide ${k + 2}`, deadline))
+  }
   const hook = options.hook?.trim() || title
   const nodes = [
     coverSlide(coverTheme, hook, title, n, cover, options.label),
