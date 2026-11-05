@@ -65,6 +65,8 @@ type Message = {
   status: string | null
   error_message: string | null
   reply_to?: string | null
+  /** manual_app = scritto a mano dall'app di Instagram/Facebook. */
+  origin?: string | null
   created_at: string
 }
 
@@ -1123,6 +1125,7 @@ function InboxPage() {
                           {formatTime(m.created_at)}
                           {m.kind === 'comment' ? (isIn ? ' · commento pubblico' : ' · risposta pubblica al commento') : ''}
                           {m.kind === 'message' && !isIn && m.reply_to && m.platform !== 'email' ? ' · privato dal commento' : ''}
+                          {!isIn && m.origin === 'manual_app' ? ' · dall’app' : ''}
                           {m.status === 'sending' ? ' · invio…' : ''}
                           {isPending ? ' · bozza' : ''}
                         </p>

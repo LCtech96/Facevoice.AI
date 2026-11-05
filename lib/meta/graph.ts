@@ -306,6 +306,140 @@ export async function publishPagePhotos(imageUrls: string[], message: string): P
   return { id: result.raw?.id }
 }
 
+/** Rifiuta dopo ms millisecondi (le chiamate a Meta non devono mai fermare una risposta). */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout dopo ${ms} ms`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
+/** Messaggio letto dallo storico di una conversazione Messenger o Instagram. */
+export type GraphConversationMessage = { id: string; text: string; fromId: string | null; createdAt: string | null }
+
+/** created_time di Meta ("2026-11-05T10:00:00+0000") in ISO; null se non si legge. */
+function graphTime(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null
+  const ms = Date.parse(value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null
+}
+
+const CONVERSATION_FIELDS = 'messages.limit(20){id,message,from,to,created_time}'
+
+/**
+ * Ultimi 20 messaggi della conversazione con questa persona (Messenger o Direct di
+ * Instagram collegato alla Pagina), compresi quelli scritti a mano dall'app.
+ * ownIds: i nostri id (Pagina e Instagram) per capire chi ha scritto cosa.
+ * Tutto entro timeoutMs: oltre, errore (chi chiama prosegue senza storico).
+ */
+export async function fetchConversationHistory(
+  platform: 'facebook' | 'instagram',
+  contactId: string,
+  timeoutMs = 5000
+): Promise<{ messages: GraphConversationMessage[]; ownIds: string[] } | { error: string }> {
+  const started = Date.now()
+  const left = () => Math.max(1, timeoutMs - (Date.now() - started))
+  // Limite rigido anche se una chiamata ignorasse il segnale di interruzione.
+  return withTimeout(readConversation(platform, contactId, left), timeoutMs + 200).catch((error) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }))
+}
+
+async function readConversation(
+  platform: 'facebook' | 'instagram',
+  contactId: string,
+  left: () => number
+): Promise<{ messages: GraphConversationMessage[]; ownIds: string[] } | { error: string }> {
+  try {
+    const page = await withTimeout(getPageToken(), left())
+    if (!page) return { error: 'token della Pagina non disponibile' }
+    const igId = platform === 'instagram' ? await withTimeout(getInstagramUserId(page), left()).catch(() => null) : null
+    const ownIds = [page.pageId, ...(igId ? [igId] : [])]
+    const token = encodeURIComponent(page.token)
+
+    const read = async (url: string) => {
+      const response = await fetch(url, { signal: AbortSignal.timeout(left()) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.error?.message || `HTTP ${response.status}`)
+      return data
+    }
+    const list = async (ownerId: string) =>
+      read(
+        `${GRAPH}/${ownerId}/conversations?platform=${platform === 'instagram' ? 'instagram' : 'messenger'}&user_id=${encodeURIComponent(contactId)}&fields=${encodeURIComponent(CONVERSATION_FIELDS)}&access_token=${token}`
+      )
+
+    let data: any
+    try {
+      data = await list(page.pageId)
+    } catch (error) {
+      // Instagram: alcune configurazioni rispondono solo sull'id dell'account Instagram.
+      if (!igId) throw error
+      data = await list(igId)
+    }
+    const conversation = (data?.data || [])[0]
+    if (!conversation) return { messages: [], ownIds }
+    let messages = conversation.messages?.data
+    if (!Array.isArray(messages) && conversation.id) {
+      const detail = await read(`${GRAPH}/${conversation.id}?fields=${encodeURIComponent(CONVERSATION_FIELDS)}&access_token=${token}`)
+      messages = detail?.messages?.data
+    }
+    const parsed: GraphConversationMessage[] = (Array.isArray(messages) ? messages : [])
+      .filter((m: any) => typeof m?.id === 'string' && m.id)
+      .map((m: any) => ({
+        id: m.id as string,
+        text: typeof m.message === 'string' ? m.message : '',
+        fromId: m.from?.id ? String(m.from.id) : null,
+        createdAt: graphTime(m.created_time),
+      }))
+      // Meta li da' dal piu' recente: si salvano in ordine.
+      .sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''))
+    return { messages: parsed, ownIds }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * Pagina Facebook: le eco dei messaggi scritti a mano (app Messenger, Meta Business Suite)
+ * arrivano solo con il campo "message_echoes". Lo aggiunge ai campi gia' attivi della
+ * nostra app sulla Pagina, senza toglierne nessuno. Serve il permesso pages_manage_metadata.
+ * Instagram manda le eco dentro "messages": li' non serve niente.
+ */
+export async function ensureMessageEchoes(): Promise<'ok' | 'added' | 'skipped' | { error: string }> {
+  try {
+    const page = await withTimeout(getPageToken(), 5000)
+    if (!page) return 'skipped'
+    const token = encodeURIComponent(page.token)
+    const [appRes, subsRes] = await Promise.all([
+      fetch(`${GRAPH}/app?fields=id&access_token=${token}`, { signal: AbortSignal.timeout(5000) }),
+      fetch(`${GRAPH}/${page.pageId}/subscribed_apps?access_token=${token}`, { signal: AbortSignal.timeout(5000) }),
+    ])
+    const app = await appRes.json().catch(() => ({}))
+    const subs = await subsRes.json().catch(() => ({}))
+    if (!appRes.ok || !subsRes.ok) return { error: subs?.error?.message || app?.error?.message || `HTTP ${appRes.ok ? subsRes.status : appRes.status}` }
+    const ours = (subs?.data || []).find((a: any) => String(a?.id) === String(app?.id))
+    // La nostra app non e' iscritta alla Pagina: si configura dalla dashboard Meta, non qui.
+    if (!ours) return 'skipped'
+    const fields: string[] = Array.isArray(ours.subscribed_fields) ? ours.subscribed_fields.map(String) : []
+    if (fields.includes('message_echoes')) return 'ok'
+    const res = await post(`${GRAPH}/${page.pageId}/subscribed_apps`, page.token, {
+      subscribed_fields: [...fields, 'message_echoes'].join(','),
+    })
+    return res.error ? { error: res.error } : 'added'
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /** Id della Pagina e dell'Instagram di Facevoice: gli altri account nei webhook sono dei clienti del SaaS. */
 export async function facevoiceAccountIds(): Promise<Set<string> | null> {
   const page = await getPageToken()
