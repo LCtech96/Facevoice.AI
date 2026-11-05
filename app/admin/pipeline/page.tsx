@@ -20,7 +20,7 @@ import LeadsBoard from './LeadsBoard'
 type Tab = 'andamento' | 'schede' | 'automazione'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'andamento', label: 'Andamento' },
-  { id: 'schede', label: 'Schede clienti' },
+  { id: 'schede', label: 'Elenco' },
   { id: 'automazione', label: 'Automazione' },
 ]
 
@@ -260,7 +260,7 @@ export default function PipelinePage() {
       <div className="max-w-6xl mx-auto px-4 pt-20 md:pt-24 pb-28 md:pb-10">
         {/* Testata */}
         <div className="flex items-center justify-between gap-3">
-          <h1 className="shrink-0 text-2xl font-bold text-[var(--text-primary)]">Motore clienti</h1>
+          <h1 className="shrink-0 text-2xl font-bold text-[var(--text-primary)]">Leads</h1>
           <span className="flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
             <span className="relative flex w-2 h-2 shrink-0">
               {activity && <span className="absolute inset-0 rounded-full animate-ping" style={{ background: DONE, opacity: 0.6 }} />}

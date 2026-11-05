@@ -105,6 +105,16 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
   const [notice, setNotice] = useState<string | null>(null)
   const [progress, setProgress] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Lead>>({})
+  // Selezione multipla per trasformare dei lead in clienti con un tocco.
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const togglePick = (id: string) =>
+    setPicked((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   // Caselle "Chiamato" in salvataggio: l'aggiornamento automatico non deve rimetterle com'erano.
   const pendingCalls = useRef(new Map<string, string | null>())
@@ -197,13 +207,22 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
     <div
       key={lead.id}
       className={`flex items-stretch rounded-xl border transition-colors ${
-        lead.id === selectedId
+        (picking ? picked.has(lead.id) : lead.id === selectedId)
           ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5'
           : 'border-[var(--border-color)] bg-[var(--card-background)]'
       }`}
     >
-    <button onClick={() => setSelectedId(lead.id)} className="min-w-0 flex-1 text-left p-3">
+    <button onClick={() => (picking ? togglePick(lead.id) : setSelectedId(lead.id))} className="min-w-0 flex-1 text-left p-3">
       <div className="flex items-start gap-3">
+        {picking && (
+          <span
+            className={`mt-2 w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center ${
+              picked.has(lead.id) ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)]' : 'border-[var(--text-secondary)]'
+            }`}
+          >
+            {picked.has(lead.id) && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
+          </span>
+        )}
         <span
           className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-sm font-bold text-white"
           style={{ backgroundColor: scoreColor(lead.score) }}
@@ -237,6 +256,33 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
   )
 
   const replaceLead = (lead: Lead) => setLeads((list) => list.map((l) => (l.id === lead.id ? lead : l)))
+
+  // Un lead diventa cliente solo quando lo decide Luca (stato "Cliente").
+  const makeClients = async (ids: string[]) => {
+    const todo = leads.filter((l) => ids.includes(l.id) && l.status !== 'client')
+    if (!todo.length) return setNotice('Sono già tutti clienti.')
+    const names = todo.length === 1 ? todo[0].name : `${todo.length} lead`
+    if (!window.confirm(`Segnare ${names} come ${todo.length === 1 ? 'cliente' : 'clienti'}?`)) return
+    setBusy('clients')
+    setNotice(null)
+    let ok = 0
+    for (const lead of todo) {
+      const res = await authFetch(`/api/admin/leads/${lead.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'client' }) }).catch(() => null)
+      const data = res ? await res.json().catch(() => ({})) : {}
+      if (res?.ok && data.lead) {
+        replaceLead(data.lead)
+        ok++
+      }
+    }
+    setBusy(null)
+    setPicking(false)
+    setPicked(new Set())
+    setNotice(
+      ok === todo.length
+        ? `${ok === 1 ? '1 nuovo cliente' : `${ok} nuovi clienti`}: li trovi nel filtro “Clienti”.`
+        : `Segnati ${ok} su ${todo.length}: riprova per gli altri.`
+    )
+  }
 
   // Esportazione numeri: tutte le schede (non solo quelle filtrate), tranne chi ha chiesto di non essere contattato.
   const phoneRows = leads
@@ -403,7 +449,7 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
         <div className={selectedId ? 'hidden md:block' : ''}>
           <p className="text-sm text-[var(--text-secondary)] mb-4">
             Cerca attività su Google Maps: l&apos;AI legge il sito e prepara il primo contatto. Le email partono solo dopo il tuo
-            controllo.
+            controllo. Sono tutti lead: diventano clienti quando li segni tu con «Rendi cliente».
           </p>
 
           {!configured && (
@@ -465,9 +511,12 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2">
               {[
                 { id: 'all', label: 'Tutti', n: counts.all },
+                { id: 'client', label: 'Clienti', n: counts.client },
                 { id: 'call:todo', label: 'Da chiamare', n: counts.toCall },
                 { id: 'call:done', label: 'Chiamati', n: counts.called },
-                ...Object.entries(STATUS).map(([id, meta]) => ({ id, label: meta.label, n: counts[id] })),
+                ...Object.entries(STATUS)
+                  .filter(([id]) => id !== 'client')
+                  .map(([id, meta]) => ({ id, label: meta.label, n: counts[id] })),
               ].map((f) => {
                 const isCall = f.id.startsWith('call:')
                 const on =
@@ -536,6 +585,20 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
               />
               {canCalls && (
                 <button
+                  onClick={() => {
+                    setPicking((v) => !v)
+                    setPicked(new Set())
+                  }}
+                  title="Seleziona più lead per renderli clienti"
+                  className={`inline-flex items-center px-3 py-2 rounded-lg border text-sm whitespace-nowrap ${
+                    picking ? 'border-[var(--accent-blue)] text-[var(--accent-blue)]' : 'border-[var(--border-color)] text-[var(--text-primary)]'
+                  }`}
+                >
+                  {picking ? 'Annulla' : 'Seleziona'}
+                </button>
+              )}
+              {canCalls && (
+                <button
                   onClick={() => setExportOpen((v) => !v)}
                   title="Scarica i numeri (Excel o Contatti)"
                   aria-label="Scarica i numeri"
@@ -558,6 +621,20 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
               )}
             </div>
 
+            {picking && (
+              <div className="sticky top-16 z-10 mb-3 flex items-center justify-between gap-2 rounded-xl border border-[var(--accent-blue)] bg-[var(--card-background)] px-3 py-2">
+                <span className="text-sm text-[var(--text-primary)]">
+                  {picked.size ? `${picked.size} selezionat${picked.size === 1 ? 'o' : 'i'}` : 'Tocca i lead da rendere clienti'}
+                </span>
+                <button
+                  onClick={() => makeClients([...picked])}
+                  disabled={!picked.size || busy !== null}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#34C759] text-white text-sm font-medium disabled:opacity-40"
+                >
+                  <Check className="w-4 h-4" strokeWidth={3} /> {busy === 'clients' ? 'Salvo…' : 'Rendi clienti'}
+                </button>
+              </div>
+            )}
             <div className="space-y-2">
               {authorized === null && <p className="text-sm text-[var(--text-secondary)] p-4">Caricamento…</p>}
               {focus && (
@@ -675,6 +752,21 @@ export default function LeadsBoard({ open, active = true }: { open?: { id: strin
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {selected.status === 'client' ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#34C759]/10 text-sm font-medium text-[#34C759]">
+                      <Check className="w-4 h-4" strokeWidth={3} /> Cliente
+                    </span>
+                  ) : (
+                    canCalls && (
+                      <button
+                        onClick={() => makeClients([selected.id])}
+                        disabled={busy !== null}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#34C759] text-white text-sm font-medium disabled:opacity-50"
+                      >
+                        <Check className="w-4 h-4" strokeWidth={3} /> Rendi cliente
+                      </button>
+                    )
+                  )}
                   <select
                     value={selected.status}
                     onChange={(e) => save({ status: e.target.value })}

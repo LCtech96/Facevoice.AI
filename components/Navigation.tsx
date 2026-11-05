@@ -124,7 +124,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ? [
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
         { id: 'admin-assistant', label: 'Super chat', short: 'Super', icon: Sparkles, href: '/admin/assistant' },
-        { id: 'admin-pipeline', label: 'Motore clienti', short: 'Clienti', icon: Target, href: '/admin/pipeline' },
+        { id: 'admin-pipeline', label: 'Leads', icon: Target, href: '/admin/pipeline' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
       ]
     : staffPages.length
