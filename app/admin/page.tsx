@@ -169,12 +169,6 @@ export default function AdminPage() {
                   >
                     Memoria AI &rarr;
                   </a>
-                  <a
-                    href="/admin/control"
-                    className="text-sm text-[var(--accent-blue)] hover:underline"
-                  >
-                    Canali e post &rarr;
-                  </a>
                 </div>
               </div>
             </div>

@@ -52,7 +52,6 @@ type ScheduledPost = {
   created_at: string
 }
 
-type Tab = 'channels' | 'posts'
 
 // ---------------------------------------------------------------------
 // Dati statici sui canali: cosa serve davvero per ognuno, non promesse
@@ -132,23 +131,17 @@ const POST_STATUS_LABEL: Record<PostStatus, string> = {
   canceled: 'Annullato',
 }
 
-export default function AdminControlPage() {
+// Overview (menu in alto): canali (Gmail, social, interruttore dell'AI) e post
+// programmati, in un'unica pagina. Prima era la pagina "Canali e AI".
+export default function AdminOverviewPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('channels')
   const supabase = createClient()
   // Dipendente senza permesso di modifica: tutto visibile ma bloccato.
   const staff = useStaffAccess()
   const readOnly = !staff.loading && !staff.can('control', 'edit')
 
-  // Ritorno dal collegamento Gmail: /admin/control?tab=channels
-  useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab')
-    // La Memoria AI ora ha la sua pagina (menu in alto).
-    if (requested === 'memory') return router.replace('/admin/memoria')
-    if (requested === 'channels' || requested === 'posts') setTab(requested)
-  }, [router])
 
   const [channels, setChannels] = useState<Channel[]>([])
   const [posts, setPosts] = useState<ScheduledPost[]>([])
@@ -227,32 +220,12 @@ export default function AdminControlPage() {
       <div className="max-w-4xl mx-auto px-4 pt-24 pb-16">
         <header className="mb-6">
           <h1 className="text-2xl font-semibold text-[var(--text-primary)]">
-            Canali e post
+            Overview
           </h1>
           <p className="text-[var(--text-secondary)] mt-1">
-            Collegamento Gmail, canali social e calendario dei contenuti. La Memoria AI è nel menu in alto.
+            Canali collegati e post programmati.
           </p>
         </header>
-
-        <div className="flex gap-2 mb-6 border-b border-[var(--border-color)]">
-          {([
-            { id: 'channels', label: 'Canali', icon: Link2 },
-            { id: 'posts', label: 'Post programmati', icon: Calendar },
-          ] as const).map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                tab === t.id
-                  ? 'border-[var(--accent-blue)] text-[var(--accent-blue)]'
-                  : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <t.icon className="w-4 h-4" />
-              {t.label}
-            </button>
-          ))}
-        </div>
 
         {readOnly && (
           <p className="mb-4 px-3 py-2 rounded-lg bg-[var(--background-secondary)] text-xs text-[var(--text-secondary)]">
@@ -260,12 +233,18 @@ export default function AdminControlPage() {
           </p>
         )}
         <fieldset disabled={readOnly} className="contents">
-        {tab === 'channels' && (
+        <section>
+          <h2 className="flex items-center gap-2 mb-3 text-lg font-semibold text-[var(--text-primary)]">
+            <Link2 className="w-4 h-4" /> Canali
+          </h2>
           <ChannelsTab channels={channels} authFetch={authFetch} onChange={setChannels} />
-        )}
-        {tab === 'posts' && (
+        </section>
+        <section className="mt-10 pt-6 border-t border-[var(--border-color)]">
+          <h2 className="flex items-center gap-2 mb-3 text-lg font-semibold text-[var(--text-primary)]">
+            <Calendar className="w-4 h-4" /> Post programmati
+          </h2>
           <PostsTab posts={posts} channels={channels} authFetch={authFetch} onChange={setPosts} />
-        )}
+        </section>
         </fieldset>
       </div>
     </main>
