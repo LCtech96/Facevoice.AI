@@ -24,7 +24,8 @@ import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo }
 import { loadBlogAutoSettings, loadBlogAutoState, requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { SITE_URL } from '@/lib/seo/site'
-import { createPostDraft, loadPostDraft, publishPostDraft, recentPostDrafts } from '@/lib/social-posts'
+import { createPostDraft, DraftConflictError, loadPostDraft, publishPostDraft, recentPostDrafts, type PostDraft } from '@/lib/social-posts'
+import { arrangeSlides, carouselOutline, editSlidesAI, isEditable } from '@/lib/carousel-edit'
 import { carouselDraftFromBlogPost } from '@/lib/blog-share'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
@@ -79,6 +80,8 @@ export type SocialAction =
       caption: string
       facebook: string
       platforms?: ('instagram' | 'facebook')[]
+      /** Si possono toccare le singole slide (modificare, spostare, togliere). */
+      editable?: boolean
     }
 
 type Turn = { role: 'user' | 'assistant'; text: string }
@@ -673,11 +676,13 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" le sostituisce, "clear" le cancella. Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
 - "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → cambia il blog automatico (days: 0 = domenica … 6 = sabato; ora italiana). Metti solo i campi da cambiare.
 - "publish_blog_now": {} → scrive e pubblica SUBITO un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram. Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Ci vogliono alcuni minuti: arriva una notifica con l'esito.
-- "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi.
+- "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "slide_count": 3, "from_draft": "opzionale", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. "slide_count": numero TOTALE di immagini chiesto da Luca, copertina e slide finale comprese ("tre slide" → 3, da 2 a 10); ometti se Luca non dice un numero. "slides" sono solo le slide di contenuto, senza copertina e senza slide finale (con slide_count 3 c'è 1 sola slide di contenuto). Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi. Con "from_draft": "draftId" rifà un carosello già creato con gli stessi testi, gancio, foto e numero di slide (es. un carosello di prima che non si può correggere slide per slide): gli altri campi solo se Luca chiede cambiamenti.
 - "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → pubblica un carosello creato prima (anche quelli del blog), solo dove non è già uscito. Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
 - "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
 - "show_post": {"draftId": "..."} → mostra a Luca l'anteprima di un carosello già creato con il pulsante Pubblica (per ripubblicarlo dove non è uscito).
-- "carousel_from_blog": {"slug": "opzionale, senza = ultimo articolo"} → rifà da zero il carosello di un articolo già pubblicato nel blog (nuove immagini, nuovo gancio, colori diversi) e lo mostra in anteprima con il pulsante Pubblica.
+- "edit_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "slides": [2], "instruction": "cosa cambiare, con le parole di Luca"} → cambia SOLO le slide indicate (numeri da 1: la 1 è la copertina, l'ultima è la slide finale) di un carosello non ancora pubblicato: testi, oppure un'immagine nuova o nessuna immagine se Luca lo chiede. Le altre slide restano identiche. Poi mostra l'anteprima aggiornata. Usalo quando Luca chiede di correggere una slide (es. "nella seconda slide scrivi …").
+- "arrange_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "order": [1, 3, 2, 4]} → nuovo ordine delle slide con i numeri attuali; quelle non elencate vengono TOLTE. La copertina resta la prima; la slide finale resta l'ultima (si può solo togliere); servono almeno 2 slide. Usalo quando Luca chiede di spostare o togliere slide. Poi mostra l'anteprima aggiornata.
+- "carousel_from_blog": {"slug": "opzionale, senza = ultimo articolo", "slide_count": 3} → rifà da zero il carosello di un articolo già pubblicato nel blog (nuove immagini, nuovo gancio, colori diversi) e lo mostra in anteprima con il pulsante Pubblica. "slide_count" come in create_carousel (immagini in tutto, copertina e slide finale comprese); ometti se Luca non dice un numero.
 Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
@@ -701,6 +706,51 @@ const asIds = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is
 const asText = (value: unknown) => (typeof value === 'string' ? value : undefined)
 const asNumber = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
+const COUNT_WORDS: Record<string, number> = { due: 2, tre: 3, quattro: 4, cinque: 5, sei: 6, sette: 7, otto: 8, nove: 9, dieci: 10 }
+
+/**
+ * Numero di slide scritto da Luca nella sua richiesta ("tre slide", "5 slide"): sono
+ * le immagini in tutto, copertina e slide finale comprese. "immagini" non conta:
+ * "le 3 immagini" sono le foto che manda, non le slide.
+ */
+function slideCountFrom(message: string): number | undefined {
+  // Solo le parole di Luca: non la trascrizione delle immagini allegate.
+  const own = message.split(/\n\[(?:Contenuto delle immagini|Immagini allegate|Immagini mandate)/)[0]
+  const found = own.match(/(?:^|[^\p{L}\d])(\d{1,2}|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s+slides?(?![\p{L}\d])/iu)?.[1]?.toLowerCase()
+  if (!found) return undefined
+  return COUNT_WORDS[found] ?? Number(found)
+}
+
+/** Numero dato dall'agente (anche come testo "3"). */
+const asCount = (value: unknown) => {
+  const n = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+}
+
+/** Caroselli: cambiarli e pubblicarli spetta solo all'amministratore (come la scheda). */
+const ONLY_ADMIN = 'chi scrive non è l’amministratore: solo l’amministratore può cambiare o pubblicare i caroselli (dall’anteprima)'
+
+/** Anteprima del carosello sotto la risposta (con il pulsante Pubblica). */
+function postPreview(draft: PostDraft): Extract<SocialAction, { kind: 'post_preview' }> {
+  const missing = (['instagram', 'facebook'] as const).filter((p) => !draft.results?.[p])
+  return {
+    kind: 'post_preview',
+    draftId: draft.id,
+    title: draft.title,
+    urls: draft.urls,
+    caption: draft.caption,
+    facebook: draft.facebook,
+    ...(draft.results && missing.length ? { platforms: [...missing] } : {}),
+    editable: isEditable(draft),
+  }
+}
+
+/** Carosello indicato dall'agente o, senza draftId, l'ultimo creato o cambiato. */
+async function targetDraft(id: string | undefined): Promise<PostDraft | null> {
+  if (id?.trim()) return loadPostDraft(id.trim())
+  return (await recentPostDrafts(1))[0] ?? null
+}
+
 /** Avanzamento tra un giro e l'altro: passi gia' fatti e avviso a ogni passo concluso. */
 export type Progress = { done?: string[]; onStep?: (line: string) => void }
 
@@ -716,7 +766,9 @@ export async function runAssistant(
   history: Turn[],
   openDrafts: Draft[],
   budget?: Budget | null,
-  progress?: Progress
+  progress?: Progress,
+  /** admin: la richiesta e' dell'amministratore (solo lui cambia e pubblica i caroselli). */
+  who: { admin?: boolean } = {}
 ): Promise<AssistantResult> {
   if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
@@ -1212,33 +1264,53 @@ export async function runAssistant(
           break
         }
         case 'create_carousel': {
-          const brief = asText(args.brief)?.trim() || message
+          // Rifatto da un carosello gia' creato (es. uno di prima, per poterlo correggere slide per slide).
+          const fromId = asText(args.from_draft)?.trim()
+          const from = fromId ? await loadPostDraft(fromId) : null
+          if (fromId && !from) {
+            result = { errore: 'carosello da rifare non trovato: usa recent_posts' }
+            break
+          }
+          const fromSlides = from?.slides ?? []
+          const brief = asText(args.brief)?.trim() || (from ? [from.title, ...fromSlides.map((x) => `${x.title}: ${x.text}`)].join('\n') : message)
           const given = Array.isArray(args.images) ? args.images.filter((u): u is string => typeof u === 'string' && u.startsWith('https://')) : []
-          const images = given.length ? given : attachedImages
+          const images = given.length ? given : from ? (from.photos ?? []) : attachedImages
           reportStatus(images.length ? `Creo il carosello con ${images.length === 1 ? 'la tua immagine' : `le tue ${images.length} immagini`}…` : 'Creo il carosello…')
+          // "tre slide" = 3 immagini in tutto (copertina e slide finale comprese).
+          const total = asCount(args.slide_count) ?? slideCountFrom(message) ?? from?.urls.length
+          const givenSlides = Array.isArray(args.slides)
+            ? (args.slides as { title?: unknown; text?: unknown }[]).map((x) => ({ title: String(x.title || ''), text: String(x.text || '') })).filter((x) => x.title)
+            : []
           const draft = await createPostDraft({
             brief,
+            total,
             photos: images,
-            imageNotes: asText(args.image_notes) || attachedNotes,
+            imageNotes: asText(args.image_notes) || (from ? undefined : attachedNotes),
             onlyMyImages: args.only_my_images === true,
-            hook: asText(args.hook),
-            slides: Array.isArray(args.slides)
-              ? (args.slides as { title?: unknown; text?: unknown }[]).map((x) => ({ title: String(x.title || ''), text: String(x.text || '') })).filter((x) => x.title)
-              : undefined,
+            hook: asText(args.hook) || from?.hook,
+            slides: givenSlides.length ? givenSlides : fromSlides.length ? fromSlides : undefined,
+            caption: from?.caption,
+            facebook: from?.facebook,
           })
-          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook })
+          actions.push(postPreview(draft))
           result = {
             creato: true,
             draftId: draft.id,
             slide: draft.urls.length,
+            ...(total ? { slide_chieste: total } : {}),
             gancio: draft.hook,
             titoli: draft.slides.map((x) => x.title),
             didascalia: draft.caption.slice(0, 400),
-            nota: 'l’anteprima con il pulsante Pubblica compare a Luca sotto la tua risposta: non è ancora pubblicato',
+            ...(draft.unusedPhotos > 0 ? { foto_non_usate: draft.unusedPhotos, nota_foto: 'con questo numero di slide alcune foto di Luca non ci stanno: diglielo' } : {}),
+            nota: 'l’anteprima con il pulsante Pubblica compare a Luca sotto la tua risposta: non è ancora pubblicato. Luca può toccare le slide per correggerle, spostarle o toglierle',
           }
           break
         }
         case 'publish_carousel': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN }
+            break
+          }
           const id = asText(args.draftId) || ''
           if (!(await loadPostDraft(id))) {
             result = { errore: 'bozza non trovata: crea prima il carosello con create_carousel' }
@@ -1273,14 +1345,45 @@ export async function runAssistant(
             break
           }
           const missing = (['instagram', 'facebook'] as const).filter((p) => !draft.results?.[p])
-          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook, ...(missing.length ? { platforms: [...missing] } : {}) })
-          result = { mostrato: true, da_pubblicare_su: missing }
+          actions.push({ ...postPreview(draft), ...(missing.length ? { platforms: [...missing] } : {}) })
+          result = { mostrato: true, da_pubblicare_su: missing, slide_modificabili: isEditable(draft) }
+          break
+        }
+        case 'edit_carousel':
+        case 'arrange_carousel': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN }
+            break
+          }
+          const draft = await targetDraft(asText(args.draftId))
+          if (!draft) {
+            result = { errore: 'carosello non trovato: usa recent_posts' }
+            break
+          }
+          const numbers = (value: unknown) => (Array.isArray(value) ? value.map(Number).filter((n) => Number.isFinite(n)) : [])
+          reportStatus(call.tool === 'edit_carousel' ? 'Correggo le slide scelte…' : 'Sistemo le slide…')
+          try {
+            const outcome =
+              call.tool === 'edit_carousel'
+                ? await editSlidesAI(draft.id, draft.urls, numbers(args.slides), asText(args.instruction) || message)
+                : await arrangeSlides(draft.id, draft.urls, numbers(args.order))
+            if (outcome.changed) actions.push(postPreview(outcome.draft))
+            result = {
+              fatto: outcome.changed ? outcome.done : ['niente da cambiare'],
+              draftId: outcome.draft.id,
+              slide: (carouselOutline(outcome.draft) || []).map((x) => ({ n: x.n, tipo: x.kind, testo: x.hook || x.title })),
+              nota: outcome.changed ? 'anteprima aggiornata mostrata a Luca, non ancora pubblicata' : undefined,
+            }
+          } catch (error) {
+            result = { errore: error instanceof DraftConflictError ? 'il carosello è appena cambiato: riprova' : error instanceof Error ? error.message : 'modifica non riuscita' }
+          }
           break
         }
         case 'carousel_from_blog': {
           reportStatus('Rifaccio il carosello dell’articolo, con immagini nuove…')
-          const draft = await carouselDraftFromBlogPost(asText(args.slug))
-          actions.push({ kind: 'post_preview', draftId: draft.id, title: draft.title, urls: draft.urls, caption: draft.caption, facebook: draft.facebook })
+          // "con 3 slide" = 3 immagini in tutto, come create_carousel.
+          const draft = await carouselDraftFromBlogPost(asText(args.slug), asCount(args.slide_count) ?? slideCountFrom(message))
+          actions.push(postPreview(draft))
           result = { creato: true, draftId: draft.id, slide: draft.urls.length, gancio: draft.hook, nota: 'anteprima con Pubblica mostrata a Luca, non ancora pubblicato' }
           break
         }

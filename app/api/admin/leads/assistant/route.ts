@@ -3,14 +3,18 @@ import { canAccess, getStaffAccess } from '@/lib/staff-access'
 import { asModelChoice } from '@/lib/ai'
 import {
   asScope,
+  ChatError,
   continuationMessage,
   IMAGE_PREFIX,
   isRunning,
   isStale,
+  listChats,
   loadState,
   newId,
+  openChat,
   recoverStaleJob,
   runJob,
+  startNewChat,
   updateState,
   type Job,
   type Scope,
@@ -65,10 +69,11 @@ function cleanImages(input: unknown): { list: { data: string; thumb: string }[] 
 /** "continua", "vai avanti"…: riprende l'ultima richiesta senza rifare i passi gia' fatti. */
 const CONTINUE_RE = /^\s*(continua|continuare|vai avanti|prosegui|riprendi|vai)\b[\s.!]*$/i
 
-/** Stato della conversazione: ?scope=leads|super */
+/** Stato della conversazione: ?scope=leads|super. Con &chats=1 solo l'elenco delle chat salvate. */
 export async function GET(req: NextRequest) {
   const scope = asScope(req.nextUrl.searchParams.get('scope'))
   if (!(await authorized(req, scope, false))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
+  if (req.nextUrl.searchParams.get('chats') === '1') return NextResponse.json({ chats: await listChats(scope) })
   // Lavoro fermo (il server ha chiuso la funzione): riparte da solo.
   const state = await resumeOrClose(req.nextUrl.origin, scope, await loadState(scope))
   return NextResponse.json({ ...state, running: isRunning(state.job) })
@@ -139,6 +144,8 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: 'Immagini non salvate, riprova' }, { status: 500 })
   }
 
+  // Caroselli: solo l'amministratore li cambia e li pubblica (come la scheda e /api/admin/social-post).
+  const admin = Boolean((await getStaffAccess(req))?.isAdmin)
   const jobId = newId()
   const now = new Date().toISOString()
   const state = await updateState(scope, (s) => {
@@ -160,6 +167,7 @@ export async function POST(req: NextRequest) {
       budget,
       run: newId(),
       steps: resuming ? previous!.steps : undefined,
+      admin,
     }
   })
 
@@ -169,12 +177,24 @@ export async function POST(req: NextRequest) {
 
 /**
  * Modifiche dalla pagina. body: { scope, drafts?, appendTurns?, updateTurn?: { id, actions }, handled?: jobId, clearTurns? }
+ * Chat salvate: { scope, newChat: true } apre una chat vuota, { scope, openChat: id } ne riapre una;
+ * quella aperta resta salvata. Rifiutate (409) mentre l'assistente lavora.
  */
 export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const scope = asScope(body?.scope)
   if (!(await getStaffAccess(req)) || !(await authorized(req, scope, true))) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
+  }
+  if (body?.newChat === true || typeof body?.openChat === 'string') {
+    try {
+      const state = body.newChat === true ? await startNewChat(scope) : await openChat(scope, body.openChat)
+      return NextResponse.json({ ...state, running: isRunning(state.job) })
+    } catch (error) {
+      if (error instanceof ChatError) return NextResponse.json({ error: error.message }, { status: error.status })
+      console.error('chat salvate:', error)
+      return NextResponse.json({ error: 'Cambio di chat non riuscito, riprova.' }, { status: 500 })
+    }
   }
   const state = await updateState(scope, (s) => {
     if (Array.isArray(body?.drafts)) s.drafts = body.drafts.filter((d: { leadId?: unknown }) => typeof d?.leadId === 'string').slice(0, 80)

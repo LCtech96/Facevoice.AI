@@ -6,8 +6,8 @@ import { SITE_URL } from '@/lib/seo/site'
 import { createCarousel } from '@/lib/blog-image'
 import { coverHook, slidesFor } from '@/lib/blog-slides'
 import { loadContentDirections, nextPaletteMix } from '@/lib/content-directions'
-import { draftFromCarousel, recordCarousel, type PostDraft } from '@/lib/social-posts'
-import type { Slide } from '@/lib/blog-image'
+import { draftFromCarousel, MAX_IMAGES, MIN_IMAGES, recordCarousel, type PostDraft } from '@/lib/social-posts'
+import type { CarouselSource, Slide } from '@/lib/blog-image'
 
 // Dopo ogni articolo pubblicato nel blog (automatico o scritto a mano):
 // 1) carosello di almeno 3 immagini con i colori Facevoice (copertina, una slide
@@ -91,6 +91,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
   // 1) Carosello (serve a tutti e due i social; senza carosello non si pubblica sui social).
   let slides: string[] = []
   let slideTexts: Slide[] = []
+  let source: CarouselSource | null = null
   if (settings.shareFacebook || settings.shareInstagram || (settings.coverImage && !post.image_url)) {
     try {
       const directions = (await loadContentDirections()).text || null
@@ -98,6 +99,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
       const carousel = await createCarousel(post.title, texts, teaserOf(post.content, 800), post.image_url, { hook, mix, imageNotes: directions, imageSeconds: 120 })
       slideTexts = texts
       slides = carousel.urls
+      source = carousel.source
       outcome.image = carousel.photo
       outcome.slides = slides.length
       outcome.slideImages = carousel.slideImages
@@ -134,6 +136,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
       caption: instagramCaption(post.title, post.content),
       facebook: facebookText(post.title, post.content, url),
       urls: slides,
+      source,
       results: {
         instagram: outcome.instagram === 'posted' ? 'ok' : undefined,
         facebook: outcome.facebook === 'posted' ? 'ok' : undefined,
@@ -164,7 +167,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
  * Nuovo carosello (con immagini nuove) per un articolo gia' pubblicato nel blog,
  * in bozza: dalla super chat Luca lo vede e lo pubblica dove vuole.
  */
-export async function carouselDraftFromBlogPost(slug?: string | null): Promise<PostDraft> {
+export async function carouselDraftFromBlogPost(slug?: string | null, total?: number): Promise<PostDraft> {
   let query = supabaseAdmin.from('blog_posts').select('id, title, content, slug, image_url, created_at').order('created_at', { ascending: false }).limit(1)
   if (slug?.trim()) query = supabaseAdmin.from('blog_posts').select('id, title, content, slug, image_url, created_at').eq('slug', slug.trim()).limit(1)
   const { data } = await query
@@ -172,15 +175,19 @@ export async function carouselDraftFromBlogPost(slug?: string | null): Promise<P
   if (!post) throw new Error('articolo non trovato')
   const directions = (await loadContentDirections()).text || null
   const [texts, hook, mix] = await Promise.all([slidesFor(post.title, post.content, directions), coverHook(post.title, post.content, directions), nextPaletteMix()])
+  // Numero chiesto da Luca: immagini in tutto (copertina e slide finale comprese), da 2 a 10.
+  const maxSlides = total && Number.isFinite(total) ? Math.max(MIN_IMAGES, Math.min(MAX_IMAGES, Math.round(total))) - 2 : 4
+  const used = texts.slice(0, maxSlides)
   // La copertina del blog e' gia' la prima slide del carosello vecchio: qui si rifa' tutto.
-  const carousel = await createCarousel(post.title, texts, teaserOf(post.content, 800), null, { hook, mix, imageNotes: directions, imageSeconds: 100 })
+  const carousel = await createCarousel(post.title, used, teaserOf(post.content, 800), null, { hook, mix, imageNotes: directions, imageSeconds: 100, maxSlides })
   const url = `${SITE_URL}/blog/${post.slug || post.id}`
   return draftFromCarousel({
     title: post.title,
     hook: hook || post.title,
-    slides: texts,
+    slides: used,
     caption: instagramCaption(post.title, post.content),
     facebook: facebookText(post.title, post.content, url),
     urls: carousel.urls,
+    source: carousel.source,
   })
 }

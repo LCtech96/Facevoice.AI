@@ -38,6 +38,13 @@ export type SocialAction =
       facebook: string
       platforms?: ('instagram' | 'facebook')[]
       published?: string[]
+      /** Si possono toccare le singole slide (modificare, spostare, togliere). */
+      editable?: boolean
+      /**
+       * Didascalia, testo Facebook e social di questa scheda sono suoi (cambiati da Luca
+       * o ripresi dalla scheda di prima): una scheda nuova dello stesso carosello li riprende.
+       */
+      edited?: boolean
     } & ActionState)
 
 export type Usage = { calls: number; input: number; output: number; cost: number; models: Record<string, number> }
@@ -58,7 +65,12 @@ export type Job = {
   budget?: { tokens?: number; usd?: number } | null
 }
 
-type ServerState = { turns: Turn[]; drafts: Draft[]; job: Job | null; running: boolean }
+/** Chat salvata (current: quella aperta adesso). */
+export type ChatInfo = { id: string; title: string; updatedAt: string; count: number; current?: boolean }
+
+type ServerState = { turns: Turn[]; drafts: Draft[]; job: Job | null; running: boolean; chatId?: string | null }
+
+export type PutResult = { ok: boolean; error?: string }
 
 export async function authFetch(url: string, init: RequestInit = {}) {
   const token = await getAccessToken()
@@ -73,30 +85,46 @@ const FAST_POLL_MS = 1500
 const SLOW_POLL_MS = 15000
 
 export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job) => void | Promise<void>) {
-  const [turns, setTurns] = useState<Turn[]>([])
+  const [turns, setTurnsState] = useState<Turn[]>([])
   const [drafts, setDraftsState] = useState<Draft[]>([])
   const [job, setJob] = useState<Job | null>(null)
   const [running, setRunning] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [chatId, setChatId] = useState<string | null>(null)
   const draftsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const draftsDirty = useRef(false)
   const doneRef = useRef(onJobDone)
   doneRef.current = onJobDone
+  // Ultima lista nota (anche prima del render): piu' modifiche di fila a una scheda non si perdono.
+  const turnsRef = useRef<Turn[]>([])
+  // Ogni scrittura alza il contatore: una lettura partita prima non sovrascrive cio' che e' stato appena salvato.
+  const gen = useRef(0)
 
-  const apply = useCallback((data: ServerState) => {
-    setTurns(data.turns || [])
-    // Bozze in modifica sulla pagina: non sovrascriverle mentre si scrive.
-    if (!draftsDirty.current) setDraftsState(data.drafts || [])
-    setJob(data.job || null)
-    setRunning(Boolean(data.running))
-    setLoaded(true)
+  const setTurns = useCallback((next: Turn[]) => {
+    turnsRef.current = next
+    setTurnsState(next)
   }, [])
 
+  const apply = useCallback(
+    (data: ServerState) => {
+      setTurns(data.turns || [])
+      // Bozze in modifica sulla pagina: non sovrascriverle mentre si scrive.
+      if (!draftsDirty.current) setDraftsState(data.drafts || [])
+      setJob(data.job || null)
+      setRunning(Boolean(data.running))
+      setChatId(data.chatId ?? null)
+      setLoaded(true)
+    },
+    [setTurns]
+  )
+
   const refresh = useCallback(async () => {
+    const started = gen.current
     const res = await authFetch(`${API}?scope=${scope}`).catch(() => null)
     if (!res?.ok) return
-    apply(await res.json())
+    const data = await res.json().catch(() => null)
+    if (data && gen.current === started) apply(data)
   }, [scope, apply])
 
   useEffect(() => {
@@ -129,11 +157,24 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
   }, [job, running, scope])
 
   const put = useCallback(
-    async (body: Record<string, unknown>) => {
+    async (body: Record<string, unknown>): Promise<PutResult> => {
+      const mine = ++gen.current
+      // Cambio di chat: la risposta e' la chat aperta adesso sul server, si mostra sempre.
+      const switching = body.newChat === true || typeof body.openChat === 'string'
       const res = await authFetch(API, { method: 'PUT', body: JSON.stringify({ scope, ...body }) }).catch(() => null)
-      if (res?.ok) apply(await res.json())
+      const data = res ? await res.json().catch(() => ({})) : {}
+      if (res?.ok) {
+        if (gen.current === mine || switching) apply(data)
+        if (switching) {
+          // Una scrittura partita prima che risponde dopo non rimette la chat di prima.
+          gen.current++
+          void refresh()
+        }
+        return { ok: true }
+      }
+      return { ok: false, error: data.error || (res ? 'Operazione non riuscita, riprova.' : 'Connessione interrotta, riprova.') }
     },
-    [scope, apply]
+    [scope, apply, refresh]
   )
 
   const ask = useCallback(
@@ -141,8 +182,9 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
       const text = message.trim()
       if ((!text && !images?.length) || running) return false
       setError(null)
+      const mine = ++gen.current
       // Mostra subito il messaggio, poi lo stato vero arriva dal server.
-      setTurns((t) => [...t, { id: `local-${Date.now()}`, role: 'user', text, images: images?.map((i) => i.thumb) }])
+      setTurns([...turnsRef.current, { id: `local-${Date.now()}`, role: 'user', text, images: images?.map((i) => i.thumb) }])
       setRunning(true)
       const res = await authFetch(API, {
         method: 'POST',
@@ -154,10 +196,11 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
         await refresh()
         return false
       }
-      apply(data)
+      if (gen.current === mine) apply(data)
+      else setRunning(true)
       return true
     },
-    [scope, running, apply, refresh]
+    [scope, running, apply, refresh, setTurns]
   )
 
   const setDrafts = useCallback(
@@ -167,6 +210,7 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
         draftsDirty.current = true
         if (draftsTimer.current) clearTimeout(draftsTimer.current)
         draftsTimer.current = setTimeout(async () => {
+          gen.current++
           await authFetch(API, { method: 'PUT', body: JSON.stringify({ scope, drafts: next }) }).catch(() => null)
           draftsDirty.current = false
         }, 700)
@@ -179,12 +223,56 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
   const appendTurn = useCallback((role: Turn['role'], text: string) => put({ appendTurns: [{ role, text }] }), [put])
   const updateActions = useCallback(
     (turnId: string, actions: SocialAction[]) => {
-      setTurns((list) => list.map((t) => (t.id === turnId ? { ...t, actions } : t)))
+      setTurns(turnsRef.current.map((t) => (t.id === turnId ? { ...t, actions } : t)))
       return put({ updateTurn: { id: turnId, actions } })
     },
-    [put]
+    [put, setTurns]
+  )
+  /**
+   * Cambia solo alcuni campi di un'azione (parte dall'ultima versione, anche con piu' modifiche di fila).
+   * patch puo' essere una funzione: riceve l'azione com'e' adesso (non com'era all'ultimo disegno).
+   */
+  const patchAction = useCallback(
+    (turnId: string, index: number, patch: Partial<SocialAction> | ((current: SocialAction) => Partial<SocialAction>)) => {
+      const turn = turnsRef.current.find((t) => t.id === turnId)
+      if (!turn?.actions?.[index]) return Promise.resolve<PutResult>({ ok: false })
+      return updateActions(
+        turnId,
+        turn.actions.map((a, i) => (i === index ? ({ ...a, ...(typeof patch === 'function' ? patch(a) : patch) } as SocialAction) : a))
+      )
+    },
+    [updateActions]
   )
   const clearTurns = useCallback(() => put({ clearTurns: true }), [put])
+  /** Nuova chat vuota: quella di adesso resta tra le chat salvate. */
+  const newChat = useCallback(() => put({ newChat: true }), [put])
+  /** Riapre una chat salvata. */
+  const openChat = useCallback((id: string) => put({ openChat: id }), [put])
+  /** Elenco delle chat salvate (la prima e' quella aperta); null se non si legge. */
+  const listChats = useCallback(async (): Promise<ChatInfo[] | null> => {
+    const res = await authFetch(`${API}?scope=${scope}&chats=1`).catch(() => null)
+    if (!res?.ok) return null
+    const data = await res.json().catch(() => null)
+    return Array.isArray(data?.chats) ? data.chats : null
+  }, [scope])
 
-  return { turns, drafts, job, running, loaded, error, ask, setDrafts, appendTurn, updateActions, clearTurns, refresh }
+  return {
+    turns,
+    drafts,
+    job,
+    running,
+    loaded,
+    error,
+    chatId,
+    ask,
+    setDrafts,
+    appendTurn,
+    updateActions,
+    patchAction,
+    clearTurns,
+    newChat,
+    openChat,
+    listChats,
+    refresh,
+  }
 }

@@ -1,30 +1,30 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import UsageStrip from './UsageStrip'
-import { ArrowUp, Check, Facebook, ImagePlus, Instagram, Loader2, Mail, Mic, Plus, Send, Sparkles, Square, X } from 'lucide-react'
+import { ArrowUp, Coins, ImagePlus, Loader2, Mic, Plus, Sparkles, X } from 'lucide-react'
 import { prepareImage, type PreparedImage } from '@/lib/client-image'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import { useDictation } from '@/components/useDictation'
-import { AI_MODEL_CHOICES, modelLabel } from '@/lib/ai-models'
+import { AI_MODEL_CHOICES } from '@/lib/ai-models'
+import UsageButton from './UsageButton'
+import ChatMenu from './ChatMenu'
+import DraftsPanel from './DraftsPanel'
+import MessageCard from './MessageCard'
+import { PostCard, SnapshotCard } from './PostCard'
+import { flushSyncedTexts } from './useSyncedText'
+import { fmtCost, fmtTokens, usageLine } from './format'
+
+// Super chat dell'admin, con la stessa pagina dell'Assistente della beta: titolo con
+// il consumo AI, "Nuova chat" (le chat di prima restano salvate e si riaprono), messaggi,
+// schede dei caroselli da correggere slide per slide e campo di scrittura in fondo.
+// Dietro c'e' l'assistente della Ricerca clienti con tutti i suoi strumenti (clienti,
+// email, siti, Instagram, messaggi social, caroselli). Il lavoro gira sul server: si puo'
+// chiudere o cambiare pagina e ritrovare tutto com'era.
+// Niente parte da solo: email, messaggi e post si inviano con un tocco.
 
 const MODEL_KEY = 'fv_superchat_model'
-const fmtTokens = (n: number) => n.toLocaleString('it-IT')
-const fmtCost = (cost: number) => (cost <= 0 ? 'gratis' : `$${cost.toFixed(cost < 0.01 ? 4 : 3)}`)
-const usedModels = (u: Usage) => Object.keys(u.models).map(modelLabel).filter((v, i, a) => a.indexOf(v) === i).join(' + ')
-
-/** Riga "Gemini Flash · 4.210 token · gratis" sotto le risposte e durante il lavoro. */
-function usageLine(u?: Usage) {
-  if (!u || !u.calls) return null
-  return `${usedModels(u)} · ${fmtTokens(u.input + u.output)} token · ${fmtCost(u.cost)}`
-}
-
-// Super chat dell'admin: una sola conversazione a tutto schermo, come una chat
-// con Claude. Dietro c'e' l'assistente della Ricerca clienti con tutti i suoi
-// strumenti (clienti, email, siti, Instagram, messaggi social). Il lavoro gira
-// sul server: si puo' chiudere o cambiare pagina e ritrovare tutto com'era.
-// Niente parte da solo: email e messaggi social si inviano con un tocco su "Invia".
+const MAX_IMAGES = 4
 
 const EXAMPLES = [
   'Quali aziende della lista hanno Instagram e quanti follower hanno?',
@@ -32,18 +32,38 @@ const EXAMPLES = [
   'Chi mi ha scritto su Instagram negli ultimi giorni?',
   'Prepara le controrisposte a chi ha risposto alle email',
   'Trovami 20 ristoranti a Palermo e preparagli la prima email',
+  'Crea un carosello di 3 slide con questa foto e una call to action finale',
 ]
+
+type PostPreview = Extract<SocialAction, { kind: 'post_preview' }>
+type Platform = NonNullable<PostPreview['platforms']>[number]
+
+/** Social scelti da Luca su una scheda di prima, solo tra quelli dove il carosello manca ancora. */
+function keepPlatforms(mine?: Platform[], missing?: Platform[]) {
+  if (!mine?.length) return missing
+  if (!missing?.length) return mine
+  const both = mine.filter((p) => missing.includes(p))
+  return both.length ? both : missing
+}
 
 export default function SuperChat() {
   // Solo lettura per chi non ha il permesso di scrivere alla super chat.
   const staff = useStaffAccess()
   const canUse = staff.can('assistant', 'use')
-  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const canWrite = staff.loading || canUse
+  // Caroselli: modifiche e pubblicazione solo per l'amministratore (come il server).
+  const isAdmin = staff.isAdmin
+  const viewOnly = !staff.loading && !isAdmin
+
+  const [choice, setChoice] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
   // Immagini allegate al prossimo messaggio (scelte o incollate).
   const [images, setImages] = useState<PreparedImage[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
+  const [chatError, setChatError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const [model, setModel] = useState<string>('auto')
 
   // Il modello scelto resta per le prossime volte.
@@ -61,10 +81,6 @@ export default function SuperChat() {
   }
   const [, setTick] = useState(0)
   const [sending, setSending] = useState<string | null>(null)
-  const [draftsOpen, setDraftsOpen] = useState(false)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
   // Comando vocale: quello che detti si aggiunge al messaggio, poi lo invii.
   const dictation = useDictation((text) => setInput((current) => (current.trim() ? `${current.trim()} ${text}` : text)))
   const sendAllRef = useRef<() => Promise<void>>(async () => {})
@@ -72,19 +88,39 @@ export default function SuperChat() {
   const onJobDone = useCallback((job: Job) => {
     if (job.result?.confirmSend) sendAllRef.current()
   }, [])
-  const { turns, drafts, job, running: busy, loaded, error, ask: askServer, setDrafts, appendTurn, updateActions, clearTurns } =
-    useAssistantChat('super', onJobDone)
+  const {
+    turns,
+    drafts,
+    job,
+    running: busy,
+    loaded,
+    error,
+    chatId,
+    ask: askServer,
+    setDrafts,
+    appendTurn,
+    patchAction,
+    newChat: startNewChat,
+    openChat,
+    listChats,
+  } = useAssistantChat('super', onJobDone)
 
   const draftsRef = useRef(drafts)
   draftsRef.current = drafts
-  const selectedRef = useRef<Record<string, boolean>>({})
-  selectedRef.current = selected
+  const choiceRef = useRef<Record<string, boolean>>({})
+  choiceRef.current = choice
   const startedAt = busy && job ? new Date(job.startedAt).getTime() : null
   const status = busy ? job?.statusText : null
 
+  // In fondo quando arriva un messaggio, quando inizia o finisce un lavoro e quando si cambia chat.
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [turns.length, busy, status])
+  }, [turns.length, busy, chatId])
+  // Avanzamento del lavoro: si segue solo chi e' gia' in fondo (chi guarda piu' su resta li').
+  useEffect(() => {
+    const el = listRef.current
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [status])
 
   useEffect(() => {
     if (!busy) return
@@ -97,11 +133,11 @@ export default function SuperChat() {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+    if (input) el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [input])
 
   const sendAll = useCallback(async () => {
-    const queue = draftsRef.current.filter((d) => selectedRef.current[d.leadId] !== false)
+    const queue = draftsRef.current.filter((d) => choiceRef.current[d.leadId] !== false)
     if (!queue.length) return
     if (!window.confirm(`Inviare ${queue.length} email? Partono una alla volta da luca@facevoice.ai.`)) return
     let ok = 0
@@ -130,14 +166,6 @@ export default function SuperChat() {
   }, [setDrafts, appendTurn])
   sendAllRef.current = sendAll
 
-  // Le nuove bozze compaiono aperte.
-  const draftCount = useRef(0)
-  useEffect(() => {
-    if (drafts.length > draftCount.current) setDraftsOpen(true)
-    draftCount.current = drafts.length
-  }, [drafts.length])
-
-  const MAX_IMAGES = 4
   const addImages = async (files: Blob[]) => {
     const list = files.filter((f) => f.type.startsWith('image/'))
     if (!list.length) return
@@ -159,6 +187,7 @@ export default function SuperChat() {
   const ask = async (message: string) => {
     if ((!message.trim() && !images.length) || busy) return
     if (dictation.listening) dictation.stop()
+    setChatError(null)
     const attached = images
     setInput('')
     setImages([])
@@ -167,48 +196,93 @@ export default function SuperChat() {
     if (!ok && attached.length) setImages(attached)
   }
 
-  const updateAction = (turnId: string, index: number, patch: Record<string, unknown>) => {
-    const turn = turns.find((t) => t.id === turnId)
-    if (!turn?.actions) return
-    updateActions(turnId, turn.actions.map((a, i) => (i === index ? ({ ...a, ...patch } as SocialAction) : a)))
+  // Esempio: riempie il campo (come nella beta), poi lo si controlla e si invia.
+  const pickExample = (text: string) => {
+    setInput(text)
+    requestAnimationFrame(() => inputRef.current?.focus())
   }
 
-  const publishPost = async (turnId: string, index: number, action: Extract<SocialAction, { kind: 'post_preview' }>) => {
-    const platforms = action.platforms?.length ? action.platforms : ['instagram', 'facebook']
-    updateAction(turnId, index, { state: 'sending', error: undefined })
-    const res = await authFetch('/api/admin/social-post', {
-      method: 'POST',
-      body: JSON.stringify({ draftId: action.draftId, caption: action.caption, facebook: action.facebook, platforms }),
-    }).catch(() => null)
-    const data = res ? await res.json().catch(() => ({})) : {}
-    const results = data.draft?.results || {}
-    const published = [results.instagram && 'Instagram', results.facebook && 'Facebook'].filter(Boolean) as string[]
-    if (res?.ok) updateAction(turnId, index, { state: 'sent', published })
-    else updateAction(turnId, index, { state: 'error', error: data.error || 'Pubblicazione non riuscita', published })
-  }
+  const updateAction = (turnId: string, index: number, patch: Partial<SocialAction> | ((current: SocialAction) => Partial<SocialAction>)) =>
+    patchAction(turnId, index, patch)
 
-  const sendAction = async (turnId: string, index: number, action: Extract<SocialAction, { kind: 'social_message' }>) => {
+  const sendMessage = async (turnId: string, index: number, action: Extract<SocialAction, { kind: 'social_message' }>, text: string) => {
     updateAction(turnId, index, { state: 'sending', error: undefined })
     const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(action.key)}`, {
       method: 'POST',
-      body: JSON.stringify({ text: action.text, platform: action.platform }),
+      body: JSON.stringify({ text, platform: action.platform }),
     }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (res?.ok) updateAction(turnId, index, { state: 'sent' })
     else updateAction(turnId, index, { state: 'error', error: data.error || 'Invio non riuscito' })
   }
 
-  const newChat = () => {
+  // Richiesta mandata da una scheda (es. "Rifallo modificabile"): non tocca il campo di scrittura.
+  const askFromCard = (text: string) => {
     if (busy) return
-    if (turns.length && !window.confirm('Iniziare una nuova conversazione? Le bozze non inviate restano.')) return
-    clearTurns()
+    setChatError(null)
+    void askServer(text, model)
   }
 
-  const chosen = drafts.filter((d) => selected[d.leadId] !== false).length
+  const newChat = async () => {
+    if (busy || !turns.length) return
+    if (!window.confirm('Iniziare una nuova conversazione? Questa resta salvata: la riapri dal pulsante con l’orologio. Le bozze email non inviate restano.')) return
+    setChatError(null)
+    // Prima si salvano i testi appena scritti nelle schede: dopo il cambio non ci sono piu'.
+    await flushSyncedTexts()
+    const result = await startNewChat()
+    if (!result.ok) setChatError(result.error || 'Nuova chat non riuscita, riprova.')
+  }
+
+  const switchChat = async (id: string) => {
+    setChatError(null)
+    await flushSyncedTexts()
+    return openChat(id)
+  }
+
+  // Lo stesso carosello puo' comparire piu' volte: l'ultima scheda e' quella viva,
+  // le precedenti sono versioni di prima (come nella beta). La scheda viva riprende
+  // didascalia, testo Facebook e social cambiati da Luca su quelle di prima (carry:
+  // si salvano nella scheda viva alla sua prima modifica, poi sono suoi).
+  const cards = new Map<string, { turnId: string; index: number; action: PostPreview }[]>()
+  for (const t of turns)
+    t.actions?.forEach((a, i) => {
+      if (a.kind === 'post_preview') cards.set(a.draftId, [...(cards.get(a.draftId) ?? []), { turnId: t.id, index: i, action: a }])
+    })
+  const live = new Map<string, { turnId: string; index: number; urls: string[]; carry: Partial<PostPreview> | null }>()
+  for (const [draftId, list] of cards) {
+    const last = list[list.length - 1]
+    let carry: Partial<PostPreview> | null = null
+    if (!last.action.edited && last.action.state !== 'sent') {
+      // La scheda di prima piu' vicina con i testi di Luca (non prima di una pubblicazione).
+      for (let k = list.length - 2; k >= 0; k--) {
+        const before = list[k].action
+        if (before.state === 'sent') break
+        if (!before.edited) continue
+        carry = { caption: before.caption, facebook: before.facebook, platforms: keepPlatforms(before.platforms, last.action.platforms), edited: true }
+        break
+      }
+    }
+    live.set(draftId, { turnId: last.turnId, index: last.index, urls: last.action.urls, carry })
+  }
+  // I testi ripresi si salvano una volta sola: dopo (scheda gia' edited) vale solo la modifica.
+  const patchLive = (turnId: string, index: number, carry: Partial<PostPreview> | null, patch: Partial<PostPreview>) =>
+    updateAction(turnId, index, (current) => (carry && current.kind === 'post_preview' && !current.edited ? { ...carry, ...patch } : patch))
+  // Versione ripresa da una scheda di prima: la scheda viva lo dice e si porta in vista.
+  const [restored, setRestored] = useState<{ draftId: string; at: number } | null>(null)
+  const restoreLive = (draftId: string, urls: string[], ok: boolean) => {
+    const target = live.get(draftId)
+    if (target) patchLive(target.turnId, target.index, target.carry, { urls })
+    if (!ok) return
+    setRestored({ draftId, at: Date.now() })
+    requestAnimationFrame(() =>
+      listRef.current?.querySelector(`[data-live-post="${CSS.escape(draftId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    )
+  }
 
   // Totale della conversazione: risposte gia' date + lavoro in corso.
   const totalUsage = turns.reduce<Usage>(
-    (sum, t) => (t.usage ? { calls: sum.calls + t.usage.calls, input: sum.input + t.usage.input, output: sum.output + t.usage.output, cost: sum.cost + t.usage.cost, models: sum.models } : sum),
+    (sum, t) =>
+      t.usage ? { calls: sum.calls + t.usage.calls, input: sum.input + t.usage.input, output: sum.output + t.usage.output, cost: sum.cost + t.usage.cost, models: sum.models } : sum,
     { calls: 0, input: 0, output: 0, cost: 0, models: {} }
   )
   // Lavoro in corso: solo la parte non ancora scritta nelle risposte (i giri gia' finiti sono gia' sopra).
@@ -219,429 +293,295 @@ export default function SuperChat() {
     totalUsage.output += Math.max(0, job.usage.output - done.reduce((n, t) => n + t.usage!.output, 0))
     totalUsage.cost += Math.max(0, job.usage.cost - done.reduce((n, t) => n + t.usage!.cost, 0))
   }
+  // Costo della conversazione: lo vede anche chi puo' solo leggere.
+  const chatCost =
+    totalUsage.calls > 0 ? (
+      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-[var(--text-secondary)]">
+        <Coins className="h-3 w-3" /> Chat: {fmtTokens(totalUsage.input + totalUsage.output)} token · {fmtCost(totalUsage.cost)}
+      </span>
+    ) : null
+  const budgetLine = job?.budget
+    ? ` · limite ${[job.budget.tokens ? `${fmtTokens(job.budget.tokens)} token` : '', job.budget.usd ? `$${job.budget.usd}` : ''].filter(Boolean).join(' o ')}`
+    : ''
 
   return (
-    <div className="fixed inset-x-0 top-14 md:top-16 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col bg-[var(--background)]">
-      <UsageStrip />
-      {/* Messaggi */}
-      <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="max-w-3xl mx-auto px-4 pt-6 pb-4">
-          {!loaded ? (
-            <div className="pt-[20vh] flex justify-center">
-              <Loader2 className="w-6 h-6 animate-spin text-[var(--text-secondary)]" />
+    // Tra la barra in alto e quella in basso del telefono (che ha due volte lo spazio sicuro di iPhone).
+    <div className="fixed inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px)+max(0px,env(safe-area-inset-bottom,0px)-0.5rem))] top-[calc(3.5rem+env(safe-area-inset-top,0px))] flex flex-col bg-[var(--background)] text-[var(--text-primary)] md:bottom-0 md:top-16">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto w-full max-w-5xl">
+          {/* Titolo con consumo AI, chat salvate e "Nuova chat": resta in alto mentre si scorre. */}
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--border-color)] bg-[var(--background)] px-4 py-3 md:px-8">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 translate="no" className="flex shrink-0 items-center gap-2 text-xl font-extrabold md:text-2xl">
+                <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> Super chat
+              </h1>
+              <UsageButton />
             </div>
-          ) : turns.length === 0 ? (
-            <div className="pt-[8vh] text-center">
-              <div className="mx-auto w-12 h-12 rounded-2xl bg-[var(--accent-blue)]/15 flex items-center justify-center">
-                <Sparkles className="w-6 h-6 text-[var(--accent-blue)]" />
-              </div>
-              <h1 className="mt-4 text-2xl font-semibold text-[var(--text-primary)]">Cosa facciamo oggi?</h1>
-              <p className="mt-2 text-sm text-[var(--text-secondary)] max-w-md mx-auto">
-                Clienti, email, siti, Instagram e messaggi: chiedi quello che vuoi. Email e messaggi partono solo quando premi Invia.
-              </p>
-              <div className="mt-6 grid gap-2 sm:grid-cols-2 text-left">
-                {EXAMPLES.map((example) => (
-                  <button
-                    key={example}
-                    onClick={() => ask(example)}
-                    className="px-4 py-3 rounded-2xl border border-[var(--border-color)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-blue)] transition-colors"
-                  >
-                    {example}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-5">
-              {turns.map((turn) =>
-                turn.role === 'user' ? (
-                  <div key={turn.id} className="flex flex-col items-end gap-1.5">
-                    {turn.images?.some(Boolean) && (
-                      <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
-                        {turn.images.filter(Boolean).map((src, i) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img key={i} src={src} alt="Immagine allegata" className="h-24 w-auto max-w-[160px] rounded-2xl object-cover border border-[var(--border-color)]" />
-                        ))}
-                      </div>
-                    )}
-                    {turn.text && (
-                      <p className="max-w-[85%] rounded-3xl rounded-br-lg px-4 py-2.5 bg-[var(--background-secondary)] text-[var(--text-primary)] whitespace-pre-wrap text-[15px] leading-relaxed">
-                        {turn.text}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div key={turn.id} className="flex gap-3">
-                    <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full bg-[var(--accent-blue)]/15 flex items-center justify-center">
-                      <Sparkles className="w-3.5 h-3.5 text-[var(--accent-blue)]" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--text-primary)] break-words">{turn.text}</p>
-                      {usageLine(turn.usage) && (
-                        <p className="mt-1 text-[11px] text-[var(--text-secondary)] opacity-80">{usageLine(turn.usage)}</p>
-                      )}
-                      {turn.actions?.map((action, i) =>
-                        action.kind === 'post_preview' ? (
-                          <PostPreviewCard
-                            key={i}
-                            action={action}
-                            onChange={(patch) => updateAction(turn.id, i, patch)}
-                            onPublish={() => publishPost(turn.id, i, action)}
-                          />
-                        ) : (
-                          <ActionCard
-                            key={i}
-                            action={action}
-                            onChange={(text) => updateAction(turn.id, i, { text })}
-                            onSend={() => sendAction(turn.id, i, action)}
-                          />
-                        )
-                      )}
-                    </div>
-                  </div>
-                )
-              )}
-              {busy && (
-                <div className="flex gap-3 items-center text-sm text-[var(--text-secondary)]">
-                  <div className="shrink-0 w-7 h-7 rounded-full bg-[var(--accent-blue)]/15 flex items-center justify-center">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent-blue)]" />
-                  </div>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{status || 'Ci sto lavorando…'}</span>
-                    {(usageLine(job?.usage) || job?.budget) && (
-                      <span className="block text-[11px] opacity-80 tabular-nums">
-                        {usageLine(job?.usage)}
-                        {job?.budget &&
-                          ` · limite ${[job.budget.tokens ? `${fmtTokens(job.budget.tokens)} token` : '', job.budget.usd ? `$${job.budget.usd}` : ''].filter(Boolean).join(' o ')}`}
-                      </span>
-                    )}
-                  </span>
-                  {startedAt && <span className="ml-auto tabular-nums opacity-70">{Math.floor((Date.now() - startedAt) / 1000)}s</span>}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Bozze email in attesa */}
-      {drafts.length > 0 && (
-        <div className="max-w-3xl w-full mx-auto px-4">
-          <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2">
-              <button onClick={() => setDraftsOpen((o) => !o)} className="flex items-center gap-2 min-w-0 flex-1 text-left">
-                <Mail className="w-4 h-4 shrink-0 text-[var(--accent-blue)]" />
-                <span className="text-sm font-medium text-[var(--text-primary)] truncate">
-                  {drafts.length} bozze email · {chosen} selezionate
-                </span>
-              </button>
-              <button
-                onClick={sendAll}
-                disabled={!chosen || sending !== null}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-blue)] text-white text-xs font-medium disabled:opacity-50"
-              >
-                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                {sending ? `Invio ${sending}` : `Invia ${chosen}`}
-              </button>
-            </div>
-            {draftsOpen && (
-              <div className="max-h-[38vh] overflow-y-auto border-t border-[var(--border-color)] divide-y divide-[var(--border-color)]">
-                {drafts.map((d) => {
-                  const on = selected[d.leadId] !== false
-                  return (
-                    <div key={d.leadId} className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelected((s) => ({ ...s, [d.leadId]: !on }))}
-                          className={`w-5 h-5 shrink-0 rounded-md border flex items-center justify-center ${on ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)]' : 'border-[var(--border-color)]'}`}
-                          aria-label={on ? 'Escludi' : 'Includi'}
-                        >
-                          {on && <Check className="w-3.5 h-3.5 text-white" />}
-                        </button>
-                        <button onClick={() => setExpanded(expanded === d.leadId ? null : d.leadId)} className="min-w-0 flex-1 text-left">
-                          <p className="text-sm text-[var(--text-primary)] truncate">{d.name}</p>
-                          <p className="text-xs text-[var(--text-secondary)] truncate">
-                            {d.kind === 'first' ? 'primo contatto' : 'follow-up'} · {d.subject}
-                          </p>
-                        </button>
-                        <button
-                          onClick={() => setDrafts((list) => list.filter((x) => x.leadId !== d.leadId))}
-                          className="p-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                          aria-label="Togli bozza"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      {expanded === d.leadId && (
-                        <div className="mt-2 space-y-2">
-                          <input
-                            value={d.subject}
-                            onChange={(e) => setDrafts((list) => list.map((x) => (x.leadId === d.leadId ? { ...x, subject: e.target.value } : x)))}
-                            className="w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
-                          />
-                          <textarea
-                            value={d.body}
-                            rows={8}
-                            onChange={(e) => setDrafts((list) => list.map((x) => (x.leadId === d.leadId ? { ...x, body: e.target.value } : x)))}
-                            className="w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+            {canWrite && (
+              <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+                <ChatMenu busy={busy} onList={listChats} onOpen={switchChat} />
+                <button
+                  type="button"
+                  onClick={newChat}
+                  disabled={busy || !turns.length}
+                  aria-label="Nuova chat"
+                  title="Nuova chat"
+                  className="flex items-center gap-1.5 p-1 text-sm text-[var(--text-secondary)] disabled:opacity-40 sm:p-0"
+                >
+                  <Plus className="h-5 w-5 sm:h-4 sm:w-4" /> <span className="hidden sm:inline">Nuova chat</span>
+                </button>
               </div>
             )}
           </div>
-        </div>
-      )}
 
-      {/* Campo di scrittura */}
-      <div className="max-w-3xl w-full mx-auto px-4 pt-2 pb-3">
-        <div className="mb-1.5 px-1 flex items-center justify-between gap-3 text-[11px] text-[var(--text-secondary)]">
-          <label className="relative flex items-center gap-1 min-w-0 flex-1">
-            <Sparkles className="w-3 h-3 shrink-0" />
-            <select
-              value={model}
-              onChange={(e) => chooseModel(e.target.value)}
-              disabled={busy}
-              className="appearance-none w-full min-w-0 bg-transparent pr-4 font-medium text-[var(--text-primary)] focus:outline-none disabled:opacity-60 overflow-hidden text-ellipsis whitespace-nowrap"
-              aria-label="Modello AI"
-            >
-              {AI_MODEL_CHOICES.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label} · {m.hint}
-                </option>
-              ))}
-            </select>
-            <span className="pointer-events-none absolute right-0" aria-hidden="true">▾</span>
-          </label>
-          {totalUsage.calls > 0 && (
-            <span className="shrink-0 tabular-nums">
-              Chat: {fmtTokens(totalUsage.input + totalUsage.output)} token · {fmtCost(totalUsage.cost)}
-            </span>
-          )}
+          <div className="space-y-5 px-4 py-5 md:px-8">
+            {!loaded ? (
+              <Loader2 className="h-5 w-5 animate-spin text-[var(--text-secondary)]" />
+            ) : !turns.length ? (
+              <div className="max-w-xl">
+                <p className="text-[var(--text-secondary)]">
+                  Scrivimi o dettami cosa vuoi fare: clienti, email, siti, Instagram, messaggi e caroselli. Allega le immagini con il pulsante{' '}
+                  <ImagePlus className="inline h-4 w-4" />. Email, messaggi e post partono solo quando premi Invia o Pubblica.
+                </p>
+                {canWrite && (
+                  <div className="mt-4 flex flex-col gap-2">
+                    {EXAMPLES.map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        onClick={() => pickExample(e)}
+                        className="rounded-xl border border-[var(--border-color)] px-3 py-2 text-left text-sm text-[var(--text-primary)] hover:border-[var(--accent-blue)]"
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              turns.map((turn) =>
+                turn.role === 'user' ? (
+                  <div key={turn.id} className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl bg-[var(--background-secondary)] px-4 py-2.5">
+                      {turn.images?.some(Boolean) ? (
+                        <div className="mb-2 flex flex-wrap justify-end gap-1.5">
+                          {turn.images.filter(Boolean).map((src, i) => (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={i} src={src} alt="Immagine allegata" className="h-20 w-20 rounded-lg object-cover" />
+                          ))}
+                        </div>
+                      ) : null}
+                      {turn.text && <p className="whitespace-pre-wrap break-words text-[15px]">{turn.text}</p>}
+                    </div>
+                  </div>
+                ) : (
+                  <div key={turn.id} className="flex gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-blue)]/15">
+                      <Sparkles className="h-3.5 w-3.5 text-[var(--accent-blue)]" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
+                      {usageLine(turn.usage) && (
+                        <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-secondary)]">
+                          <Coins className="h-3 w-3 shrink-0" /> {usageLine(turn.usage)}
+                        </p>
+                      )}
+                      {turn.actions?.map((action, i) => {
+                        if (action.kind === 'social_message')
+                          return (
+                            <MessageCard
+                              key={i}
+                              action={action}
+                              onChange={(text) => updateAction(turn.id, i, { text })}
+                              onSend={(text) => sendMessage(turn.id, i, action, text)}
+                            />
+                          )
+                        const current = live.get(action.draftId)
+                        const carry = current?.carry ?? null
+                        return current && (current.turnId !== turn.id || current.index !== i) ? (
+                          <SnapshotCard
+                            key={i}
+                            action={action}
+                            liveUrls={current.urls}
+                            canEdit={isAdmin}
+                            chatBusy={busy}
+                            onRestored={(urls, ok) => restoreLive(action.draftId, urls, ok)}
+                          />
+                        ) : (
+                          <PostCard
+                            key={i}
+                            action={carry ? { ...action, ...carry } : action}
+                            canEdit={isAdmin}
+                            viewOnly={viewOnly}
+                            chatBusy={busy}
+                            restoredAt={restored?.draftId === action.draftId ? restored.at : undefined}
+                            onChange={(patch) => patchLive(turn.id, i, carry, patch)}
+                            onAsk={canWrite ? askFromCard : undefined}
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              )
+            )}
+            {busy && (
+              <div className="flex items-start gap-3 text-sm text-[var(--text-secondary)]">
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[var(--accent-blue)]" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate">{status || 'Ci sto lavorando…'}</p>
+                  {(usageLine(job?.usage) || budgetLine) && (
+                    <p className="text-[11px] tabular-nums">
+                      {usageLine(job?.usage)}
+                      {budgetLine}
+                    </p>
+                  )}
+                </div>
+                {startedAt && <span className="shrink-0 text-xs tabular-nums">{Math.floor((Date.now() - startedAt) / 1000)}s</span>}
+              </div>
+            )}
+            {error && <p className="text-sm text-[#FF9500]">{error}</p>}
+            {chatError && <p className="text-sm text-[#FF9500]">{chatError}</p>}
+          </div>
         </div>
-        {error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{error}</p>}
-        {dictation.error && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{dictation.error}</p>}
-        {imageError && <p className="mb-2 px-2 text-xs text-[#FF3B30]">{imageError}</p>}
-        {images.length > 0 && (
-          <div className="mb-2 flex gap-2 overflow-x-auto px-1">
-            {images.map((img) => (
-              <div key={img.id} className="relative shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.thumb} alt="Anteprima" className="h-16 w-16 rounded-xl object-cover border border-[var(--border-color)]" />
+      </div>
+
+      {/* Bozze email e campo di scrittura */}
+      <div className="mx-auto w-full max-w-5xl shrink-0 border-t border-[var(--border-color)] bg-[var(--background)] px-4 py-3 md:px-8">
+        {drafts.length > 0 && (
+          <DraftsPanel
+            drafts={drafts}
+            choice={choice}
+            onChoice={(leadId, on) => setChoice((c) => ({ ...c, [leadId]: on }))}
+            setDrafts={setDrafts}
+            sending={sending}
+            onSend={sendAll}
+          />
+        )}
+        {!canWrite ? (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1">
+            <p className="text-sm text-[var(--text-secondary)]">Puoi vedere la conversazione, ma non scrivere alla super chat.</p>
+            {chatCost}
+          </div>
+        ) : (
+          <>
+            {images.length > 0 && (
+              <div className="mb-2 flex gap-2 overflow-x-auto pt-1.5">
+                {images.map((img) => (
+                  <div key={img.id} className="relative shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={img.thumb} alt="Anteprima" className="h-16 w-16 rounded-lg object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setImages((list) => list.filter((x) => x.id !== img.id))}
+                      aria-label="Togli immagine"
+                      className="absolute -right-1.5 -top-1.5 rounded-full bg-[var(--background)] p-0.5 text-[var(--text-primary)] shadow"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mb-1.5 flex items-center justify-between gap-3 px-1 text-[11px] text-[var(--text-secondary)]">
+              {/* Testo piccolo come nella beta; sopra c'e' il menu vero a 16px, trasparente, cosi' iPhone non ingrandisce la pagina. */}
+              <label className={`relative flex min-w-0 flex-1 items-center gap-1 ${busy ? 'opacity-60' : ''}`}>
+                <Sparkles className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate pr-4 font-medium text-[var(--text-primary)]" aria-hidden="true">
+                  {(() => {
+                    const m = AI_MODEL_CHOICES.find((c) => c.id === model) ?? AI_MODEL_CHOICES[0]
+                    return `${m.label} · ${m.hint}`
+                  })()}
+                </span>
+                <span className="pointer-events-none absolute right-1" aria-hidden="true">
+                  ▾
+                </span>
+                <select
+                  value={model}
+                  onChange={(e) => chooseModel(e.target.value)}
+                  disabled={busy}
+                  aria-label="Modello AI"
+                  className="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent text-base opacity-0 disabled:cursor-default"
+                >
+                  {AI_MODEL_CHOICES.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} · {m.hint}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {chatCost}
+            </div>
+            {dictation.error && <p className="mb-1.5 px-1 text-xs text-[#FF3B30]">{dictation.error}</p>}
+            {imageError && <p className="mb-1.5 px-1 text-xs text-[#FF3B30]">{imageError}</p>}
+            {dictation.listening && <p className="mb-1.5 px-1 text-xs text-[var(--text-secondary)]">Ti ascolto… parla, poi tocca il microfono rosso per fermare e invia.</p>}
+            <div className="flex items-end gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addImages(Array.from(e.target.files || []))
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={images.length >= MAX_IMAGES}
+                aria-label="Allega un'immagine"
+                title="Allega un'immagine (puoi anche incollarla)"
+                className="p-2 text-[var(--text-secondary)] disabled:opacity-40"
+              >
+                <ImagePlus className="h-5 w-5" />
+              </button>
+              <textarea
+                ref={inputRef}
+                value={input}
+                rows={1}
+                onChange={(e) => setInput(e.target.value)}
+                onPaste={(e) => {
+                  // Screenshot incollato (Cmd/Ctrl+V o "Incolla" sul telefono): diventa un allegato.
+                  const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
+                  if (files.length) {
+                    e.preventDefault()
+                    addImages(files)
+                  }
+                }}
+                onKeyDown={(e) => {
+                  // Invio manda solo da computer; sul telefono va a capo (si invia con la freccia).
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia('(min-width: 768px)').matches) {
+                    e.preventDefault()
+                    ask(input)
+                  }
+                }}
+                placeholder="Chiedi qualcosa…"
+                className="max-h-40 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-base text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)] md:text-[15px]"
+              />
+              {dictation.supported && (
                 <button
                   type="button"
-                  onClick={() => setImages((list) => list.filter((x) => x.id !== img.id))}
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/80 text-white flex items-center justify-center"
-                  aria-label="Togli immagine"
+                  onClick={dictation.toggle}
+                  aria-label={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
+                  title={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
+                  className={`p-2 ${dictation.listening ? 'animate-pulse text-[#FF3B30]' : 'text-[var(--text-secondary)]'}`}
                 >
-                  <X className="w-3 h-3" />
+                  <Mic className="h-5 w-5" />
                 </button>
-              </div>
-            ))}
-          </div>
-        )}
-        {dictation.listening && <p className="mb-2 px-2 text-xs text-[var(--text-secondary)]">Ti ascolto… parla, poi tocca il quadrato per fermare e invia.</p>}
-        {!staff.loading && !canUse ? (
-          <p className="px-3 py-3 rounded-2xl border border-[var(--border-color)] text-sm text-center text-[var(--text-secondary)]">
-            Puoi vedere la conversazione, ma non scrivere alla super chat.
-          </p>
-        ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            ask(input)
-          }}
-          className="flex items-end gap-2 rounded-3xl border border-[var(--border-color)] bg-[var(--card-background)] pl-2 pr-2 py-2 focus-within:border-[var(--accent-blue)] transition-colors"
-        >
-          <button
-            type="button"
-            onClick={newChat}
-            disabled={busy}
-            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)] disabled:opacity-40"
-            aria-label="Nuova conversazione"
-            title="Nuova conversazione"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={busy || images.length >= MAX_IMAGES}
-            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)] disabled:opacity-40"
-            aria-label="Allega un'immagine"
-            title="Allega un'immagine (puoi anche incollarla)"
-          >
-            <ImagePlus className="w-5 h-5" />
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              addImages(Array.from(e.target.files || []))
-              e.target.value = ''
-            }}
-          />
-          <textarea
-            ref={inputRef}
-            value={input}
-            rows={1}
-            onChange={(e) => setInput(e.target.value)}
-            onPaste={(e) => {
-              // Screenshot incollato (Cmd/Ctrl+V o "Incolla" sul telefono): diventa un allegato.
-              const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
-              if (files.length) {
-                e.preventDefault()
-                addImages(files)
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) {
-                e.preventDefault()
-                ask(input)
-              }
-            }}
-            placeholder="Chiedi qualcosa…"
-            className="flex-1 min-w-0 resize-none bg-transparent py-2 text-[16px] leading-6 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none"
-          />
-          {dictation.supported && (
-            <button
-              type="button"
-              onClick={dictation.toggle}
-              className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${
-                dictation.listening ? 'bg-[#FF3B30] text-white animate-pulse' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--background-secondary)]'
-              }`}
-              aria-label={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
-              title={dictation.listening ? 'Ferma la dettatura' : 'Detta il messaggio'}
-            >
-              {dictation.listening ? <Square className="w-4 h-4" /> : <Mic className="w-5 h-5" />}
-            </button>
-          )}
-          <button
-            type="submit"
-            disabled={busy || (!input.trim() && !images.length)}
-            className="shrink-0 w-9 h-9 rounded-full bg-[var(--accent-blue)] text-white flex items-center justify-center disabled:opacity-40"
-            aria-label="Invia"
-          >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
-          </button>
-        </form>
-        )}
-      </div>
-    </div>
-  )
-}
-
-type PostPreview = Extract<SocialAction, { kind: 'post_preview' }>
-
-/** Anteprima di un carosello creato dalla super chat: slide, testi modificabili, Pubblica. */
-function PostPreviewCard({ action, onChange, onPublish }: { action: PostPreview; onChange: (patch: Partial<PostPreview>) => void; onPublish: () => void }) {
-  const platforms = action.platforms?.length ? action.platforms : (['instagram', 'facebook'] as const)
-  const done = action.state === 'sent'
-  const toggle = (p: 'instagram' | 'facebook') => {
-    const next = platforms.includes(p) ? platforms.filter((x) => x !== p) : [...platforms, p]
-    onChange({ platforms: next as PostPreview['platforms'] })
-  }
-  return (
-    <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-3">
-      <p className="text-sm font-medium text-[var(--text-primary)]">Carosello: {action.title}</p>
-      <div className="mt-2 flex gap-2 overflow-x-auto pb-2 snap-x">
-        {action.urls.map((url, i) => (
-          <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 snap-start">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt={`Slide ${i + 1}`} className="h-56 w-[180px] rounded-lg object-cover border border-[var(--border-color)]" loading="lazy" />
-          </a>
-        ))}
-      </div>
-      <label className="mt-1 block text-xs text-[var(--text-secondary)]">Didascalia Instagram</label>
-      <textarea
-        value={action.caption}
-        onChange={(e) => onChange({ caption: e.target.value })}
-        disabled={done || action.state === 'sending'}
-        rows={5}
-        className="mt-1 w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
-      />
-      <label className="mt-2 block text-xs text-[var(--text-secondary)]">Testo Facebook</label>
-      <textarea
-        value={action.facebook}
-        onChange={(e) => onChange({ facebook: e.target.value })}
-        disabled={done || action.state === 'sending'}
-        rows={4}
-        className="mt-1 w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
-      />
-      {action.error && <p className="mt-1 text-xs text-[#FF3B30]">{action.error}</p>}
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3 text-sm text-[var(--text-primary)]">
-          {(['instagram', 'facebook'] as const).map((p) => {
-            const Icon = p === 'instagram' ? Instagram : Facebook
-            return (
-              <label key={p} className="inline-flex items-center gap-1.5">
-                <input type="checkbox" checked={platforms.includes(p)} onChange={() => toggle(p)} disabled={done || action.state === 'sending'} />
-                <Icon className="w-4 h-4" />
-              </label>
-            )
-          })}
-        </div>
-        {done ? (
-          <span className="inline-flex items-center gap-1 text-xs text-[#34C759]">
-            <Check className="w-3.5 h-3.5" /> Pubblicato{action.published?.length ? ` su ${action.published.join(' e ')}` : ''}
-          </span>
-        ) : (
-          <button
-            onClick={onPublish}
-            disabled={action.state === 'sending' || !platforms.length || !action.caption.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-blue)] text-white text-xs font-medium disabled:opacity-50"
-          >
-            {action.state === 'sending' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-            Pubblica
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ActionCard({ action, onChange, onSend }: { action: Extract<SocialAction, { kind: 'social_message' }>; onChange: (text: string) => void; onSend: () => void }) {
-  const Icon = action.platform === 'instagram' ? Instagram : Facebook
-  const old = action.lastIncomingAt ? Date.now() - new Date(action.lastIncomingAt).getTime() > 24 * 3600_000 : true
-  return (
-    <div className="mt-3 rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-3">
-      <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
-        <Icon className="w-4 h-4 shrink-0" />
-        <span className="font-medium truncate">Messaggio a {action.name}</span>
-      </div>
-      <textarea
-        value={action.text}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={action.state === 'sent' || action.state === 'sending'}
-        rows={3}
-        className="mt-2 w-full px-3 py-2 rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]"
-      />
-      {old && action.state !== 'sent' && (
-        <p className="mt-1 text-xs text-[#FF9500]">
-          Ti ha scritto più di 24 ore fa: Meta potrebbe rifiutare l’invio.
-        </p>
-      )}
-      {action.error && <p className="mt-1 text-xs text-[#FF3B30]">{action.error}</p>}
-      <div className="mt-2 flex justify-end">
-        {action.state === 'sent' ? (
-          <span className="inline-flex items-center gap-1 text-xs text-[#34C759]">
-            <Check className="w-3.5 h-3.5" /> Inviato
-          </span>
-        ) : (
-          <button
-            onClick={onSend}
-            disabled={action.state === 'sending' || !action.text.trim()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-blue)] text-white text-xs font-medium disabled:opacity-50"
-          >
-            {action.state === 'sending' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-            Invia
-          </button>
+              )}
+              <button
+                type="button"
+                onClick={() => ask(input)}
+                disabled={busy || (!input.trim() && !images.length)}
+                aria-label="Invia"
+                className="rounded-full bg-[var(--accent-blue)] p-2.5 text-white disabled:opacity-40"
+              >
+                {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowUp className="h-5 w-5" />}
+              </button>
+            </div>
+          </>
         )}
       </div>
     </div>
