@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { handleIncoming, type OutreachContext } from '@/lib/meta/agent'
+import { verificationReplyKind } from '@/lib/identity-verify'
 import {
   getMessage,
   header,
@@ -78,6 +79,22 @@ async function findOutreachLead(email: string, threadId: string): Promise<(Outre
   }
 }
 
+/** Ultimo thread (diverso da quello del codice di verifica) in cui ci ha scritto questo indirizzo. */
+async function previousThread(email: string, exclude: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('channel_account_id')
+    .eq('platform', 'email')
+    .eq('contact_id', email)
+    .eq('direction', 'in')
+    .not('channel_account_id', 'is', null)
+    .neq('channel_account_id', exclude)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data?.channel_account_id ?? null
+}
+
 async function readCursor(fallback: number) {
   const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', CURSOR_KEY).maybeSingle()
   const value = Number(data?.value)
@@ -124,7 +141,15 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
       const sender = parseAddress(header(message, 'Reply-To') || header(message, 'From'))
       const subject = header(message, 'Subject').trim()
       const text = messageText(message)
-      const lead = await findOutreachLead(sender.email, message.threadId).catch(() => null)
+      // Risposta all'email con il codice di verifica. Dalla stessa conversazione che l'ha chiesta
+      // (es. ha scritto da questo indirizzo): il codice si controlla come in chat. Da chiunque
+      // altro resta in casella per Luca, senza risposta AI e senza controllare codici (chi ha
+      // ricevuto il codice senza chiederlo potrebbe citarlo rispondendo).
+      const verificationReply = await verificationReplyKind(message.threadId, sender.email).catch(() => null)
+      const silent = verificationReply === 'other'
+      const lead = silent ? null : await findOutreachLead(sender.email, message.threadId).catch(() => null)
+      // Il thread del codice non diventa quello in cui si risponde alla conversazione.
+      const threadId = verificationReply ? (await previousThread(sender.email, message.threadId)) || message.threadId : message.threadId
 
       await handleIncoming({
         platform: 'email',
@@ -132,10 +157,11 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
         contactId: sender.email,
         contactName: sender.name || parseAddress(header(message, 'From')).name,
         externalId: `gmail:${message.id}`,
-        channelAccountId: message.threadId,
+        channelAccountId: threadId,
         text: [subject ? `Oggetto: ${subject}` : '', text].filter(Boolean).join('\n\n') || null,
         fallbackLabel: '[email senza testo]',
         outreach: lead,
+        silent,
       })
       // Un contatto della Ricerca clienti ha risposto: la scheda passa a "ha risposto".
       if (lead?.status === 'contacted' || lead?.status === 'no_answer') {

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { loadIdentityMap } from '@/lib/meta/identities'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
+import { loadVerificationSummaries, pickSummary, type VerificationSummary } from '@/lib/identity-verify'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +37,8 @@ type Conversation = {
   hasComments: boolean
   linked: boolean
   suggestion?: { key: string; name: string; platforms: string[] }
+  /** Verifica dell'identita' (dice di conoscerci): in corso, riuscita o non riuscita. */
+  verification?: VerificationSummary
 }
 
 const normalizeName = (name: string | null) =>
@@ -110,6 +113,14 @@ export async function GET(req: NextRequest) {
   }
 
   const all = Array.from(conversations.values())
+  // Solo le verifiche degli account in elenco (mai un sottoinsieme a caso di tutte quelle salvate).
+  const verifications = await loadVerificationSummaries(all.flatMap((c) => c.members.map((m) => `${m.platform}:${m.contactId}`))).catch(
+    () => new Map<string, VerificationSummary>()
+  )
+  for (const conv of all) {
+    const summary = pickSummary(conv.members.map((m) => verifications.get(`${m.platform}:${m.contactId}`)))
+    if (summary) conv.verification = summary
+  }
 
   // Suggerimento: stesso nome su un altro canale, non ancora collegati.
   for (const conv of all) {

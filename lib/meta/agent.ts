@@ -21,8 +21,22 @@ import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
 import { defineSection, sectionText } from '@/lib/ai-context'
 import { bookedSlotsText, cancelAppointmentsFor, createAppointment, parseAppointmentMarkers } from '@/lib/appointments'
+import {
+  currentVerification,
+  identityNotice,
+  identityPrompt,
+  noteVerificationDraft,
+  parseIdentityMarker,
+  processVerification,
+  startVerification,
+  type Verification,
+} from '@/lib/identity-verify'
 
 const HISTORY_LIMIT = 12
+
+/** L'AI ha segnalato "dice di conoscerci" in una conversazione gia' avviata con il team: nessuna verifica, solo questa risposta in bozza. */
+const SKIPPED_CLAIM_NOTICE =
+  'L’assistente segnala che dice di conoscerci, ma la conversazione è già avviata con il team: nessuna verifica aperta. Risposta in bozza, controllala prima di inviarla.'
 
 export type SocialPlatform = 'whatsapp' | 'facebook' | 'instagram' | 'email' | 'web'
 export type MessageKind = 'message' | 'comment'
@@ -346,6 +360,8 @@ type ReplyOptions = {
   outreach?: OutreachContext | null
   // Risposta chiesta da Luca dalla Super chat, con le sue indicazioni.
   instructions?: string
+  // Verifica dell'identita' gia' aggiornata con l'ultimo messaggio (altrimenti si legge lo stato salvato).
+  identity?: Verification | null
 }
 
 /** Scheda della Ricerca clienti di chi sta rispondendo alla nostra email di primo contatto. */
@@ -512,11 +528,20 @@ async function generateReply(
   const { publicComment, postCaption, privateFollowUp, outreach, instructions } = options
   const fromComment = Boolean(publicComment)
 
+  // Verifica dell'identita': all'AI arriva solo lo stato e cosa chiedere, mai i dati dell'archivio.
+  const identity = fromComment
+    ? null
+    : options.identity !== undefined
+      ? options.identity
+      : await currentVerification(platform, contactId).catch(() => null)
+  // Durante una verifica niente esempi presi da conversazioni di altre persone nel prompt.
+  const verifying = Boolean(identity?.hold)
+
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
   const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal] = await Promise.all([
     loadKnowledge(),
     fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
-    fromComment && !privateFollowUp ? Promise.resolve('') : loadStyleExamples(platform),
+    (fromComment && !privateFollowUp) || verifying ? Promise.resolve('') : loadStyleExamples(platform),
     outreach ? loadOutreachReplySettings().catch(() => null) : Promise.resolve(null),
     agentPrompt(platform, fromComment && !privateFollowUp),
     fromComment ? sectionText(privateFollowUp ? PRIVATE_FOLLOW_UP_RULES : PUBLIC_COMMENT_RULES) : Promise.resolve(''),
@@ -544,6 +569,8 @@ async function generateReply(
       : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     CLARITY_RULES,
+    // Regole per i commenti solo nella risposta pubblica; il privato che la segue ha le sue.
+    identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
     languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
   ].join('')
 
@@ -673,8 +700,10 @@ export async function prepareOutreachReply(
     .maybeSingle()
   if (!last) return { ok: false, reason: 'nessuna risposta ricevuta da questo indirizzo' }
 
-  const text = parseSuspicious(parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text).text
+  const marked = parseIdentityMarker(parseSuspicious(parseOutreachReply(await generateReply('email', contactEmail, last.contact_name, { outreach })).text).text)
+  const text = marked.text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
+  if (marked.claim) await startVerification('email', contactEmail, marked.claim).catch(() => null)
 
   await supabaseAdmin
     .from('social_messages')
@@ -690,7 +719,8 @@ export async function prepareOutreachReply(
     channel_account_id: last.channel_account_id,
     reply_to: null,
   }
-  await queueReply(target, last.contact_name, text, false)
+  // Verifica aperta con i dati gia' trovati: questa bozza annuncia l'email con il codice.
+  await noteVerificationDraft('email', contactEmail, await queueReply(target, last.contact_name, text, false))
   return { ok: true, text }
 }
 
@@ -779,9 +809,12 @@ export async function prepareInboxReply(
 
   const name = named?.contact_name ?? last?.contact_name ?? null
   const raw = await generateReply(platform, contactId, name, { instructions: instructions || '' })
-  const checked = parseSuspicious(parseAppointmentMarkers(raw).text)
+  const marked = parseIdentityMarker(raw)
+  const checked = parseSuspicious(parseAppointmentMarkers(marked.text).text)
   const text = checked.text
   if (!text) return { ok: false, reason: 'generazione non riuscita, riprova' }
+  // Stesso filtro dei messaggi in arrivo: in una conversazione gia' avviata con il team non si apre nessuna verifica.
+  const opened = marked.claim ? await startVerification(platform, contactId, marked.claim).catch(() => null) : null
 
   // Email da un no-reply: la bozza va a un indirizzo vero dell'azienda (o a quello indicato da Luca).
   let recipient = contactId
@@ -808,12 +841,17 @@ export async function prepareInboxReply(
     .in('contact_id', [...new Set([contactId, recipient])])
     .eq('direction', 'out')
     .eq('status', 'pending')
-  await queueReply(
+  const draftId = await queueReply(
     { platform, kind: 'message', contact_id: recipient, channel_account_id: threadId, reply_to: null },
     name,
     text,
     false
   )
+  // Verifica aperta con i dati gia' trovati: questa bozza annuncia l'email con il codice.
+  if (recipient === contactId) await noteVerificationDraft(platform, contactId, draftId)
+  const identity = await currentVerification(platform, contactId).catch(() => null)
+  if (identity?.hold) warning = [warning, identityNotice(identity)].filter(Boolean).join(' · ')
+  else if (opened?.skipped) warning = [warning, SKIPPED_CLAIM_NOTICE].filter(Boolean).join(' · ')
   if (checked.reason) warning = [warning, `messaggio poco attendibile: ${checked.reason}`].filter(Boolean).join(' · ')
   return { ok: true, text, warning, sentTo: recipient }
 }
@@ -837,6 +875,8 @@ export async function handleIncoming(input: {
   outreach?: OutreachContext | null
   /** Solo allegati: se nei 2 minuti prima c'e' gia' un altro messaggio o una risposta per questa persona, non si risponde di nuovo. */
   burstGuard?: boolean
+  /** Si salva e si avvisa, ma l'AI non risponde (es. risposta all'email con il codice di verifica). */
+  silent?: boolean
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -865,6 +905,17 @@ export async function handleIncoming(input: {
   const settings = await getChannelSettings(input.platform)
   const outreach = input.kind === 'message' ? input.outreach ?? null : null
 
+  // Chi dice di conoscerci gia' (altro canale, cliente, host, creator...): i dati li confronta
+  // il codice con gli archivi e solo il codice inviato all'email registrata lo verifica.
+  // Se lo stato non si legge, per prudenza la risposta resta in bozza. Solo dove l'AI risponde.
+  let identity: Verification | null =
+    input.kind === 'message' && !input.silent && (outreach || settings.enabled)
+      ? await processVerification({ platform: input.platform, contactId: input.contactId, text: input.text }).catch((error) => {
+          console.error(`${input.platform} verifica identità:`, error)
+          return { state: null, phase: 'none' as const, hold: true }
+        })
+      : null
+
   // Piu' post/storie mandati di fila (es. due storie con la menzione): una risposta sola.
   let quiet = false
   if (input.burstGuard) {
@@ -882,14 +933,50 @@ export async function handleIncoming(input: {
     if (quiet) console.log(`${input.platform} message: altro allegato di fila, nessuna nuova risposta`)
   }
 
-  let reply = ''
+  // Testo grezzo della risposta AI (con i marcatori), con lo stato della verifica dato.
+  const compose = async (id: Verification | null): Promise<string> => {
+    if (input.silent) return ''
+    if (outreach) return input.text ? generateReply(input.platform, input.contactId, input.contactName, { outreach, identity: id }) : ''
+    if (!settings.enabled) return ''
+    if (input.kind === 'comment') {
+      return input.text
+        ? generateReply(input.platform, input.contactId, input.contactName, { publicComment: input.text, postCaption: input.postCaption })
+        : ''
+    }
+    return quiet ? '' : input.text ? generateReply(input.platform, input.contactId, input.contactName, { identity: id }) : NON_TEXT_REPLY
+  }
+  if (input.silent) console.log(`${input.platform} ${input.kind}: risposta all'email di verifica, nessuna risposta AI`)
+  const raw = await compose(identity)
+
+  // L'AI ha riconosciuto una dichiarazione di identita' sfuggita al controllo sul testo:
+  // la verifica si apre (la riga puo' solo aprirla, mai chiuderla) con lo stesso filtro del
+  // testo. Su una conversazione verificata se ne apre una nuova (altra identita' o canale).
+  // Nei commenti si toglie e basta.
+  let marker = parseIdentityMarker(raw)
+  let identityNote: string | null = null
+  let holdOnce = false
+  if (marker.claim && input.kind === 'message' && identity && (!identity.state || identity.state.status === 'verified')) {
+    const opened = await startVerification(input.platform, input.contactId, marker.claim, { text: input.text, allowVerified: true }).catch(
+      () => ({ state: null, phase: 'none' as const, hold: true }) as Verification
+    )
+    if (opened.skipped) {
+      // Conversazione gia' avviata con il team: nessuna verifica, ma questa risposta la controlla Luca.
+      holdOnce = true
+      identityNote = SKIPPED_CLAIM_NOTICE
+    } else {
+      identity = opened
+      // Telefono o email gia' nel messaggio: la risposta deve annunciare l'email con il codice.
+      if (opened.phase === 'data_received') marker = parseIdentityMarker(await compose(opened))
+    }
+  }
+
+  let reply = marker.text
   // Controrisposta ai contatti cercati da noi: si prepara sempre; parte da sola (dopo qualche
   // minuto) solo con l'interruttore "risposte automatiche ai contatti" acceso.
   let outreachAuto = false
   let outreachStop = false
-  if (outreach) {
-    const raw = input.text ? await generateReply(input.platform, input.contactId, input.contactName, { outreach }) : ''
-    const parsed = parseOutreachReply(raw)
+  if (outreach && !input.silent) {
+    const parsed = parseOutreachReply(reply)
     reply = parsed.text
     outreachStop = parsed.stop
     if (reply && !parsed.review && !parsed.stop) {
@@ -900,17 +987,18 @@ export async function handleIncoming(input: {
       // Ha chiesto di non essere ricontattato: la scheda esce da ogni invio futuro.
       await supabaseAdmin.from('leads').update({ status: 'do_not_contact' }).eq('id', outreach.leadId)
     }
-  } else if (settings.enabled) {
-    if (input.kind === 'comment') {
-      reply = input.text
-        ? await generateReply(input.platform, input.contactId, input.contactName, {
-            publicComment: input.text,
-            postCaption: input.postCaption,
-          })
-        : ''
-    } else {
-      reply = quiet ? '' : input.text ? await generateReply(input.platform, input.contactId, input.contactName) : NON_TEXT_REPLY
-    }
+  }
+
+  // Verifica in corso o non riuscita: mai invio automatico. Lo stato si rilegge dopo la
+  // generazione: un altro messaggio arrivato insieme (webhook in parallelo) puo' averla aperta.
+  let holdForIdentity = Boolean(identity?.hold) || holdOnce
+  if (reply && input.kind === 'message' && !holdForIdentity) {
+    const latest = await currentVerification(input.platform, input.contactId).catch(() => ({ hold: true }))
+    holdForIdentity = latest.hold
+  }
+  if (holdForIdentity) {
+    outreachAuto = false
+    console.log(`${input.platform} ${input.kind}: verifica dell'identità in corso, risposta in bozza`)
   }
 
   // Messaggio giudicato poco attendibile dall'AI: la risposta resta in bozza (mai automatica).
@@ -926,6 +1014,8 @@ export async function handleIncoming(input: {
   if (reply && input.kind === 'message') {
     const parsed = parseAppointmentMarkers(reply)
     reply = parsed.text
+    // Anche durante una verifica: l'appuntamento e' legato a questo contatto, non all'identita' che dichiara,
+    // e la persona riceve comunque la conferma (altrimenti crederebbe di avere una chiamata che non c'e').
     if (!suspicious.reason) try {
       if (parsed.cancel) await cancelAppointmentsFor(input.platform, input.contactId)
       for (const a of parsed.appointments) {
@@ -966,11 +1056,14 @@ export async function handleIncoming(input: {
       .eq('direction', 'out')
       .eq('status', 'pending')
   }
+  let draftId: string | false = false
   if (reply && outreach) {
-    const draftId = await queueReply(target, input.contactName, reply, false)
-    pendingDraft = Boolean(draftId)
+    draftId = await queueReply(target, input.contactName, reply, false)
     if (draftId && outreachAuto) scheduledAt = await scheduleAutoSend(draftId)
-  } else if (reply) pendingDraft = Boolean(await queueReply(target, input.contactName, reply, settings.autoSend && !suspicious.reason))
+  } else if (reply) draftId = await queueReply(target, input.contactName, reply, settings.autoSend && !suspicious.reason && !holdForIdentity)
+  pendingDraft = Boolean(draftId)
+  // Dati corrispondenti a un archivio: il codice parte quando questa bozza viene approvata e inviata.
+  if (draftId && identity?.state?.status === 'code_ready') await noteVerificationDraft(input.platform, input.contactId, draftId)
 
   if (!reply) {
     const why = outreach ? 'testo mancante o generazione non riuscita' : !settings.enabled ? 'canale non collegato in Canali e AI' : "l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita"
@@ -986,7 +1079,7 @@ export async function handleIncoming(input: {
       postCaption: input.postCaption,
       privateFollowUp: true,
     })
-    const privateCheck = parseSuspicious(privateText)
+    const privateCheck = parseSuspicious(parseIdentityMarker(privateText).text)
     if (privateCheck.text) {
       const privateTarget: OutgoingTarget = { ...target, kind: 'message', reply_to: input.externalId }
       const auto = settings.autoSend && !suspicious.reason && !privateCheck.reason
@@ -1005,5 +1098,6 @@ export async function handleIncoming(input: {
     outreachName: outreach?.name ?? null,
     scheduledAt,
     suspicious: suspicious.reason,
+    identity: reply || identity?.phase === 'verified_now' ? identityNote || identityNotice(identity) : null,
   })
 }

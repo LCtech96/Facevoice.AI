@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
+import { releaseVerificationCode } from '@/lib/identity-verify'
 
 // Risposte automatiche alle persone che abbiamo contattato noi per primi (email
 // della Ricerca clienti e dell'automazione giornaliera). Interruttore separato da
@@ -88,6 +89,8 @@ export async function sendDueOutreachReplies(): Promise<number> {
       .eq('id', id)
     if (!result.error) {
       await setOrigin(id, 'ai_auto')
+      // Per sicurezza: se era la risposta che annuncia l'email di verifica, parte il codice.
+      await releaseVerificationCode(locked.platform, locked.contact_id, id).catch((e) => console.error('verifica identità, codice:', e))
       sent++
     } else console.error('outreach auto reply:', result.error)
   }
