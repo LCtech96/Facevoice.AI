@@ -13,22 +13,14 @@ export const STAFF_PAGES = {
     },
   },
   leads: {
-    label: 'Clienti',
-    href: '/admin/leads',
+    label: 'Motore clienti',
+    href: '/admin/pipeline',
     caps: {
       view: 'Vedere schede e ricerche fatte',
       calls: 'Segnare chiamate, stato e note, scaricare i numeri',
       search: 'Fare nuove ricerche e analisi',
       email: 'Modificare e inviare email',
       assistant: "Usare l'assistente della pagina",
-    },
-  },
-  contacts: {
-    label: 'Contatti',
-    href: '/admin/contacts',
-    caps: {
-      view: 'Vedere la rubrica contatti',
-      edit: 'Aggiungere e modificare contatti',
     },
   },
   assistant: {
@@ -40,8 +32,8 @@ export const STAFF_PAGES = {
     },
   },
   control: {
-    label: 'Canali e AI',
-    href: '/admin/control',
+    label: 'Memoria AI',
+    href: '/admin/memoria',
     caps: {
       view: 'Vedere memoria, canali e post',
       edit: 'Modificare',
