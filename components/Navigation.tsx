@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen, LayoutGrid } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -143,6 +143,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
   const dropdownMenuItems: NavItem[] = isAdmin
     ? [
+        { id: 'admin-overview', label: 'Overview', icon: LayoutGrid, href: '/admin/overview' },
         { id: 'admin-memory', label: 'Memoria AI', icon: BookOpen, href: '/admin/memoria' },
         { id: 'home', label: 'Home del sito (blog)', icon: Home, href: '/home' },
       ]

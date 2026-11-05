@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import Navigation from '@/components/Navigation'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
-import MemoryTab, { type KnowledgeItem } from '../control/MemoryTab'
-import AIContextPanel from '../control/AIContextPanel'
+import MemoryTab, { type KnowledgeItem } from './MemoryTab'
+import AIContextPanel from './AIContextPanel'
 
 // Memoria AI: cosa sa l'assistente (voci di memoria) e le regole per ogni lavoro.
 // Si apre dal menu in alto; prima era una scheda di "Canali e AI".

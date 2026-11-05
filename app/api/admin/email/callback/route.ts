@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 /** Ritorno da Google dopo il consenso: salva la casella e attiva il canale email. */
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
-  const back = (result: string) => NextResponse.redirect(`${SITE_URL}/admin/control?tab=channels&email=${result}`)
+  const back = (result: string) => NextResponse.redirect(`${SITE_URL}/admin/overview?email=${result}`)
 
   if (!verifyOAuthState(params.get('state'))) return back('invalid')
   const code = params.get('code')
