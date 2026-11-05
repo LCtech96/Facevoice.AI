@@ -13,7 +13,7 @@ export const STAFF_PAGES = {
     },
   },
   leads: {
-    label: 'Motore clienti',
+    label: 'Leads',
     href: '/admin/pipeline',
     caps: {
       view: 'Vedere schede e ricerche fatte',
