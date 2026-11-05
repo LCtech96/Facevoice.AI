@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { respondToMessage } from '@/lib/saas/responder'
-import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
+import { aiBlockedMessage } from '@/lib/usage-limits'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (!last) return NextResponse.json({ error: 'Nessun messaggio a cui rispondere' }, { status: 404 })
     // Bozza su richiesta: mai invio automatico.
     const outcome = await respondToMessage(access.db, last.id as string, { force: true })
-    if (outcome.blocked) return NextResponse.json({ error: AI_BLOCKED_MESSAGE, blocked: true }, { status: 402 })
+    if (outcome.blocked) return NextResponse.json({ error: await aiBlockedMessage(access.workspace.id), blocked: true }, { status: 402 })
     if (outcome.status === 'failed') return NextResponse.json({ error: `Bozza non pronta: ${outcome.reason}` }, { status: 502 })
     return NextResponse.json({ ok: true, outcome })
   }

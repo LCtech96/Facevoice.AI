@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, CalendarClock, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
+import { Bot, CalendarClock, CreditCard, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
 import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
-import { UsageBlockedBanner, UsageProvider, UserUsageBadge } from './UsageLights'
+import { UsageBlockedBanner, UsageProvider, UserUsageBadge, useUsage } from './UsageLights'
 
 // Cornice dell'area clienti: accesso, creazione del primo spazio di lavoro,
 // menu delle pagine e scelta dello spazio. Accanto all'icona dell'utente i tre
@@ -94,6 +94,8 @@ function Frame({ children }: { children: ReactNode }) {
   const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload } = useWorkspace()
   const pathname = usePathname()
   useSaveDashboardLanguage()
+  // "Piano" solo con i pagamenti online attivi: prima del lancio tutto resta com'era.
+  const showPlan = Boolean(useUsage().status?.billing)
 
   if (!ready) {
     return (
@@ -162,6 +164,16 @@ function Frame({ children }: { children: ReactNode }) {
         >
           <CalendarClock className="h-4 w-4" /> Contenuti programmati
         </Link>
+        {showPlan && (
+          <Link
+            href="/app/piano"
+            className={`mt-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
+              active('/app/piano') ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <CreditCard className="h-4 w-4" /> Piano
+          </Link>
+        )}
         <LanguageSwitch className="mt-auto self-start" />
         <button onClick={signOut} className="mt-3 flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
           <LogOut className="h-4 w-4" /> Esci
@@ -189,7 +201,7 @@ function Frame({ children }: { children: ReactNode }) {
         <div className="flex shrink-0 items-center gap-3">
           <UserUsageBadge />
           <LanguageSwitch />
-          <HeaderMenu onSignOut={signOut} />
+          <HeaderMenu onSignOut={signOut} showPlan={showPlan} />
         </div>
       </header>
 
@@ -208,8 +220,8 @@ function Frame({ children }: { children: ReactNode }) {
   )
 }
 
-/** Menu ☰ della barra in alto (telefono): contenuti programmati ed esci. */
-function HeaderMenu({ onSignOut }: { onSignOut: () => void }) {
+/** Menu ☰ della barra in alto (telefono): contenuti programmati, piano (con i pagamenti online attivi) ed esci. */
+function HeaderMenu({ onSignOut, showPlan }: { onSignOut: () => void; showPlan: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
@@ -238,6 +250,11 @@ function HeaderMenu({ onSignOut }: { onSignOut: () => void }) {
           <Link href="/app/programmati" className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
             <CalendarClock className="h-4 w-4 text-[var(--accent-blue)]" /> Contenuti programmati
           </Link>
+          {showPlan && (
+            <Link href="/app/piano" className="flex items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
+              <CreditCard className="h-4 w-4 text-[var(--accent-blue)]" /> Piano
+            </Link>
+          )}
           <button onClick={onSignOut} className="flex w-full items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-left text-sm text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]">
             <LogOut className="h-4 w-4" /> Esci
           </button>

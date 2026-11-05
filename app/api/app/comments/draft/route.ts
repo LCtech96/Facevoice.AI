@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { respondToComment } from '@/lib/saas/comments'
-import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
+import { aiBlockedMessage } from '@/lib/usage-limits'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   if (body.action === 'suggest') {
     const outcome = await respondToComment(access.db, String(body.commentId || ''), { force: true })
-    if (outcome.blocked) return NextResponse.json({ error: AI_BLOCKED_MESSAGE, blocked: true }, { status: 402 })
+    if (outcome.blocked) return NextResponse.json({ error: await aiBlockedMessage(access.workspace.id), blocked: true }, { status: 402 })
     if (outcome.status === 'failed') return NextResponse.json({ error: `Bozza non pronta: ${outcome.reason}` }, { status: 502 })
     if (outcome.status === 'skipped' && outcome.reason === 'nessuna risposta necessaria') {
       return NextResponse.json({ ok: true, outcome, notice: 'Per l’AI questo commento non ha bisogno di risposta (tag, spam o simili). Puoi comunque scriverne una tu.' })

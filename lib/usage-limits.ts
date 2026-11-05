@@ -4,7 +4,28 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb } from '@/lib/workspace-db'
 import { eurPerUsd, eurPerUsdNow } from '@/lib/eur'
 import { updateSetting } from '@/lib/settings-store'
-import { AI_BLOCKED_MESSAGE, type ShownLight, type UsageLevel, type UsageLight, type UsageStatus } from '@/lib/usage-shared'
+import { workspaceOwnerId } from '@/lib/workspace'
+import {
+  allBillingStates,
+  billingConfigured,
+  isLiveState,
+  readBillingStates,
+  refreshSubscription,
+  renewalOverdue,
+  subscriptionAIPlan,
+  subscriptionPeriod,
+  trialAvailableFor,
+  type BillingState,
+} from '@/lib/billing'
+import {
+  AI_BLOCKED_MESSAGE,
+  noPlanMessage,
+  type BlockReason,
+  type ShownLight,
+  type UsageLevel,
+  type UsageLight,
+  type UsageStatus,
+} from '@/lib/usage-shared'
 
 // AI inclusa nei piani dei clienti. La spesa si conta per PERSONA (il titolare
 // dello spazio di lavoro), sommando tutti gli spazi di cui e' titolare, in un
@@ -13,6 +34,12 @@ import { AI_BLOCKED_MESSAGE, type ShownLight, type UsageLevel, type UsageLight, 
 // l'AI si ferma per tutti i suoi spazi fino al periodo dopo. A ogni fase parte
 // un avviso al sito principale (pannello di Facevoice: notifica ed email).
 // Lo spazio Facevoice e chi ne e' titolare non hanno limiti e non generano avvisi.
+//
+// Con i pagamenti online attivi (STRIPE_SECRET_KEY, vedi lib/billing.ts) il piano
+// viene dall'abbonamento ('trial' durante la prova) e il periodo e' quello di
+// Stripe; senza abbonamento in corso l'AI e' ferma ("nessun piano attivo").
+// Senza la chiave tutto resta come prima: etichetta workspaces.plan e periodo
+// dalla registrazione.
 
 // --- Piani e soglie (in euro, per periodo) ----------------------------------------
 
@@ -37,7 +64,12 @@ export const PLAN_BUDGETS: Record<PlanKey, Budget> = {
 /** Piano mostrato per chi e' titolare dello spazio Facevoice (nessun limite). */
 export const FACEVOICE_PLAN = 'facevoice'
 
-export const PLAN_LABELS: Record<PlanKey | typeof FACEVOICE_PLAN, string> = {
+/** Pagamenti online attivi e nessun abbonamento in corso: l'AI e' ferma. */
+export const NO_PLAN = 'none'
+const NO_PLAN_BUDGET: Budget = { orange: 0, red: 0, limit: 0 }
+
+export const PLAN_LABELS: Record<PlanKey | typeof FACEVOICE_PLAN | typeof NO_PLAN, string> = {
+  none: 'Nessun piano',
   free: 'Gratis',
   trial: 'Prova',
   start: 'Start',
@@ -57,7 +89,7 @@ export function effectivePlan(plans: unknown[]): PlanKey {
   return plans.map(asPlan).reduce<PlanKey>((best, p) => (PLAN_ORDER.indexOf(p) > PLAN_ORDER.indexOf(best) ? p : best), 'free')
 }
 
-type PlanInfo = { plan: string; planLabel: string; budget: Budget }
+export type PlanInfo = { plan: string; planLabel: string; budget: Budget }
 
 /** Piano, etichetta e soglie di una persona (dai piani degli spazi di cui e' titolare). */
 export function planInfo(ownedPlans: unknown[], unlimited: boolean): PlanInfo {
@@ -91,6 +123,57 @@ export function periodFor(registeredAt: string | Date | null | undefined, now = 
   if (start.getTime() > now.getTime()) start = at(year, --month)
   const end = at(year, month + 1)
   return { start, end, daysLeft: Math.max(0, Math.ceil((end.getTime() - now.getTime()) / DAY_MS)) }
+}
+
+/** Periodo in corso: quello dell'abbonamento se c'e', altrimenti dal giorno della registrazione. */
+export function usagePeriod(
+  registeredAt: string | Date | null | undefined,
+  billingPeriod: { start: Date; end: Date } | null,
+  now = new Date()
+): UsagePeriod {
+  if (!billingPeriod) return periodFor(registeredAt, now)
+  // Rinnovo non ancora arrivato da Stripe: si va avanti di mese in mese dall'inizio dell'abbonamento.
+  if (now.getTime() >= billingPeriod.end.getTime()) return periodFor(billingPeriod.start, now)
+  const { start, end } = billingPeriod
+  return { start, end, daysLeft: Math.max(0, Math.ceil((end.getTime() - now.getTime()) / DAY_MS)) }
+}
+
+// --- Piano in vigore (abbonamento o etichetta dello spazio) ----------------------------
+
+export type ResolvedPlan = {
+  info: PlanInfo
+  /** Pagamenti online attivi e nessun abbonamento in corso: l'AI e' ferma. */
+  noPlan: boolean
+  /** Periodo dell'abbonamento che da' il piano (null = periodo dalla registrazione). */
+  billingPeriod: { start: Date; end: Date } | null
+  /** Abbonamento che da' il piano (o l'ultimo visto, se nessuno e' in corso). */
+  billing: BillingState | null
+}
+
+/** L'ultimo abbonamento visto tra gli spazi di una persona (anche finito). */
+function latestBilling(states: (BillingState | null | undefined)[]): BillingState | null {
+  return states.filter((s): s is BillingState => Boolean(s?.subscriptionId)).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0] ?? null
+}
+
+/**
+ * Piano di una persona dagli spazi di cui e' titolare. billing null (pagamenti
+ * online non attivi): le etichette workspaces.plan, come sempre. Altrimenti
+ * l'abbonamento in corso piu' alto ('trial' durante la prova); nessuno = AI ferma.
+ */
+export function resolvePlan(dbPlans: unknown[], unlimited: boolean, billing: (BillingState | null | undefined)[] | null): ResolvedPlan {
+  if (unlimited || !billing) return { info: planInfo(dbPlans, unlimited), noPlan: false, billingPeriod: null, billing: null }
+  let best: { plan: PlanKey; state: BillingState } | null = null
+  for (const state of billing) {
+    const plan = subscriptionAIPlan(state)
+    if (plan && state && (!best || PLAN_ORDER.indexOf(plan) > PLAN_ORDER.indexOf(best.plan))) best = { plan, state }
+  }
+  if (!best) return { info: { plan: NO_PLAN, planLabel: PLAN_LABELS.none, budget: NO_PLAN_BUDGET }, noPlan: true, billingPeriod: null, billing: latestBilling(billing) }
+  return {
+    info: { plan: best.plan, planLabel: PLAN_LABELS[best.plan], budget: PLAN_BUDGETS[best.plan] },
+    noPlan: false,
+    billingPeriod: subscriptionPeriod(best.state),
+    billing: best.state,
+  }
 }
 
 // --- Livelli e gettoni ----------------------------------------------------------
@@ -199,7 +282,6 @@ type Owner = {
   name: string
   createdAt: string
   ownedIds: string[]
-  plans: string[]
   unlimited: boolean
 }
 
@@ -221,19 +303,7 @@ const avatarOf = (user: Pick<User, 'user_metadata'>) => {
 async function ownerIdOf(workspaceId: string): Promise<string | null> {
   const cached = workspaceOwners.get(workspaceId)
   if (cached && Date.now() - cached.at < OWNER_TTL_MS) return cached.ownerId
-  const { data, error } = await supabaseAdmin
-    .from('workspace_members')
-    .select('user_id')
-    .eq('workspace_id', workspaceId)
-    .eq('role', 'owner')
-    .order('created_at', { ascending: true })
-    .limit(1)
-  if (error) throw new Error(`titolare non letto: ${error.message}`)
-  let ownerId = (data?.[0]?.user_id as string | undefined) ?? null
-  if (!ownerId) {
-    const { data: ws } = await supabaseAdmin.from('workspaces').select('created_by').eq('id', workspaceId).maybeSingle()
-    ownerId = (ws?.created_by as string | undefined) ?? null
-  }
+  const ownerId = await workspaceOwnerId(workspaceId)
   workspaceOwners.set(workspaceId, { ownerId, at: Date.now() })
   return ownerId
 }
@@ -242,7 +312,7 @@ async function ownerProfile(userId: string): Promise<Owner | null> {
   const cached = owners.get(userId)
   if (cached && Date.now() - cached.at < OWNER_TTL_MS) return cached.owner
   const [{ data: rows, error }, { data: auth }] = await Promise.all([
-    supabaseAdmin.from('workspace_members').select('workspace_id, workspaces(plan)').eq('user_id', userId).eq('role', 'owner'),
+    supabaseAdmin.from('workspace_members').select('workspace_id').eq('user_id', userId).eq('role', 'owner'),
     supabaseAdmin.auth.admin.getUserById(userId),
   ])
   if (error) throw new Error(`spazi del titolare non letti: ${error.message}`)
@@ -254,10 +324,6 @@ async function ownerProfile(userId: string): Promise<Owner | null> {
         name: displayName(user),
         createdAt: user.created_at,
         ownedIds: (rows || []).map((r) => r.workspace_id as string),
-        plans: (rows || []).map((r) => {
-          const ws = (Array.isArray(r.workspaces) ? r.workspaces[0] : r.workspaces) as { plan?: string } | null
-          return ws?.plan || 'free'
-        }),
         unlimited: (rows || []).some((r) => r.workspace_id === FACEVOICE_WORKSPACE_ID),
       }
     : null
@@ -268,6 +334,63 @@ async function ownerProfile(userId: string): Promise<Owner | null> {
 async function ownerOfWorkspace(workspaceId: string): Promise<Owner | null> {
   const ownerId = await ownerIdOf(workspaceId)
   return ownerId ? ownerProfile(ownerId) : null
+}
+
+// Il piano cambia con i pagamenti: si rilegge spesso (al massimo 30 secondi di
+// ritardo tra le istanze) e, su questa istanza, subito dopo un evento di Stripe.
+const PLAN_TTL_MS = 30_000
+const ownerPlans = new Map<string, { plan: ResolvedPlan; ownedIds: string[]; at: number }>()
+let planGeneration = 0
+
+async function readWorkspacePlans(ids: string[]): Promise<string[]> {
+  if (!ids.length) return []
+  const { data, error } = await supabaseAdmin.from('workspaces').select('id, plan').in('id', ids)
+  if (error) throw new Error(`piani non letti: ${error.message}`)
+  return (data || []).map((w) => (w.plan as string) || 'free')
+}
+
+async function ownerPlan(owner: Owner): Promise<ResolvedPlan> {
+  const cached = ownerPlans.get(owner.id)
+  if (cached && Date.now() - cached.at < PLAN_TTL_MS) return cached.plan
+  const generation = planGeneration
+  const at = Date.now()
+  const withBilling = billingConfigured() && !owner.unlimited
+  const [plans, billing] = await Promise.all([
+    withBilling ? Promise.resolve([] as string[]) : readWorkspacePlans(owner.ownedIds),
+    withBilling ? readBillingStates(owner.ownedIds) : Promise.resolve(null),
+  ])
+  if (billing) for (const [id, state] of billing) if (renewalOverdue(state)) refreshOverdueBilling(id, state)
+  const plan = resolvePlan(plans, owner.unlimited, billing ? owner.ownedIds.map((id) => billing.get(id) ?? null) : null)
+  // Un cambio arrivato durante la lettura: non si tiene in memoria un piano forse vecchio.
+  if (generation === planGeneration) ownerPlans.set(owner.id, { plan, ownedIds: owner.ownedIds, at })
+  return plan
+}
+
+// Periodo finito e rinnovo non arrivato (webhook in ritardo o fermo): si rilegge da
+// Stripe dopo la risposta, al massimo ogni 10 minuti per abbonamento su questa istanza.
+// Se non arriva niente, oltre la tolleranza (lib/billing.ts) l'abbonamento non vale piu'.
+const OVERDUE_REFRESH_MS = 10 * 60_000
+const overdueRefreshAt = new Map<string, number>()
+
+function refreshOverdueBilling(workspaceId: string, state: BillingState) {
+  const subscriptionId = state.subscriptionId
+  if (!subscriptionId) return
+  const last = overdueRefreshAt.get(subscriptionId)
+  if (last !== undefined && Date.now() - last < OVERDUE_REFRESH_MS) return
+  overdueRefreshAt.set(subscriptionId, Date.now())
+  runLater(async () => {
+    const synced = await refreshSubscription(subscriptionId, workspaceId)
+    if (synced?.applied) invalidateWorkspacePlan(synced.workspaceId)
+  }, 'abbonamento non riletto')
+}
+
+/** Abbonamento cambiato (webhook, cambio di piano): il piano del titolare si rilegge subito su questa istanza. */
+export function invalidateWorkspacePlan(workspaceId: string) {
+  planGeneration++
+  const ownerId = workspaceOwners.get(workspaceId)?.ownerId
+  for (const [id, entry] of ownerPlans) {
+    if (id === ownerId || entry.ownedIds.includes(workspaceId)) ownerPlans.delete(id)
+  }
 }
 
 // --- Spesa del periodo ------------------------------------------------------------
@@ -341,17 +464,29 @@ async function ownerUsd(owner: Owner, period: UsagePeriod, budget: Budget, rate:
   return readOwnerUsd(owner, period)
 }
 
-type OwnerState = { owner: Owner; plan: PlanInfo; budget: Budget; period: UsagePeriod; eur: number; level: UsageLevel; blocked: boolean }
+type OwnerState = {
+  owner: Owner
+  plan: PlanInfo
+  budget: Budget
+  period: UsagePeriod
+  eur: number
+  level: UsageLevel
+  blocked: boolean
+  /** Nessun abbonamento in corso (pagamenti online attivi): AI ferma, niente conti ne' avvisi. */
+  noPlan: boolean
+}
 
 async function ownerState(owner: Owner): Promise<OwnerState> {
-  const plan = planInfo(owner.plans, owner.unlimited)
+  const resolved = await ownerPlan(owner)
+  const plan = resolved.info
   const budget = plan.budget
-  const period = periodFor(owner.createdAt)
+  const period = usagePeriod(owner.createdAt, resolved.billingPeriod)
+  if (resolved.noPlan) return { owner, plan, budget, period, eur: 0, level: 'none', blocked: !owner.unlimited, noPlan: true }
   // Cambio senza aspettare: prima di una chiamata all'AI non si attende il servizio dei cambi.
   const rate = eurPerUsdNow()
   const eur = (await ownerUsd(owner, period, budget, rate)) * rate
   const level = levelFor(eur, budget)
-  return { owner, plan, budget, period, eur, level, blocked: !owner.unlimited && level === 'blocked' }
+  return { owner, plan, budget, period, eur, level, blocked: !owner.unlimited && level === 'blocked', noPlan: false }
 }
 
 /** Costo appena registrato da questa istanza: entra subito nel conto in memoria del titolare. */
@@ -368,8 +503,8 @@ function noteSpend(workspaceId: string, costUsd: number) {
 /** L'AI inclusa nel piano e' finita: nessuna chiamata parte per questo spazio. */
 export class AIBlockedError extends Error {
   readonly blocked = true
-  constructor() {
-    super(AI_BLOCKED_MESSAGE)
+  constructor(message: string = AI_BLOCKED_MESSAGE) {
+    super(message)
     this.name = 'AIBlockedError'
   }
 }
@@ -378,29 +513,47 @@ export const isAIBlockedError = (error: unknown): error is AIBlockedError =>
   error instanceof AIBlockedError || (error instanceof Error && error.name === 'AIBlockedError')
 
 /**
- * true se il titolare dello spazio ha finito l'AI del periodo. Lo spazio Facevoice
- * (e chi ne e' titolare) non si blocca mai. Se il conto non si riesce a fare
- * (database irraggiungibile) non si blocca: il lavoro del cliente non si ferma per un guasto.
+ * Perche' l'AI dello spazio e' ferma: 'limit' (il titolare ha finito l'AI del
+ * periodo), 'no_plan' (pagamenti online attivi e nessun abbonamento in corso),
+ * null se puo' lavorare. Lo spazio Facevoice (e chi ne e' titolare) non si blocca mai.
+ * Se il conto non si riesce a fare (database irraggiungibile) non si blocca: il
+ * lavoro del cliente non si ferma per un guasto.
  */
-export async function workspaceAIBlocked(workspaceId: string | null | undefined): Promise<boolean> {
-  if (!workspaceId || workspaceId === FACEVOICE_WORKSPACE_ID) return false
+async function blockReason(workspaceId: string | null | undefined): Promise<BlockReason | null> {
+  if (!workspaceId || workspaceId === FACEVOICE_WORKSPACE_ID) return null
   try {
     const owner = await ownerOfWorkspace(workspaceId)
-    if (!owner || owner.unlimited) return false
-    const blocked = (await ownerState(owner)).blocked
+    if (!owner || owner.unlimited) return null
+    const state = await ownerState(owner)
+    if (state.noPlan) return 'no_plan'
     // Avviso "bloccato" non ancora consegnato (sito principale giu'): si riprova qui,
     // perche' da bloccato non arrivano piu' consumi nuovi che lo rilancino.
-    if (blocked) scheduleAlertCheck(workspaceId)
-    return blocked
+    if (state.blocked) scheduleAlertCheck(workspaceId)
+    return state.blocked ? 'limit' : null
   } catch (error) {
     console.warn('limite AI non verificato:', error instanceof Error ? error.message : error)
-    return false
+    return null
   }
 }
 
-/** Da chiamare prima di ogni chiamata all'AI per uno spazio: lancia AIBlockedError al limite. */
+/** true se l'AI dello spazio e' ferma (limite del piano raggiunto o nessun piano attivo). */
+export async function workspaceAIBlocked(workspaceId: string | null | undefined): Promise<boolean> {
+  return (await blockReason(workspaceId)) !== null
+}
+
+const messageFor = async (reason: BlockReason, workspaceId: string) =>
+  reason === 'no_plan' ? noPlanMessage(await trialAvailableFor(workspaceId).catch(() => false)) : AI_BLOCKED_MESSAGE
+
+/** Testo da mostrare quando l'AI dello spazio e' ferma (dice se e' il limite o se manca il piano). */
+export async function aiBlockedMessage(workspaceId: string | null | undefined): Promise<string> {
+  const reason = await blockReason(workspaceId)
+  return reason && workspaceId ? messageFor(reason, workspaceId) : AI_BLOCKED_MESSAGE
+}
+
+/** Da chiamare prima di ogni chiamata all'AI per uno spazio: lancia AIBlockedError se l'AI e' ferma. */
 export async function assertAIAllowed(workspaceId: string | null | undefined): Promise<void> {
-  if (await workspaceAIBlocked(workspaceId)) throw new AIBlockedError()
+  const reason = await blockReason(workspaceId)
+  if (reason && workspaceId) throw new AIBlockedError(await messageFor(reason, workspaceId))
 }
 
 // --- Gettone e scelta a mano ---------------------------------------------------------
@@ -439,17 +592,23 @@ export async function setUsageLight(userId: string, mode: 'auto' | UsageLight): 
 
 /** Stato per l'area clienti: il gettone del titolare dello spazio, mai gli euro. */
 export async function customerUsageStatus(workspaceId: string): Promise<UsageStatus> {
+  const billing = billingConfigured()
   const owner = await ownerOfWorkspace(workspaceId)
   if (!owner) {
     const period = periodFor(null)
-    return { shown: 'none', blocked: false, daysLeft: period.daysLeft, periodEnd: period.end.toISOString() }
+    return { shown: 'none', blocked: false, daysLeft: period.daysLeft, periodEnd: period.end.toISOString(), billing }
   }
   const [state, override] = await Promise.all([ownerState(owner), readOverride(owner.id)])
+  const blocked = workspaceId !== FACEVOICE_WORKSPACE_ID && state.blocked
+  const reason: BlockReason | undefined = blocked ? (state.noPlan ? 'no_plan' : 'limit') : undefined
   return {
-    shown: shownLight(state.level, override),
-    blocked: workspaceId !== FACEVOICE_WORKSPACE_ID && state.blocked,
+    shown: state.noPlan ? 'none' : shownLight(state.level, override),
+    blocked,
     daysLeft: state.period.daysLeft,
     periodEnd: state.period.end.toISOString(),
+    billing,
+    ...(reason ? { reason } : {}),
+    ...(reason === 'no_plan' ? { trialAvailable: await trialAvailableFor(workspaceId).catch(() => false) } : {}),
   }
 }
 
@@ -518,7 +677,8 @@ async function checkAlerts(workspaceId: string): Promise<void> {
   const owner = await ownerOfWorkspace(workspaceId)
   if (!owner || owner.unlimited) return
   const state = await ownerState(owner)
-  if (state.level === 'none') return
+  // Senza piano nessun avviso di consumo: l'AI e' ferma per un altro motivo.
+  if (state.noPlan || state.level === 'none') return
   const { period, budget } = state
   const key = alertKey(owner.id, period.start.toISOString())
   // La memoria vede solo la spesa di questa istanza: se non e' un conto preso dal database
@@ -577,12 +737,12 @@ async function checkAlerts(workspaceId: string): Promise<void> {
 }
 
 /** Lavoro da fare dopo la risposta (after), senza mai far fallire la chiamata all'AI. */
-function runLater(job: () => Promise<void>) {
+function runLater(job: () => Promise<void>, label = 'avvisi consumo AI') {
   const safe = async () => {
     try {
       await job()
     } catch (error) {
-      console.warn('avvisi consumo AI:', error instanceof Error ? error.message : error)
+      console.warn(`${label}:`, error instanceof Error ? error.message : error)
     }
   }
   try {
@@ -634,6 +794,32 @@ export type BridgeUser = {
   shown: ShownLight
   blocked: boolean
   byConnection: ConnectionSpend[]
+  /**
+   * Abbonamento Stripe che da' il piano (o l'ultimo); null: titolare senza abbonamenti.
+   * Assente con i pagamenti online non attivi e per chi non e' titolare di nessuno spazio
+   * (il sito principale allora non mostra niente).
+   */
+  subscription?: BridgeSubscription | null
+}
+
+export type BridgeSubscription = {
+  status: string | null
+  plan: string | null
+  renewsAt: string | null
+  trialEndsAt: string | null
+  cancelAtPeriodEnd: boolean
+}
+
+function bridgeSubscription(state: BillingState | null): BridgeSubscription | null {
+  if (!state?.subscriptionId) return null
+  const live = isLiveState(state)
+  return {
+    status: state.status,
+    plan: state.plan,
+    renewsAt: live ? state.currentPeriodEnd : null,
+    trialEndsAt: state.status === 'trialing' ? state.trialEnd : null,
+    cancelAtPeriodEnd: live && state.cancelAtPeriodEnd,
+  }
 }
 
 async function allAuthUsers(): Promise<User[]> {
@@ -679,7 +865,14 @@ async function allOverrides(): Promise<Map<string, UsageLight>> {
 /** Tutti gli utenti registrati con piano, spesa del periodo, gettone e dettaglio per collegamento. */
 export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeUser[] }> {
   const now = new Date()
-  const [users, memberships, overrides, rate] = await Promise.all([allAuthUsers(), allMemberships(), allOverrides(), eurPerUsd()])
+  const withBilling = billingConfigured()
+  const [users, memberships, overrides, rate, billingStates] = await Promise.all([
+    allAuthUsers(),
+    allMemberships(),
+    allOverrides(),
+    eurPerUsd(),
+    withBilling ? allBillingStates() : Promise.resolve(null),
+  ])
 
   const spacesOf = new Map<string, BridgeUser['workspaces']>()
   for (const row of memberships) {
@@ -699,11 +892,13 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
       const spaces = spacesOf.get(user.id) || []
       const owned = spaces.filter((w) => w.role === 'owner')
       const unlimited = owned.some((w) => w.id === FACEVOICE_WORKSPACE_ID)
-      const { plan, planLabel, budget } = planInfo(
+      const resolved = resolvePlan(
         owned.map((w) => w.plan),
-        unlimited
+        unlimited,
+        billingStates && owned.length ? owned.map((w) => billingStates.get(w.id) ?? null) : null
       )
-      const period = periodFor(user.created_at, now)
+      const { plan, planLabel, budget } = resolved.info
+      const period = usagePeriod(user.created_at, resolved.billingPeriod, now)
       // Solo chi e' titolare ha una spesa: i membri usano l'AI dello spazio di un altro.
       // Solo le chiamate a pagamento (quelle gratuite non spostano gli euro e sono la gran parte).
       const spend = owned.length
@@ -711,7 +906,8 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
         : { usd: 0, eur: 0, byConnection: [] as ConnectionSpend[] }
       if (owned.length) spendCache.set(user.id, { periodStart: period.start.toISOString(), usd: spend.usd, at: now.getTime(), exact: true })
       const eur = round2(spend.eur)
-      const level = levelFor(eur, budget)
+      // Senza piano l'AI e' ferma qualunque sia la spesa (non e' un limite raggiunto).
+      const level = resolved.noPlan ? 'none' : levelFor(eur, budget)
       const override = overrides.get(user.id) ?? null
       result.push({
         id: user.id,
@@ -730,9 +926,12 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
         eur,
         level,
         override,
-        shown: shownLight(level, override),
-        blocked: !unlimited && level === 'blocked',
+        shown: resolved.noPlan ? 'none' : shownLight(level, override),
+        blocked: !unlimited && (resolved.noPlan || level === 'blocked'),
         byConnection: spend.byConnection,
+        ...(billingStates && owned.length && !unlimited
+          ? { subscription: bridgeSubscription(resolved.billing ?? latestBilling(owned.map((w) => billingStates.get(w.id) ?? null))) }
+          : {}),
       })
     }
   }

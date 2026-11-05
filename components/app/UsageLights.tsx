@@ -1,13 +1,15 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useWorkspace } from './WorkspaceContext'
-import { AI_BLOCKED_MESSAGE, UPGRADE_URL, USAGE_REFRESH_EVENT, usageLabel, type ShownLight, type UsageStatus } from '@/lib/usage-shared'
+import { USAGE_REFRESH_EVENT, blockedMessage, upgradeUrl, usageLabel, type ShownLight, type UsageStatus } from '@/lib/usage-shared'
 
 // Consumo dell'AI nell'area clienti: tre gettoni in fila come un semaforo
 // (verde, arancione, rosso). Si accende solo quello del momento, gli altri
 // restano grigi. Mai euro: quelli li vede solo Facevoice. Quando l'AI del piano
-// e' finita compare l'avviso con "Passa al piano superiore".
+// e' finita compare l'avviso con "Passa al piano superiore"; con i pagamenti
+// online attivi e nessun piano, l'avviso "Scegli un piano" (pagina Piano).
 
 const UsageCtx = createContext<{ status: UsageStatus | null; refresh: () => void }>({ status: null, refresh: () => {} })
 
@@ -27,7 +29,15 @@ export function UsageProvider({ children }: { children: ReactNode }) {
     const res = await appFetch('/api/app/usage').catch(() => null)
     const data = res?.ok ? await res.json().catch(() => null) : null
     if (data && typeof data.shown === 'string') {
-      setStatus({ shown: data.shown, blocked: Boolean(data.blocked), daysLeft: Number(data.daysLeft) || 0, periodEnd: String(data.periodEnd || '') })
+      setStatus({
+        shown: data.shown,
+        blocked: Boolean(data.blocked),
+        daysLeft: Number(data.daysLeft) || 0,
+        periodEnd: String(data.periodEnd || ''),
+        billing: Boolean(data.billing),
+        ...(data.reason === 'limit' || data.reason === 'no_plan' ? { reason: data.reason } : {}),
+        trialAvailable: Boolean(data.trialAvailable),
+      })
     }
   }, [appFetch, workspace])
 
@@ -73,7 +83,7 @@ export function UsageTokens({ shown, blocked, className = '' }: { shown?: ShownL
   const { status } = useUsage()
   const current = shown ?? status?.shown ?? 'none'
   const isBlocked = blocked ?? status?.blocked ?? false
-  const label = usageLabel(current, isBlocked)
+  const label = usageLabel(current, isBlocked, shown === undefined ? status?.reason : undefined)
   return (
     <span
       role="img"
@@ -118,31 +128,35 @@ export function UserUsageBadge({ className = '' }: { className?: string }) {
   )
 }
 
-/** Avviso in cima a tutte le pagine quando l'AI del piano e' finita. */
+/** Avviso in cima a tutte le pagine quando l'AI e' ferma: limite del piano raggiunto o nessun piano attivo. */
 export function UsageBlockedBanner() {
   const { status } = useUsage()
   if (!status?.blocked) return null
+  const noPlan = status.reason === 'no_plan'
+  const button = noPlan ? (status.trialAvailable ? 'Inizia la prova gratuita' : 'Scegli un piano') : 'Passa al piano superiore'
+  const buttonClass = 'shrink-0 self-start rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-bold text-white sm:self-auto'
   return (
     <div role="alert" className="flex flex-col gap-3 border-b border-[#FF3B30]/40 bg-[#FF3B30]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-8">
       <div className="flex min-w-0 items-start gap-3">
         <UsageTokens className="mt-0.5" />
         <div className="min-w-0 text-sm">
-          <p className="font-semibold text-[var(--text-primary)]">{AI_BLOCKED_MESSAGE}</p>
-          {status.daysLeft > 0 && (
+          <p className="font-semibold text-[var(--text-primary)]">{blockedMessage(status.reason, status.trialAvailable)}</p>
+          {!noPlan && status.daysLeft > 0 && (
             <p className="mt-0.5 text-[var(--text-secondary)]">
               Altrimenti torna disponibile tra {status.daysLeft === 1 ? '1 giorno' : `${status.daysLeft} giorni`}.
             </p>
           )}
         </div>
       </div>
-      <a
-        href={UPGRADE_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="shrink-0 self-start rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-bold text-white sm:self-auto"
-      >
-        Passa al piano superiore
-      </a>
+      {status.billing ? (
+        <Link href={upgradeUrl(true)} className={buttonClass}>
+          {button}
+        </Link>
+      ) : (
+        <a href={upgradeUrl(false)} target="_blank" rel="noopener noreferrer" className={buttonClass}>
+          {button}
+        </a>
+      )}
     </div>
   )
 }

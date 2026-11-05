@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
-import { isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
-import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
+import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
@@ -65,7 +64,7 @@ export async function POST(req: NextRequest) {
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)
   if (!message && !images.length) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
   // AI del piano finita: la richiesta non parte (e non resta in chat).
-  if (await workspaceAIBlocked(access.workspace.id)) return NextResponse.json({ error: AI_BLOCKED_MESSAGE, blocked: true }, { status: 402 })
+  if (await workspaceAIBlocked(access.workspace.id)) return NextResponse.json({ error: await aiBlockedMessage(access.workspace.id), blocked: true }, { status: 402 })
   // Slide toccata nell'anteprima: la richiesta riguarda solo quella.
   const slide = Number(body.target?.slide)
   const target =
@@ -100,7 +99,8 @@ export async function POST(req: NextRequest) {
     // Limite raggiunto durante il lavoro: si dice chiaramente, non "qualcosa non è andato".
     blocked = isAIBlockedError(error)
     if (!blocked) console.error('saas assistente:', error instanceof Error ? error.message : error)
-    reply = { role: 'assistant', text: blocked ? AI_BLOCKED_MESSAGE : 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
+    // Il testo dell'errore dice se e' finita l'AI del piano o se manca il piano.
+    reply = { role: 'assistant', text: blocked ? (error as Error).message : 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns, chatId)

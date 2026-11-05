@@ -39,6 +39,22 @@ export async function membershipsOf(userId: string): Promise<Membership[]> {
   })
 }
 
+/** Titolare dello spazio (il primo con ruolo owner; per gli spazi vecchi chi l'ha creato), oppure null. */
+export async function workspaceOwnerId(workspaceId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from('workspace_members')
+    .select('user_id')
+    .eq('workspace_id', workspaceId)
+    .eq('role', 'owner')
+    .order('created_at', { ascending: true })
+    .limit(1)
+  if (error) throw new Error(`titolare non letto: ${error.message}`)
+  const ownerId = (data?.[0]?.user_id as string | undefined) ?? null
+  if (ownerId) return ownerId
+  const { data: ws } = await supabaseAdmin.from('workspaces').select('created_by').eq('id', workspaceId).maybeSingle()
+  return (ws?.created_by as string | undefined) ?? null
+}
+
 /** Accesso allo spazio richiesto (o al primo dell'utente), oppure null. */
 export async function getWorkspaceAccess(req: NextRequest): Promise<WorkspaceAccess | null> {
   const user = await userFromRequest(req)
