@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Coins, Facebook, History, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES } from '@/lib/ai-models'
@@ -39,7 +40,7 @@ type Post = {
 }
 type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
-type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; usage?: { tokens: number; eur: number }; at: string }
+type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
 
@@ -188,6 +189,8 @@ export default function AssistantPage() {
     const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, model, chatId: chatRef.current, ...(target ? { target } : {}) }) }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(false)
+    // La richiesta ha usato l'AI: il gettone del consumo si aggiorna.
+    refreshUsage()
     if (res?.ok && data?.turns) {
       setTurns(data.turns)
       return true
@@ -230,7 +233,8 @@ export default function AssistantPage() {
           <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
             <Sparkles className="h-5 w-5 text-[var(--accent-blue)]" /> FacevoiceAI
           </h1>
-          <UsageButton />
+          {/* Consumo dell'AI: solo il gettone acceso (mai euro). */}
+          <UsageTokens />
         </div>
         <button onClick={newChat} disabled={busy || !turns?.length} className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-40">
           <Plus className="h-4 w-4" /> Nuova chat
@@ -295,11 +299,6 @@ export default function AssistantPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
-                  {turn.usage && (
-                    <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--text-secondary)]">
-                      <Coins className="h-3 w-3" /> {tokens(turn.usage.tokens)} token · {euro(turn.usage.eur)}
-                    </p>
-                  )}
                   {turn.actions?.map((action, k) =>
                     action.kind === 'post' ? (
                       action.post.snapshot ? (
@@ -549,6 +548,7 @@ function PostCard({
     }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     setBusy(null)
+    if (['edit_slides', 'edit_caption', 'extract', 'restore'].includes(action)) refreshUsage()
     if (!res?.ok) keepSelected.current = null
     if (data.post) onChange(data.post)
     // La modifica e' entrata in cronologia: la chat mostra la nuova versione in fondo.
@@ -1031,99 +1031,6 @@ function SnapshotCard({
         </button>
       )}
       {busy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Per le versioni di prima rileggo i testi delle slide: ci vuole fino a un minuto.</p>}
-    </div>
-  )
-}
-
-type Usage = {
-  updatedAt: string
-  today: { tokens: number; eur: number; calls: number }
-  month: { tokens: number; eur: number; calls: number }
-  byFeature: { feature: string; label: string; tokens: number; eur: number }[]
-}
-
-const euro = (value: number) =>
-  new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: value > 0 && value < 1 ? 3 : 2 }).format(value)
-const tokens = (value: number) => new Intl.NumberFormat('it-IT').format(value)
-
-/** Consumo dell'AI dello spazio (token ed euro), aggiornato ogni minuto. */
-function UsageButton() {
-  const { appFetch, workspace } = useWorkspace()
-  const [usage, setUsage] = useState<Usage | null>(null)
-  const [open, setOpen] = useState(false)
-
-  const refresh = useCallback(async () => {
-    const res = await appFetch('/api/app/usage').catch(() => null)
-    const data = res?.ok ? await res.json().catch(() => null) : null
-    if (data?.month) setUsage(data)
-  }, [appFetch])
-
-  useEffect(() => {
-    if (!workspace) return
-    refresh()
-    const timer = setInterval(() => document.visibilityState === 'visible' && refresh(), 60_000)
-    const onVisible = () => document.visibilityState === 'visible' && refresh()
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [refresh, workspace])
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => {
-          setOpen((o) => !o)
-          refresh()
-        }}
-        aria-label="Consumo dell’AI"
-        className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-1 text-xs font-semibold text-[var(--text-secondary)]"
-      >
-        <Coins className="h-3.5 w-3.5 text-[var(--accent-blue)]" />
-        {usage ? euro(usage.month.eur) : '…'}
-      </button>
-      {open && (
-        <div className="fixed inset-x-4 top-16 z-30 rounded-2xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-sm shadow-xl md:absolute md:inset-x-auto md:left-0 md:top-full md:mt-2 md:w-72">
-          <div className="flex items-center justify-between">
-            <b>Consumo dell’AI</b>
-            <button onClick={() => setOpen(false)} aria-label="Chiudi" className="p-1 text-[var(--text-secondary)]">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {usage ? (
-            <>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {([['Oggi', usage.today], ['Questo mese', usage.month]] as const).map(([name, t]) => (
-                  <div key={name} className="rounded-xl bg-[var(--background-secondary)] p-2">
-                    <p className="text-xs text-[var(--text-secondary)]">{name}</p>
-                    <p className="text-base font-bold">{euro(t.eur)}</p>
-                    <p className="text-xs text-[var(--text-secondary)]">{tokens(t.tokens)} token</p>
-                  </div>
-                ))}
-              </div>
-              {usage.byFeature.length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs">
-                  {usage.byFeature.slice(0, 6).map((f) => (
-                    <li key={f.feature} className="flex justify-between gap-2">
-                      <span className="truncate text-[var(--text-secondary)]">{f.label}</span>
-                      <span className="shrink-0">
-                        {tokens(f.tokens)} · {euro(f.eur)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                Aggiornato alle {new Date(usage.updatedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}, si aggiorna ogni minuto. Euro al cambio BCE del giorno; le
-                modifiche delle immagini con l’AI non sono ancora conteggiate.
-              </p>
-            </>
-          ) : (
-            <p className="mt-2 text-xs text-[var(--text-secondary)]">Carico il consumo…</p>
-          )}
-        </div>
-      )}
     </div>
   )
 }

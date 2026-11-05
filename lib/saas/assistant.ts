@@ -1,4 +1,5 @@
 import { callAI, hasAIProvider } from '@/lib/ai'
+import { isAIBlockedError } from '@/lib/usage-limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections } from './connections'
@@ -70,8 +71,6 @@ export type ChatTurn = {
   /** Slide scelta dal cliente toccandola nell'anteprima (la richiesta riguarda quella). */
   target?: { postId: string; slide: number; thumb?: string; slides?: number[] }
   actions?: ChatAction[]
-  /** Costo di questa risposta (token ed euro). */
-  usage?: { tokens: number; eur: number }
   at: string
 }
 
@@ -135,7 +134,8 @@ export const postView = (p: PostRow): PostView => ({
 export async function loadChat(workspaceId: string, userId: string, chatId?: string | null): Promise<ChatTurn[]> {
   const { id } = await resolveChat(workspaceId, userId, chatId)
   const turns = await readSetting(chatKey(workspaceId, userId, id))
-  return Array.isArray(turns) ? (turns as ChatTurn[]) : []
+  // Le chat di prima avevano il costo (token ed euro) sotto le risposte: al cliente non si mostra piu'.
+  return Array.isArray(turns) ? (turns as (ChatTurn & { usage?: unknown })[]).map(({ usage: _usage, ...turn }) => turn) : []
 }
 
 export async function saveChat(workspaceId: string, userId: string, turns: ChatTurn[], chatId?: string | null) {
@@ -212,7 +212,6 @@ export async function logPostChange(
   request: Omit<ChatTurn, 'role' | 'at'>,
   reply: string,
   post: PostRow,
-  usage?: ChatTurn['usage'],
   /** Chat aperta nella pagina (se manca: quella aperta per ultima). */
   chatId?: string | null
 ): Promise<ChatTurn[]> {
@@ -220,7 +219,7 @@ export async function logPostChange(
   const turns: ChatTurn[] = [
     ...(await loadChat(db.workspaceId, userId, chatId)),
     { role: 'user', ...request, at },
-    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], ...(usage && usage.tokens ? { usage } : {}), at },
+    { role: 'assistant', text: reply, actions: [{ kind: 'post', post: postView(post) }], at },
   ]
   await saveChat(db.workspaceId, userId, turns, chatId)
   return refreshPostActions(db, turns)
@@ -534,6 +533,8 @@ export async function runClientAssistant(
           result = { errore: `strumento sconosciuto: ${call.tool}` }
       }
     } catch (error) {
+      // AI del piano finita a meta' lavoro: ci si ferma qui (il messaggio chiaro lo da' la route).
+      if (isAIBlockedError(error)) throw error
       result = { errore: error instanceof Error ? error.message : 'errore' }
       errors.push(`${call.tool}: ${(result as { errore: string }).errore}`)
       console.warn(`saas assistente: ${call.tool} non riuscito: ${(result as { errore: string }).errore}`)

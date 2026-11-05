@@ -8,9 +8,11 @@ import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
+import { UsageBlockedBanner, UsageProvider, UserUsageBadge } from './UsageLights'
 
 // Cornice dell'area clienti: accesso, creazione del primo spazio di lavoro,
-// menu delle pagine e scelta dello spazio.
+// menu delle pagine e scelta dello spazio. Accanto all'icona dell'utente i tre
+// gettoni del consumo AI; se l'AI del piano e' finita, l'avviso in cima a ogni pagina.
 
 const NAV = [
   { href: '/app', label: 'Panoramica', icon: LayoutGrid },
@@ -118,7 +120,10 @@ function Frame({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-[100dvh] pb-20 md:pb-0 md:pl-60">
       <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-[var(--border-color)] bg-[var(--background-secondary)] p-4 md:flex">
-        <p translate="no" className="px-2 text-xs font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
+        <div className="flex items-center justify-between gap-2 px-2">
+          <p translate="no" className="text-xs font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
+          <UserUsageBadge />
+        </div>
         {workspaces.length > 1 ? (
           <select
             value={workspace.id}
@@ -182,10 +187,13 @@ function Frame({ children }: { children: ReactNode }) {
           <p translate="no" className="truncate font-bold text-[var(--text-primary)]">{workspace.name}</p>
         )}
         <div className="flex shrink-0 items-center gap-3">
+          <UserUsageBadge />
           <LanguageSwitch />
           <HeaderMenu onSignOut={signOut} />
         </div>
       </header>
+
+      <UsageBlockedBanner />
 
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">{children}</div>
 
@@ -242,7 +250,9 @@ function HeaderMenu({ onSignOut }: { onSignOut: () => void }) {
 export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <WorkspaceProvider>
-      <Frame>{children}</Frame>
+      <UsageProvider>
+        <Frame>{children}</Frame>
+      </UsageProvider>
     </WorkspaceProvider>
   )
 }

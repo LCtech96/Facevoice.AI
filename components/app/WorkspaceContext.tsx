@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase-client'
+import { USAGE_REFRESH_EVENT } from '@/lib/usage-shared'
 
 // Stato dell'area clienti: sessione, spazi di lavoro dell'utente e spazio scelto.
 // Tutte le chiamate alle API dell'area clienti passano da appFetch, che aggiunge
@@ -102,6 +103,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...(workspace ? { 'x-workspace-id': workspace.id } : {}),
           ...(init.headers || {}),
         },
+      }).then((res) => {
+        // 402: AI del piano finita. I gettoni e l'avviso in alto si aggiornano subito.
+        if (res.status === 402) {
+          try {
+            window.dispatchEvent(new Event(USAGE_REFRESH_EVENT))
+          } catch {}
+        }
+        return res
       }),
     [token, workspace]
   )

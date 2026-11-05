@@ -16,6 +16,21 @@ export async function eurPerUsd(): Promise<number> {
   return rate.value
 }
 
+let refreshing: Promise<number> | null = null
+
+/**
+ * Cambio senza aspettare (per i controlli prima di una chiamata all'AI): quello in
+ * memoria, o EUR_PER_USD / il valore indicativo se non c'e'; intanto si aggiorna.
+ */
+export function eurPerUsdNow(): number {
+  if ((!rate || Date.now() - rate.at >= 12 * 3600_000) && !refreshing) {
+    refreshing = eurPerUsd().finally(() => {
+      refreshing = null
+    })
+  }
+  return rate?.value ?? (Number(process.env.EUR_PER_USD) || 0.92)
+}
+
 /** Token ed euro di un lavoro (dal contatore di lib/ai). */
 export async function usageSummary(tally: { input: number; output: number; cost: number }) {
   return { tokens: tally.input + tally.output, eur: Math.round(tally.cost * (await eurPerUsd()) * 10000) / 10000 }
