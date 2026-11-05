@@ -20,6 +20,7 @@ import {
   Mail,
   Globe,
   Trash2,
+  Sparkles,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
@@ -290,46 +291,49 @@ function AutoReplyToggles() {
 
   if (!channels.length) return null
 
+  // Come l'Omnichat della piattaforma clienti: un riquadro per canale con la modalita' e cosa vuol dire.
+  const MODES = [
+    { id: 'approval' as const, label: 'Bozze', hint: 'L’AI prepara la risposta, tu la controlli e la invii.' },
+    { id: 'auto' as const, label: 'Automatica', hint: 'L’AI risponde da sola, subito.' },
+  ]
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)]">
-      <span className="text-xs font-medium text-[var(--text-secondary)]">Risposte AI automatiche:</span>
-      {channels.map((channel) => {
-        const meta = PLATFORM[channel.platform as Platform]
-        const Icon = meta.icon
-        const on = channel.reply_mode === 'auto'
-        return (
-          <button
-            key={channel.id}
-            role="switch"
-            aria-checked={on}
-            onClick={() => toggle(channel)}
-            disabled={busyId === channel.id}
-            className="inline-flex items-center gap-2 text-xs text-[var(--text-primary)] disabled:opacity-50"
-            title={on ? 'Inviate subito, senza approvazione' : 'Da approvare prima dell\'invio'}
-          >
-            <Icon className="w-3.5 h-3.5" style={{ color: meta.color }} />
-            {meta.label}
-            <span
-              className={`relative inline-block w-9 h-5 rounded-full transition-colors ${
-                on ? 'bg-[#34C759]' : 'bg-[var(--border-color)]'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                  on ? 'translate-x-4' : ''
-                }`}
-              />
-            </span>
-            <span className={on ? 'text-[#34C759]' : 'text-[var(--text-secondary)]'}>{on ? 'Attive' : 'Con approvazione'}</span>
-          </button>
-        )
-      })}
+    <div className="mt-3">
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {channels.map((channel) => {
+          const meta = PLATFORM[channel.platform as Platform]
+          const Icon = meta.icon
+          const mode = channel.reply_mode === 'auto' ? 'auto' : 'approval'
+          return (
+            <div key={channel.id} className="shrink-0 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                <Icon className="h-4 w-4" style={{ color: meta.color }} /> {meta.label}
+              </p>
+              <div className="mt-2 flex rounded-full bg-[var(--background)] p-0.5" role="radiogroup" aria-label={`Risposte AI ${meta.label}`}>
+                {MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    role="radio"
+                    aria-checked={mode === m.id}
+                    title={m.hint}
+                    disabled={busyId === channel.id}
+                    onClick={() => mode !== m.id && toggle(channel)}
+                    className={`rounded-full px-3 py-1 text-xs disabled:opacity-50 ${mode === m.id ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 max-w-[15rem] text-[11px] text-[var(--text-secondary)]">{MODES.find((m) => m.id === mode)?.hint}</p>
+            </div>
+          )
+        })}
+      </div>
       {channels.some((c) => c.platform === 'email') && (
-        <span className="text-[11px] text-[var(--text-secondary)] w-full">
+        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
           Email: in automatico solo per chi ci scrive per primo. Le risposte dei contatti della Ricerca clienti hanno sempre la controrisposta da approvare.
-        </span>
+        </p>
       )}
-      {error && <span className="text-xs text-[#FF3B30]">{error}</span>}
+      {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
     </div>
   )
 }
@@ -766,43 +770,77 @@ function InboxPage() {
     )
   }
 
-  const chip = (active: boolean) =>
-    `px-3 py-1.5 rounded-full text-xs border transition-colors whitespace-nowrap ${
-      active
-        ? 'bg-[var(--accent-blue)] border-[var(--accent-blue)] text-white'
-        : 'border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-    }`
-
   const linkCandidates = conversations
     .filter((c) => c.key !== selectedKey)
     .filter((c) => !linkQuery.trim() || (c.contactName || '').toLowerCase().includes(linkQuery.trim().toLowerCase()))
     .slice(0, 30)
 
+  // Bozza AI a richiesta (✨): resta in bozza da approvare, come nell'Omnichat.
+  const suggest = async () => {
+    if (!selectedKey) return
+    setBusyId('suggest')
+    setNotice(null)
+    try {
+      const res = await authFetch('/api/admin/inbox/suggest', {
+        method: 'POST',
+        body: JSON.stringify({ c: selectedKey, platform: activeReplyPlatform || undefined, instructions: reply.trim() || undefined }),
+      }).catch(() => null)
+      const data = res ? await res.json().catch(() => ({})) : {}
+      if (!res?.ok) setNotice(data.error || 'Bozza non preparata, riprova')
+      else {
+        if (data.warning) setNotice(data.warning)
+        setReply('')
+      }
+      await loadThread()
+      loadConversations()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Un'unica fila di filtri: stato (tutte, da approvare, non lette) e canali.
+  const filters: { id: string; label: string; active: boolean; onClick: () => void }[] = [
+    { id: 'all', label: 'Tutti', active: statusFilter === 'all' && platformFilter === 'all', onClick: () => { setStatusFilter('all'); setPlatformFilter('all') } },
+    { id: 'pending', label: totals.pending ? `Da approvare (${totals.pending})` : 'Da approvare', active: statusFilter === 'pending', onClick: () => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending') },
+    { id: 'unread', label: totals.unread ? `Non lette (${totals.unread})` : 'Non lette', active: statusFilter === 'unread', onClick: () => setStatusFilter(statusFilter === 'unread' ? 'all' : 'unread') },
+    ...(Object.keys(PLATFORM) as Platform[]).map((p) => ({
+      id: p,
+      label: PLATFORM[p].label,
+      active: platformFilter === p,
+      onClick: () => setPlatformFilter(platformFilter === p ? 'all' : p),
+    })),
+  ]
+
   return (
     <main className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       <Navigation />
 
-      <div className="max-w-6xl mx-auto px-4 pt-20 md:pt-24 pb-24 md:pb-6">
-        <div className={`flex-wrap items-start justify-between gap-3 mb-4 ${selectedKey ? 'hidden md:flex' : 'flex'}`}>
-          <div>
-            <h1 className="text-2xl font-bold text-[var(--text-primary)]">Messaggi</h1>
-            <p className="text-sm text-[var(--text-secondary)]">
-              WhatsApp, Messenger, Instagram, email e chat del sito in un posto solo.
+      <div className="mx-auto max-w-6xl pt-16 md:pt-20 pb-20 md:pb-4">
+        {/* Intestazione e risposte AI per canale (nascoste su telefono con una chat aperta) */}
+        <div className={`border-b border-[var(--border-color)] px-4 py-4 ${selectedKey ? 'hidden md:block' : ''}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-extrabold text-[var(--text-primary)]">Messaggi</h1>
               {totals.pending > 0 && (
-                <span className="ml-1 text-[#FF9500] font-medium">
-                  {totals.pending === 1 ? '1 risposta AI da approvare.' : `${totals.pending} risposte AI da approvare.`}
-                </span>
+                <p className="text-sm text-[#FF9500]">{totals.pending === 1 ? '1 risposta AI da approvare' : `${totals.pending} risposte AI da approvare`}</p>
               )}
-            </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              {staff.isAdmin && <PushToggle />}
+              <button
+                onClick={() => {
+                  loadConversations()
+                  loadThread()
+                }}
+                className="flex items-center gap-2 text-sm text-[var(--text-secondary)]"
+                aria-label="Aggiorna"
+              >
+                <RefreshCw className="h-4 w-4" /> <span className="hidden sm:inline">Aggiorna</span>
+              </button>
+            </div>
           </div>
-          {staff.isAdmin && <PushToggle />}
+          {staff.can('control', 'edit') && <AutoReplyToggles />}
         </div>
-
-        {staff.can('control', 'edit') && (
-          <div className={selectedKey ? 'hidden md:block' : ''}>
-            <AutoReplyToggles />
-          </div>
-        )}
 
         {removed && (
           <div className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-50 flex items-center gap-4 px-4 py-3 rounded-xl bg-[#1c1c1e] text-white text-sm shadow-lg max-w-[calc(100vw-32px)]">
@@ -814,72 +852,47 @@ function InboxPage() {
         )}
 
         {notice && (
-          <div className="mb-3 px-3 py-2 rounded-lg bg-[#FF3B30]/10 text-[#FF3B30] text-sm flex justify-between gap-2">
+          <div className="mx-4 mt-3 flex justify-between gap-2 rounded-lg bg-[#FF9500]/10 px-3 py-2 text-sm text-[var(--text-primary)]">
             <span>{notice}</span>
             <button onClick={() => setNotice(null)} aria-label="Chiudi">
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         )}
 
-        <div
-          className={`grid grid-cols-1 md:grid-cols-[340px_1fr] gap-4 md:h-[calc(100dvh-11rem)] min-h-[380px] ${
-            selectedKey ? 'h-[calc(100dvh-10.5rem)]' : 'h-[calc(100dvh-18rem)]'
-          }`}
-        >
+        <div className={`flex min-h-[380px] ${selectedKey ? 'h-[calc(100dvh-8.5rem)] md:h-[calc(100dvh-13rem)]' : 'h-[calc(100dvh-15rem)] md:h-[calc(100dvh-13rem)]'}`}>
           {/* Elenco conversazioni */}
-          <section
-            className={`flex-col min-h-0 min-w-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
-              selectedKey ? 'hidden md:flex' : 'flex'
-            }`}
-          >
-            <div className="p-3 space-y-2 border-b border-[var(--border-color)]">
+          <section className={`min-h-0 w-full flex-col border-r border-[var(--border-color)] md:flex md:w-80 md:shrink-0 ${selectedKey ? 'hidden' : 'flex'}`}>
+            <div className="space-y-2 px-4 pt-3 pb-2">
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-secondary)]" />
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Cerca nome o testo…"
-                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
+                  className="w-full rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] py-2 pl-9 pr-3 text-[16px] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none md:text-sm"
                 />
               </div>
-              <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                <button className={chip(platformFilter === 'all')} onClick={() => setPlatformFilter('all')}>
-                  Tutti
-                </button>
-                {(Object.keys(PLATFORM) as Platform[]).map((p) => (
-                  <button key={p} className={chip(platformFilter === p)} onClick={() => setPlatformFilter(p)}>
-                    {PLATFORM[p].label}
+              <div className="flex gap-1 overflow-x-auto pb-0.5">
+                {filters.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={f.onClick}
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs ${f.active ? 'bg-[var(--text-primary)] text-[var(--background)]' : 'text-[var(--text-secondary)]'}`}
+                  >
+                    {f.label}
                   </button>
                 ))}
               </div>
-              <div className="flex gap-1.5">
-                <button className={chip(statusFilter === 'all')} onClick={() => setStatusFilter('all')}>
-                  Tutte
-                </button>
-                <button className={chip(statusFilter === 'pending')} onClick={() => setStatusFilter('pending')}>
-                  Da approvare
-                </button>
-                <button className={chip(statusFilter === 'unread')} onClick={() => setStatusFilter('unread')}>
-                  Non lette
-                </button>
-              </div>
-              {canReply && conversations.length > 0 && (
-                <p className="text-[11px] text-[var(--text-secondary)]">
-                  Scorri una chat verso sinistra, o tienila premuta, per eliminarla.
-                </p>
-              )}
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {authorized === null && (
-                <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>
-              )}
-              {authorized && conversations.length === 0 && (
-                <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Nessuna conversazione.</p>
-              )}
+              {authorized === null && <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>}
+              {authorized && conversations.length === 0 && <p className="px-4 py-6 text-sm text-[var(--text-secondary)]">Nessun messaggio per ora.</p>}
               {conversations.map((c) => {
                 const active = c.key === selectedKey
+                const first = PLATFORM[c.platforms[0] as Platform]
+                const Icon = first?.icon || MessageSquareText
                 return (
                   <SwipeRow
                     key={c.key}
@@ -888,113 +901,68 @@ function InboxPage() {
                     onDelete={() => removeConversation(c)}
                     disabled={!canReply}
                   >
-                  <button
-                    onClick={() => select(c.key)}
-                    className={`w-full text-left px-3 py-3 flex gap-3 transition-colors ${
-                      active ? 'bg-[var(--background-secondary)]' : 'hover:bg-[var(--background-secondary)]'
-                    }`}
-                  >
-                    <div className="flex -space-x-2 shrink-0">
-                      {c.platforms.map((p) => {
-                        const meta = PLATFORM[p as Platform]
-                        if (!meta) return null
-                        const Icon = meta.icon
-                        return (
-                          <div
-                            key={p}
-                            className="w-8 h-8 rounded-full flex items-center justify-center ring-2 ring-[var(--card-background)]"
-                            style={{ backgroundColor: `${meta.color}33`, color: meta.color }}
-                          >
-                            <Icon className="w-3.5 h-3.5" />
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p
-                          className={`text-sm truncate text-[var(--text-primary)] ${c.unread ? 'font-semibold' : ''}`}
-                        >
-                          {c.contactName || c.members[0]?.contactId}
-                        </p>
-                        <span className="text-[11px] text-[var(--text-secondary)] shrink-0">{formatTime(c.lastAt)}</span>
-                      </div>
-                      <p className="text-xs text-[var(--text-secondary)] truncate">
-                        {c.lastStatus === 'pending' ? 'Bozza AI: ' : c.lastDirection === 'out' ? 'Tu: ' : ''}
-                        {c.lastMessage}
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 mt-1">
-                        {c.pending > 0 && (
-                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[#FF9500]/15 text-[#FF9500]">
-                            {c.pending} da approvare
+                    <button
+                      onClick={() => select(c.key)}
+                      className={`flex w-full gap-3 border-b border-[var(--border-color)] px-4 py-3 text-left ${active ? 'bg-[var(--background-secondary)]' : ''}`}
+                    >
+                      <span className="relative mt-0.5 shrink-0">
+                        <Icon className="h-4 w-4" style={{ color: first?.color }} />
+                        {c.platforms.length > 1 && (
+                          <span className="absolute -bottom-2 -right-2 rounded-full bg-[var(--background-secondary)] px-1 text-[9px] text-[var(--text-secondary)]">+{c.platforms.length - 1}</span>
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline gap-2">
+                          <span className={`truncate text-[var(--text-primary)] ${c.unread ? 'font-bold' : 'font-medium'}`}>{c.contactName || c.members[0]?.contactId}</span>
+                          <span className="ml-auto shrink-0 text-[11px] text-[var(--text-secondary)]">{formatTime(c.lastAt)}</span>
+                        </span>
+                        <span className="block truncate text-xs text-[var(--text-secondary)]">
+                          {c.lastStatus === 'pending' ? 'Bozza: ' : c.lastDirection === 'out' ? 'Tu: ' : ''}
+                          {c.lastMessage}
+                        </span>
+                        {(c.unread > 0 || c.pending > 0 || c.suggestion || c.hasComments || (c.linked && c.platforms.length > 1)) && (
+                          <span className="mt-1 flex flex-wrap gap-1.5">
+                            {c.unread > 0 && <span className="rounded-full bg-[var(--accent-blue)] px-2 text-[10px] text-white">{c.unread} nuovi</span>}
+                            {c.pending > 0 && <span className="rounded-full bg-[#FF9500] px-2 text-[10px] text-white">bozza da approvare</span>}
+                            {c.linked && c.platforms.length > 1 && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">su {c.platforms.length} canali</span>}
+                            {c.suggestion && <span className="rounded-full bg-[#AF52DE]/15 px-2 text-[10px] text-[#AF52DE]">possibile doppione</span>}
+                            {c.hasComments && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">commenti</span>}
                           </span>
                         )}
-                        {c.unread > 0 && (
-                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)]/15 text-[var(--accent-blue)]">
-                            {c.unread} nuovi
-                          </span>
-                        )}
-                        {c.linked && c.platforms.length > 1 && (
-                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--background-secondary)] text-[var(--text-secondary)]">
-                            stessa persona su {c.platforms.length} canali
-                          </span>
-                        )}
-                        {c.suggestion && (
-                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[#AF52DE]/15 text-[#AF52DE]">
-                            possibile doppione
-                          </span>
-                        )}
-                        {c.hasComments && (
-                          <span className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--background-secondary)] text-[var(--text-secondary)]">
-                            commenti
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
+                      </span>
+                    </button>
                   </SwipeRow>
                 )
               })}
+              {canReply && conversations.length > 0 && (
+                <p className="px-4 py-3 text-[11px] text-[var(--text-secondary)]">Per eliminare una chat scorrila verso sinistra o tienila premuta.</p>
+              )}
             </div>
           </section>
 
           {/* Conversazione */}
-          <section
-            className={`flex-col min-h-0 min-w-0 rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] ${
-              selectedKey ? 'flex' : 'hidden md:flex'
-            }`}
-          >
+          <section className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${selectedKey ? 'flex' : 'hidden'}`}>
             {!selectedKey ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-secondary)] gap-2">
-                <MessageSquareText className="w-8 h-8" />
-                <p className="text-sm">Seleziona una conversazione</p>
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[var(--text-secondary)]">
+                <MessageSquareText className="h-8 w-8" />
+                <p className="text-sm">Scegli una conversazione.</p>
               </div>
             ) : (
               <>
-                <div className="px-3 py-2.5 border-b border-[var(--border-color)] space-y-2">
+                <div className="space-y-2 border-b border-[var(--border-color)] px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <button
-                      className="md:hidden p-1 -ml-1 text-[var(--text-secondary)]"
-                      onClick={() => select(null)}
-                      aria-label="Indietro"
-                    >
-                      <ArrowLeft className="w-5 h-5" />
+                    <button className="-ml-1 p-1 text-[var(--text-secondary)] md:hidden" onClick={() => select(null)} aria-label="Indietro">
+                      <ArrowLeft className="h-5 w-5" />
                     </button>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">
-                        {current?.contactName || current?.members[0]?.contactId || 'Conversazione'}
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-0.5">
+                      <p className="truncate font-semibold text-[var(--text-primary)]">{current?.contactName || current?.members[0]?.contactId || 'Conversazione'}</p>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                         {(current?.members || []).map((m) => (
                           <span key={`${m.platform}:${m.contactId}`} className="inline-flex items-center gap-1">
                             <PlatformBadge platform={m.platform} size="xs" />
                             {canReply && current?.linked && current.members.length > 1 && (
-                              <button
-                                onClick={() => unlink(m.platform, m.contactId)}
-                                className="text-[10px] text-[var(--text-secondary)] hover:text-[#FF3B30]"
-                                title="Separa questo account"
-                              >
-                                <Unlink className="w-3 h-3" />
+                              <button onClick={() => unlink(m.platform, m.contactId)} className="text-[var(--text-secondary)] hover:text-[#FF3B30]" title="Separa questo account" aria-label="Separa questo account">
+                                <Unlink className="h-3 w-3" />
                               </button>
                             )}
                           </span>
@@ -1002,90 +970,62 @@ function InboxPage() {
                       </div>
                     </div>
                     {canReply && (
-                    <>
-                    <button
-                      onClick={() => current && removeConversation(current)}
-                      className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[#FF3B30] hover:bg-[var(--background-secondary)]"
-                      aria-label="Elimina conversazione"
-                      title="Elimina conversazione"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setLinking((v) => !v)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                      title="Collega a un altro canale della stessa persona"
-                    >
-                      <Link2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Stessa persona</span>
-                    </button>
-                    </>
+                      <>
+                        <button
+                          onClick={() => setLinking((v) => !v)}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2.5 py-1 text-xs text-[var(--text-secondary)]"
+                          title="Collega a un altro canale della stessa persona"
+                        >
+                          <Link2 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Stessa persona</span>
+                        </button>
+                        <button onClick={() => current && removeConversation(current)} className="p-1.5 text-[var(--text-secondary)] hover:text-[#FF3B30]" aria-label="Elimina conversazione" title="Elimina conversazione">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </>
                     )}
-                    <button
-                      onClick={() => {
-                        loadThread()
-                        loadConversations()
-                      }}
-                      className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]"
-                      aria-label="Aggiorna"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
                   </div>
 
                   {canReply && current?.suggestion && !linking && (
-                    <div className="flex flex-wrap items-center gap-2 px-2.5 py-2 rounded-lg bg-[#AF52DE]/10 text-xs text-[var(--text-primary)]">
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#AF52DE]/10 px-3 py-2 text-xs text-[var(--text-primary)]">
                       <span>
                         Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
                         {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}.
                       </span>
-                      <button
-                        onClick={() => link(current.suggestion!.key)}
-                        className="px-2 py-1 rounded-md bg-[#AF52DE] text-white font-medium"
-                      >
+                      <button onClick={() => link(current.suggestion!.key)} className="rounded-full bg-[#AF52DE] px-3 py-1 font-medium text-white">
                         Collega
                       </button>
                     </div>
                   )}
 
                   {canReply && linking && (
-                    <div className="rounded-lg border border-[var(--border-color)] p-2 space-y-2">
+                    <div className="space-y-2 rounded-xl border border-[var(--border-color)] p-2">
                       <p className="text-xs text-[var(--text-secondary)]">
-                        Scegli la conversazione della stessa persona su un altro canale: verranno unite qui e l&apos;AI
-                        terrà conto di entrambe.
+                        Scegli la conversazione della stessa persona su un altro canale: verranno unite qui e l&apos;AI terrà conto di entrambe.
                       </p>
                       <input
                         value={linkQuery}
                         onChange={(e) => setLinkQuery(e.target.value)}
                         placeholder="Cerca per nome…"
-                        className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none"
+                        className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2.5 py-1.5 text-[16px] text-[var(--text-primary)] focus:outline-none md:text-xs"
                       />
-                      <div className="max-h-40 overflow-y-auto space-y-1">
+                      <div className="max-h-40 space-y-1 overflow-y-auto">
                         {linkCandidates.map((c) => (
-                          <button
-                            key={c.key}
-                            onClick={() => link(c.key)}
-                            className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-left text-xs hover:bg-[var(--background-secondary)]"
-                          >
-                            <span className="truncate text-[var(--text-primary)]">
-                              {c.contactName || c.members[0]?.contactId}
-                            </span>
-                            <span className="flex gap-1 shrink-0">
+                          <button key={c.key} onClick={() => link(c.key)} className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--background-secondary)]">
+                            <span className="truncate text-[var(--text-primary)]">{c.contactName || c.members[0]?.contactId}</span>
+                            <span className="flex shrink-0 gap-1">
                               {c.platforms.map((p) => (
                                 <PlatformBadge key={p} platform={p} size="xs" />
                               ))}
                             </span>
                           </button>
                         ))}
-                        {linkCandidates.length === 0 && (
-                          <p className="text-xs text-[var(--text-secondary)] px-2">Nessuna altra conversazione.</p>
-                        )}
+                        {linkCandidates.length === 0 && <p className="px-2 text-xs text-[var(--text-secondary)]">Nessuna altra conversazione.</p>}
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div ref={threadRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-2">
+                <div ref={threadRef} className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-4 py-4">
                   {messages.map((m) => {
                     const isIn = m.direction === 'in'
                     const isPending = m.status === 'pending' || m.status === 'failed'
@@ -1096,114 +1036,111 @@ function InboxPage() {
                         </p>
                       )
                     }
-                    return (
-                      <div key={m.id} className={`flex flex-col ${isIn ? 'items-start' : 'items-end'}`}>
-                        <div className="flex items-center gap-1 mb-0.5 px-1">
-                          <PlatformBadge platform={m.platform} size="xs" />
-                          {m.kind === 'comment' && (
-                            <span className="text-[10px] text-[var(--text-secondary)]">
-                              {isIn ? 'commento pubblico' : 'risposta pubblica al commento'}
-                            </span>
-                          )}
-                          {m.kind === 'message' && !isIn && m.reply_to && m.platform !== 'email' && (
-                            <span className="text-[10px] text-[var(--text-secondary)]">messaggio privato dal commento</span>
-                          )}
+                    // Bozza da approvare: riquadro arancione con il testo modificabile, come nell'Omnichat.
+                    if (isPending && canReply) {
+                      const value = drafts[m.id] ?? m.body
+                      return (
+                        <div key={m.id} className="ml-auto max-w-[92%] rounded-2xl border border-[#FF9500] bg-[var(--background-secondary)] p-3">
+                          <p className="flex items-center gap-1.5 text-xs font-semibold text-[#FF9500]">
+                            <PlatformBadge platform={m.platform} size="xs" />
+                            {m.status === 'failed' ? `Invio non riuscito: ${m.error_message || 'riprova'}` : 'Bozza dell’AI: controllala e inviala'}
+                          </p>
+                          <textarea
+                            value={value}
+                            onChange={(e) => setDrafts((d) => ({ ...d, [m.id]: e.target.value }))}
+                            rows={Math.min(14, Math.max(4, value.split('\n').length + 1))}
+                            className="mt-2 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-[16px] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none md:text-sm"
+                          />
+                          <DraftTranslate text={value} />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <button onClick={() => act(m, 'reject')} disabled={busyId === m.id} className="rounded-full px-3 py-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-50">
+                              Scarta
+                            </button>
+                            <button
+                              onClick={() => act(m, 'approve')}
+                              disabled={busyId === m.id || !value.trim()}
+                              className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                            >
+                              <Send className="h-4 w-4" /> {busyId === m.id ? 'Invio…' : m.status === 'failed' ? 'Riprova' : 'Invia'}
+                            </button>
+                          </div>
                         </div>
+                      )
+                    }
+                    return (
+                      <div key={m.id} className={`max-w-[85%] ${isIn ? '' : 'ml-auto'}`}>
                         <div
-                          className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                            isIn
-                              ? 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
-                              : isPending
-                                ? 'border-2 border-dashed border-[#FF9500] bg-[#FF9500]/5 text-[var(--text-primary)]'
-                                : 'bg-[var(--accent-blue)] text-white'
+                          className={`break-words rounded-2xl px-4 py-2.5 text-sm ${
+                            isIn ? 'bg-[var(--background-secondary)] text-[var(--text-primary)]' : isPending ? 'border border-dashed border-[#FF9500] text-[var(--text-primary)]' : 'bg-[var(--accent-blue)] text-white'
                           }`}
                         >
-                          {isPending && canReply ? (
-                            <div className="space-y-2 min-w-[min(240px,70vw)]">
-                              <p className="text-[11px] font-medium text-[#FF9500]">
-                                {m.status === 'failed' ? `Invio fallito: ${m.error_message}` : 'Bozza AI · da approvare'}
-                              </p>
-                              <textarea
-                                value={drafts[m.id] ?? m.body}
-                                onChange={(e) => setDrafts((d) => ({ ...d, [m.id]: e.target.value }))}
-                                rows={Math.min(10, Math.max(3, Math.ceil((drafts[m.id] ?? m.body).length / 32)))}
-                                className="w-full px-2 py-1.5 text-sm rounded-lg bg-[var(--background)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)] resize-y"
-                              />
-                              <DraftTranslate text={drafts[m.id] ?? m.body} />
-                              <div className="flex gap-2 justify-end">
-                                <button
-                                  onClick={() => act(m, 'reject')}
-                                  disabled={busyId === m.id}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border border-[var(--border-color)] text-[var(--text-secondary)] disabled:opacity-50"
-                                >
-                                  <X className="w-3.5 h-3.5" /> Scarta
-                                </button>
-                                <button
-                                  onClick={() => act(m, 'approve')}
-                                  disabled={busyId === m.id}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-[#34C759] text-white font-medium disabled:opacity-50"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                  {busyId === m.id ? 'Invio…' : m.status === 'failed' ? 'Riprova' : 'Approva e invia'}
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <TranslatableBody text={m.body} tone={isIn ? 'in' : 'out'} />
-                          )}
-                          {!isPending && (
-                            <p className={`text-[10px] mt-1 ${isIn ? 'text-[var(--text-secondary)]' : 'text-white/70'}`}>
-                              {formatTime(m.created_at)}
-                              {m.status === 'sending' ? ' · invio…' : ''}
-                            </p>
-                          )}
+                          <TranslatableBody text={m.body} tone={isIn ? 'in' : 'out'} />
                         </div>
+                        <p className={`mt-1 flex flex-wrap items-center gap-1 text-[11px] text-[var(--text-secondary)] ${isIn ? '' : 'justify-end'}`}>
+                          <PlatformBadge platform={m.platform} size="xs" />
+                          {formatTime(m.created_at)}
+                          {m.kind === 'comment' ? (isIn ? ' · commento pubblico' : ' · risposta pubblica al commento') : ''}
+                          {m.kind === 'message' && !isIn && m.reply_to && m.platform !== 'email' ? ' · privato dal commento' : ''}
+                          {m.status === 'sending' ? ' · invio…' : ''}
+                          {isPending ? ' · bozza' : ''}
+                        </p>
                       </div>
                     )
                   })}
                 </div>
 
                 {canReply && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    sendManual()
-                  }}
-                  className="flex gap-2 p-3 border-t border-[var(--border-color)]"
-                >
-                  {privatePlatforms.length > 1 && (
-                    <select
-                      value={activeReplyPlatform}
-                      onChange={(e) => setReplyPlatform(e.target.value)}
-                      className="px-2 text-xs rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)]"
-                      aria-label="Canale di risposta"
-                    >
-                      {privatePlatforms.map((p) => (
-                        <option key={p} value={p}>
-                          {PLATFORM[p as Platform]?.label || p}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <input
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    placeholder={
-                      activeReplyPlatform
-                        ? `Rispondi su ${PLATFORM[activeReplyPlatform as Platform]?.label || activeReplyPlatform}…`
-                        : 'Scrivi una risposta…'
-                    }
-                    className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg bg-[var(--background-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-blue)]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!reply.trim() || busyId === 'manual'}
-                    className="px-3 rounded-lg bg-[var(--accent-blue)] text-white disabled:opacity-50"
-                    aria-label="Invia"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </form>
+                  <div className="border-t border-[var(--border-color)] p-3">
+                    {privatePlatforms.length > 1 && (
+                      <div className="mb-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                        Rispondi su
+                        <select
+                          value={activeReplyPlatform}
+                          onChange={(e) => setReplyPlatform(e.target.value)}
+                          className="rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                          aria-label="Canale di risposta"
+                        >
+                          {privatePlatforms.map((p) => (
+                            <option key={p} value={p}>
+                              {PLATFORM[p as Platform]?.label || p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className="flex items-end gap-2">
+                      <textarea
+                        value={reply}
+                        onChange={(e) => setReply(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 768px)').matches) {
+                            e.preventDefault()
+                            sendManual()
+                          }
+                        }}
+                        placeholder={activeReplyPlatform ? `Rispondi su ${PLATFORM[activeReplyPlatform as Platform]?.label || activeReplyPlatform}…` : 'Scrivi una risposta…'}
+                        rows={2}
+                        className="min-h-[44px] flex-1 resize-none rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-4 py-2.5 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+                      />
+                      <button
+                        onClick={suggest}
+                        disabled={Boolean(busyId)}
+                        title="Chiedi all’AI una bozza (se scrivi qualcosa, l’AI lo usa come indicazione)"
+                        aria-label="Chiedi all’AI una bozza"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-color)] text-[var(--accent-blue)] disabled:opacity-50"
+                      >
+                        {busyId === 'suggest' ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={sendManual}
+                        disabled={!reply.trim() || Boolean(busyId)}
+                        aria-label="Invia"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--accent-blue)] text-white disabled:opacity-50"
+                      >
+                        <Send className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
                 )}
               </>
             )}
