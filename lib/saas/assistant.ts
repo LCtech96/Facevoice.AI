@@ -42,7 +42,7 @@ export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'capti
   /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
   restyle?: boolean
   /** Stile e colori del carosello con le foto (null se non si possono scegliere). */
-  design?: { layout: string; mix: number } | null
+  design?: { kind: 'photo' | 'text'; layout: string; mix: number } | null
   /** Versione precedente nella chat (com'era in quel momento): solo da guardare o riprendere. */
   snapshot?: boolean
   /** La versione precedente e' uguale a quella attuale. */
@@ -55,7 +55,7 @@ export async function withArrange<T extends PostView>(posts: T[]): Promise<T[]> 
   const { modes, outdated, designs } = await arrangeModes(posts).catch(() => ({
     modes: new Map<string, ArrangeMode>(),
     outdated: new Set<string>(),
-    designs: new Map<string, { layout: string; mix: number }>(),
+    designs: new Map<string, { kind: 'photo' | 'text'; layout: string; mix: number }>(),
   }))
   return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null, restyle: outdated.has(p.id), design: designs.get(p.id) ?? null }))
 }
@@ -239,7 +239,7 @@ Strumenti:
 - "create_post": {"brief": "tutto quello che ha chiesto, con le sue parole", "images": ["url", ...] opzionale, "kind": "photos|carousel", "slides": [{"title": "", "text": ""}, ...] opzionale, "hook": "opzionale", "label": "opzionale", "closing": false, "ai_images": true} → crea un post IN BOZZA e lo mostra con l'anteprima (didascalia modificabile, giorno e ora, Programma e Pubblica ora).
   · "photos" = le sue foto così come sono, senza scritte.
   · "carousel" CON foto = UNA SLIDE PER FOTO, nell'ordine esatto delle foto (Foto 1 = slide 1 = copertina con il gancio in grande; Foto 2 = slide 2…), testo SOPRA la foto e il logo su ogni slide. Nessuna foto viene aggiunta o tolta. In "slides" metti un elemento per ogni foto, nello stesso ordine: per la Foto k scrivi titolo e testo della slide k seguendo ALLA LETTERA quello che il cliente ha chiesto per quella foto (slides[0].title = riga piccola sotto il gancio della copertina). "closing": true solo se chiede una slide finale in più.
-  · "carousel" SENZA foto = slide grafiche con testi grandi, colori del marchio e immagini create dall'AI (ai_images false per evitarle).
+  · "carousel" SENZA foto = slide di solo testo (copertina con il gancio, una slide per testo, slide finale) con colori, font e logo del marchio; niente immagini AI. Lo stile (Grande titolo, Lista, Citazione) e i colori il cliente li sceglie sotto l'anteprima.
   Se non passi "images" usa le foto allegate al messaggio, nel loro ordine. Ci vuole fino a un paio di minuti.
 - "edit_carousel": {"post_id": "…", "slides": [{"n": 3, "title": "…", "text": "…"}], "order": [2,1,3,…], "remove": [5], "hook": "…", "label": "…", "closing": true|false} → corregge un carosello con le foto e lo rifà, tutto in UNA chiamata: testi di singole slide (n = numero della slide; per la copertina n 1 "title" è la riga piccola sotto il gancio, il gancio e l'etichetta si cambiano con "hook" e "label"; per la slide finale usa il suo numero con "title", "text" e "button"), nuovo ordine delle foto (tutti i numeri, una volta ciascuno), slide da togliere. Per tradurre o riscrivere tutto il carosello metti tutte le slide in una sola chiamata, poi la didascalia con update_post (caption e facebook). Usalo per "nella terza scrivi…", "scambia la 2 e la 4", "togli l'ultima". In "slides" metti SOLO le slide da cambiare, con il loro numero esatto: non riscrivere le altre e non usare "order" o "remove" se il cliente non chiede di spostare o togliere slide.
 - "post_outline": {"post_id": "…"} → testi attuali di ogni slide di un carosello con le foto, copertina e slide finale comprese (prima di correggerlo).

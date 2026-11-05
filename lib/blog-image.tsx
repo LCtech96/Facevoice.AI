@@ -4,9 +4,9 @@ import { ImageResponse } from 'next/og'
 import sharp from 'sharp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
-import { asPhotoLayout, type PhotoLayout } from './photo-layouts'
+import { asPhotoLayout, asTextLayout, type PhotoLayout, type TextLayout } from './photo-layouts'
 
-export { PHOTO_LAYOUTS, asPhotoLayout, type PhotoLayout } from './photo-layouts'
+export { PHOTO_LAYOUTS, TEXT_LAYOUTS, asPhotoLayout, asTextLayout, type PhotoLayout, type TextLayout } from './photo-layouts'
 
 // Immagini degli articoli del blog per i social: un CAROSELLO (da 3 a 6 slide,
 // formato 4:5 come i caroselli Facevoice su Canva) con i soli colori del marchio,
@@ -686,6 +686,97 @@ function splitSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: nu
   )
 }
 
+// --- Slide di solo testo (caroselli senza foto) --------------------------------------
+
+/** Cornice comune: logo e numero in alto, firma in basso, contenuto al centro. */
+function textFrame(t: Theme, i: number, n: number, logo: Logo, showCounter: boolean, children: React.ReactNode) {
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '56px 80px 60px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 90 }}>
+        {logoImg(logo, 84) || <div style={{ display: 'flex' }} />}
+        {showCounter ? <div style={{ display: 'flex', fontSize: 28, color: t.soft }}>{counter(i, n)}</div> : <div style={{ display: 'flex' }} />}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', marginBottom: 'auto' }}>{children}</div>
+      {t.handle ? <div style={{ display: 'flex', fontSize: 28, color: t.soft }}>{t.handle}</div> : null}
+    </div>
+  )
+}
+
+/** Copertina dei caroselli di testo: etichetta, gancio enorme, riga sotto, SCORRI. */
+function textCover(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: { hook: string; label: string }, showCounter: boolean) {
+  return textFrame(
+    t,
+    i,
+    n,
+    logo,
+    showCounter,
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {cover.label ? <div style={{ display: 'flex', fontSize: 28, color: t.label, letterSpacing: 3, marginBottom: 26 }}>{cover.label.toUpperCase()}</div> : null}
+      <div style={{ display: 'flex', fontSize: hookSize(cover.hook), fontWeight: 800, lineHeight: 1.02, letterSpacing: -2 }}>{cover.hook}</div>
+      {slide.title ? <div style={{ display: 'flex', fontSize: 38, lineHeight: 1.36, color: t.soft, marginTop: 32 }}>{slide.title}</div> : null}
+      <div style={{ display: 'flex', marginTop: 48 }}>
+        <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 30, fontWeight: 800, padding: '18px 70px', borderRadius: 999, letterSpacing: 1 }}>SCORRI</div>
+      </div>
+    </div>
+  )
+}
+
+/** Grande titolo: barra di colore, titolo grande, testo sotto. */
+function bigTitleSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  if (cover) return textCover(t, slide, i, n, logo, cover, showCounter)
+  return textFrame(
+    t,
+    i,
+    n,
+    logo,
+    showCounter,
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', width: 120, height: 12, borderRadius: 6, background: t.accent, marginBottom: 40 }} />
+      <div style={{ display: 'flex', fontSize: slide.title.length > 40 ? 78 : 96, fontWeight: 800, lineHeight: 1.02, letterSpacing: -2 }}>{slide.title}</div>
+      {slide.text ? <div style={{ display: 'flex', fontSize: 42, lineHeight: 1.38, color: t.soft, marginTop: 34 }}>{slide.text}</div> : null}
+    </div>
+  )
+}
+
+/** Lista: numero grande (01, 02…) sopra titolo e testo. */
+function listSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  if (cover) return textCover(t, slide, i, n, logo, cover, showCounter)
+  return textFrame(
+    t,
+    i,
+    n,
+    logo,
+    showCounter,
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', fontSize: 230, fontWeight: 800, lineHeight: 0.9, letterSpacing: -6, color: t.accent }}>{String(i - 1).padStart(2, '0')}</div>
+      <div style={{ display: 'flex', fontSize: slide.title.length > 40 ? 66 : 80, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.5, marginTop: 30 }}>{slide.title}</div>
+      {slide.text ? <div style={{ display: 'flex', fontSize: 40, lineHeight: 1.38, color: t.soft, marginTop: 28 }}>{slide.text}</div> : null}
+    </div>
+  )
+}
+
+/** Citazione: virgolette grandi, il testo in grande, il titolo come firma sotto. */
+function quoteSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  if (cover) return textCover(t, slide, i, n, logo, cover, showCounter)
+  const quote = slide.text || slide.title
+  return textFrame(
+    t,
+    i,
+    n,
+    logo,
+    showCounter,
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', fontSize: 300, fontWeight: 800, lineHeight: 0.7, color: t.accent, height: 170 }}>“</div>
+      <div style={{ display: 'flex', fontSize: quote.length > 120 ? 50 : 60, lineHeight: 1.3, letterSpacing: -0.5 }}>{quote}</div>
+      {slide.text && slide.title ? (
+        <div style={{ display: 'flex', fontSize: 32, fontWeight: 800, color: t.label, letterSpacing: 2, marginTop: 40 }}>— {slide.title.toUpperCase()}</div>
+      ) : null}
+    </div>
+  )
+}
+
+const textSlideFor = (layout: TextLayout) => (layout === 'lista' ? listSlide : layout === 'citazione' ? quoteSlide : bigTitleSlide)
+
 const slideFor = (layout: PhotoLayout) =>
   layout === 'fascia' ? bandSlide : layout === 'cornice' ? frameSlide : layout === 'minimal' ? minimalSlide : layout === 'diviso' ? splitSlide : photoSlide
 
@@ -713,6 +804,8 @@ export async function createPhotoCarousel(input: {
   layout?: PhotoLayout
   /** Font del marchio del cliente (titoli e testi). */
   fonts?: CustomFonts
+  /** Stile delle slide senza foto (foto vuota ''): Grande titolo, Lista, Citazione. */
+  textLayout?: TextLayout
   /**
    * Slide da NON rifare (stesso indice delle slide, finale compresa): se c'e' un indirizzo
    * si tiene quel file cosi' com'e'. Serve per correggere solo alcune slide.
@@ -726,10 +819,12 @@ export async function createPhotoCarousel(input: {
   const accentTheme = themes[mix.cover]
   const kept = (k: number) => input.keep?.[k] || null
   const layout = asPhotoLayout(input.layout)
+  const textLayout = asTextLayout(input.textLayout)
   const [logo, ...fitted] = await Promise.all([
     logoData(input.logo),
     ...photos.map(async (url, k) => {
-      if (kept(k)) return null
+      // Slide senza foto (carosello di testo): niente da scaricare.
+      if (kept(k) || !url) return null
       const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
       if (!res.ok) throw new Error(`foto non scaricata (${res.status})`)
       // Ritaglio sulla parte piu' interessante, alla misura della foto nello stile scelto.
@@ -740,7 +835,20 @@ export async function createPhotoCarousel(input: {
   ])
   const n = photos.length + (input.cta ? 1 : 0)
   const nodes = photos.map((_, k) =>
-    kept(k) ? null : slideFor(layout)(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null, input.counter !== false)
+    kept(k)
+      ? null
+      : photos[k]
+        ? slideFor(layout)(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null, input.counter !== false)
+        : // Senza foto: slide di testo, con i colori che cambiano da una slide all'altra.
+          textSlideFor(textLayout)(
+            k === 0 ? themes[mix.cover] : themes[mix.content[(k - 1) % mix.content.length]],
+            input.slides[k] || { title: '', text: '' },
+            k + 1,
+            n,
+            logo,
+            k === 0 ? { hook: input.hook, label: input.label || '' } : null,
+            input.counter !== false
+          )
   )
   if (input.cta) nodes.push(kept(photos.length) ? null : ctaSlide(themes[mix.cta], n, n, input.cta, input.counter !== false))
   return Promise.all(

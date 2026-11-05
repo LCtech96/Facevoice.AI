@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { fontPreset } from '@/lib/font-presets'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
-import { asPhotoLayout, checkFont, createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide } from '@/lib/blog-image'
+import { asPhotoLayout, asTextLayout, checkFont, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, TEXT_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide, type TextLayout } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
@@ -415,6 +415,8 @@ export type CarouselSource = {
   counter?: boolean
   /** Stile delle slide (Classico, Fascia, Cornice, Minimal, Diviso). */
   layout?: PhotoLayout
+  /** Stile delle slide senza foto (Grande titolo, Lista, Citazione). */
+  textLayout?: TextLayout
   /** Marchio con cui sono state fatte le slide (vedi brandSignature). */
   brand?: string
 }
@@ -460,6 +462,7 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, 
     keep: outdated ? undefined : keep,
     counter: source.counter !== false,
     layout: asPhotoLayout(source.layout),
+    textLayout: asTextLayout(source.textLayout),
     photos: source.photos,
     slides: source.slides,
     hook: source.hook,
@@ -537,22 +540,19 @@ export async function createPost(
     }
     media = await renderPhotoCarousel(db.workspaceId, source)
   } else {
-    const brand = await workspaceBrand(db.workspaceId)
-    const slides = texts.slides.length ? texts.slides : [{ title: texts.title, text: '' }]
-    const carousel = await createCarousel(texts.title, slides, input.brief, null, {
-      hook: texts.hook || texts.title,
-      label: texts.label,
-      cta: texts.cta,
-      mix: Math.floor(Math.random() * PALETTE_MIXES),
-      onlyMyImages: input.aiImages === false,
-      palette: brand.palette,
-      handle: brand.handle,
-      subject: `a social media post of a small business ("${(await workspaceName(db.workspaceId)).slice(0, 60)}")`,
-      storage: { bucket: MEDIA_BUCKET, folder: `${db.workspaceId}/posts` },
-      imageSeconds: 90,
-      maxSlides: 8,
-    })
-    media = carousel.urls
+    // Carosello di solo testo: copertina con il gancio, una slide per testo e la slide
+    // finale. Niente immagini AI; i testi si salvano (si correggono, spostano, cambiano
+    // stile e colori come nei caroselli con le foto: la "foto" vuota '' vuol dire testo).
+    const content = (texts.slides.length ? texts.slides : [{ title: texts.title, text: '' }]).slice(0, 8)
+    source = {
+      photos: ['', ...content.map(() => '')],
+      slides: [{ title: '', text: '' }, ...content.map((x) => ({ title: trim(x.title, 90), text: trim(x.text, 220) }))],
+      hook: trim(texts.hook || texts.title, 60),
+      label: trim(texts.label, 30),
+      closing: texts.cta,
+      ...(await workspaceDesign(db.workspaceId)),
+    }
+    media = await renderPhotoCarousel(db.workspaceId, source)
   }
 
   const { data, error } = await db
@@ -985,6 +985,10 @@ ${wantsCaption ? `Se la richiesta chiede di cambiare anche la didascalia (descri
   }
   if (photoEdits.length > 4) throw new Error('per modificare le foto scegli al massimo 4 slide per volta')
   for (const edit of photoEdits) {
+    if (!next.photos[edit.k]) {
+      done.push(`slide ${edit.k + 1}: non ha una foto da modificare`)
+      continue
+    }
     next.photos[edit.k] = await editImage(db.workspaceId, next.photos[edit.k], edit.instruction)
     redo.add(edit.k)
     done.push(`slide ${edit.k + 1}: foto modificata`)
@@ -1146,7 +1150,7 @@ export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number
     const k = Math.round(n) - 1
     const photos = source ? source.photos : post.kind === 'photos' ? post.media : null
     if (!photos) throw new Error('in questo carosello grafico non si possono estrarre le foto: crealo dalle foto')
-    if (k < 0 || k >= photos.length) throw new Error(`la slide ${n} non ha una foto da cui estrarre`)
+    if (k < 0 || k >= photos.length || !photos[k]) throw new Error(`la slide ${n} non ha una foto da cui estrarre`)
     const image = await download(photos[k])
     const { boxes, notes } = await findPhotos(image, db.workspaceId)
     if (boxes.length < 2) throw new Error(`nella slide ${n} non ho trovato più foto da separare${boxes.length ? ' (ce n’è una sola)' : ''}`)
@@ -1212,7 +1216,9 @@ export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number
  */
 export type ArrangeMode = 'free' | 'closing' | null
 
-export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string>; designs: Map<string, { layout: PhotoLayout; mix: number }> }> {
+export async function arrangeModes(
+  posts: { id: string; kind: string }[]
+): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string>; designs: Map<string, { kind: 'photo' | 'text'; layout: string; mix: number }> }> {
   const keys = posts.filter((p) => p.kind === 'carousel').map((p) => sourceKey(p.id))
   const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
   const sources = new Map<string, CarouselSource>()
@@ -1239,7 +1245,18 @@ export async function arrangeModes(posts: { id: string; kind: string }[]): Promi
   const designs = new Map(
     posts.flatMap((p) => {
       const source = sources.get(sourceKey(p.id))
-      return source ? [[p.id, { layout: asPhotoLayout(source.layout), mix: ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES }] as const] : []
+      return source
+        ? [
+            [
+              p.id,
+              {
+                kind: source.photos.every((x) => !x) ? ('text' as const) : ('photo' as const),
+                layout: source.photos.every((x) => !x) ? asTextLayout(source.textLayout) : asPhotoLayout(source.layout),
+                mix: ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES,
+              },
+            ] as const,
+          ]
+        : []
     })
   )
   return { modes, outdated, designs }
@@ -1248,33 +1265,45 @@ export async function arrangeModes(posts: { id: string; kind: string }[]): Promi
 // Stile e colori: quelli scelti l'ultima volta valgono anche per i caroselli nuovi.
 const designKey = (workspaceId: string) => `ws_design:${workspaceId}`
 
-async function workspaceDesign(workspaceId: string): Promise<{ layout: PhotoLayout; mix: number }> {
+async function workspaceDesign(workspaceId: string): Promise<{ layout: PhotoLayout; textLayout: TextLayout; mix: number }> {
   const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', designKey(workspaceId)).maybeSingle()
   try {
     const saved = data?.value ? JSON.parse(data.value) : null
-    if (saved) return { layout: asPhotoLayout(saved.layout), mix: Number.isInteger(saved.mix) ? saved.mix : Math.floor(Math.random() * PALETTE_MIXES) }
+    if (saved) {
+      return { layout: asPhotoLayout(saved.layout), textLayout: asTextLayout(saved.textLayout), mix: Number.isInteger(saved.mix) ? saved.mix : Math.floor(Math.random() * PALETTE_MIXES) }
+    }
   } catch {}
-  return { layout: 'classico', mix: Math.floor(Math.random() * PALETTE_MIXES) }
+  return { layout: 'classico', textLayout: 'titolo', mix: Math.floor(Math.random() * PALETTE_MIXES) }
 }
 
 /** Cambia stile e/o colori di un carosello con le foto: si rifanno tutte le slide, senza AI. */
-export async function setDesign(db: WorkspaceDb, id: string, wish: { layout?: unknown; mix?: unknown }): Promise<{ post: PostRow; done: string[] }> {
+export async function setDesign(db: WorkspaceDb, id: string, wish: { layout?: unknown; mix?: unknown; textLayout?: unknown }): Promise<{ post: PostRow; done: string[] }> {
   const post = await getPost(db, id)
   if (!post) throw new Error('post non trovato')
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
   const source = await loadSource(id)
-  if (!source) throw new Error('lo stile si sceglie solo nei caroselli fatti con le foto')
+  if (!source) throw new Error('lo stile non si può scegliere per questo post: ricrealo (con le foto o di solo testo)')
   const layout = wish.layout === undefined ? asPhotoLayout(source.layout) : asPhotoLayout(wish.layout)
+  const textLayout = wish.textLayout === undefined ? asTextLayout(source.textLayout) : asTextLayout(wish.textLayout)
   const mix = Number.isInteger(wish.mix) ? (((wish.mix as number) % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES : ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES
-  if (layout === asPhotoLayout(source.layout) && mix === ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES && (source.style ?? 1) >= SLIDE_STYLE) return { post, done: [] }
+  if (
+    layout === asPhotoLayout(source.layout) &&
+    textLayout === asTextLayout(source.textLayout) &&
+    mix === ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES &&
+    (source.style ?? 1) >= SLIDE_STYLE
+  ) {
+    return { post, done: [] }
+  }
   await keepBaseline(post, source)
-  const next: CarouselSource = { ...source, layout, mix }
+  const next: CarouselSource = { ...source, layout, textLayout, mix }
   const media = await renderPhotoCarousel(db.workspaceId, next)
   await saveSource(id, next)
   await supabaseAdmin
     .from('app_settings')
-    .upsert({ key: designKey(db.workspaceId), value: JSON.stringify({ layout, mix }), updated_at: new Date().toISOString() }, { onConflict: 'key' })
-  return { post: await updatePost(db, id, { media }), done: [`stile «${PHOTO_LAYOUTS.find((l) => l.id === layout)?.label || layout}», colori ${mix + 1}: tutte le slide rifatte con gli stessi testi e foto`] }
+    .upsert({ key: designKey(db.workspaceId), value: JSON.stringify({ layout, textLayout, mix }), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  const textOnly = source.photos.every((p) => !p)
+  const styleName = textOnly ? TEXT_LAYOUTS.find((l) => l.id === textLayout)?.label : PHOTO_LAYOUTS.find((l) => l.id === layout)?.label
+  return { post: await updatePost(db, id, { media }), done: [`stile «${styleName}», colori ${mix + 1}: tutte le slide rifatte con gli stessi testi${textOnly ? '' : ' e foto'}`] }
 }
 
 /** Rifa' tutte le slide con la grafica attuale: stessi testi e stesse foto, nessuna AI. */
@@ -1340,6 +1369,7 @@ export async function editSlidePhoto(db: WorkspaceDb, id: string, n: number, ins
   const source = await loadSource(id)
   await keepBaseline(post, source)
   if (source && k >= 0 && k < source.photos.length) {
+    if (!source.photos[k]) throw new Error(`la slide ${k + 1} è di solo testo: non ha una foto da modificare`)
     const edited = await editImage(db.workspaceId, source.photos[k], instruction)
     const next = { ...source, photos: source.photos.map((url, j) => (j === k ? edited : url)) }
     const media = await renderPhotoCarousel(db.workspaceId, next)

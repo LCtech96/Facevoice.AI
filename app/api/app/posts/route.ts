@@ -104,7 +104,7 @@ export async function PATCH(req: NextRequest) {
       }
       case 'design': {
         // Stile e/o colori delle slide: si rifanno tutte, stessi testi e foto, nessuna AI.
-        const result = await setDesign(access.db, id, { layout: body.layout, mix: body.mix })
+        const result = await setDesign(access.db, id, { layout: body.layout, mix: body.mix, textLayout: body.textLayout })
         post = result.post
         done = result.done
         if (done.length) {

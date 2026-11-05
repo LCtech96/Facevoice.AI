@@ -12,3 +12,14 @@ export const PHOTO_LAYOUTS = [
 export type PhotoLayout = (typeof PHOTO_LAYOUTS)[number]['id']
 
 export const asPhotoLayout = (value: unknown): PhotoLayout => (PHOTO_LAYOUTS.some((l) => l.id === value) ? (value as PhotoLayout) : 'classico')
+
+/** Stili dei caroselli di solo testo (senza foto). */
+export const TEXT_LAYOUTS = [
+  { id: 'titolo', label: 'Grande titolo', hint: 'titolo grande e testo sotto' },
+  { id: 'lista', label: 'Lista', hint: 'numero grande su ogni slide (01, 02…)' },
+  { id: 'citazione', label: 'Citazione', hint: 'il testo in grande tra virgolette' },
+] as const
+
+export type TextLayout = (typeof TEXT_LAYOUTS)[number]['id']
+
+export const asTextLayout = (value: unknown): TextLayout => (TEXT_LAYOUTS.some((l) => l.id === value) ? (value as TextLayout) : 'titolo')

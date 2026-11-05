@@ -7,7 +7,7 @@ import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES } from '@/lib/ai-models'
-import { PHOTO_LAYOUTS } from '@/lib/photo-layouts'
+import { PHOTO_LAYOUTS, TEXT_LAYOUTS } from '@/lib/photo-layouts'
 
 const MODEL_KEY = 'fv_app_assistant_model'
 
@@ -32,7 +32,7 @@ type Post = {
   /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
   restyle?: boolean
   /** Stile e colori del carosello con le foto (null: non si scelgono). */
-  design?: { layout: string; mix: number } | null
+  design?: { kind: 'photo' | 'text'; layout: string; mix: number } | null
   /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
   snapshot?: boolean
   sameAsLive?: boolean
@@ -663,10 +663,10 @@ function PostCard({
         <div className="mt-2 space-y-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
             <span className="shrink-0 text-[var(--text-secondary)]">Stile</span>
-            {PHOTO_LAYOUTS.map((l) => (
+            {(post.design.kind === 'text' ? TEXT_LAYOUTS : PHOTO_LAYOUTS).map((l) => (
               <button
                 key={l.id}
-                onClick={() => post.design?.layout !== l.id && act('design', { layout: l.id })}
+                onClick={() => post.design?.layout !== l.id && act('design', post.design?.kind === 'text' ? { textLayout: l.id } : { layout: l.id })}
                 disabled={working || changed}
                 title={l.hint}
                 className={`shrink-0 rounded-full border px-2.5 py-1 disabled:opacity-50 ${
