@@ -162,10 +162,35 @@ async function brandFonts() {
   return fonts
 }
 
-async function render(node: React.ReactElement): Promise<Buffer> {
-  const list = await brandFonts()
+/** Font del cliente: titoli (grassetto) e testi; se ne manca uno si usa l'altro. */
+export type CustomFonts = { heading?: Buffer | null; body?: Buffer | null }
+
+async function render(node: React.ReactElement, custom?: CustomFonts): Promise<Buffer> {
+  const base = await brandFonts()
+  const heading = custom?.heading || custom?.body
+  const body = custom?.body || custom?.heading
+  // I font del cliente prendono il posto di Inter Tight (titoli = 800, testi = 400); Inter
+  // Tight resta di riserva per i caratteri che il loro font non ha.
+  const list =
+    heading && body
+      ? [
+          { name: 'Inter Tight', data: heading, weight: 800 as const, style: 'normal' as const },
+          { name: 'Inter Tight', data: body, weight: 400 as const, style: 'normal' as const },
+          ...base.map((f) => ({ ...f, name: 'Inter Tight Riserva' })),
+        ]
+      : base
   const res = new ImageResponse(node, { width: W, height: H, ...(list.length ? { fonts: list } : {}) })
   return Buffer.from(await res.arrayBuffer())
+}
+
+/** Il font si legge e si disegna? (prima di salvarlo come font del marchio) */
+export async function checkFont(data: Buffer): Promise<void> {
+  const node = (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 80, fontWeight: 800, fontFamily: 'Inter Tight', background: '#ffffff' }}>
+      Prova Àè 123
+    </div>
+  )
+  await render(node, { heading: data, body: data })
 }
 
 const counter = (i: number, n: number) => `${String(i).padStart(2, '0')} / ${String(n).padStart(2, '0')}`
@@ -686,6 +711,8 @@ export async function createPhotoCarousel(input: {
   counter?: boolean
   /** Stile delle slide (vedi PHOTO_LAYOUTS); di base "classico". */
   layout?: PhotoLayout
+  /** Font del marchio del cliente (titoli e testi). */
+  fonts?: CustomFonts
   /**
    * Slide da NON rifare (stesso indice delle slide, finale compresa): se c'e' un indirizzo
    * si tiene quel file cosi' com'e'. Serve per correggere solo alcune slide.
@@ -719,7 +746,7 @@ export async function createPhotoCarousel(input: {
   return Promise.all(
     nodes.map(async (node, k) => {
       if (!node) return kept(k)!
-      const jpeg = await toJpeg(await render(node))
+      const jpeg = await toJpeg(await render(node, input.fonts))
       return input.save ? input.save(jpeg) : upload(jpeg, input.storage)
     })
   )

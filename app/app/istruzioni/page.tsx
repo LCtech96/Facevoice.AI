@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Facebook, Instagram, Loader2, Mail, SlidersHorizontal } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import BrandSettings from '@/components/app/BrandSettings'
 
 // Istruzioni per l'AI: una base comune a tutti i canali e una parte per ogni
 // canale (tono, cosa dire e cosa no). L'AI usa solo quello che c'e' scritto qui.
@@ -86,6 +87,9 @@ export default function InstructionsPage() {
         sono le risposte.
       </p>
       {error && <p className="mt-4 text-sm text-[#ff6b6b]">{error}</p>}
+      <div className="mt-8">
+        <BrandSettings canEdit={canEdit} />
+      </div>
       {!values ? (
         <Loader2 className="mt-8 h-5 w-5 animate-spin text-[var(--text-secondary)]" />
       ) : (

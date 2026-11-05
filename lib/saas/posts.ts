@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
-import { asPhotoLayout, createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide } from '@/lib/blog-image'
+import { asPhotoLayout, checkFont, createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
@@ -62,15 +62,15 @@ async function download(url: string): Promise<Buffer> {
  * arrivava solo "Unexpected token '<'"). Se la prima prova fallisce si riprova
  * con la sola chiave nell'intestazione apikey (chiavi nuove sb_secret_).
  */
-async function store(workspaceId: string, folder: string, jpeg: Buffer): Promise<string> {
-  const path = `${workspaceId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+async function store(workspaceId: string, folder: string, jpeg: Buffer, kind: 'jpg' | 'png' = 'jpg'): Promise<string> {
+  const path = `${workspaceId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${kind}`
   const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '')
   const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
   const url = `${base}/storage/v1/object/${MEDIA_BUCKET}/${path}`
   const attempt = async (headers: Record<string, string>) => {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { ...headers, 'Content-Type': 'image/jpeg', 'x-upsert': 'false', 'cache-control': 'max-age=31536000' },
+      headers: { ...headers, 'Content-Type': kind === 'png' ? 'image/png' : 'image/jpeg', 'x-upsert': 'false', 'cache-control': 'max-age=31536000' },
       body: new Uint8Array(jpeg),
       signal: AbortSignal.timeout(30_000),
     })
@@ -142,7 +142,9 @@ Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`
 
 // --- Marchio del cliente ---------------------------------------------------------
 
-export type WorkspaceBrand = { palette: Palette; handle: string; logo?: string | null }
+/** Font del marchio: nome mostrato e chiave in app_settings dove sta il file (base64). */
+export type BrandFont = { name: string; key: string }
+export type WorkspaceBrand = { palette: Palette; handle: string; logo?: string | null; fonts?: { heading?: BrandFont | null; body?: BrandFont | null } }
 
 const DEFAULT_PALETTE: Palette = { night: '#0f1218', navy: '#141922', deep: '#222a38', blue: '#3b82f6', blueLight: '#bfd4ff', ink: '#f7f7f2' }
 
@@ -184,6 +186,7 @@ export async function workspaceBrand(workspaceId: string): Promise<WorkspaceBran
     palette: { ...DEFAULT_PALETTE, ...(saved.palette || {}) },
     handle: saved.handle ?? (username ? `@${username}` : await workspaceName(workspaceId)),
     logo: saved.logo || null,
+    fonts: saved.fonts || {},
   }
 }
 
@@ -205,6 +208,60 @@ export async function setWorkspaceBrand(workspaceId: string, input: { dark?: str
     .upsert({ key: brandKey(workspaceId), value: JSON.stringify(next), updated_at: new Date().toISOString() }, { onConflict: 'key' })
   if (error) throw new Error(`marchio non salvato: ${error.message}`)
   return next
+}
+
+const brandSignature = (b: WorkspaceBrand) => JSON.stringify([b.palette, b.handle, b.logo || '', b.fonts?.heading?.key || '', b.fonts?.body?.key || ''])
+
+const fontCache = new Map<string, Buffer>()
+async function loadFont(font?: BrandFont | null): Promise<Buffer | null> {
+  if (!font?.key) return null
+  if (fontCache.has(font.key)) return fontCache.get(font.key)!
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', font.key).maybeSingle()
+  if (!data?.value) return null
+  const buffer = Buffer.from(data.value, 'base64')
+  fontCache.set(font.key, buffer)
+  return buffer
+}
+
+/** Logo del marchio: PNG con la trasparenza (niente riquadro bianco), lato lungo max 800 px. */
+export async function setBrandLogo(workspaceId: string, input: Buffer) {
+  const png = await sharp(input, { density: 300 }).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).png().toBuffer()
+  const url = await store(workspaceId, 'brand', png, 'png')
+  return setWorkspaceBrand(workspaceId, { logo: url })
+}
+
+/**
+ * Font del marchio (.ttf, .otf o .woff) per i titoli, i testi o tutti e due. Il file sta
+ * in app_settings (base64): l'archivio delle foto potrebbe accettare solo immagini.
+ */
+export async function setBrandFont(workspaceId: string, role: 'heading' | 'body' | 'both', name: string, data: Buffer) {
+  if (data.length > 3_000_000) throw new Error('il font è troppo pesante (massimo 3 MB)')
+  const magic = data.subarray(0, 4).toString('latin1')
+  if (magic === 'wOF2') throw new Error('i font .woff2 non si possono usare: carica la versione .ttf, .otf o .woff')
+  if (!['\x00\x01\x00\x00', 'true', 'OTTO', 'wOFF'].includes(magic)) throw new Error('file non riconosciuto: carica un font .ttf, .otf o .woff')
+  await checkFont(data).catch(() => {
+    throw new Error('questo font non si riesce a usare: prova la versione .ttf o .otf')
+  })
+  const key = `ws_font:${workspaceId}:${Date.now().toString(36)}`
+  const { error } = await supabaseAdmin.from('app_settings').upsert({ key, value: data.toString('base64'), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  if (error) throw new Error(`font non salvato: ${error.message}`)
+  const font: BrandFont = { name: name.replace(/\.(ttf|otf|woff)$/i, '').slice(0, 60) || 'Font', key }
+  const current = await workspaceBrand(workspaceId)
+  const fonts = { ...(current.fonts || {}), ...(role === 'heading' || role === 'both' ? { heading: font } : {}), ...(role === 'body' || role === 'both' ? { body: font } : {}) }
+  return saveBrand(workspaceId, { ...current, fonts })
+}
+
+export async function removeBrandFont(workspaceId: string, role: 'heading' | 'body') {
+  const current = await workspaceBrand(workspaceId)
+  return saveBrand(workspaceId, { ...current, fonts: { ...(current.fonts || {}), [role]: null } })
+}
+
+async function saveBrand(workspaceId: string, brand: WorkspaceBrand) {
+  const { error } = await supabaseAdmin
+    .from('app_settings')
+    .upsert({ key: brandKey(workspaceId), value: JSON.stringify(brand), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  if (error) throw new Error(`marchio non salvato: ${error.message}`)
+  return brand
 }
 
 // --- Lettura delle foto ---------------------------------------------------------
@@ -337,6 +394,8 @@ export type CarouselSource = {
   counter?: boolean
   /** Stile delle slide (Classico, Fascia, Cornice, Minimal, Diviso). */
   layout?: PhotoLayout
+  /** Marchio con cui sono state fatte le slide (vedi brandSignature). */
+  brand?: string
 }
 
 /**
@@ -366,10 +425,15 @@ export async function loadSource(postId: string): Promise<CarouselSource | null>
 /** keep: file delle slide da tenere identiche (stesso indice), null = da rifare. */
 async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, keep?: (string | null)[]): Promise<string[]> {
   const brand = await workspaceBrand(workspaceId)
-  // Grafica vecchia: si rifanno tutte le slide (chi chiama salva poi la nuova versione).
-  const outdated = (source.style ?? 1) < SLIDE_STYLE
+  // Grafica vecchia o marchio cambiato (logo, colori, font, firma): si rifanno tutte le
+  // slide, cosi' non ci sono mai slide diverse nello stesso carosello.
+  const sig = brandSignature(brand)
+  const outdated = (source.style ?? 1) < SLIDE_STYLE || Boolean(source.brand && source.brand !== sig)
   source.style = SLIDE_STYLE
+  source.brand = sig
+  const [heading, body] = await Promise.all([loadFont(brand.fonts?.heading), loadFont(brand.fonts?.body)])
   return createPhotoCarousel({
+    fonts: { heading, body },
     keep: outdated ? undefined : keep,
     counter: source.counter !== false,
     layout: asPhotoLayout(source.layout),
