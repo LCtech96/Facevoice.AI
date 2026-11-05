@@ -10,6 +10,15 @@ import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
+import {
+  identityNotice,
+  identityPrompt,
+  noteVerificationDraft,
+  parseIdentityMarker,
+  processVerification,
+  startVerification,
+  type Verification,
+} from '@/lib/identity-verify'
 
 // Chat del sito pubblico come canale della casella Messaggi (platform 'web').
 // L'AI raccoglie a piccoli passi esigenza e contatto, poi passa la
@@ -84,7 +93,7 @@ I marcatori tra doppie parentesi quadre non vengono mostrati all'utente.`,
 })
 
 function cleanReply(text: string) {
-  return parseSuspicious(text)
+  return parseSuspicious(parseIdentityMarker(text).text)
     .text
     .replace(NAME_TAG, '')
     .replace(HANDOFF_TAG, '')
@@ -130,15 +139,41 @@ export async function handleSiteMessage(
   const stored = !insertError
   if (insertError) console.error('site chat insert:', insertError.message)
 
+  // Verifica dell'identita' (chi dice di averci gia' scritto altrove, di essere cliente...):
+  // lo stato vive solo sul server, mai nello storico mandato dal browser. Nelle chat gia'
+  // passate a un operatore avanza solo una verifica gia' aperta. Se lo stato non si legge,
+  // la chat continua normalmente (con le regole sull'identita' nel prompt).
+  const handedOff = stored ? await isHandedOff(sessionId) : false
+  const identity: Verification | null = stored
+    ? await processVerification({ platform: WEB_PLATFORM, contactId: sessionId, text, startNew: !handedOff }).catch((error) => {
+        console.error('site chat verifica identità:', error)
+        return null
+      })
+    : null
+  const verifying = Boolean(identity && (identity.hold || identity.phase === 'verified_now'))
+
   // Gia' passato a un operatore: l'AI tace, avvisiamo Luca del nuovo messaggio.
-  if (stored && (await isHandedOff(sessionId))) {
+  // Con una verifica gia' aperta l'AI prepara solo una bozza da approvare.
+  if (handedOff) {
+    if (verifying && identity) await draftVerificationReply(sessionId, contactName, identity, language)
     await sendPushToAdmins({
       title: `${contactName || 'Visitatore'} · Chat sito`,
-      body: text.slice(0, 140),
+      body: [text.slice(0, 140), verifying ? identityNotice(identity) : null].filter(Boolean).join('\n'),
       url: `/admin/inbox?c=${encodeURIComponent(`${WEB_PLATFORM}:${sessionId}`)}`,
       tag: `web:${sessionId}`,
     }).catch(() => null)
     return { handoff: true, stored }
+  }
+
+  // Verifica aperta: il visitatore riceve subito un messaggio di attesa, la chat passa a un
+  // operatore e l'AI scrive solo bozze da approvare (mai risposte automatiche finche' la
+  // persona non e' verificata con il codice).
+  if (verifying && identity) {
+    const reply = await sendHoldingMessage(sessionId, contactName, language)
+    await markHandedOff(sessionId)
+    await draftVerificationReply(sessionId, contactName, identity, language)
+    await notifyHandoff(sessionId, contactName)
+    return { reply, handoff: true, stored }
   }
 
   // Appena il visitatore lascia email o cellulare: passaggio all'operatore
@@ -200,6 +235,7 @@ export async function handleSiteMessage(
       : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     CLARITY_RULES,
+    identityPrompt(identity, WEB_PLATFORM),
   ].join('')
 
   let raw = ''
@@ -217,6 +253,39 @@ export async function handleSiteMessage(
 
   const nameMatch = raw.match(NAME_TAG)
   if (nameMatch) contactName = nameMatch[1].trim()
+
+  // L'AI ha riconosciuto una dichiarazione di identita': si apre la verifica (stesso filtro
+  // del testo) e la risposta (che chiede telefono ed email) resta in bozza per l'operatore.
+  const marker = parseIdentityMarker(raw)
+  if (marker.claim && stored && (!identity?.state || identity.state.status === 'verified')) {
+    const opened = await startVerification(WEB_PLATFORM, sessionId, marker.claim, { text, allowVerified: true }).catch((error) => {
+      console.error('site chat verifica identità:', error)
+      return null
+    })
+    if (opened?.state && opened.hold) {
+      const reply = await sendHoldingMessage(sessionId, contactName, language)
+      // Telefono o email gia' nel messaggio: la bozza deve annunciare l'email con il codice.
+      if (opened.phase === 'data_received') await draftVerificationReply(sessionId, contactName, opened, language)
+      else {
+        const draft = cleanReply(marker.text).slice(0, 1200)
+        if (draft) {
+          await supabaseAdmin.from('social_messages').insert({
+            platform: WEB_PLATFORM,
+            kind: 'message',
+            contact_id: sessionId,
+            contact_name: contactName,
+            direction: 'out',
+            body: draft,
+            status: 'pending',
+          })
+        }
+      }
+      await markHandedOff(sessionId)
+      await notifyHandoff(sessionId, contactName)
+      return { reply, handoff: true, stored }
+    }
+  }
+
   const wantsHandoff = raw.includes(HANDOFF_TAG)
   const body = cleanReply(raw).slice(0, 1200) || 'Dimmi pure, ti ascolto.'
 
@@ -258,6 +327,84 @@ export async function handleSiteMessage(
     handoff: wantsHandoff,
     stored,
   }
+}
+
+/** Messaggio di attesa inviato subito al visitatore quando la chat passa all'operatore per una verifica. */
+async function sendHoldingMessage(sessionId: string, contactName: string | null, language: SiteLanguage): Promise<SiteMessage> {
+  const body = HANDOFF_MESSAGES[language].replace('{name}', contactName ? `, ${contactName}` : '')
+  const { data: row } = await supabaseAdmin
+    .from('social_messages')
+    .insert({
+      platform: WEB_PLATFORM,
+      kind: 'message',
+      contact_id: sessionId,
+      contact_name: contactName,
+      direction: 'out',
+      external_id: `web:${randomUUID()}`,
+      body,
+      status: 'sent',
+    })
+    .select('id, direction, body, created_at')
+    .single()
+  return (row as SiteMessage | null) ?? { id: `local-${Date.now()}`, direction: 'out', body, created_at: new Date().toISOString() }
+}
+
+/**
+ * Bozza della risposta durante una verifica dell'identita': la vede solo Luca nella
+ * casella e parte quando la approva (se annuncia l'email, solo allora parte il codice).
+ */
+async function draftVerificationReply(sessionId: string, contactName: string | null, identity: Verification, language: SiteLanguage) {
+  if (!hasAIProvider()) return
+  const history = (await loadSession(sessionId)).slice(-HISTORY_LIMIT).map((m) => ({
+    role: m.direction === 'in' ? 'user' : 'assistant',
+    content: m.body,
+  }))
+  if (!history.length) return
+  const knowledge = await loadKnowledge().catch(() => '')
+  const system = [
+    await sectionText(SITE_PROMPT),
+    knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+    contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
+    `\n\n## Operatore\nLa conversazione è seguita da un operatore del team: scrivi la risposta come bozza, che l'operatore controlla prima di inviarla. Non aggiungere ${HANDOFF_TAG}.`,
+    language !== 'it' ? `\n\n## Lingua\nRispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}.` : '',
+    `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+    CLARITY_RULES,
+    identityPrompt(identity, WEB_PLATFORM),
+  ].join('')
+
+  let raw = ''
+  try {
+    raw = ((await callAI(history, system, { feature: 'chat_sito', temperature: 0.4, maxOutputTokens: 512 })).message || '').trim()
+  } catch (error) {
+    console.error('site chat verifica identità, bozza:', error)
+    return
+  }
+  if (!raw || raw.includes('NESSUNA_RISPOSTA')) return
+  const body = cleanReply(raw).slice(0, 1200)
+  if (!body) return
+  // La bozza nuova sostituisce quelle dell'AI ancora da approvare (non si accumulano).
+  await supabaseAdmin
+    .from('social_messages')
+    .delete()
+    .eq('platform', WEB_PLATFORM)
+    .eq('contact_id', sessionId)
+    .eq('direction', 'out')
+    .eq('status', 'pending')
+  const { data: row } = await supabaseAdmin
+    .from('social_messages')
+    .insert({
+      platform: WEB_PLATFORM,
+      kind: 'message',
+      contact_id: sessionId,
+      contact_name: contactName,
+      direction: 'out',
+      body,
+      status: 'pending',
+    })
+    .select('id')
+    .single()
+  // Dati corrispondenti a un archivio: il codice parte quando questa bozza viene approvata.
+  if (row && identity.state?.status === 'code_ready') await noteVerificationDraft(WEB_PLATFORM, sessionId, row.id)
 }
 
 /** Email all'admin con tutta la conversazione e il link per rispondere dalla casella. */

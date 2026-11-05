@@ -44,6 +44,14 @@ type Conversation = {
   hasComments: boolean
   linked: boolean
   suggestion?: { key: string; name: string; platforms: string[] }
+  verification?: { status: string; label: string; detail: string; tone: 'pending' | 'ok' | 'bad' }
+}
+
+// Colori del badge della verifica dell'identita'.
+const VERIFY_TONE: Record<'pending' | 'ok' | 'bad', string> = {
+  pending: 'bg-[#5856D6]/15 text-[#5856D6]',
+  ok: 'bg-[#34C759]/15 text-[#248A3D]',
+  bad: 'bg-[#FF3B30]/15 text-[#FF3B30]',
 }
 
 type Message = {
@@ -751,6 +759,13 @@ function InboxPage() {
     loadConversations()
   }
 
+  const resetVerification = async () => {
+    if (!selectedKey || !confirm('Azzerare la verifica dell’identità? Le risposte torneranno a seguire la modalità del canale e nella chat del sito risponderà di nuovo l’AI. I collegamenti tra conversazioni restano: per toglierli separa l’account dalla conversazione.')) return
+    const res = await authFetch(`/api/admin/inbox/verify?c=${encodeURIComponent(selectedKey)}`, { method: 'DELETE' })
+    if (!res.ok) return setNotice('Non è stato possibile azzerare la verifica')
+    loadConversations()
+  }
+
   const unlink = async (platform: string, contactId: string) => {
     const res = await authFetch('/api/admin/inbox/link', {
       method: 'DELETE',
@@ -920,10 +935,11 @@ function InboxPage() {
                           {c.lastStatus === 'pending' ? 'Bozza: ' : c.lastDirection === 'out' ? 'Tu: ' : ''}
                           {c.lastMessage}
                         </span>
-                        {(c.unread > 0 || c.pending > 0 || c.suggestion || c.hasComments || (c.linked && c.platforms.length > 1)) && (
+                        {(c.unread > 0 || c.pending > 0 || c.suggestion || c.verification || c.hasComments || (c.linked && c.platforms.length > 1)) && (
                           <span className="mt-1 flex flex-wrap gap-1.5">
                             {c.unread > 0 && <span className="rounded-full bg-[var(--accent-blue)] px-2 text-[10px] text-white">{c.unread} nuovi</span>}
                             {c.pending > 0 && <span className="rounded-full bg-[#FF9500] px-2 text-[10px] text-white">bozza da approvare</span>}
+                            {c.verification && <span title={c.verification.detail} className={`rounded-full px-2 text-[10px] ${VERIFY_TONE[c.verification.tone]}`}>{c.verification.label}</span>}
                             {c.linked && c.platforms.length > 1 && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">su {c.platforms.length} canali</span>}
                             {c.suggestion && <span className="rounded-full bg-[#AF52DE]/15 px-2 text-[10px] text-[#AF52DE]">possibile doppione</span>}
                             {c.hasComments && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">commenti</span>}
@@ -985,11 +1001,23 @@ function InboxPage() {
                     )}
                   </div>
 
+                  {current?.verification && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${VERIFY_TONE[current.verification.tone]}`}>{current.verification.label}</span>
+                      <span className="min-w-0 flex-1">{current.verification.detail}</span>
+                      {canReply && (
+                        <button onClick={resetVerification} className="text-[var(--text-secondary)] underline hover:text-[var(--text-primary)]">
+                          Azzera
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {canReply && current?.suggestion && !linking && (
                     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#AF52DE]/10 px-3 py-2 text-xs text-[var(--text-primary)]">
                       <span>
                         Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
-                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}.
+                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}. Il nome da solo non è una prova: collega solo se ne sei sicuro, l&apos;AI userà anche l&apos;altra conversazione.
                       </span>
                       <button onClick={() => link(current.suggestion!.key)} className="rounded-full bg-[#AF52DE] px-3 py-1 font-medium text-white">
                         Collega
