@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { ChevronDown, MessageCircleReply, Save } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, ImagePlus, Loader2, MessageCircleReply, Save } from 'lucide-react'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import { prepareImage } from '@/lib/client-image'
 
 // Interruttore delle risposte automatiche a chi abbiamo contattato noi per primi,
 // separato da quello della casella Messaggi, con gli esempi di strategia di Luca.
@@ -28,6 +29,45 @@ export default function OutreachReplyPanel() {
   const [strategy, setStrategy] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  // Screenshot di conversazioni vere: l'AI le legge e ne ricava il metodo, che si aggiunge agli esempi.
+  const [reading, setReading] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const readScreenshots = async (files: File[]) => {
+    const list = files.filter((f) => f.type.startsWith('image/')).slice(0, 12)
+    if (!list.length) return
+    setNotice(null)
+    const added: string[] = []
+    let failed = ''
+    try {
+      // A gruppi di 3: gli screenshot della stessa conversazione vengono letti insieme.
+      for (let i = 0; i < list.length; i += 3) {
+        const group = list.slice(i, i + 3)
+        setReading(list.length > 3 ? `Leggo gli screenshot ${i + 1}-${i + group.length} di ${list.length}…` : 'Leggo gli screenshot…')
+        const images = await Promise.all(group.map((f) => prepareImage(f).then((img) => img.data)))
+        const res = await authFetch('/api/admin/outreach-reply/screenshots', { method: 'POST', body: JSON.stringify({ images }) }).catch(() => null)
+        const data = res ? await res.json().catch(() => ({})) : {}
+        if (!res?.ok || !data.example) {
+          failed = data.error || 'Lettura non riuscita, riprova.'
+          break
+        }
+        added.push(data.example)
+      }
+    } catch {
+      failed = 'Uno dei file non è un’immagine valida.'
+    } finally {
+      setReading(null)
+    }
+    if (added.length) {
+      const day = new Date().toLocaleDateString('it-IT')
+      setStrategy((current) => [current.trim(), ...added.map((text) => `--- Da screenshot (${day}) ---\n${text}`)].filter(Boolean).join('\n\n'))
+    }
+    setNotice(
+      failed
+        ? `${added.length ? 'Una parte è stata aggiunta. ' : ''}${failed}`
+        : 'Letti: conversazione e metodo sono stati aggiunti qui sotto. Controlla e premi “Salva esempi”.'
+    )
+  }
 
   useEffect(() => {
     authFetch('/api/admin/outreach-reply')
@@ -107,6 +147,32 @@ export default function OutreachReplyPanel() {
             Il metodo della tua conversazione con Dario è già incluso. Qui puoi incollare altre conversazioni vere scritte da te: l’AI ne prende il metodo, cioè come rispondi, come
             sposti il discorso e come porti alla chiamata, ma scrive sempre come Luca di Facevoice AI e non copia frasi o persone.
           </p>
+          <div className="rounded-lg border border-dashed border-[var(--border-color)] p-3">
+            <p className="text-xs text-[var(--text-secondary)]">
+              Oppure carica degli screenshot di email o chat già avute (il messaggio ricevuto e la tua risposta): l’AI li legge, trascrive la
+              conversazione senza nomi e ricava come rispondi a ogni tipo di messaggio.
+            </p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files || [])
+                e.target.value = ''
+                readScreenshots(files)
+              }}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={Boolean(reading) || busy}
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border border-[var(--border-color)] text-[var(--text-primary)] disabled:opacity-50"
+            >
+              {reading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
+              {reading || 'Aggiungi screenshot'}
+            </button>
+          </div>
           <textarea
             value={strategy}
             onChange={(e) => setStrategy(e.target.value)}
@@ -116,7 +182,7 @@ export default function OutreachReplyPanel() {
           />
           <button
             onClick={() => save({ strategy })}
-            disabled={busy}
+            disabled={busy || Boolean(reading)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm text-white disabled:opacity-40"
             style={{ background: ACCENT }}
           >
