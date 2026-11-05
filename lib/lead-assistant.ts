@@ -17,6 +17,7 @@ import { prepareInboxReply, prepareOutreachReply, type SocialPlatform } from '@/
 import { pollGmail } from '@/lib/gmail-poll'
 import { withCalls } from '@/lib/lead-calls'
 import { SOURCE_CHAT, addContact } from '@/lib/contacts'
+import { noteLeadFields } from '@/lib/lead-origin'
 import { inspectWebsite, platformOf } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { conversationKeyFor } from '@/lib/meta/identities'
@@ -986,6 +987,8 @@ export async function runAssistant(
             break
           }
           reportStatus('Aggiorno le schede…')
+          // Email messa dalla super chat: non collega conversazioni in automatico (resta un suggerimento).
+          if (updates.email) await Promise.all(ids.map((id) => noteLeadFields(id, { email: updates.email }, 'auto')))
           const { error } = await supabaseAdmin.from('leads').update(updates).in('id', ids)
           result = error ? { errore: error.message } : { aggiornate: ids.length }
           refresh = true

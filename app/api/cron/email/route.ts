@@ -6,6 +6,7 @@ import { resumeOrClose } from '@/lib/assistant-launch'
 import { autopilotTick } from '@/lib/autopilot'
 import { blogAutoTick } from '@/lib/blog-auto'
 import { sendDueOutreachReplies } from '@/lib/outreach-reply'
+import { autoLinkBackfillTick } from '@/lib/meta/auto-link'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -36,6 +37,9 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
+  // Collegamento automatico delle conversazioni gia' esistenti: pochi secondi a ogni giro, riprende da dove
+  // era rimasto. Va in parallelo e non ritarda la lettura delle email.
+  const backfill = autoLinkBackfillTick().catch((error) => console.error('collegamento automatico:', error))
   await Promise.all([
     autopilotTick(req.nextUrl.origin).catch((error) => console.error('autopilot:', error)),
     blogAutoTick(req.nextUrl.origin).catch((error) => console.error('blog auto:', error)),
@@ -43,5 +47,7 @@ export async function GET(req: NextRequest) {
     wakeSaasPreview().catch((error) => console.warn('saas cron:', error instanceof Error ? error.message : error)),
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])
-  return NextResponse.json(await pollGmail())
+  const result = await pollGmail()
+  await backfill
+  return NextResponse.json(result)
 }

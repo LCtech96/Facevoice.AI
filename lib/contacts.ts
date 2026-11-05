@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { Lead } from '@/lib/leads'
+import { noteLeadFields } from '@/lib/lead-origin'
 
 // Rubrica contatti: tutte le attivita' e persone della tabella leads, sia quelle
 // trovate con le ricerche (Google Maps) sia quelle inserite a mano dalla pagina
@@ -79,6 +80,9 @@ export async function addContact(input: Record<string, unknown>, source: string)
       else if (!existing[field]) updates[field] = value
     }
     if (!Object.keys(updates).length) return { lead: existing, created: false }
+    // Dati aggiunti a una scheda che esisteva gia' (anche solo con lo stesso nome): non sono una
+    // prova che appartengano alla stessa persona, quindi non collegano conversazioni in automatico.
+    await noteLeadFields(existing.id, updates, 'auto')
     const { data, error } = await supabaseAdmin.from('leads').update(updates).eq('id', existing.id).select('*').single()
     if (error) throw new Error(error.message)
     return { lead: data as Lead, created: false }

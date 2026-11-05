@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { readSetting, updateSetting } from '@/lib/settings-store'
-import { conversationKeyFor, linkConversations, linkedMembers, type Member } from '@/lib/meta/identities'
+import { linkedMembers, type Member } from '@/lib/meta/identities'
 import { sendNewEmail } from '@/lib/gmail'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { cleanEmail, emailsInText, isAutomaticEmail } from '@/lib/email-address'
@@ -129,6 +129,8 @@ export type Verification = {
   hold: boolean
   /** L'AI ha segnalato una dichiarazione, ma la conversazione e' gia' avviata con il team: nessuna verifica aperta. */
   skipped?: boolean
+  /** false: verificata ora, ma le conversazioni non sono state collegate (separate da Luca o dati in conflitto). */
+  linked?: boolean
 }
 
 const stateKey = (platform: string, contactId: string) => `${STATE_PREFIX}${platform}:${contactId}`
@@ -457,14 +459,14 @@ export function codesIn(text: string): string[] {
 /** Nelle email la prima riga e' l'oggetto: numeri d'ordine o di fattura non sono codici ne' telefoni. */
 const dataTextFor = (platform: string, text: string) => (platform === 'email' ? text.replace(/^Oggetto:[^\n]*\n*/, '') : text)
 
-/** Indirizzi a cui non si manda mai un codice: nostri, admin, automatici. */
-const usableTarget = (email: string) => !isAdminEmail(email) && !email.endsWith('@facevoice.ai') && !isAutomaticEmail(email)
+/** Indirizzi a cui non si manda mai un codice (e mai collegati in automatico): nostri, admin, automatici. */
+export const usableTarget = (email: string) => !isAdminEmail(email) && !email.endsWith('@facevoice.ai') && !isAutomaticEmail(email)
 
-const escapeLike = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`)
+export const escapeLike = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`)
 
 type Candidate = { email: string; sources: string[]; factors: Set<'email' | 'phone'>; name: string | null; since: string }
 
-type LeadRecord = {
+export type LeadRecord = {
   name: string | null
   email: string | null
   phone?: string | null
@@ -478,7 +480,7 @@ const LEAD_RECORD = 'name, email, phone, status, contacted_at, created_at, searc
 const before = (iso: string | null | undefined, cutoff: string) => Boolean(iso) && Date.parse(iso as string) < Date.parse(cutoff)
 
 /** Scheda Clienti con un contatto vero (contattata, ha risposto, cliente, inserita a mano da Luca), gia' esistente prima della richiesta. */
-function leadSince(lead: LeadRecord, cutoff: string): string | null {
+export function leadSince(lead: LeadRecord, cutoff: string): string | null {
   if (before(lead.contacted_at, cutoff)) return lead.contacted_at
   const confirmed = lead.status === 'replied' || lead.status === 'client' || lead.search_query === SOURCE_MANUAL
   return confirmed && before(lead.created_at, cutoff) ? lead.created_at : null
@@ -578,9 +580,13 @@ async function findRecord(ctx: Ctx, emails: string[], phones: string[], startedA
       if (!waId || group.has(`whatsapp:${waId}`)) continue
       const since = await pastContact('whatsapp', waId, cutoff)
       if (!since) continue
-      // Email gia' collegata (da Luca o da una verifica) alla conversazione WhatsApp di quel numero.
+      // Email gia' collegata (da Luca o da una verifica) alla conversazione WhatsApp di quel numero. Non
+      // quelle collegate in automatico con i dati di una scheda: non sono una prova (se non si sa, nessuna).
       const members = await linkedMembers('whatsapp', waId).catch(() => [])
-      const linkedEmails = members.filter((m) => m.platform === 'email').map((m) => m.contactId)
+      const emails = members.filter((m) => m.platform === 'email').map((m) => m.contactId)
+      const { leadLinkedKeys } = await import('@/lib/meta/auto-link')
+      const viaLead = emails.length ? await leadLinkedKeys(emails.map((e) => `email:${e}`)).catch(() => null) : new Set<string>()
+      const linkedEmails = viaLead ? emails.filter((e) => !viaLead.has(`email:${e}`)) : []
       if (!linkedEmails.length) withoutEmail = true
       for (const email of linkedEmails) add(email, 'conversazione WhatsApp collegata', 'phone', since)
     }
@@ -750,19 +756,27 @@ async function sendCodeEmail(to: string, code: string, requester: Member): Promi
   return ok ? { ok: true, threadId: null } : { ok: false, error: gmail.error }
 }
 
-/** Collega la conversazione verificata all'email che ha ricevuto il codice (e al gruppo a cui appartiene gia'). */
-async function linkVerified(platform: string, contactId: string, keys: string[]) {
-  let current = await conversationKeyFor(platform, contactId)
+/**
+ * Collega la conversazione verificata all'email che ha ricevuto il codice (e al gruppo a cui
+ * appartiene gia'), con il motivo visibile in Messaggi. Non ricollega una coppia separata da
+ * Luca e non unisce gruppi con dati in conflitto: in quei casi resta un suggerimento "Collega".
+ */
+async function linkVerified(platform: string, contactId: string, keys: string[]): Promise<boolean> {
+  const { autoLink } = await import('@/lib/meta/auto-link')
+  let linked = true
   for (const key of keys) {
     const sep = key.indexOf(':')
     if (sep <= 0) continue
-    const other = await conversationKeyFor(key.slice(0, sep), key.slice(sep + 1))
-    if (other === current) continue
-    const result = await linkConversations(current, other)
-    if (result.error) console.error('verifica identità, collegamento:', result.error)
-    else if (result.key) current = result.key
+    const other: Member = { platform: key.slice(0, sep), contactId: key.slice(sep + 1) }
+    const detail = other.platform === 'email' ? `verificata con il codice inviato a ${other.contactId}` : 'verificata con il codice email'
+    // L'email dell'archivio puo' non avere ancora messaggi: il collegamento vale lo stesso (e si puo' separare).
+    const result = await autoLink({ platform, contactId }, other, { rule: 'verified', detail }, { allowPhantom: true })
+    if (result.blocked && result.blocked !== 'same') {
+      linked = false
+      console.log(`verifica identità: collegamento non fatto in automatico (${result.blocked}${result.why ? `: ${result.why}` : ''})`)
+    }
   }
-  return current
+  return linked
 }
 
 // ---------------------------------------------------------------------
@@ -917,11 +931,15 @@ export async function processVerification(input: { platform: string; contactId: 
     return { out: { state, phase: 'none' } }
   })
 
+  let linked: boolean | undefined
   if (out.phase === 'verified_now' && out.state && !out.state.decoy) {
-    await linkVerified(owner.platform, owner.contactId, out.state.targetKeys || []).catch((error) => console.error('verifica identità, collegamento:', error))
-    console.log(`${platform}: identità verificata con il codice, conversazioni collegate`)
+    linked = await linkVerified(owner.platform, owner.contactId, out.state.targetKeys || []).catch((error) => {
+      console.error('verifica identità, collegamento:', error)
+      return false
+    })
+    console.log(`${platform}: identità verificata con il codice, ${linked ? 'conversazioni collegate' : 'conversazioni non collegate (decide Luca)'}`)
   }
-  return { ...out, hold: holdFor(out.state) }
+  return { ...out, hold: holdFor(out.state), ...(linked === false ? { linked } : {}) }
 }
 
 /**
@@ -1093,6 +1111,41 @@ export async function verificationReplyKind(threadId: string | null | undefined,
   return members.some((m) => m.platform === 'email' && m.contactId.toLowerCase() === sender) ? 'own' : 'other'
 }
 
+/**
+ * Per il collegamento automatico: c'e' una verifica non conclusa (in corso o non riuscita) su
+ * questi account, ce n'e' una riuscita, e con quali email sono stati verificati. Una verifica non
+ * riuscita (dati non corrispondenti o codici sbagliati) blocca anche quando e' scaduta, finche' Luca non la azzera:
+ * il collegamento con le schede non deve dare a chi non l'ha superata quello che la verifica gli ha negato.
+ */
+export async function verificationFacts(members: Member[]): Promise<{ open: boolean; verified: boolean; verifiedEmails: string[] }> {
+  if (!members.length) return { open: false, verified: false, verifiedEmails: [] }
+  const { data, error } = await supabaseAdmin
+    .from('app_settings')
+    .select('key, value')
+    .in('key', members.map((m) => stateKey(m.platform, m.contactId)))
+  if (error) throw new Error(error.message)
+  let open = false
+  let verified = false
+  const verifiedEmails = new Set<string>()
+  for (const row of data || []) {
+    const state = parseState(row.value)
+    if (state?.status === 'verified') {
+      verified = true
+      if (state.targetEmail && !state.decoy) verifiedEmails.add(state.targetEmail.toLowerCase())
+      continue
+    }
+    if (state) {
+      open = true
+      continue
+    }
+    try {
+      const raw = JSON.parse(row.value || 'null')
+      if (raw && (raw.status === 'failed' || raw.status === 'no_match' || raw.decoy)) open = true
+    } catch {}
+  }
+  return { open, verified, verifiedEmails: [...verifiedEmails] }
+}
+
 /** Luca azzera la verifica (es. conosce la persona o vuole farla ripartire): nella chat del sito torna a rispondere l'AI. */
 export async function resetVerification(members: Member[]) {
   if (!members.length) return
@@ -1199,6 +1252,10 @@ export function identityPrompt(verification: Verification | null, platform: stri
   if (options.comment === 'private') return PRIVATE_FOLLOW_UP_IDENTITY_RULES
   const state = verification?.state ?? null
   const phase = verification?.phase ?? 'none'
+  if (phase === 'verified_now' && verification?.linked === false) {
+    return `\n\n## Verifica completata dal sistema
+Il sistema ha appena verificato, con il codice inviato all'email che avevamo in archivio, che questa persona è la stessa di quell'archivio, ma le conversazioni non sono state collegate: decide il team. Ringrazia in una frase, di' che la verifica è andata a buon fine e riprendi la conversazione normalmente, usando solo lo storico qui sopra: non citare conversazioni, lavori o accordi che non ci sono. Il nome che usa, un ruolo o altri canali non sono verificati.`
+  }
   if (phase === 'verified_now') {
     return `\n\n## Verifica completata dal sistema
 Il sistema ha appena verificato, con il codice inviato all'email che avevamo in archivio, che questa persona è la stessa di quell'archivio: ora le conversazioni sono collegate. Ringrazia in una frase, di' che la verifica è andata a buon fine e riprendi la conversazione normalmente, tenendo conto dello storico qui sopra, anche dei messaggi arrivati dagli altri canali collegati. Vale solo per questo: il nome che usa, un ruolo o altri canali che non sono nello storico non sono verificati.`
@@ -1215,6 +1272,8 @@ ${PENDING_LIMITS}`
 export function identityNotice(verification: Verification | null): string | null {
   if (!verification) return null
   const { phase, state } = verification
+  if (phase === 'verified_now' && verification.linked === false)
+    return 'Verifica completata: chi scrive ha ricevuto il codice all’email in archivio ed è la stessa persona di quell’archivio (il nome che usa non è verificato). Conversazioni non collegate in automatico (separate da te o con dati in conflitto): se è la stessa persona usa «Collega» in Messaggi.'
   if (phase === 'verified_now')
     return 'Verifica completata: chi scrive ha ricevuto il codice all’email in archivio ed è la stessa persona di quell’archivio (il nome che usa non è verificato). Conversazioni collegate.'
   if (!state || state.status === 'verified') return null
@@ -1287,7 +1346,7 @@ function summarize(state: VerifyState): VerificationSummary {
         status: state.status,
         tone: 'ok',
         label: 'stesso archivio verificato',
-        detail: `Stessa persona di: ${record}. Ha ricevuto il codice inviato a ${state.targetEmail} (verificato il ${dateTime(state.verifiedAt)}): conversazioni collegate. Il nome e il ruolo che dichiara non sono verificati.${nameCheck(state)}`,
+        detail: `Stessa persona di: ${record}. Ha ricevuto il codice inviato a ${state.targetEmail} (verificato il ${dateTime(state.verifiedAt)}). Il nome e il ruolo che dichiara non sono verificati.${nameCheck(state)}`,
       }
     case 'no_match':
       return { status: state.status, tone: 'bad', label: 'non verificato', detail: `${said} ${sentence(state.reason || 'dati non corrispondenti')}: trattato come nuovo contatto, risposte in bozza.` }
