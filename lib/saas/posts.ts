@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
-import { createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, type Cta, type Palette, type Slide } from '@/lib/blog-image'
+import { asPhotoLayout, createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
@@ -335,6 +335,8 @@ export type CarouselSource = {
   style?: number
   /** Numero della slide in alto a destra ("03 / 08"): false se il cliente l'ha tolto. */
   counter?: boolean
+  /** Stile delle slide (Classico, Fascia, Cornice, Minimal, Diviso). */
+  layout?: PhotoLayout
 }
 
 /**
@@ -370,6 +372,7 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, 
   return createPhotoCarousel({
     keep: outdated ? undefined : keep,
     counter: source.counter !== false,
+    layout: asPhotoLayout(source.layout),
     photos: source.photos,
     slides: source.slides,
     hook: source.hook,
@@ -442,7 +445,8 @@ export async function createPost(
       hook: trim(input.hook || texts.hook || texts.title, 60),
       label: trim(input.label ?? texts.label, 30),
       closing,
-      mix: Math.floor(Math.random() * PALETTE_MIXES),
+      // Stile e colori scelti l'ultima volta dal cliente (altrimenti Classico e colori a caso).
+      ...(await workspaceDesign(db.workspaceId)),
     }
     media = await renderPhotoCarousel(db.workspaceId, source)
   } else {
@@ -1121,7 +1125,7 @@ export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number
  */
 export type ArrangeMode = 'free' | 'closing' | null
 
-export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string> }> {
+export async function arrangeModes(posts: { id: string; kind: string }[]): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string>; designs: Map<string, { layout: PhotoLayout; mix: number }> }> {
   const keys = posts.filter((p) => p.kind === 'carousel').map((p) => sourceKey(p.id))
   const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
   const sources = new Map<string, CarouselSource>()
@@ -1144,7 +1148,46 @@ export async function arrangeModes(posts: { id: string; kind: string }[]): Promi
       return Boolean(source) && (source!.style ?? 1) < SLIDE_STYLE
     }).map((p) => p.id)
   )
-  return { modes, outdated }
+  // Stile e colori attuali (per la scelta nell'anteprima).
+  const designs = new Map(
+    posts.flatMap((p) => {
+      const source = sources.get(sourceKey(p.id))
+      return source ? [[p.id, { layout: asPhotoLayout(source.layout), mix: ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES }] as const] : []
+    })
+  )
+  return { modes, outdated, designs }
+}
+
+// Stile e colori: quelli scelti l'ultima volta valgono anche per i caroselli nuovi.
+const designKey = (workspaceId: string) => `ws_design:${workspaceId}`
+
+async function workspaceDesign(workspaceId: string): Promise<{ layout: PhotoLayout; mix: number }> {
+  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', designKey(workspaceId)).maybeSingle()
+  try {
+    const saved = data?.value ? JSON.parse(data.value) : null
+    if (saved) return { layout: asPhotoLayout(saved.layout), mix: Number.isInteger(saved.mix) ? saved.mix : Math.floor(Math.random() * PALETTE_MIXES) }
+  } catch {}
+  return { layout: 'classico', mix: Math.floor(Math.random() * PALETTE_MIXES) }
+}
+
+/** Cambia stile e/o colori di un carosello con le foto: si rifanno tutte le slide, senza AI. */
+export async function setDesign(db: WorkspaceDb, id: string, wish: { layout?: unknown; mix?: unknown }): Promise<{ post: PostRow; done: string[] }> {
+  const post = await getPost(db, id)
+  if (!post) throw new Error('post non trovato')
+  if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
+  const source = await loadSource(id)
+  if (!source) throw new Error('lo stile si sceglie solo nei caroselli fatti con le foto')
+  const layout = wish.layout === undefined ? asPhotoLayout(source.layout) : asPhotoLayout(wish.layout)
+  const mix = Number.isInteger(wish.mix) ? (((wish.mix as number) % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES : ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES
+  if (layout === asPhotoLayout(source.layout) && mix === ((source.mix % PALETTE_MIXES) + PALETTE_MIXES) % PALETTE_MIXES && (source.style ?? 1) >= SLIDE_STYLE) return { post, done: [] }
+  await keepBaseline(post, source)
+  const next: CarouselSource = { ...source, layout, mix }
+  const media = await renderPhotoCarousel(db.workspaceId, next)
+  await saveSource(id, next)
+  await supabaseAdmin
+    .from('app_settings')
+    .upsert({ key: designKey(db.workspaceId), value: JSON.stringify({ layout, mix }), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  return { post: await updatePost(db, id, { media }), done: [`stile «${PHOTO_LAYOUTS.find((l) => l.id === layout)?.label || layout}», colori ${mix + 1}: tutte le slide rifatte con gli stessi testi e foto`] }
 }
 
 /** Rifa' tutte le slide con la grafica attuale: stessi testi e stesse foto, nessuna AI. */

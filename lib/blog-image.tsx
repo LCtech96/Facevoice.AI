@@ -4,6 +4,9 @@ import { ImageResponse } from 'next/og'
 import sharp from 'sharp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
+import { asPhotoLayout, type PhotoLayout } from './photo-layouts'
+
+export { PHOTO_LAYOUTS, asPhotoLayout, type PhotoLayout } from './photo-layouts'
 
 // Immagini degli articoli del blog per i social: un CAROSELLO (da 3 a 6 slide,
 // formato 4:5 come i caroselli Facevoice su Canva) con i soli colori del marchio,
@@ -522,17 +525,6 @@ function photoSlide(
 }
 
 // --- Stili delle slide con le foto (selezionabili) ---------------------------------
-
-/** Stili delle slide con le foto. Cambiarli rifa' le slide con gli stessi testi e foto. */
-export const PHOTO_LAYOUTS = [
-  { id: 'classico', label: 'Classico', hint: 'foto a tutto schermo, testo in basso' },
-  { id: 'fascia', label: 'Fascia', hint: 'foto in alto, testo su una fascia di colore' },
-  { id: 'cornice', label: 'Cornice', hint: 'titolo sopra, foto incorniciata, testo sotto' },
-  { id: 'minimal', label: 'Minimal', hint: 'foto quasi intera, solo il titolo' },
-  { id: 'diviso', label: 'Diviso', hint: 'metà colore con il testo, metà foto' },
-] as const
-export type PhotoLayout = (typeof PHOTO_LAYOUTS)[number]['id']
-export const asPhotoLayout = (value: unknown): PhotoLayout => (PHOTO_LAYOUTS.some((l) => l.id === value) ? (value as PhotoLayout) : 'classico')
 
 type Logo = { src: string; width: number; height: number } | null
 type Cover = { hook: string; label: string } | null

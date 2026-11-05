@@ -3,7 +3,7 @@ import { requireWorkspace } from '@/lib/workspace'
 import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
 import { usageSummary } from '@/lib/eur'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
-import { arrangeSlides, cancelPost, deletePost, editCaption, editSlides, extractPhotos, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
+import { arrangeSlides, cancelPost, deletePost, editCaption, editSlides, extractPhotos, setDesign, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Azioni che devono riguardare esattamente la versione che il cliente vede.
-const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'schedule', 'publish'])
+const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'design', 'schedule', 'publish'])
 
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
@@ -100,6 +100,16 @@ export async function PATCH(req: NextRequest) {
         post = result.post
         done = result.done
         turns = await logPostChange(access.db, access.userId, { text: `Didascalia: ${instruction.trim().slice(0, 600)}` }, `Fatto: ${done.join(' · ')}. Le slide non sono cambiate.`, post, await usageSummary(tally), chatId)
+        break
+      }
+      case 'design': {
+        // Stile e/o colori delle slide: si rifanno tutte, stessi testi e foto, nessuna AI.
+        const result = await setDesign(access.db, id, { layout: body.layout, mix: body.mix })
+        post = result.post
+        done = result.done
+        if (done.length) {
+          turns = await logPostChange(access.db, access.userId, { text: 'Cambia lo stile delle slide' }, `Fatto: ${done.join(' · ')}. Vale anche per i prossimi caroselli.`, post, undefined, chatId)
+        }
         break
       }
       case 'restyle': {

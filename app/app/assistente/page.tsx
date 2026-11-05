@@ -7,6 +7,7 @@ import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES } from '@/lib/ai-models'
+import { PHOTO_LAYOUTS } from '@/lib/photo-layouts'
 
 const MODEL_KEY = 'fv_app_assistant_model'
 
@@ -30,6 +31,8 @@ type Post = {
   arrange?: 'free' | 'closing' | null
   /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
   restyle?: boolean
+  /** Stile e colori del carosello con le foto (null: non si scelgono). */
+  design?: { layout: string; mix: number } | null
   /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
   snapshot?: boolean
   sameAsLive?: boolean
@@ -656,6 +659,46 @@ function PostCard({
           )
         })}
       </div>
+      {post.design && !done && canManage && (
+        <div className="mt-2 space-y-1.5 text-xs">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <span className="shrink-0 text-[var(--text-secondary)]">Stile</span>
+            {PHOTO_LAYOUTS.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => post.design?.layout !== l.id && act('design', { layout: l.id })}
+                disabled={working || changed}
+                title={l.hint}
+                className={`shrink-0 rounded-full border px-2.5 py-1 disabled:opacity-50 ${
+                  post.design?.layout === l.id ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)] font-semibold text-white' : 'border-[var(--border-color)] text-[var(--text-secondary)]'
+                }`}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <span className="shrink-0 text-[var(--text-secondary)]">Colori</span>
+            {['Scuro', 'Colore', 'Chiaro', 'Profondo'].map((name, m) => (
+              <button
+                key={name}
+                onClick={() => post.design?.mix !== m && act('design', { mix: m })}
+                disabled={working || changed}
+                className={`shrink-0 rounded-full border px-2.5 py-1 disabled:opacity-50 ${
+                  post.design?.mix === m ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)] font-semibold text-white' : 'border-[var(--border-color)] text-[var(--text-secondary)]'
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+            {busy === 'design' && (
+              <span className="inline-flex shrink-0 items-center gap-1 text-[var(--text-secondary)]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Rifaccio le slide…
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       {post.restyle && !done && canManage && !changed && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-[var(--accent-blue)]/10 px-3 py-2 text-xs">
           <span className="min-w-0 flex-1 text-[var(--text-secondary)]">

@@ -41,6 +41,8 @@ export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'capti
   arrange?: ArrangeMode
   /** Slide fatte con una grafica vecchia (es. ombra chiara sotto il testo): si possono rifare. */
   restyle?: boolean
+  /** Stile e colori del carosello con le foto (null se non si possono scegliere). */
+  design?: { layout: string; mix: number } | null
   /** Versione precedente nella chat (com'era in quel momento): solo da guardare o riprendere. */
   snapshot?: boolean
   /** La versione precedente e' uguale a quella attuale. */
@@ -50,8 +52,12 @@ export type PostView = Pick<PostRow, 'id' | 'status' | 'kind' | 'title' | 'capti
 /** Aggiunge ai post se le slide si possono spostare o togliere. */
 export async function withArrange<T extends PostView>(posts: T[]): Promise<T[]> {
   if (!posts.length) return posts
-  const { modes, outdated } = await arrangeModes(posts).catch(() => ({ modes: new Map<string, ArrangeMode>(), outdated: new Set<string>() }))
-  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null, restyle: outdated.has(p.id) }))
+  const { modes, outdated, designs } = await arrangeModes(posts).catch(() => ({
+    modes: new Map<string, ArrangeMode>(),
+    outdated: new Set<string>(),
+    designs: new Map<string, { layout: string; mix: number }>(),
+  }))
+  return posts.map((p) => ({ ...p, arrange: modes.get(p.id) ?? null, restyle: outdated.has(p.id), design: designs.get(p.id) ?? null }))
 }
 
 export type ChatTurn = {
