@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookUser, Activity } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -15,7 +15,6 @@ import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage } from '@/lib/staff-pages'
 const STAFF_ICONS: Record<StaffPage, typeof Home> = {
   inbox: Inbox,
   leads: Target,
-  contacts: BookUser,
   assistant: Sparkles,
   control: Bot,
   usage: BarChart3,
@@ -125,16 +124,13 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ? [
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
         { id: 'admin-assistant', label: 'Super chat', short: 'Super', icon: Sparkles, href: '/admin/assistant' },
-        { id: 'admin-leads', label: 'Clienti', icon: Target, href: '/admin/leads' },
-        { id: 'admin-contacts', label: 'Contatti', icon: BookUser, href: '/admin/contacts' },
-        { id: 'admin-control', label: 'Canali e AI', short: 'Canali', icon: Bot, href: '/admin/control' },
+        { id: 'admin-pipeline', label: 'Motore clienti', short: 'Clienti', icon: Target, href: '/admin/pipeline' },
         { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
       ]
     : staffPages.length
     ? [
         ...staffPages.map((page) => ({ id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href })),
-        { id: 'chat', label: t('nav.chat'), icon: MessageSquare, href: '/ai-chat' },
       ]
     : [
         { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
@@ -145,8 +141,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
 
   const dropdownMenuItems: NavItem[] = isAdmin
     ? [
-        { id: 'admin-pipeline', label: 'Motore clienti', icon: Activity, href: '/admin/pipeline' },
-        { id: 'chat', label: 'Assistente AI interno', icon: MessageSquare, href: '/ai-chat' },
+        { id: 'admin-memory', label: 'Memoria AI', icon: BookOpen, href: '/admin/memoria' },
         { id: 'home', label: 'Home del sito (blog)', icon: Home, href: '/home' },
       ]
     : [

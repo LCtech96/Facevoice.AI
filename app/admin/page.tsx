@@ -169,10 +169,16 @@ export default function AdminPage() {
                     Consumo AI del team &rarr;
                   </a>
                   <a
+                    href="/admin/memoria"
+                    className="text-sm text-[var(--accent-blue)] hover:underline"
+                  >
+                    Memoria AI &rarr;
+                  </a>
+                  <a
                     href="/admin/control"
                     className="text-sm text-[var(--accent-blue)] hover:underline"
                   >
-                    Memoria AI e canali &rarr;
+                    Canali e post &rarr;
                   </a>
                 </div>
               </div>

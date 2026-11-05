@@ -330,7 +330,7 @@ function AutoReplyToggles() {
       </div>
       {channels.some((c) => c.platform === 'email') && (
         <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-          Email: in automatico solo per chi ci scrive per primo. Le risposte dei contatti della Ricerca clienti hanno sempre la controrisposta da approvare.
+          Email: in automatico solo per chi ci scrive per primo. Le risposte dei contatti del Motore clienti hanno sempre la controrisposta da approvare.
         </p>
       )}
       {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}

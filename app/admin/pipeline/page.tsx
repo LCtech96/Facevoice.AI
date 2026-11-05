@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import { Check, Mail, Phone } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -10,10 +9,20 @@ import AutopilotPanel from './AutopilotPanel'
 import OutreachReplyPanel from './OutreachReplyPanel'
 import AppointmentsPanel from './AppointmentsPanel'
 import LiveFeed, { type FeedEvent } from './LiveFeed'
+import LeadsBoard from './LeadsBoard'
 
-// Motore clienti: la pipeline vera in una schermata. Le schede passano da sole
-// da una colonna all'altra man mano che avanzano (ricerca, analisi, contatto,
-// risposta, cliente), anche mentre la super chat lavora.
+// Motore clienti: tutto il lavoro sui clienti in una pagina, in tre schede.
+// Andamento: le schede passano da sole da una colonna all'altra man mano che
+// avanzano (ricerca, analisi, contatto, risposta, cliente). Schede: ricerca su
+// Maps, elenco, chiamate, email (era la pagina "Clienti"). Automazione: lavoro
+// giornaliero e risposte automatiche.
+
+type Tab = 'andamento' | 'schede' | 'automazione'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'andamento', label: 'Andamento' },
+  { id: 'schede', label: 'Schede clienti' },
+  { id: 'automazione', label: 'Automazione' },
+]
 
 type StageId = 'found' | 'research' | 'outreach' | 'replies' | 'clients'
 type Card = { id: string; name: string; place: string | null; at: string; via?: 'email' | 'phone'; email: boolean }
@@ -104,7 +113,7 @@ function shortDate(iso: string) {
   return date.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
 }
 
-function LeadCard({ card, stage, flash, delay }: { card: Card; stage: StageId; flash: boolean; delay: number }) {
+function LeadCard({ card, stage, flash, delay, onOpen }: { card: Card; stage: StageId; flash: boolean; delay: number; onOpen: (id: string) => void }) {
   const won = stage === 'clients'
   const glow = won ? DONE : ACCENT
   return (
@@ -121,7 +130,10 @@ function LeadCard({ card, stage, flash, delay }: { card: Card; stage: StageId; f
       }}
       exit={{ opacity: 0, scale: 0.92 }}
       transition={{ type: 'spring', stiffness: 260, damping: 30, delay, ...(flash ? { duration: 1.4, type: 'tween' } : {}) }}
-      className="rounded-xl border bg-[var(--background-secondary)] px-2.5 py-2 min-w-0"
+      onClick={() => onOpen(card.id)}
+      role="button"
+      title="Apri la scheda"
+      className="cursor-pointer rounded-xl border bg-[var(--background-secondary)] px-2.5 py-2 min-w-0 hover:border-[var(--accent-blue)]"
       style={{ borderColor: won ? DONE : 'var(--border-color)' }}
     >
       <div className="flex items-center justify-between gap-1">
@@ -158,6 +170,46 @@ export default function PipelinePage() {
   const [fresh, setFresh] = useState<Set<string>>(new Set())
   const [flash, setFlash] = useState<Set<string>>(new Set())
   const firstLoad = useRef(true)
+  const [tab, setTab] = useState<Tab>('andamento')
+  // Le schede si caricano la prima volta che si aprono, poi restano (filtri e scheda aperta compresi).
+  const [boardReady, setBoardReady] = useState(false)
+  const [openLead, setOpenLead] = useState<{ id: string; n: number } | null>(null)
+
+  const showTab = useCallback((next: Tab) => {
+    setTab(next)
+    if (next === 'schede') setBoardReady(true)
+    try {
+      const url = new URL(window.location.href)
+      if (next === 'andamento') url.searchParams.delete('tab')
+      else url.searchParams.set('tab', next)
+      url.searchParams.delete('lead')
+      window.history.replaceState(null, '', url)
+    } catch {}
+  }, [])
+
+  const openCard = useCallback(
+    (id: string) => {
+      showTab('schede')
+      setOpenLead({ id, n: Date.now() })
+      window.scrollTo({ top: 0 })
+    },
+    [showTab]
+  )
+
+  // Link diretti: ?tab=schede (dalla vecchia pagina Clienti) e ?lead=<id>.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const lead = params.get('lead')
+    const wanted = params.get('tab')
+    if (lead) {
+      setTab('schede')
+      setBoardReady(true)
+      setOpenLead({ id: lead, n: Date.now() })
+    } else if (wanted === 'schede' || wanted === 'automazione') {
+      setTab(wanted)
+      if (wanted === 'schede') setBoardReady(true)
+    }
+  }, [])
 
   const load = useCallback(async (p: string) => {
     const res = await authFetch(`/api/admin/pipeline?period=${p}`).catch(() => null)
@@ -208,12 +260,7 @@ export default function PipelinePage() {
       <div className="max-w-6xl mx-auto px-4 pt-20 md:pt-24 pb-28 md:pb-10">
         {/* Testata */}
         <div className="flex items-center justify-between gap-3">
-          <p className="shrink-0 whitespace-nowrap text-sm text-[var(--text-secondary)]">
-            <Link href="/admin/leads" className="hover:text-[var(--text-primary)]">
-              Clienti
-            </Link>{' '}
-            / <span className="text-[var(--text-primary)] font-medium">Motore clienti</span>
-          </p>
+          <h1 className="shrink-0 text-2xl font-bold text-[var(--text-primary)]">Motore clienti</h1>
           <span className="flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
             <span className="relative flex w-2 h-2 shrink-0">
               {activity && <span className="absolute inset-0 rounded-full animate-ping" style={{ background: DONE, opacity: 0.6 }} />}
@@ -223,6 +270,33 @@ export default function PipelinePage() {
           </span>
         </div>
 
+        <div className="mt-4 flex gap-1 overflow-x-auto border-b border-[var(--border-color)]">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => showTab(t.id)}
+              className={`shrink-0 -mb-px border-b-2 px-3 py-2 text-sm font-medium ${
+                tab === t.id ? 'border-[var(--accent-blue)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {boardReady && (
+          <div className={`mt-5 ${tab === 'schede' ? '' : 'hidden'}`}>
+            <LeadsBoard open={openLead} active={tab === 'schede'} />
+          </div>
+        )}
+
+        {/* Automazione: resta montata, cosi' l'indicatore in alto sa sempre cosa sta facendo */}
+        <div className={tab === 'automazione' ? '' : 'hidden'}>
+          {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
+          {authorized && <OutreachReplyPanel />}
+        </div>
+
+        <div className={tab === 'andamento' ? '' : 'hidden'}>
         {/* Numero principale */}
         <section className="mt-6 pb-6 border-b border-[var(--border-color)] flex items-center gap-5 md:gap-8">
           <span className="text-[72px] md:text-[120px] leading-none font-bold tracking-tight tabular-nums text-[var(--text-primary)]">
@@ -296,6 +370,7 @@ export default function PipelinePage() {
                             stage={stage.id}
                             flash={flash.has(card.id)}
                             delay={firstLoad.current ? index * 0.12 + row * 0.07 : 0}
+                            onOpen={openCard}
                           />
                         ))}
                       </AnimatePresence>
@@ -314,14 +389,13 @@ export default function PipelinePage() {
           <p className="mt-6 text-xs text-[var(--text-secondary)]">
             Ogni colonna mostra le schede arrivate più di recente in quella fase; il numero sotto il nome conta tutte quelle che
             l’hanno raggiunta{data.period !== 'all' ? ` (in blu quelle ${periodText})` : ''}.
-            {data.discarded ? ` ${data.discarded} scartate non sono nelle colonne.` : ''} Si aggiorna da sola.
+            {data.discarded ? ` ${data.discarded} scartate non sono nelle colonne.` : ''} Tocca una scheda per aprirla. Si aggiorna da sola.
           </p>
         )}
 
         {data && <LiveFeed events={data.events || []} fresh={fresh} />}
         {authorized && <AppointmentsPanel />}
-        {authorized && <AutopilotPanel onRunning={setAutopilotText} />}
-        {authorized && <OutreachReplyPanel />}
+        </div>
       </div>
     </main>
   )
