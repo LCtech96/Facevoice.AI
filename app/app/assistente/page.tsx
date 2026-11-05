@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, MessageCircle, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
@@ -15,6 +15,8 @@ const MODEL_KEY = 'fv_app_assistant_model'
 // Assistente AI dell'area clienti: chat (anche a voce) con le foto allegate.
 // Crea i post, modifica le immagini, li programma a giorno e ora o li pubblica
 // subito su Instagram e Facebook, e risponde su messaggi e commenti ricevuti.
+// Solo per chi ce l'ha attivo (lo accende Facevoice dal suo pannello): agli altri
+// la pagina dice come chiederlo, su WhatsApp.
 
 type Post = {
   id: string
@@ -69,7 +71,48 @@ const toLocalInput = (iso: string | null) => {
 
 const whenLabel = (iso: string) => new Date(iso).toLocaleString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 
+const WHATSAPP_NUMBER = '393514206353'
+const activationUrl = (email: string | null) =>
+  `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(`Ciao, vorrei attivare l’assistente AI di Facevoice AI per il mio account${email ? ` (${email})` : ''}.`)}`
+
 export default function AssistantPage() {
+  const { assistant } = useWorkspace()
+  // null: non si sa (lettura non riuscita): decide il server, che risponde 403 se e' spento.
+  return assistant === false ? <AssistantLocked /> : <AssistantChat />
+}
+
+/** Assistente non attivo per questa persona: come chiederlo. */
+function AssistantLocked() {
+  const { email, refreshAssistant } = useWorkspace()
+  // Tornando sulla pagina (es. dopo aver scritto su WhatsApp) si ricontrolla.
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && refreshAssistant()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [refreshAssistant])
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center py-16 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--background-secondary)]">
+        <Lock className="h-5 w-5 text-[var(--accent-blue)]" />
+      </span>
+      <h1 className="mt-5 text-2xl font-extrabold">L’assistente AI non è attivo per il tuo account.</h1>
+      <p className="mt-2 text-[var(--text-secondary)]">Scrivici e lo attiviamo per te.</p>
+      <a
+        href={activationUrl(email)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#25D366] px-5 py-3 font-bold text-white"
+      >
+        <MessageCircle className="h-5 w-5" /> Scrivici su WhatsApp
+      </a>
+      <Link href="/app/omnichat" className="mt-4 text-sm font-semibold text-[var(--accent-blue)]">
+        Vai all’Omnichat →
+      </Link>
+    </div>
+  )
+}
+
+function AssistantChat() {
   const { appFetch, workspace } = useWorkspace()
   const [turns, setTurns] = useState<Turn[] | null>(null)
   const [input, setInput] = useState('')

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireWorkspace } from '@/lib/workspace'
+import { requireAssistant } from '@/lib/assistant-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
@@ -11,9 +11,10 @@ export const maxDuration = 300
 // Assistente AI dell'area clienti: conversazione (GET, anche ?chat=<id> o ?post=<id> per
 // riaprire la chat in cui si e' lavorato a un post), nuova richiesta con le foto gia'
 // caricate (POST), nuova conversazione (DELETE: le altre restano salvate).
+// Solo per chi ha l'assistente attivo (lo accende Facevoice: lib/assistant-access.ts).
 
 export async function GET(req: NextRequest) {
-  const access = await requireWorkspace(req)
+  const access = await requireAssistant(req)
   if (access instanceof NextResponse) return access
   const ws = access.workspace.id
   const params = req.nextUrl.searchParams
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const access = await requireWorkspace(req, 'admin')
+  const access = await requireAssistant(req, 'admin')
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   const message = String(body.message || '').trim().slice(0, 3000)
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const access = await requireWorkspace(req)
+  const access = await requireAssistant(req)
   if (access instanceof NextResponse) return access
   // Nuova chat: quella di prima resta salvata (si riapre dai contenuti programmati).
   const chatId = await startChat(access.workspace.id, access.userId)

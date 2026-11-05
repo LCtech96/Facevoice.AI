@@ -19,10 +19,10 @@ const CARDS: Record<PaidPlan, { tagline: string; badge?: string }> = {
   business: { tagline: 'Quasi 7 volte più utilizzo di Start', badge: 'Miglior valore' },
 }
 
+// L'Assistente (l'unico che crea post e caroselli) lo attiva Facevoice persona per persona.
 const FEATURES = [
-  'Assistente AI',
   'Risposte automatiche ai messaggi e ai commenti',
-  'Post e caroselli',
+  'Assistente AI per post e caroselli (su richiesta)',
   'Instagram, Facebook ed Email',
   'I tre gettoni dei consumi',
 ]

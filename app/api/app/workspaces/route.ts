@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createWorkspace, membershipsOf, renameWorkspace, requireWorkspace, userFromRequest } from '@/lib/workspace'
+import { assistantAccess } from '@/lib/assistant-access'
 
 export const dynamic = 'force-dynamic'
 
 // Spazi di lavoro dell'utente collegato: elenco e creazione del primo spazio
-// (dopo la registrazione) o di uno nuovo, cambio del nome.
+// (dopo la registrazione) o di uno nuovo, cambio del nome. Con l'elenco, se la persona
+// ha l'Assistente attivo (assistant: true/false; null se non si e' potuto leggere).
 
 export async function GET(req: NextRequest) {
   const user = await userFromRequest(req)
   if (!user?.email) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
   try {
-    return NextResponse.json({ email: user.email, workspaces: await membershipsOf(user.id) })
+    const workspaces = await membershipsOf(user.id)
+    const assistant = await assistantAccess(user.id, workspaces.map((w) => w.id))
+      .then((a) => a.enabled)
+      .catch((error) => {
+        console.error('app workspaces assistente:', error instanceof Error ? error.message : error)
+        return null
+      })
+    return NextResponse.json({ email: user.email, workspaces, assistant })
   } catch (error) {
     console.error('app workspaces:', error)
     return NextResponse.json({ error: 'Spazi di lavoro non disponibili, riprova.' }, { status: 500 })

@@ -5,6 +5,7 @@ import { FACEVOICE_WORKSPACE_ID, workspaceDb } from '@/lib/workspace-db'
 import { eurPerUsd, eurPerUsdNow } from '@/lib/eur'
 import { updateSetting } from '@/lib/settings-store'
 import { workspaceOwnerId } from '@/lib/workspace'
+import { accessFrom, enabledAssistantUsers, type AssistantAccess } from '@/lib/assistant-access'
 import {
   allBillingStates,
   billingConfigured,
@@ -800,6 +801,8 @@ export type BridgeUser = {
    * (il sito principale allora non mostra niente).
    */
   subscription?: BridgeSubscription | null
+  /** Pagina Assistente: attiva per questa persona; locked = sempre attiva (spazio Facevoice), non si spegne. */
+  assistant: AssistantAccess
 }
 
 export type BridgeSubscription = {
@@ -866,12 +869,13 @@ async function allOverrides(): Promise<Map<string, UsageLight>> {
 export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeUser[] }> {
   const now = new Date()
   const withBilling = billingConfigured()
-  const [users, memberships, overrides, rate, billingStates] = await Promise.all([
+  const [users, memberships, overrides, rate, billingStates, assistantOn] = await Promise.all([
     allAuthUsers(),
     allMemberships(),
     allOverrides(),
     eurPerUsd(),
     withBilling ? allBillingStates() : Promise.resolve(null),
+    enabledAssistantUsers(),
   ])
 
   const spacesOf = new Map<string, BridgeUser['workspaces']>()
@@ -932,6 +936,7 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
         ...(billingStates && owned.length && !unlimited
           ? { subscription: bridgeSubscription(resolved.billing ?? latestBilling(owned.map((w) => billingStates.get(w.id) ?? null))) }
           : {}),
+        assistant: accessFrom(spaces.map((w) => w.id), assistantOn.has(user.id)),
       })
     }
   }

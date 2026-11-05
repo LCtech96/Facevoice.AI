@@ -7,7 +7,8 @@ import { USAGE_REFRESH_EVENT } from '@/lib/usage-shared'
 
 // Stato dell'area clienti: sessione, spazi di lavoro dell'utente e spazio scelto.
 // Tutte le chiamate alle API dell'area clienti passano da appFetch, che aggiunge
-// il token e lo spazio di lavoro.
+// il token e lo spazio di lavoro. Con gli spazi arriva anche se la persona ha
+// l'Assistente attivo (lo accende Facevoice, persona per persona).
 
 export type Workspace = { id: string; name: string; plan: string; role: 'owner' | 'admin' | 'member' }
 
@@ -18,6 +19,10 @@ type State = {
   workspaces: Workspace[]
   workspace: Workspace | null
   error: string | null
+  /** Assistente attivo per questa persona; null: non si sa (lettura non riuscita), decide il server. */
+  assistant: boolean | null
+  /** Rilegge soltanto lo stato dell'Assistente (es. tornando sulla pagina dopo aver chiesto di attivarlo); null: non letto. */
+  refreshAssistant: () => Promise<boolean | null>
   selectWorkspace: (id: string) => void
   reload: () => Promise<void>
   signOut: () => Promise<void>
@@ -44,6 +49,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [email, setEmail] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [assistant, setAssistant] = useState<boolean | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -70,6 +76,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } else {
       setWorkspaces(data.workspaces || [])
       setEmail(data.email || null)
+      setAssistant(typeof data.assistant === 'boolean' ? data.assistant : null)
     }
     setLoaded(true)
   }, [token])
@@ -79,6 +86,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setLoaded(false)
     reload()
   }, [sessionReady, reload])
+
+  const refreshAssistant = useCallback(async (): Promise<boolean | null> => {
+    if (!token) return null
+    const res = await fetch('/api/app/workspaces', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (typeof data?.assistant !== 'boolean') return null
+    setAssistant(data.assistant)
+    return data.assistant
+  }, [token])
 
   const workspace = useMemo(() => {
     const wanted = currentId || storedWorkspace()
@@ -110,6 +126,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             window.dispatchEvent(new Event(USAGE_REFRESH_EVENT))
           } catch {}
         }
+        // 403 assistant_disabled: Facevoice ha spento l'Assistente per questa persona.
+        if (res.status === 403) {
+          res
+            .clone()
+            .json()
+            .then((data) => data?.code === 'assistant_disabled' && setAssistant(false))
+            .catch(() => undefined)
+        }
         return res
       }),
     [token, workspace]
@@ -118,6 +142,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     await supabase.auth.signOut()
     setWorkspaces([])
+    setAssistant(null)
   }, [supabase])
 
   const value: State = {
@@ -127,6 +152,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaces,
     workspace,
     error,
+    assistant,
+    refreshAssistant,
     selectWorkspace,
     reload,
     signOut,

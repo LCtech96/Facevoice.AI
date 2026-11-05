@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
+import { assistantDenied } from '@/lib/assistant-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { assertAIAllowed, isAIBlockedError } from '@/lib/usage-limits'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
@@ -32,12 +33,31 @@ const USES_AI = new Set(['edit_slides', 'edit_caption', 'extract'])
 // Azioni che devono riguardare esattamente la versione che il cliente vede.
 const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'design', 'schedule', 'publish'])
 
+// Contenuti programmati cambia solo giorno e ora o toglie la programmazione: tutto il resto
+// (modifiche, didascalia, pubblica ora, elimina...) arriva dall'anteprima nella chat
+// dell'Assistente e serve l'assistente attivo per chi fa la richiesta.
+const SCHEDULE_ONLY = new Set(['schedule', 'unschedule'])
+
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   const id = String(body.id || '')
   const action = String(body.action || '')
+  const editsContent = typeof body.caption === 'string' || typeof body.facebook === 'string' || Array.isArray(body.platforms)
+  if (!SCHEDULE_ONLY.has(action) || editsContent) {
+    const denied = await assistantDenied(access.userId)
+    if (denied) return denied
+  } else if (action === 'schedule') {
+    // Senza assistente si cambia l'orario solo dei post che Contenuti programmati mostra
+    // (programmati, o non usciti all'orario scelto): una bozza si programma dalla chat.
+    // (Togliere la programmazione vale gia' solo per programmati e non usciti.)
+    const denied = await assistantDenied(access.userId)
+    if (denied) {
+      const current = await getPost(access.db, id)
+      if (!(current?.status === 'scheduled' || (current?.status === 'failed' && current.publish_at))) return denied
+    }
+  }
   // Chat aperta nella pagina: le modifiche dall'anteprima entrano in quella.
   const chatId = typeof body.chatId === 'string' ? body.chatId : null
   // Modello scelto nella chat: vale anche per le correzioni e i ripristini dall'anteprima.
