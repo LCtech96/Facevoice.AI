@@ -1,4 +1,5 @@
 import { callAI, hasAIProvider } from '@/lib/ai'
+import { parseToolStep, looksLikeToolCall, cleanReplyText, FORMAT_RETRY } from '@/lib/tool-step'
 import { isAIBlockedError } from '@/lib/usage-limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { WorkspaceDb } from '@/lib/workspace-db'
@@ -231,7 +232,7 @@ ${context ? `${context}Quando scrivi testi di slide o didascalie (anche in "slid
 Account collegati: ${channels}
 Post recenti: ${recent}
 
-A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
+A ogni passo rispondi SOLO con un JSON (niente testo prima o dopo, niente tag come <function_calls>), in uno di questi due formati:
 {"tool": "nome", "args": {...}}
 {"reply": "risposta finale"}
 
@@ -270,12 +271,7 @@ const asUrls = (v: unknown) => (Array.isArray(v) ? v.filter((u): u is string => 
 const asPlatforms = (v: unknown) => (Array.isArray(v) ? (v.filter((p) => p === 'instagram' || p === 'facebook') as PostPlatform[]) : undefined)
 
 function parseStep(raw: string): { tool?: string; args?: Record<string, unknown>; reply?: string } | null {
-  try {
-    const json = raw.match(/\{[\s\S]*\}/)?.[0]
-    return json ? JSON.parse(json) : null
-  } catch {
-    return null
-  }
+  return parseToolStep(raw)
 }
 
 async function messagesOverview(db: WorkspaceDb, args: Record<string, unknown>) {
@@ -378,13 +374,26 @@ export async function runClientAssistant(
   // Strumenti usati ed errori: se i passi finiscono si sa perche' (nei log e nella risposta).
   const used: string[] = []
   const errors: string[] = []
+  let formatRetried = false
   for (let step = 0; step < MAX_STEPS; step++) {
     // cache: dal secondo passo la parte gia' mandata (istruzioni e passi prima) costa circa un decimo.
     const response = await callAI(transcript, system, { feature: 'saas_assistente', temperature: 0.3, maxOutputTokens: 3000, workspaceId: db.workspaceId, cache: true })
     const raw = response.message || ''
     const call = parseStep(raw)
-    if (!call) return { reply: raw.trim() || 'Non ho capito, puoi riformulare?', actions }
-    if (call.reply !== undefined && !call.tool) return { reply: call.reply, actions }
+    if (!call) {
+      // Formato sbagliato (es. <function_calls> o JSON rotto): si fa rifare il passo una volta,
+      // invece di mostrare al cliente il testo grezzo con lo strumento mai partito.
+      if (looksLikeToolCall(raw) && !formatRetried) {
+        formatRetried = true
+        console.warn('saas assistente: passo in formato sbagliato, lo faccio rifare')
+        transcript.push({ role: 'assistant', content: raw.slice(0, 6000) })
+        transcript.push({ role: 'user', content: FORMAT_RETRY })
+        continue
+      }
+      const text = cleanReplyText(raw)
+      return { reply: text && !looksLikeToolCall(text) ? text : 'Non sono riuscito a completare la richiesta, puoi riprovare?', actions }
+    }
+    if (call.reply !== undefined && !call.tool) return { reply: cleanReplyText(call.reply) || call.reply, actions }
 
     const args = call.args || {}
     const postId = asText(args.post_id) || target?.postId || lastPost()?.post.id || ''
