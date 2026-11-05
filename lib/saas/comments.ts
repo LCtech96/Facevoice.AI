@@ -76,8 +76,20 @@ export async function replyPublic(connection: Connection, commentId: string, tex
 /** Messaggio privato a chi ha commentato (uno per commento, entro 7 giorni). */
 export async function replyPrivate(connection: Connection, commentId: string, text: string): Promise<string> {
   const access = await accessFor(connection)
-  const data = await post<{ message_id?: string }>(access, '/me/messages', { recipient: { comment_id: commentId }, message: { text } }, 'risposta privata')
-  return data.message_id || `private:${Date.now()}`
+  try {
+    const data = await post<{ message_id?: string }>(access, '/me/messages', { recipient: { comment_id: commentId }, message: { text } }, 'risposta privata')
+    return data.message_id || `private:${Date.now()}`
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    // 2534066: permesso dei messaggi non ancora approvato da Meta per tutti (l'app e' in
+    // revisione) o commento non valido: si spiega in italiano cosa fare.
+    if (/2534066|granular scopes|private reply/i.test(message)) {
+      throw new Error(
+        'Instagram non permette ancora il messaggio privato a questa persona. Finché Meta non approva il permesso dei messaggi, funziona solo con gli account "Tester di Instagram" dell’app; dopo l’approvazione funzionerà con tutti. Il commento deve avere meno di 7 giorni e si può mandare un solo messaggio per commento.'
+      )
+    }
+    throw error
+  }
 }
 
 /** Inizio della didascalia del post commentato (contesto per l'AI e per la pagina). */
