@@ -126,24 +126,38 @@ export async function fetchPostCaption(
   }
 }
 
-/** Nome visibile del contatto Messenger/Instagram, se Meta lo concede. */
-export async function fetchContactName(
+/**
+ * Nome visibile e, su Instagram, username del contatto, se Meta li concede. Lo username viene
+ * da Meta (non lo sceglie chi scrive nel messaggio): serve al collegamento automatico.
+ */
+export async function fetchContactProfile(
   platform: 'facebook' | 'instagram',
   contactId: string
-): Promise<string | null> {
+): Promise<{ name: string | null; username: string | null }> {
+  const empty = { name: null, username: null }
   const page = await getPageToken()
-  if (!page) return null
+  if (!page) return empty
   const fields = platform === 'instagram' ? 'name,username' : 'name'
   try {
     const response = await fetch(
       `${GRAPH}/${contactId}?fields=${fields}&access_token=${encodeURIComponent(page.token)}`
     )
-    if (!response.ok) return null
+    if (!response.ok) return empty
     const data = await response.json()
-    return data?.name || (data?.username ? `@${data.username}` : null)
+    const username = typeof data?.username === 'string' && data.username.trim() ? data.username.trim() : null
+    return { name: typeof data?.name === 'string' && data.name.trim() ? data.name : null, username }
   } catch {
-    return null
+    return empty
   }
+}
+
+/** Nome visibile del contatto Messenger/Instagram, se Meta lo concede. */
+export async function fetchContactName(
+  platform: 'facebook' | 'instagram',
+  contactId: string
+): Promise<string | null> {
+  const profile = await fetchContactProfile(platform, contactId)
+  return profile.name || (profile.username ? `@${profile.username}` : null)
 }
 
 let cachedIgUserId: string | null = null

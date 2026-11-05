@@ -219,6 +219,45 @@ export function header(message: GmailMessage, name: string): string {
   return found?.value || ''
 }
 
+/** Solo le intestazioni che servono a controllare il mittente (per email gia' salvate). */
+export async function getMessageHeaders(id: string): Promise<GmailMessage> {
+  const names = ['From', 'Reply-To', 'Authentication-Results'].map((n) => `metadataHeaders=${encodeURIComponent(n)}`).join('&')
+  return gmail<GmailMessage>(`/messages/${id}?format=metadata&${names}`)
+}
+
+/** Dominio di firma allineato a quello del mittente (uguale, o uno dentro l'altro). */
+const alignedDomain = (signer: string, from: string) => signer === from || from.endsWith(`.${signer}`) || signer.endsWith(`.${from}`)
+
+/**
+ * Mittente vero, controllato da Gmail: l'indirizzo e' quello del From (nessun Reply-To
+ * diverso) e il controllo di Gmail (la prima intestazione Authentication-Results, scritta
+ * da mx.google.com) dice dmarc=pass per quel dominio o dkim=pass con un dominio allineato.
+ * Il nome visualizzato non conta mai.
+ */
+export function senderAuthenticated(message: GmailMessage, address: string): boolean {
+  const from = parseAddress(header(message, 'From')).email
+  const replyTo = header(message, 'Reply-To').trim()
+  if (!from || from !== address.toLowerCase()) return false
+  if (replyTo && parseAddress(replyTo).email !== from) return false
+  const domain = from.split('@')[1] || ''
+  if (!domain) return false
+  // Solo la prima (la piu' in alto, aggiunta da Gmail alla ricezione): le altre le puo' scrivere chiunque.
+  const results = message.payload?.headers?.find((h) => h.name.toLowerCase() === 'authentication-results')?.value || ''
+  if (!/^\s*mx\.google\.com\s*;/i.test(results)) return false
+  return results
+    .split(';')
+    .slice(1)
+    .some((part) => {
+      const text = part.trim().toLowerCase()
+      if (/^dmarc=pass\b/.test(text)) return text.match(/header\.from=([^\s;)]+)/)?.[1] === domain
+      if (/^dkim=pass\b/.test(text)) {
+        const signer = (text.match(/header\.(?:d|i)=@?([^\s;)]+)/)?.[1] || '').replace(/^.*@/, '')
+        return Boolean(signer) && alignedDomain(signer, domain)
+      }
+      return false
+    })
+}
+
 function decode(data?: string) {
   return data ? Buffer.from(data, 'base64url').toString('utf8') : ''
 }
