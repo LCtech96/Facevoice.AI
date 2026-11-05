@@ -10,7 +10,8 @@ import {
   type SendResult,
 } from '@/lib/meta/graph'
 import { notifyNewMessage } from '@/lib/meta/notify'
-import { conversationKeyFor, linkConversations, linkedMembers } from '@/lib/meta/identities'
+import { linkedMembers } from '@/lib/meta/identities'
+import { autoLink, autoLinkContact } from '@/lib/meta/auto-link'
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
@@ -627,12 +628,14 @@ export async function deliver(target: OutgoingTarget, text: string): Promise<Sen
     // Messaggio privato nato da un commento: si invia tramite l'id del commento.
     const sent = await sendPrivateReply(target.reply_to, text)
     if (sent.recipientId && sent.recipientId !== target.contact_id) {
-      // Chi commenta e chi riceve il Direct hanno id diversi: sono la stessa persona.
-      const [a, b] = await Promise.all([
-        conversationKeyFor(target.platform, target.contact_id),
-        conversationKeyFor(target.platform, sent.recipientId),
-      ])
-      if (a !== b) await linkConversations(a, b)
+      // Chi commenta e chi riceve il Direct hanno id diversi: Meta dice che sono lo stesso account.
+      // Collegamento automatico con il motivo (mai se Luca li aveva separati); il Direct puo' non avere ancora messaggi.
+      await autoLink(
+        { platform: target.platform, contactId: target.contact_id },
+        { platform: target.platform, contactId: sent.recipientId },
+        { rule: 'private_reply', detail: `risposta privata al commento: ${target.platform === 'instagram' ? 'Instagram' : 'Facebook'} ha indicato lo stesso account` },
+        { allowPhantom: true }
+      ).catch((error) => console.error(`${target.platform} collegamento risposta privata:`, error))
     }
     return sent
   }
@@ -877,6 +880,10 @@ export async function handleIncoming(input: {
   burstGuard?: boolean
   /** Si salva e si avvisa, ma l'AI non risponde (es. risposta all'email con il codice di verifica). */
   silent?: boolean
+  /** Instagram: username dato da Meta (webhook o profilo), per il collegamento automatico. Mai il nome visualizzato. */
+  instagramUsername?: string | null
+  /** Email: mittente autenticato da Gmail (DMARC/DKIM, nessun Reply-To diverso), per il collegamento automatico. */
+  emailAuthenticated?: boolean
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -900,6 +907,21 @@ export async function handleIncoming(input: {
     if (error?.code !== '23505') console.error(`${input.platform} insert error:`, error)
     else console.log(`${input.platform} ${input.kind}: già ricevuto (doppione di Meta), ignorato`)
     return
+  }
+
+  // Stessa persona su altri canali: collegamento automatico solo con dati certi (numero WhatsApp,
+  // mittente email autenticato, username Instagram dato da Meta, schede Clienti con un contatto
+  // vero), mai con il nome o con dati scritti nei messaggi. Prima della verifica e della risposta,
+  // cosi' vedono il gruppo aggiornato. Se nel messaggio dice di conoscerci, decide la verifica.
+  if (!input.silent) {
+    await autoLinkContact({
+      platform: input.platform,
+      contactId: input.contactId,
+      kind: input.kind,
+      text: input.text,
+      instagramUsername: input.instagramUsername,
+      emailAuthenticated: input.emailAuthenticated,
+    }).catch((error) => console.error(`${input.platform} collegamento automatico:`, error))
   }
 
   const settings = await getChannelSettings(input.platform)

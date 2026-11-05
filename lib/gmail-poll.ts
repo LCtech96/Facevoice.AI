@@ -8,6 +8,7 @@ import {
   loadGmailSettings,
   messageText,
   parseAddress,
+  senderAuthenticated,
   type GmailMessage,
 } from '@/lib/gmail'
 
@@ -162,6 +163,8 @@ export async function pollGmail(): Promise<{ processed: number; skipped: number;
         fallbackLabel: '[email senza testo]',
         outreach: lead,
         silent,
+        // Mittente controllato da Gmail (DMARC/DKIM, nessun Reply-To diverso): solo cosi' l'indirizzo vale per il collegamento automatico.
+        emailAuthenticated: senderAuthenticated(message, sender.email),
       })
       // Un contatto della Ricerca clienti ha risposto: la scheda passa a "ha risposto".
       if (lead?.status === 'contacted' || lead?.status === 'no_answer') {

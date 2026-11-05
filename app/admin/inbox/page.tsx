@@ -43,8 +43,10 @@ type Conversation = {
   pending: number
   hasComments: boolean
   linked: boolean
-  suggestion?: { key: string; name: string; platforms: string[] }
+  suggestion?: { key: string; name: string; platforms: string[]; reason?: string }
   verification?: { status: string; label: string; detail: string; tone: 'pending' | 'ok' | 'bad' }
+  /** Motivi dei collegamenti automatici (si annullano con "Separa"). */
+  autoLinks?: string[]
 }
 
 // Colori del badge della verifica dell'identita'.
@@ -1013,11 +1015,23 @@ function InboxPage() {
                     </div>
                   )}
 
+                  {current?.autoLinks && current.autoLinks.length > 0 && (
+                    <p className="flex items-start gap-1.5 text-xs text-[var(--text-secondary)]">
+                      <Link2 className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span className="min-w-0">
+                        Collegata in automatico: {current.autoLinks.join(' · ')}.{canReply && ' Se non è la stessa persona, separa l’account con l’icona accanto al canale: non verrà ricollegato.'}
+                      </span>
+                    </p>
+                  )}
+
                   {canReply && current?.suggestion && !linking && (
                     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#AF52DE]/10 px-3 py-2 text-xs text-[var(--text-primary)]">
                       <span>
                         Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
-                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}. Il nome da solo non è una prova: collega solo se ne sei sicuro, l&apos;AI userà anche l&apos;altra conversazione.
+                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}
+                        {current.suggestion.reason
+                          ? `: ${current.suggestion.reason}. Collega solo se ne sei sicuro, l'AI userà anche l'altra conversazione.`
+                          : ". Il nome da solo non è una prova: collega solo se ne sei sicuro, l'AI userà anche l'altra conversazione."}
                       </span>
                       <button onClick={() => link(current.suggestion!.key)} className="rounded-full bg-[#AF52DE] px-3 py-1 font-medium text-white">
                         Collega

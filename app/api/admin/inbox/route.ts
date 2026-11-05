@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
-import { loadIdentityMap } from '@/lib/meta/identities'
+import { loadIdentityMap, memberKey, type Member } from '@/lib/meta/identities'
+import { loadAutoLinkInfo, loadSeparations, parseMemberKey, separatedBetween, type AutoLinkInfo } from '@/lib/meta/auto-link'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 import { loadVerificationSummaries, pickSummary, type VerificationSummary } from '@/lib/identity-verify'
 
@@ -36,7 +37,10 @@ type Conversation = {
   pending: number
   hasComments: boolean
   linked: boolean
-  suggestion?: { key: string; name: string; platforms: string[] }
+  /** Possibile stessa persona: per nome o, con reason, per un dato certo non sufficiente a collegare da solo. */
+  suggestion?: { key: string; name: string; platforms: string[]; reason?: string }
+  /** Perche' alcuni account sono stati collegati in automatico (per Luca, con "Separa" per annullare). */
+  autoLinks?: string[]
   /** Verifica dell'identita' (dice di conoscerci): in corso, riuscita o non riuscita. */
   verification?: VerificationSummary
 }
@@ -112,25 +116,67 @@ export async function GET(req: NextRequest) {
     if (query) conv.haystack += ` ${row.body.toLowerCase()}`
   }
 
+  // Account collegati senza messaggi (es. l'email dell'archivio di una verifica): si vedono lo stesso, cosi' si possono separare.
+  const byPerson = new Map<string, Member[]>()
+  for (const [key, person] of identities) {
+    const m = parseMemberKey(key)
+    if (m) byPerson.set(person, [...(byPerson.get(person) || []), m])
+  }
+  for (const conv of conversations.values()) {
+    if (!conv.key.startsWith('person:')) continue
+    for (const m of byPerson.get(conv.key.slice('person:'.length)) || []) {
+      if (!conv.members.some((x) => x.platform === m.platform && x.contactId === m.contactId)) conv.members.push({ ...m, contactName: null })
+    }
+  }
+
   const all = Array.from(conversations.values())
+  const memberKeys = all.flatMap((c) => c.members.map((m) => memberKey(m)))
   // Solo le verifiche degli account in elenco (mai un sottoinsieme a caso di tutte quelle salvate).
-  const verifications = await loadVerificationSummaries(all.flatMap((c) => c.members.map((m) => `${m.platform}:${m.contactId}`))).catch(
-    () => new Map<string, VerificationSummary>()
-  )
+  const [verifications, autoInfo, separations] = await Promise.all([
+    loadVerificationSummaries(memberKeys).catch(() => new Map<string, VerificationSummary>()),
+    loadAutoLinkInfo(memberKeys).catch(() => new Map<string, AutoLinkInfo>()),
+    loadSeparations().catch(() => new Set<string>()),
+  ])
   for (const conv of all) {
     const summary = pickSummary(conv.members.map((m) => verifications.get(`${m.platform}:${m.contactId}`)))
     if (summary) conv.verification = summary
   }
 
-  // Suggerimento: stesso nome su un altro canale, non ancora collegati.
+  const conversationOf = (key: string) => {
+    const person = identities.get(key)
+    return conversations.get(person ? `person:${person}` : key)
+  }
+
   for (const conv of all) {
+    const own = new Set(conv.members.map((m) => memberKey(m)))
+    const infos = conv.members.map((m) => autoInfo.get(memberKey(m))).filter((i): i is AutoLinkInfo => Boolean(i))
+
+    // Collegamenti automatici ancora in piedi (l'altro account e' ancora nella stessa conversazione).
+    const details = [...new Set(infos.flatMap((i) => i.links.filter((n) => own.has(n.with)).map((n) => n.detail)))]
+    if (details.length) conv.autoLinks = details
+
+    // Suggerimento con un dato certo (non bastava a collegare da solo): prima di quello per nome.
+    for (const hint of infos.flatMap((i) => i.hints)) {
+      if (own.has(hint.with)) continue
+      const other = conversationOf(hint.with)
+      if (!other || other.key === conv.key) continue
+      if (!hint.separated && separatedBetween(separations, conv.members, other.members)) continue
+      conv.suggestion = { key: other.key, name: other.contactName || other.members[0]?.contactId || '', platforms: other.platforms, reason: hint.detail }
+      break
+    }
+  }
+
+  // Suggerimento: stesso nome su un altro canale, non ancora collegati (mai se Luca li aveva separati).
+  for (const conv of all) {
+    if (conv.suggestion) continue
     const name = normalizeName(conv.contactName)
     if (name.length < 3) continue
     const match = all.find(
       (other) =>
         other.key !== conv.key &&
         normalizeName(other.contactName) === name &&
-        !other.platforms.some((p) => conv.platforms.includes(p))
+        !other.platforms.some((p) => conv.platforms.includes(p)) &&
+        !separatedBetween(separations, conv.members, other.members)
     )
     if (match) {
       conv.suggestion = { key: match.key, name: match.contactName || '', platforms: match.platforms }

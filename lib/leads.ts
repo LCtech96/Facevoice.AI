@@ -2,6 +2,7 @@ import { cleanEmail, decodeEntities } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAIPaced, hasAIProvider } from '@/lib/ai'
 import { defineSection, sectionText } from '@/lib/ai-context'
+import { noteLeadFields } from '@/lib/lead-origin'
 
 // Ricerca clienti: Google Places (API ufficiale, niente scraping di Google),
 // poi lettura del sito di ogni attivita' per email e social, poi analisi AI
@@ -336,6 +337,16 @@ export async function analyzeLead(lead: Lead): Promise<Lead> {
   })
   const analysis = parseAnalysis(result.message || '')
   if (!analysis) throw new Error('Risposta AI non valida, riprova')
+
+  // Scheda gia' segnata come cliente: email e Instagram letti ora dal sito non li ha confermati
+  // nessuno (spesso sono dell'agenzia web), quindi non collegano conversazioni in automatico.
+  if (lead.status === 'client') {
+    await noteLeadFields(
+      lead.id,
+      { email: !lead.email && site?.email ? site.email : undefined, instagram: !lead.instagram && site?.instagram ? site.instagram : undefined },
+      'auto'
+    )
+  }
 
   const { data, error } = await supabaseAdmin
     .from('leads')

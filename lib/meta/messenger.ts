@@ -1,5 +1,5 @@
 import { handleIncoming } from '@/lib/meta/agent'
-import { fetchContactName, fetchPostCaption, getPageToken } from '@/lib/meta/graph'
+import { fetchContactProfile, fetchPostCaption, getPageToken } from '@/lib/meta/graph'
 import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib/meta/media-context'
 
 // Messenger e i Direct di Instagram arrivano con lo stesso formato ("messaging").
@@ -48,12 +48,15 @@ async function handleEvent(platform: Platform, accountId: string | undefined, ev
   })
   const userText = message.text?.trim() || ''
   const text = [userText, context].filter(Boolean).join('\n\n') || null
+  const profile = await fetchContactProfile(platform, senderId)
 
   await handleIncoming({
     platform,
     kind: 'message',
     contactId: senderId,
-    contactName: await fetchContactName(platform, senderId),
+    contactName: profile.name || (profile.username ? `@${profile.username}` : null),
+    // Username dato da Meta (mai il nome visualizzato): per il collegamento automatico.
+    instagramUsername: platform === 'instagram' ? profile.username : null,
     externalId: message.mid,
     channelAccountId: accountId ?? null,
     text,
@@ -89,17 +92,18 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
 
   const postId = platform === 'instagram' ? value.media?.id : value.post_id
   const postCaption = postId ? await fetchPostCaption(platform, postId) : null
+  // I commenti Instagram portano solo lo username: si prova a leggere il nome del profilo.
+  const profile = platform === 'instagram' && !value.from?.name ? await fetchContactProfile(platform, authorId) : null
+  const fetchedName = profile?.name && !profile.name.startsWith('@') ? profile.name : null
 
   await handleIncoming({
     platform,
     kind: 'comment',
     postCaption,
     contactId: authorId,
-    // I commenti Instagram portano solo lo username: si prova a leggere il nome del profilo.
-    contactName:
-      value.from?.name ||
-      (platform === 'instagram' ? await fetchContactName(platform, authorId).then((n) => (n && !n.startsWith('@') ? n : null)) : null) ||
-      (value.from?.username ? `@${value.from.username}` : null),
+    contactName: value.from?.name || fetchedName || (value.from?.username ? `@${value.from.username}` : null),
+    // Username dato da Meta nel webhook o dal profilo (mai il nome visualizzato): per il collegamento automatico.
+    instagramUsername: platform === 'instagram' ? value.from?.username || profile?.username || null : null,
     externalId: commentId,
     channelAccountId: accountId ?? null,
     text,

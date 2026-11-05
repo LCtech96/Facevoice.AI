@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { canAccess, guard } from '@/lib/staff-access'
 import { LEAD_STATUSES } from '@/lib/leads'
 import { setCalled, withCalls } from '@/lib/lead-calls'
+import { noteLeadFields } from '@/lib/lead-origin'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +43,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     : await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!data) return NextResponse.json({ error: 'Contatto non trovato' }, { status: 404 })
+  // Telefono, email e Instagram scritti qui da una persona del team: per il collegamento automatico delle conversazioni valgono.
+  await noteLeadFields(id, { phone: updates.phone, email: updates.email, instagram: updates.instagram }, 'staff').catch((error) =>
+    console.error('scheda, origine dei dati:', error)
+  )
   // Casella "Chiamato": telefonata fatta o da fare.
   if (calling) await setCalled(id, body.called)
   const [lead] = await withCalls([data])
