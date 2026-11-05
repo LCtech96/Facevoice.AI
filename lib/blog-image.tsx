@@ -521,6 +521,157 @@ function photoSlide(
   )
 }
 
+// --- Stili delle slide con le foto (selezionabili) ---------------------------------
+
+/** Stili delle slide con le foto. Cambiarli rifa' le slide con gli stessi testi e foto. */
+export const PHOTO_LAYOUTS = [
+  { id: 'classico', label: 'Classico', hint: 'foto a tutto schermo, testo in basso' },
+  { id: 'fascia', label: 'Fascia', hint: 'foto in alto, testo su una fascia di colore' },
+  { id: 'cornice', label: 'Cornice', hint: 'titolo sopra, foto incorniciata, testo sotto' },
+  { id: 'minimal', label: 'Minimal', hint: 'foto quasi intera, solo il titolo' },
+  { id: 'diviso', label: 'Diviso', hint: 'metà colore con il testo, metà foto' },
+] as const
+export type PhotoLayout = (typeof PHOTO_LAYOUTS)[number]['id']
+export const asPhotoLayout = (value: unknown): PhotoLayout => (PHOTO_LAYOUTS.some((l) => l.id === value) ? (value as PhotoLayout) : 'classico')
+
+type Logo = { src: string; width: number; height: number } | null
+type Cover = { hook: string; label: string } | null
+
+/** Misura della foto in ogni stile (la foto si ritaglia gia' su questa misura). */
+function photoBox(layout: PhotoLayout, isCover: boolean): { w: number; h: number } {
+  if (layout === 'fascia') return { w: W, h: 800 }
+  if (layout === 'cornice') return { w: W - 124, h: isCover ? 680 : 740 }
+  if (layout === 'diviso') return { w: W, h: 730 }
+  return { w: W, h: H }
+}
+
+/** Logo alto al massimo maxH (in proporzione). */
+const logoImg = (logo: Logo, maxH: number, style: Record<string, unknown> = {}) => {
+  if (!logo) return null
+  const h = Math.min(maxH, logo.height)
+  const w = Math.round((logo.width * h) / logo.height)
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={logo.src} width={w} height={h} style={{ width: w, height: h, ...style }} />
+}
+
+/** Foto in alto, testo su una fascia di colore pieno sotto: il piu' leggibile. */
+function bandSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  const PH = 800
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.solid, color: t.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={photo} width={W} height={PH} style={{ width: W, height: PH, objectFit: 'cover' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, width: W, height: 220, display: 'flex', background: 'linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 100%)' }} />
+      {logoImg(logo, 120, { position: 'absolute', top: 44, left: 56 })}
+      {showCounter ? <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: BRAND.ink, display: 'flex' }}>{counter(i, n)}</div> : null}
+      <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, padding: '40px 72px 44px' }}>
+        {cover?.label ? <div style={{ display: 'flex', fontSize: 24, color: t.label, letterSpacing: 3, marginBottom: 14 }}>{cover.label.toUpperCase()}</div> : null}
+        {!cover ? <div style={{ display: 'flex', width: 90, height: 9, borderRadius: 5, background: t.accent, marginBottom: 24 }} /> : null}
+        <div style={{ display: 'flex', fontSize: cover ? (cover.hook.length > 28 ? 72 : 88) : slide.title.length > 40 ? 56 : 68, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.4 }}>
+          {cover ? cover.hook : slide.title}
+        </div>
+        {(cover ? slide.title : slide.text) ? <div style={{ display: 'flex', fontSize: 33, lineHeight: 1.36, color: t.soft, marginTop: 18 }}>{cover ? slide.title : slide.text}</div> : null}
+        {cover ? (
+          <div style={{ display: 'flex', marginTop: 24 }}>
+            <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 26, fontWeight: 800, padding: '14px 54px', borderRadius: 999, letterSpacing: 1 }}>SCORRI</div>
+          </div>
+        ) : null}
+        {t.handle ? <div style={{ display: 'flex', fontSize: 25, color: t.soft, marginTop: 'auto' }}>{t.handle}</div> : null}
+      </div>
+    </div>
+  )
+}
+
+/** Stile rivista: titolo grande sopra, foto incorniciata al centro, testo sotto. */
+function frameSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  const box = photoBox('cornice', Boolean(cover))
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '44px 56px 40px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 84 }}>
+        {logoImg(logo, 76) || <div style={{ display: 'flex' }} />}
+        {showCounter ? <div style={{ display: 'flex', fontSize: 26, color: t.soft }}>{counter(i, n)}</div> : <div style={{ display: 'flex' }} />}
+      </div>
+      {cover?.label ? <div style={{ display: 'flex', fontSize: 24, color: t.label, letterSpacing: 3, marginTop: 10 }}>{cover.label.toUpperCase()}</div> : null}
+      <div style={{ display: 'flex', fontSize: cover ? (cover.hook.length > 28 ? 62 : 74) : slide.title.length > 40 ? 50 : 58, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.2, marginTop: 12 }}>
+        {cover ? cover.hook : slide.title}
+      </div>
+      <div style={{ display: 'flex', marginTop: 24, borderRadius: 30, overflow: 'hidden', border: `6px solid ${t.accent}`, width: box.w + 12, height: box.h + 12 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={photo} width={box.w} height={box.h} style={{ width: box.w, height: box.h, objectFit: 'cover' }} />
+      </div>
+      {(cover ? slide.title : slide.text) ? <div style={{ display: 'flex', fontSize: 29, lineHeight: 1.34, color: t.soft, marginTop: 20 }}>{cover ? slide.title : slide.text}</div> : null}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto' }}>
+        {t.handle ? <div style={{ display: 'flex', fontSize: 24, color: t.soft }}>{t.handle}</div> : <div style={{ display: 'flex' }} />}
+        {cover ? <div style={{ display: 'flex', fontSize: 24, fontWeight: 800, color: t.accent, letterSpacing: 1 }}>SCORRI →</div> : null}
+      </div>
+    </div>
+  )
+}
+
+/** Foto quasi intera, solo il titolo in un riquadro: per le foto molto belle (niente testo lungo). */
+function minimalSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  const shade = textShade(t)
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: shade, color: BRAND.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={photo} width={W} height={H} style={{ position: 'absolute', top: 0, left: 0, width: W, height: H, objectFit: 'cover' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, width: W, height: 220, display: 'flex', background: 'linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 100%)' }} />
+      {logoImg(logo, 120, { position: 'absolute', top: 44, left: 56 })}
+      {showCounter ? <div style={{ position: 'absolute', top: 56, right: 64, fontSize: 28, color: BRAND.ink, display: 'flex' }}>{counter(i, n)}</div> : null}
+      <div
+        style={{
+          position: 'absolute',
+          left: 56,
+          bottom: 60,
+          maxWidth: W - 112,
+          display: 'flex',
+          flexDirection: 'column',
+          background: alpha(shade, 0.84),
+          borderRadius: 28,
+          padding: cover ? '30px 38px 32px' : '24px 34px 26px',
+        }}
+      >
+        {cover?.label ? <div style={{ display: 'flex', fontSize: 22, color: t.label === t.ink ? BRAND.ink : t.label, letterSpacing: 3, marginBottom: 10 }}>{cover.label.toUpperCase()}</div> : null}
+        <div style={{ display: 'flex', fontSize: cover ? (cover.hook.length > 28 ? 60 : 72) : 46, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1 }}>{cover ? cover.hook : slide.title}</div>
+        {cover && slide.title ? <div style={{ display: 'flex', fontSize: 28, color: 'rgba(248, 248, 240, 0.85)', marginTop: 14 }}>{slide.title}</div> : null}
+        {t.handle ? <div style={{ display: 'flex', fontSize: 22, color: 'rgba(248, 248, 240, 0.7)', marginTop: 14 }}>{t.handle}</div> : null}
+      </div>
+    </div>
+  )
+}
+
+/** Meta' colore pieno in alto con logo, titolo e testo; meta' foto sotto. */
+function splitSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: number, logo: Logo, cover: Cover, showCounter: boolean) {
+  const box = photoBox('diviso', Boolean(cover))
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: H - box.h, padding: '44px 72px 36px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 84 }}>
+          {logoImg(logo, 76) || <div style={{ display: 'flex' }} />}
+          {showCounter ? <div style={{ display: 'flex', fontSize: 26, color: t.soft }}>{counter(i, n)}</div> : <div style={{ display: 'flex' }} />}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto' }}>
+          {cover?.label ? <div style={{ display: 'flex', fontSize: 24, color: t.label, letterSpacing: 3, marginBottom: 12 }}>{cover.label.toUpperCase()}</div> : null}
+          {!cover ? <div style={{ display: 'flex', width: 90, height: 9, borderRadius: 5, background: t.accent, marginBottom: 22 }} /> : null}
+          <div style={{ display: 'flex', fontSize: cover ? (cover.hook.length > 28 ? 64 : 76) : slide.title.length > 40 ? 50 : 58, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.2 }}>
+            {cover ? cover.hook : slide.title}
+          </div>
+          {(cover ? slide.title : slide.text) ? <div style={{ display: 'flex', fontSize: 29, lineHeight: 1.34, color: t.soft, marginTop: 16 }}>{cover ? slide.title : slide.text}</div> : null}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 18 }}>
+            {t.handle ? <div style={{ display: 'flex', fontSize: 24, color: t.soft }}>{t.handle}</div> : <div style={{ display: 'flex' }} />}
+            {cover ? <div style={{ display: 'flex', fontSize: 24, fontWeight: 800, color: t.accent, letterSpacing: 1 }}>SCORRI →</div> : null}
+          </div>
+        </div>
+      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={photo} width={box.w} height={box.h} style={{ width: box.w, height: box.h, objectFit: 'cover' }} />
+    </div>
+  )
+}
+
+const slideFor = (layout: PhotoLayout) =>
+  layout === 'fascia' ? bandSlide : layout === 'cornice' ? frameSlide : layout === 'minimal' ? minimalSlide : layout === 'diviso' ? splitSlide : photoSlide
+
 /**
  * Carosello fatto con le foto del cliente, UNA SLIDE PER FOTO nell'ordine dato:
  * la prima e' la copertina (gancio grande), le altre hanno titolo e testo sopra la
@@ -541,6 +692,8 @@ export async function createPhotoCarousel(input: {
   save?: (jpeg: Buffer) => Promise<string>
   /** Numero della slide in alto a destra (es. "03 / 08"); false per toglierlo. */
   counter?: boolean
+  /** Stile delle slide (vedi PHOTO_LAYOUTS); di base "classico". */
+  layout?: PhotoLayout
   /**
    * Slide da NON rifare (stesso indice delle slide, finale compresa): se c'e' un indirizzo
    * si tiene quel file cosi' com'e'. Serve per correggere solo alcune slide.
@@ -553,20 +706,22 @@ export async function createPhotoCarousel(input: {
   const mix = MIXES[(((input.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length]
   const accentTheme = themes[mix.cover]
   const kept = (k: number) => input.keep?.[k] || null
+  const layout = asPhotoLayout(input.layout)
   const [logo, ...fitted] = await Promise.all([
     logoData(input.logo),
     ...photos.map(async (url, k) => {
       if (kept(k)) return null
       const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
       if (!res.ok) throw new Error(`foto non scaricata (${res.status})`)
-      // A tutta pagina (ritaglio sulla parte piu' interessante): il testo va sopra la foto.
-      const jpeg = await sharp(Buffer.from(await res.arrayBuffer())).rotate().resize(W, H, { fit: 'cover', position: 'attention' }).jpeg({ quality: 86 }).toBuffer()
+      // Ritaglio sulla parte piu' interessante, alla misura della foto nello stile scelto.
+      const box = photoBox(layout, k === 0)
+      const jpeg = await sharp(Buffer.from(await res.arrayBuffer())).rotate().resize(box.w, box.h, { fit: 'cover', position: 'attention' }).jpeg({ quality: 86 }).toBuffer()
       return `data:image/jpeg;base64,${jpeg.toString('base64')}`
     }),
   ])
   const n = photos.length + (input.cta ? 1 : 0)
   const nodes = photos.map((_, k) =>
-    kept(k) ? null : photoSlide(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null, input.counter !== false)
+    kept(k) ? null : slideFor(layout)(accentTheme, fitted[k]!, input.slides[k] || { title: '', text: '' }, k + 1, n, logo, k === 0 ? { hook: input.hook, label: input.label || '' } : null, input.counter !== false)
   )
   if (input.cta) nodes.push(kept(photos.length) ? null : ctaSlide(themes[mix.cta], n, n, input.cta, input.counter !== false))
   return Promise.all(
