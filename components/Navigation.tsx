@@ -125,12 +125,14 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
         { id: 'admin-assistant', label: 'Super chat', short: 'Super', icon: Sparkles, href: '/admin/assistant' },
         { id: 'admin-pipeline', label: 'Motore clienti', short: 'Clienti', icon: Target, href: '/admin/pipeline' },
-        { id: 'admin-usage', label: 'Consumi', icon: BarChart3, href: '/admin/usage' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
       ]
     : staffPages.length
     ? [
-        ...staffPages.map((page) => ({ id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href })),
+        // I consumi stanno dentro la Super chat: niente voce doppia.
+        ...staffPages
+          .filter((page, i) => staffPages.findIndex((p) => STAFF_PAGES[p].href === STAFF_PAGES[page].href) === i)
+          .map((page) => ({ id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href })),
       ]
     : [
         { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },

@@ -41,9 +41,9 @@ export const STAFF_PAGES = {
   },
   usage: {
     label: 'Consumi',
-    href: '/admin/usage',
+    href: '/admin/assistant',
     caps: {
-      view: 'Vedere i consumi',
+      view: 'Vedere i consumi (in alto nella Super chat)',
     },
   },
 } as const

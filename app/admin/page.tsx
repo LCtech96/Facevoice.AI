@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { isAdminEmail } from '@/lib/admin-auth'
+import StaffManager from './StaffManager'
 import BlogAutoPanel from './BlogAutoPanel'
 
 interface UserSummary {
@@ -163,12 +164,6 @@ export default function AdminPage() {
                     Messaggi social &rarr;
                   </a>
                   <a
-                    href="/admin/usage"
-                    className="text-sm text-[var(--accent-blue)] hover:underline"
-                  >
-                    Consumo AI del team &rarr;
-                  </a>
-                  <a
                     href="/admin/memoria"
                     className="text-sm text-[var(--accent-blue)] hover:underline"
                   >
@@ -194,6 +189,8 @@ export default function AdminPage() {
           </div>
 
           <BlogAutoPanel />
+
+          <StaffManager />
 
           {/* Users Section */}
           <motion.div
