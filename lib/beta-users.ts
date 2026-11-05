@@ -25,6 +25,13 @@ export type BetaSubscription = {
   cancelAtPeriodEnd: boolean
 }
 
+/** Accesso alla chat Assistente dell'area clienti della beta (lo decide l'admin, utente per utente). */
+export type BetaAssistant = {
+  enabled: boolean
+  /** Membro dello spazio Facevoice: sempre attivo, non si puo' spegnere. */
+  locked: boolean
+}
+
 export type BetaUser = {
   id: string
   email: string
@@ -50,6 +57,8 @@ export type BetaUser = {
   byConnection: BetaConnection[]
   /** null: nessun abbonamento. Assente: la beta (versione vecchia) non lo manda. */
   subscription?: BetaSubscription | null
+  /** Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore. */
+  assistant?: BetaAssistant
 }
 
 export type BetaUsersResponse = { updatedAt: string; users: BetaUser[] }
@@ -184,6 +193,15 @@ function subscriptionFrom(v: unknown): BetaSubscription | null {
   }
 }
 
+/** Stato dell'assistente come lo manda la beta; null se manca o non e' valido. */
+export function assistantFrom(v: unknown): BetaAssistant | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const a = v as Record<string, unknown>
+  if (typeof a.enabled !== 'boolean' && typeof a.locked !== 'boolean') return null
+  const locked = a.locked === true
+  return { enabled: locked || a.enabled === true, locked }
+}
+
 function thresholdsFrom(v: unknown): BetaThresholds | null {
   if (!v || typeof v !== 'object') return null
   const t = v as Record<string, unknown>
@@ -206,6 +224,7 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
       const period = u.period && typeof u.period === 'object' ? u.period : {}
       const thresholds = thresholdsFrom(u.thresholds)
       const plan = str(u.plan) || 'free'
+      const assistant = assistantFrom(u.assistant)
       return {
         id: u.id,
         email: str(u.email),
@@ -239,6 +258,8 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
           .sort((a: BetaConnection, b: BetaConnection) => b.eur - a.eur),
         // Solo se la beta lo manda: senza il campo la pagina non mostra gli abbonamenti.
         ...(u.subscription !== undefined ? { subscription: subscriptionFrom(u.subscription) } : {}),
+        // Idem per l'assistente: senza il campo l'interruttore resta nascosto.
+        ...(assistant ? { assistant } : {}),
       }
     })
   return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users }

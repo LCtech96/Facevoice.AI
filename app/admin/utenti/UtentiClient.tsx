@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { RefreshCw, Search, Users, X } from 'lucide-react'
+import { RefreshCw, Search, Sparkles, Users, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
 import {
+  assistantFrom,
   daysLeftText,
   formatEur,
   formatEurRound,
@@ -17,6 +18,7 @@ import {
   subscriptionPlanLabel,
   subscriptionStatusLabel,
   subscriptionSummary,
+  type BetaAssistant,
   type BetaSubscription,
   type BetaUser,
   type BetaUsersResponse,
@@ -27,6 +29,7 @@ import {
 
 // Pagina "Utenti": chi e' iscritto alla beta, quanto ha speso di AI nel periodo
 // del suo abbonamento e quale gettone vede (verde, arancione, rosso).
+// Dalla scheda l'admin accende o spegne anche la chat Assistente della beta.
 // ?u=<id> apre subito la scheda di quell'utente (link delle notifiche).
 
 const LIGHTS = [
@@ -221,6 +224,66 @@ function SubscriptionRow({ sub }: { sub: BetaSubscription | null }) {
   )
 }
 
+const ASSISTANT_ON = '#34C759'
+
+/** Nella lista: chi ha la chat Assistente accesa. */
+function AssistantChip() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--accent-blue)]/15 px-2 py-0.5 text-[11px] font-medium text-[var(--accent-blue)]">
+      <Sparkles className="h-3 w-3" aria-hidden="true" />
+      Assistente
+    </span>
+  )
+}
+
+/** Riga "Assistente AI" della scheda: interruttore che salva subito. */
+function AssistantRow({
+  assistant,
+  saving,
+  error,
+  onToggle,
+}: {
+  assistant: BetaAssistant
+  saving: boolean
+  error: string | null
+  onToggle: () => void
+}) {
+  const on = assistant.enabled || assistant.locked
+  return (
+    <div className="mt-3 rounded-xl bg-[var(--background)] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p id="assistente-ai" className="text-sm font-medium text-[var(--text-primary)]">
+            Assistente AI
+          </p>
+          <p className="text-xs text-[var(--text-secondary)]">
+            {assistant.locked ? 'Sempre attivo (Facevoice)' : 'La chat Assistente nell’area clienti della beta'}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-labelledby="assistente-ai"
+          aria-busy={saving || undefined}
+          disabled={assistant.locked || saving}
+          onClick={onToggle}
+          className="-my-1.5 -mr-1 inline-flex min-h-[44px] shrink-0 items-center gap-2 rounded-full px-1 text-sm font-medium disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+        >
+          <span style={{ color: on ? ASSISTANT_ON : 'var(--text-secondary)' }}>{on ? 'Attivo' : 'Spento'}</span>
+          <span
+            className={`relative h-7 w-12 rounded-full transition-colors ${assistant.locked || saving ? 'opacity-60' : ''}`}
+            style={{ background: on ? ASSISTANT_ON : 'var(--border-color)' }}
+          >
+            <span className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all" style={{ left: on ? 22 : 2 }} />
+          </span>
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-[#FF3B30]">{error}</p>}
+    </div>
+  )
+}
+
 const workspacesLine = (user: BetaUser) =>
   user.workspaces.length
     ? user.workspaces.map((w) => `${w.name} · ${planLabelFor(w.plan)}`).join(', ')
@@ -309,6 +372,9 @@ export default function UtentiClient() {
   const using = users.filter((u) => u.eur > 0).length
   const blocked = users.filter((u) => u.blocked).length
   const subs = useMemo(() => subscriptionSummary(users), [users])
+  // Solo se la beta manda gia' lo stato dell'assistente.
+  const assistantKnown = users.some((u) => u.assistant)
+  const withAssistant = users.filter((u) => u.assistant?.enabled).length
 
   const updateUser = (id: string, patch: Partial<BetaUser>) =>
     setData((d) => (d ? { ...d, users: d.users.map((u) => (u.id === id ? { ...u, ...patch } : u)) } : d))
@@ -334,7 +400,8 @@ export default function UtentiClient() {
           {data && (
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               {users.length} {users.length === 1 ? 'utente' : 'utenti'} · {using} con consumi · {blocked}{' '}
-              {blocked === 1 ? 'bloccato' : 'bloccati'} · aggiornato {dateTime(data.updatedAt)}
+              {blocked === 1 ? 'bloccato' : 'bloccati'}
+              {assistantKnown && ` · ${withAssistant} con l’assistente`} · aggiornato {dateTime(data.updatedAt)}
             </p>
           )}
           {subs && (
@@ -410,9 +477,10 @@ export default function UtentiClient() {
                   <Badges user={user} />
                 </div>
                 <p className="truncate text-xs text-[var(--text-secondary)]">{user.email}</p>
-                {user.subscription !== undefined && (
-                  <div className="mt-1 flex min-w-0">
+                {(user.subscription !== undefined || user.assistant?.enabled) && (
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-1">
                     <SubscriptionBadge user={user} />
+                    {user.assistant?.enabled && <AssistantChip />}
                   </div>
                 )}
                 <div className="mt-2 flex items-baseline justify-between gap-2">
@@ -451,6 +519,8 @@ function UserSheet({
 }) {
   const [saving, setSaving] = useState<LightMode | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [assistantSaving, setAssistantSaving] = useState(false)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
   const mode: LightMode = user.override ?? 'auto'
 
   useEffect(() => {
@@ -464,7 +534,10 @@ function UserSheet({
     }
   }, [onClose])
 
-  useEffect(() => setSaveError(null), [user.id])
+  useEffect(() => {
+    setSaveError(null)
+    setAssistantError(null)
+  }, [user.id])
 
   const choose = async (next: LightMode) => {
     if (next === mode || saving) return
@@ -486,6 +559,35 @@ function UserSheet({
       setSaveError(e instanceof Error ? e.message : 'Salvataggio non riuscito.')
     } finally {
       setSaving(null)
+    }
+  }
+
+  // Si vede subito la scelta; se la beta non la salva torna com'era.
+  const toggleAssistant = async () => {
+    const prev = user.assistant
+    if (!prev || prev.locked || assistantSaving) return
+    const next = !prev.enabled
+    setAssistantSaving(true)
+    setAssistantError(null)
+    onSaved({ assistant: { ...prev, enabled: next } })
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error('Sessione scaduta: accedi di nuovo.')
+      const res = await fetch('/api/admin/utenti', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId: user.id, assistant: next }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error || 'Salvataggio non riuscito.')
+      onSaved({ assistant: assistantFrom(json?.assistant) ?? { ...prev, enabled: next } })
+    } catch (e) {
+      onSaved({ assistant: prev })
+      const message = (e instanceof Error && e.message.trim()) || 'Salvataggio non riuscito.'
+      const sentence = /[.!?…]$/.test(message) ? message : `${message}.`
+      setAssistantError(`${sentence} L’assistente resta ${prev.enabled ? 'attivo' : 'spento'}.`)
+    } finally {
+      setAssistantSaving(false)
     }
   }
 
@@ -544,6 +646,10 @@ function UserSheet({
           </div>
           {user.subscription !== undefined && <SubscriptionRow sub={user.subscription} />}
         </div>
+
+        {user.assistant && (
+          <AssistantRow assistant={user.assistant} saving={assistantSaving} error={assistantError} onToggle={toggleAssistant} />
+        )}
 
         <div className="mt-3 rounded-xl bg-[var(--background)] p-3">
           <div className="flex items-baseline justify-between gap-2">
