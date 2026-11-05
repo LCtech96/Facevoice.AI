@@ -52,9 +52,12 @@ export type Job = {
   run?: string
   /** Passi gia' fatti (strumenti usati e risultato in breve): chi riprende non li rifa'. */
   steps?: string[]
+  /** Chi ha scritto la richiesta e' l'amministratore: solo lui cambia e pubblica i caroselli. */
+  admin?: boolean
 }
 
-export type AssistantState = { turns: Turn[]; drafts: Draft[]; job: Job | null }
+/** chatId: chat aperta (le altre sono salvate a parte, vedi "Chat salvate" in fondo). */
+export type AssistantState = { turns: Turn[]; drafts: Draft[]; job: Job | null; chatId?: string }
 
 const MAX_TURNS = 80
 /**
@@ -80,7 +83,12 @@ export function asScope(value: unknown): Scope {
 function parseState(value: string | null | undefined): AssistantState {
   try {
     const parsed = value ? JSON.parse(value) : null
-    return { turns: parsed?.turns || [], drafts: parsed?.drafts || [], job: parsed?.job || null }
+    return {
+      turns: parsed?.turns || [],
+      drafts: parsed?.drafts || [],
+      job: parsed?.job || null,
+      ...(typeof parsed?.chatId === 'string' ? { chatId: parsed.chatId } : {}),
+    }
   } catch {
     return { turns: [], drafts: [], job: null }
   }
@@ -252,7 +260,11 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
 
   const history = start.turns
     .slice(-9, -1)
-    .map((t) => ({ role: t.role, text: `${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500) }))
+    .map((t) => {
+      // Caroselli mostrati in anteprima: l'agente ne conosce il draftId (per correggerli).
+      const posts = (t.actions || []).flatMap((a) => (a.kind === 'post_preview' ? [`\n[Carosello in anteprima: draftId ${a.draftId}, ${a.urls.length} slide]`] : []))
+      return { role: t.role, text: `${`${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500)}${posts.slice(-3).join('')}` }
+    })
   // Token di questo giro; il totale della richiesta somma anche i giri precedenti.
   const tally: UsageTally = emptyTally()
   const base: UsageTally = job.usage && (job.round ?? 0) > 0 ? job.usage : emptyTally()
@@ -323,13 +335,20 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
         overBudget: () => overBudget(budget, total(), lastStep),
       },
       async () =>
-        runAssistant(await withImages(scope, jobId, start, message), history, start.drafts, budget, {
-          done: job.steps,
-          onStep: (line) => {
-            steps.push(line)
-            void writeStatus(undefined, true)
+        runAssistant(
+          await withImages(scope, jobId, start, message),
+          history,
+          start.drafts,
+          budget,
+          {
+            done: job.steps,
+            onStep: (line) => {
+              steps.push(line)
+              void writeStatus(undefined, true)
+            },
           },
-        })
+          { admin: job.admin === true }
+        )
     )
     // Prima che il server chiuda la funzione (300 s) si passa a un nuovo giro.
     const result = await Promise.race([work, new Promise<null>((resolve) => setTimeout(() => resolve(null), HARD_STOP_MS))])
@@ -393,4 +412,136 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
       s.job!.updatedAt = new Date().toISOString()
     }).catch(() => undefined)
   }
+}
+
+// ---------------------------------------------------------------------
+// Chat salvate (come nella beta): "Nuova chat" non cancella piu' niente.
+// La chiave assistant_state:<scope> contiene sempre la chat APERTA, quindi
+// lavori, cron, giri successivi e pagina Clienti non cambiano. Le altre chat
+// stanno in assistant_chat:<scope>:<id>, con l'elenco in assistant_chats:<scope>.
+// Le bozze email restano in comune a tutte le chat ("le bozze non inviate restano").
+// Si cambia chat solo a lavoro fermo.
+// ---------------------------------------------------------------------
+
+export type ChatInfo = { id: string; title: string; updatedAt: string; count: number; current?: boolean }
+type ChatArchive = { turns: Turn[]; job: Job | null }
+
+const MAX_CHATS = 60
+const CHAT_ID_RE = /^[a-z0-9]{6,40}$/
+const chatsKey = (scope: Scope) => `assistant_chats:${scope}`
+const archiveKey = (scope: Scope, id: string) => `assistant_chat:${scope}:${id}`
+
+/** Errore da mostrare nella pagina (status: codice HTTP della risposta). */
+export class ChatError extends Error {
+  constructor(message: string, public status = 400) {
+    super(message)
+  }
+}
+
+function parseIndex(raw: string | null): { chats: ChatInfo[] } {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null
+    const chats = Array.isArray(parsed?.chats) ? parsed.chats : []
+    return { chats: chats.filter((c: Partial<ChatInfo>) => typeof c?.id === 'string' && typeof c?.updatedAt === 'string') }
+  } catch {
+    return { chats: [] }
+  }
+}
+
+function parseArchive(raw: string | null): ChatArchive | null {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null
+    return Array.isArray(parsed?.turns) ? { turns: parsed.turns, job: parsed.job || null } : null
+  } catch {
+    return null
+  }
+}
+
+/** Titolo della chat: la prima richiesta di Luca (o il primo carosello). */
+function chatTitle(turns: Turn[]): string {
+  const first = turns.find((t) => t.role === 'user' && t.text.trim())?.text
+  const post = turns.flatMap((t) => t.actions || []).find((a) => a.kind === 'post_preview')
+  const title = first || (post?.kind === 'post_preview' ? post.title : '')
+  return title.replace(/\s+/g, ' ').trim().slice(0, 70) || 'Chat'
+}
+
+const sameTurns = (a: Turn[], b: Turn[]) => JSON.stringify(a) === JSON.stringify(b)
+
+async function loadStamped(scope: Scope) {
+  const { value, stamp } = await readSetting(keyOf(scope))
+  return { state: parseState(value), stamp: stamp || new Date().toISOString() }
+}
+
+/** Salva la chat aperta tra quelle salvate (prima di cambiarla: cosi' non si perde mai). */
+async function archiveChat(scope: Scope, id: string, state: AssistantState, updatedAt: string, keep: string) {
+  // Il lavoro resta (serve a "continua" e al limite di spesa), ma chiuso e gia' gestito.
+  const job: Job | null = state.job ? { ...state.job, status: state.job.status === 'running' ? 'error' : state.job.status, handled: true } : null
+  await updateSetting<ChatArchive | null>(archiveKey(scope, id), parseArchive, () => ({ turns: state.turns, job }))
+  let dropped: string[] = []
+  await updateSetting(chatsKey(scope), parseIndex, (index) => {
+    const info: ChatInfo = { id, title: chatTitle(state.turns), updatedAt, count: state.turns.length }
+    const chats = [info, ...index.chats.filter((c) => c.id !== id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    const kept = chats.filter((c, i) => i < MAX_CHATS || c.id === keep)
+    dropped = chats.filter((c) => !kept.includes(c)).map((c) => c.id)
+    return { chats: kept }
+  })
+  // Oltre le 60 chat si tolgono le piu' vecchie.
+  if (dropped.length) {
+    const { error } = await supabaseAdmin.from('app_settings').delete().in('key', dropped.map((d) => archiveKey(scope, d)))
+    if (error) console.warn('chat salvate: pulizia non riuscita:', error.message)
+  }
+}
+
+/**
+ * Sostituisce la chat aperta con `next` dopo averla salvata. Si salva solo se intanto
+ * la chat aperta non e' cambiata (stessi messaggi, nessun lavoro in corso).
+ */
+async function switchChat(scope: Scope, target: string | null, load: () => Promise<ChatArchive | null>): Promise<AssistantState> {
+  // Chat di prima senza id (salvata prima delle chat multiple): lo stesso id anche se si riprova.
+  const fallbackId = newId()
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { state: snap, stamp } = await loadStamped(scope)
+    if (target && snap.chatId === target) return snap
+    if (!target && !snap.turns.length) return snap
+    if (isRunning(snap.job)) throw new ChatError('Sto ancora lavorando: aspetta che finisca, poi cambia chat.', 409)
+    const next = await load()
+    if (!next) throw new ChatError('Chat non trovata', 404)
+    if (snap.turns.length) await archiveChat(scope, snap.chatId || fallbackId, snap, stamp, target || '')
+    const flag = { applied: false }
+    const state = await updateState(scope, (s) => {
+      // Si puo' rifare piu' volte (salvataggio conteso): conta solo l'ultima.
+      flag.applied = false
+      if (isRunning(s.job) || !sameTurns(s.turns, snap.turns)) return false
+      s.turns = next.turns
+      s.job = next.job
+      s.chatId = target || newId()
+      flag.applied = true
+    })
+    if (flag.applied) return state
+  }
+  throw new ChatError('La chat è cambiata proprio ora: riprova.', 409)
+}
+
+/** Nuova chat vuota; quella di prima resta salvata. */
+export function startNewChat(scope: Scope): Promise<AssistantState> {
+  return switchChat(scope, null, async () => ({ turns: [], job: null }))
+}
+
+/** Riapre una chat salvata; quella aperta resta salvata. */
+export function openChat(scope: Scope, id: string): Promise<AssistantState> {
+  if (!CHAT_ID_RE.test(id)) return Promise.reject(new ChatError('Chat non trovata', 404))
+  return switchChat(scope, id, async () => parseArchive((await readSetting(archiveKey(scope, id))).value))
+}
+
+/** Chat da mostrare nell'elenco: prima quella aperta, poi le salvate dalla piu' recente. */
+export async function listChats(scope: Scope): Promise<ChatInfo[]> {
+  const [{ state, stamp }, index] = await Promise.all([loadStamped(scope), readSetting(chatsKey(scope)).then((r) => parseIndex(r.value))])
+  const current: ChatInfo = {
+    id: state.chatId || '',
+    title: state.turns.length ? chatTitle(state.turns) : 'Nuova chat',
+    updatedAt: stamp,
+    count: state.turns.length,
+    current: true,
+  }
+  return [current, ...index.chats.filter((c) => c.id !== state.chatId)]
 }
