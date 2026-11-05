@@ -312,6 +312,18 @@ const numbered = (notes: (string | null)[]) => notes.map((n, k) => `Foto ${k + 1
 
 // --- Testi dei post --------------------------------------------------------------
 
+/**
+ * Le istruzioni del cliente (pagina Istruzioni: per tutti i canali + Instagram) come
+ * unica fonte per i testi dei post e delle slide, in ogni chiamata che scrive testi.
+ */
+export async function businessContext(workspaceId: string, max = 12000): Promise<string> {
+  const instructions = await readInstructions(workspaceId).catch(() => null)
+  const text = [instructions?.general, instructions?.instagram].map((t) => t?.trim()).filter(Boolean).join('\n\n').slice(0, max)
+  return text
+    ? `Informazioni sull'attività (dalla pagina Istruzioni del titolare): sono l'UNICA fonte per i contenuti. Usa i termini come li definisce lui (es. ruoli, servizi, nomi di funzioni) e non inventare servizi, funzioni, pagine, numeri o promesse che qui non ci sono.\n${text}\n`
+    : ''
+}
+
 /** Instagram accetta al massimo 5 hashtag per post: si tengono i primi 5, gli altri si tolgono. */
 export function limitHashtags(text: string, max = 5): string {
   let seen = 0
@@ -331,7 +343,7 @@ export async function editCaption(db: WorkspaceDb, id: string, instruction: stri
   if (['publishing', 'published'].includes(post.status)) throw new Error('il post è già pubblicato')
   const result = await callAI(
     [{ role: 'user', content: `Didascalia Instagram attuale:\n${post.caption}\n\nTesto Facebook attuale:\n${post.facebook_text || post.caption}\n\nRichiesta: ${request}` }],
-    `Cambi SOLO la didascalia di un post seguendo la richiesta (es. traduzione, piu' corta, altro tono). Mantieni il senso, gli emoji e i link come sono, salvo che la richiesta dica altro; niente informazioni inventate. Al massimo 5 hashtag (adattati se traduci). "facebook" e' lo stesso testo senza la fila di hashtag. Niente markdown.
+    `${await businessContext(db.workspaceId)}Cambi SOLO la didascalia di un post seguendo la richiesta (es. traduzione, piu' corta, altro tono). Mantieni il senso, gli emoji e i link come sono, salvo che la richiesta dica altro; niente informazioni inventate. Al massimo 5 hashtag (adattati se traduci). "facebook" e' lo stesso testo senza la fila di hashtag. Niente markdown.
 Rispondi SOLO con JSON: {"didascalia": "", "facebook": ""}`,
     { feature: 'saas_didascalia', temperature: 0.3, maxOutputTokens: 1800, workspaceId: db.workspaceId }
   )
@@ -350,10 +362,9 @@ type Texts = { title: string; caption: string; facebook: string; hook: string; l
 const trim = (value: unknown, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 
 async function writeTexts(workspaceId: string, brief: string, kind: 'photos' | 'carousel' | 'photo_carousel', photoNotes: string, photoCount: number): Promise<Texts> {
-  const [name, instructions] = await Promise.all([workspaceName(workspaceId), readInstructions(workspaceId).catch(() => null)])
-  const voice = [instructions?.general, instructions?.instagram].map((t) => t?.trim()).filter(Boolean).join('\n\n').slice(0, 4000)
+  const [name, context] = await Promise.all([workspaceName(workspaceId), businessContext(workspaceId)])
   const system = `Sei il social media manager di "${name}". Prepari un post per Instagram e Facebook dalle indicazioni del titolare${photoCount ? ' e dalle sue foto (te ne do la descrizione)' : ''}.
-${voice ? `Informazioni e tono dell'attività (dalle sue istruzioni):\n${voice}\n` : ''}
+${context}
 Regole:
 - Usa solo le informazioni del titolare, delle sue istruzioni e di quello che si vede nelle foto: niente prezzi, date, offerte o promesse inventate.
 - Scrivi nella lingua delle indicazioni del titolare (di solito italiano). Niente markdown.
@@ -911,7 +922,8 @@ export async function editSlides(db: WorkspaceDb, id: string, numbers: number[],
       ? { n, copertina: true, gancio: source.hook, etichetta: source.label, sottotitolo: s.title }
       : { n, titolo: s.title, testo: s.text }
   })
-  const system = `Correggi SOLO le slide di un carosello Instagram indicate qui sotto, seguendo la richiesta del titolare. Le altre slide non esistono per te: non nominarle e non cambiarle.
+  const context = await businessContext(db.workspaceId)
+  const system = `${context}Correggi SOLO le slide di un carosello Instagram indicate qui sotto, seguendo la richiesta del titolare. Le altre slide non esistono per te: non nominarle e non cambiarle. Se la richiesta dice di prendere le informazioni dalle istruzioni, usa quelle qui sopra.
 Per ogni slide indicata restituisci SOLO i campi da cambiare (ometti quelli che restano uguali):
 - slide normale: "titolo" (max 45 caratteri), "testo" (max 140 caratteri);
 - copertina: "gancio" (titolo grande, max 40 caratteri, niente emoji), "etichetta" (max 26 caratteri), "sottotitolo" (max 70 caratteri);
@@ -1180,7 +1192,7 @@ export async function extractPhotos(db: WorkspaceDb, id: string, numbers: number
                 .join(' | ')}\n\nNuove foto (in ordine):\n${notes.slice(1, 1 + extra).map((note, j) => `${j + 1}. ${note || 'foto'}`).join('\n')}`,
             },
           ],
-          `Scrivi i testi di ${extra} nuove slide di un carosello Instagram, una per ogni foto indicata e nello stesso ordine, nello stile delle altre slide: "titolo" max 45 caratteri, "testo" max 140 caratteri, che parlino di quello che mostra la foto. Niente prezzi o promesse inventate, niente markdown. Rispondi SOLO con JSON: {"slide": [{"titolo": "", "testo": ""}]}`,
+          `${await businessContext(db.workspaceId)}Scrivi i testi di ${extra} nuove slide di un carosello Instagram, una per ogni foto indicata e nello stesso ordine, nello stile delle altre slide: "titolo" max 45 caratteri, "testo" max 140 caratteri, che parlino di quello che mostra la foto. Niente prezzi o promesse inventate, niente markdown. Rispondi SOLO con JSON: {"slide": [{"titolo": "", "testo": ""}]}`,
           { feature: 'saas_slide', temperature: 0.5, maxOutputTokens: 900, workspaceId: db.workspaceId }
         )
         const data = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')

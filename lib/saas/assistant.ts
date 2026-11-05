@@ -22,6 +22,7 @@ import {
   setWorkspaceBrand,
   updatePost,
   arrangeModes,
+  businessContext,
   type ArrangeMode,
   type PostPlatform,
   type PostRow,
@@ -225,9 +226,9 @@ export async function logPostChange(
   return refreshPostActions(db, turns)
 }
 
-const PROMPT = (name: string, now: string, channels: string, recent: string) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili. Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.
+const PROMPT = (name: string, now: string, channels: string, recent: string, context: string) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili. Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.
 
-Ora italiana: ${now}
+${context ? `${context}Quando scrivi testi di slide o didascalie (anche in "slides" di create_post o in edit_carousel) usa queste informazioni.\n\n` : ''}Ora italiana: ${now}
 Account collegati: ${channels}
 Post recenti: ${recent}
 
@@ -365,7 +366,7 @@ export async function runClientAssistant(
     .join('\n\n')
   const past = history.slice(-8).map((t) => `${t.role === 'user' ? 'Cliente' : 'Assistente'}: ${t.text.slice(0, 600)}`).join('\n')
   const transcript: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: `${past ? `Conversazione recente:\n${past}\n\n` : ''}Richiesta: ${request}` }]
-  const system = PROMPT(name, now, channels, recentText)
+  const system = PROMPT(name, now, channels, recentText, await businessContext(db.workspaceId))
   const actions: ChatAction[] = []
   const lastPost = () => [...actions].reverse().find((a) => a.kind === 'post') as { post: PostView } | undefined
   const showPost = (post: PostRow) => {
