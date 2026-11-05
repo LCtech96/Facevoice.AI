@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb } from '@/lib/workspace-db'
 import { listConnections, type Connection } from './connections'
 import { syncMailbox, type EmailMeta } from './email'
-import { respondToMessage } from './responder'
+import { scheduleReply } from './reply-queue'
 
 // Lettura periodica delle caselle email dei clienti: dal cron ogni minuto in
 // produzione e dall'omnichat quando e' aperta (le anteprime non hanno il cron).
@@ -28,8 +28,9 @@ export async function syncWorkspace(workspaceId: string, options: { force?: bool
     if (error) result.errors.push(`${connection.external_id}: ${error}`)
     result.inserted += inserted.length
     for (const id of inserted.slice(-MAX_REPLIES_PER_RUN)) {
-      const outcome = await respondToMessage(db, id)
-      if (outcome.status === 'sent' || outcome.status === 'pending') result.replies++
+      // Subito, o in coda con il ritardo scelto dal cliente (la manda il cron).
+      const scheduled = await scheduleReply(db, id)
+      if (scheduled.status === 'queued' || scheduled.outcome.status === 'sent' || scheduled.outcome.status === 'pending') result.replies++
     }
   }
   return result

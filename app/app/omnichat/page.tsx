@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, RefreshCw, Send, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Clock, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 
@@ -11,6 +11,8 @@ import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 type Mode = 'off' | 'approval' | 'auto'
 type Channel = { platform: string; status: string; handle: string | null; mode: Mode }
+type DelayUnit = 'secondi' | 'minuti'
+type ReplyDelay = { seconds: number; unit: DelayUnit }
 type Conversation = {
   platform: string
   contactId: string
@@ -55,12 +57,27 @@ export default function OmnichatPage() {
   const [open, setOpen] = useState<{ platform: string; contactId: string } | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [delay, setDelay] = useState<ReplyDelay | null>(null)
   const canManage = workspace?.role !== 'member'
 
   const loadChannels = useCallback(async () => {
     const res = await appFetch('/api/app/channels').catch(() => null)
-    if (res?.ok) setChannels(((await res.json()).channels || []).filter((c: Channel) => c.status === 'connected'))
+    if (!res?.ok) return
+    const data = await res.json()
+    setChannels((data.channels || []).filter((c: Channel) => c.status === 'connected'))
+    if (data.replyDelay) setDelay(data.replyDelay)
   }, [appFetch])
+
+  const saveDelay = async (value: number, unit: DelayUnit) => {
+    const res = await appFetch('/api/app/channels', { method: 'PATCH', body: JSON.stringify({ replyDelay: { value, unit } }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (!res?.ok) {
+      setNotice(data.error || 'Ritardo non salvato, riprova.')
+      return false
+    }
+    setDelay(data.replyDelay)
+    return true
+  }
 
   const loadInbox = useCallback(async () => {
     const res = await appFetch('/api/app/inbox').catch(() => null)
@@ -163,6 +180,7 @@ export default function OmnichatPage() {
                 </div>
               )
             })}
+            {channels.length > 0 && delay && <DelayCard delay={delay} canManage={canManage} onSave={saveDelay} />}
           </div>
         </div>
       )}
@@ -368,6 +386,7 @@ function Thread({
                 {when(m.created_at, language)}
                 {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
                 {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
+                {mine && m.origin === 'manual_app' ? ' · dall’app' : ''}
                 {m.status === 'sending' ? ' · invio…' : ''}
               </p>
             </div>
@@ -405,6 +424,80 @@ function Thread({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+const shownDelay = (d: ReplyDelay) => String(d.unit === 'minuti' ? Math.round((d.seconds / 60) * 10) / 10 : d.seconds)
+
+/** Ritardo delle risposte automatiche (uno per spazio): lo cambiano titolare e amministratori. */
+function DelayCard({ delay, canManage, onSave }: { delay: ReplyDelay; canManage: boolean; onSave: (value: number, unit: DelayUnit) => Promise<boolean> }) {
+  const shown = shownDelay
+  const [amount, setAmount] = useState(shown(delay))
+  const [unit, setUnit] = useState<DelayUnit>(delay.unit)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setAmount(shown(delay))
+    setUnit(delay.unit)
+  }, [delay])
+
+  const value = Number(amount.replace(',', '.'))
+  const seconds = unit === 'minuti' ? value * 60 : value
+  const valid = amount.trim() !== '' && Number.isFinite(value) && value >= 0 && seconds <= 30 * 60
+  const changed = amount !== shown(delay) || unit !== delay.unit
+
+  const save = async () => {
+    if (!valid) {
+      setError('Da 0 a 30 minuti.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    await onSave(value, unit)
+    setSaving(false)
+  }
+
+  return (
+    <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+      <p className="flex items-center gap-2 text-sm font-semibold">
+        <Clock className="h-4 w-4 text-[var(--accent-blue)]" /> Ritardo delle risposte automatiche
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          min={0}
+          max={unit === 'minuti' ? 30 : 1800}
+          step={unit === 'minuti' ? 0.5 : 5}
+          value={amount}
+          disabled={!canManage || saving}
+          onChange={(e) => setAmount(e.target.value)}
+          aria-label="Ritardo"
+          className="w-20 rounded-full border border-[var(--border-color)] bg-[var(--background)] px-3 py-1 text-[16px] text-[var(--text-primary)] md:text-xs"
+        />
+        <select
+          value={unit}
+          disabled={!canManage || saving}
+          onChange={(e) => setUnit(e.target.value as DelayUnit)}
+          aria-label="Unità"
+          className="rounded-full border border-[var(--border-color)] bg-[var(--background)] px-3 py-1 text-[16px] text-[var(--text-primary)] md:text-xs"
+        >
+          <option value="secondi">secondi</option>
+          <option value="minuti">minuti</option>
+        </select>
+        {canManage && changed && (
+          <button onClick={save} disabled={saving} className="rounded-full bg-[var(--accent-blue)] px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salva'}
+          </button>
+        )}
+      </div>
+      <p className="mt-1.5 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">
+        La risposta parte dopo questo tempo, con qualche secondo di variazione, come una persona vera. Vale per i canali in Automatica. 0 = subito, massimo 30 minuti.
+      </p>
+      {!canManage && <p className="mt-1 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">Lo cambiano il titolare o un amministratore.</p>}
+      {error && <p className="mt-1 text-[11px] text-[#ff6b6b]">{error}</p>}
     </div>
   )
 }

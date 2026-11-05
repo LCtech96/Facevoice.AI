@@ -3,8 +3,13 @@ import { verifyMetaSignature } from '@/lib/meta/agent'
 import { handleWhatsAppWebhook, type WhatsAppPayload } from '@/lib/meta/whatsapp'
 import { handleMessagingWebhook, type MessagingPayload } from '@/lib/meta/messenger'
 import { routeClientEntries } from '@/lib/saas/meta-inbound'
+import { processDueReplies, waitForQueuedReplies } from '@/lib/saas/reply-queue'
 
 export const dynamic = 'force-dynamic'
+// Le risposte con un ritardo breve (fino a 45 s) si aspettano qui dentro, dopo la risposta a Meta.
+export const maxDuration = 180
+/** Oltre questo tempo dall'arrivo del webhook l'attesa passa al cron (resta il margine per scrivere e inviare). */
+const WAIT_BUDGET_MS = 120_000
 
 /** Verifica dell'URL richiesta da Meta quando si salva il webhook in console. */
 export async function GET(req: NextRequest) {
@@ -24,6 +29,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now()
   const rawBody = await req.text()
 
   if (!verifyMetaSignature(rawBody, req.headers.get('x-hub-signature-256'))) {
@@ -48,10 +54,16 @@ export async function POST(req: NextRequest) {
   } else if (payload.object === 'page' || payload.object === 'instagram') {
     after(async () => {
       // Pagine e Instagram dei clienti del SaaS: ognuno nel suo spazio di lavoro.
-      const rest = await routeClientEntries(payload as MessagingPayload)
-      // Anteprima del SaaS: gli account di Facevoice li gestisce solo il sito vero.
-      if (process.env.META_WEBHOOK_CLIENTS_ONLY === '1' || !rest.entry?.length) return
-      await handleMessagingWebhook(rest as MessagingPayload)
+      const queued: string[] = []
+      const rest = await routeClientEntries(payload as MessagingPayload, queued)
+      await Promise.all([
+        // Anteprima del SaaS: gli account di Facevoice li gestisce solo il sito vero.
+        process.env.META_WEBHOOK_CLIENTS_ONLY === '1' || !rest.entry?.length ? null : handleMessagingWebhook(rest as MessagingPayload),
+        // Risposte dei clienti con il ritardo: quelle brevi partono da qui all'ora prevista.
+        waitForQueuedReplies(queued, startedAt + WAIT_BUDGET_MS).catch((error) => console.error('saas coda risposte (webhook):', error)),
+        // Se il cron non gira: le risposte gia' scadute partono con il primo evento che arriva.
+        processDueReplies({ limit: 3 }).catch(() => 0),
+      ])
     })
   }
 

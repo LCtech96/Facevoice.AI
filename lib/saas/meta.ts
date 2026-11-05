@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
-import { readConnectionSecret, saveConnection, setChannelState, takeOverConnection, type Connection } from './connections'
-import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginText } from './instagram'
+import { readConnectionSecret, saveConnection, setChannelState, takeOverConnection, updateConnection, type Connection } from './connections'
+import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginAction, sendInstagramLoginText } from './instagram'
 
 // Facebook e Instagram dei clienti: collegamento con "Facebook Login for
 // Business" (configurazione con token di sistema che non scade), Pagine e
@@ -66,6 +66,46 @@ async function graph<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T
 }
 
+/**
+ * Eventi che la Pagina manda a Facevoice. message_echoes: i messaggi che il
+ * cliente scrive a mano dall'app (Messenger, Business Suite), cosi' l'AI vede
+ * anche il primo messaggio della conversazione. Per Instagram gli "echo"
+ * arrivano gia' dentro "messages".
+ */
+export const PAGE_SUBSCRIBED_FIELDS = 'messages,message_echoes,messaging_postbacks,feed'
+
+/** Iscrive la Pagina ai webhook (true se Meta ha accettato). */
+export async function subscribePage(pageId: string, pageToken: string): Promise<boolean> {
+  return graph(`/${pageId}/subscribed_apps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ subscribed_fields: PAGE_SUBSCRIBED_FIELDS, access_token: pageToken }),
+  })
+    .then(() => true)
+    .catch((error) => {
+      console.warn('meta subscribe:', pageId, error instanceof Error ? error.message : error)
+      return false
+    })
+}
+
+/**
+ * Pagine collegate prima degli "echo": la prima volta che arriva un loro evento
+ * si rinnova l'iscrizione con i campi nuovi (un tentativo al giorno se Meta rifiuta).
+ */
+export async function ensurePageSubscription(connection: Connection): Promise<void> {
+  if (connection.platform !== 'facebook') return
+  const meta = (connection.meta || {}) as { subscribed_fields?: string | null; subscribe_tried_at?: string }
+  if (meta.subscribed_fields === PAGE_SUBSCRIBED_FIELDS) return
+  if (meta.subscribe_tried_at && Date.now() - new Date(meta.subscribe_tried_at).getTime() < 24 * 3600_000) return
+  const secret = await readConnectionSecret<MetaSecret>(connection.id).catch(() => null)
+  if (!secret?.pageToken) return
+  const ok = await subscribePage(secret.pageId || connection.external_id, secret.pageToken)
+  await updateConnection(workspaceDb(connection.workspace_id), connection.id, {
+    meta: { ...connection.meta, ...(ok ? { subscribed_fields: PAGE_SUBSCRIBED_FIELDS } : {}), subscribe_tried_at: new Date().toISOString() },
+  })
+  console.log(`meta subscribe: Pagina ${connection.external_id} ${ok ? 'iscritta anche agli echo' : 'non aggiornata'}`)
+}
+
 type Page = { id: string; name: string; access_token?: string; instagram_business_account?: { id: string; username?: string; profile_picture_url?: string } }
 
 /** Dal codice del login: token, Pagine scelte dal cliente e Instagram collegati. Salva tutto. */
@@ -104,14 +144,17 @@ export async function connectFromCode(
       continue
     }
     // La Pagina manda a Facevoice messaggi e commenti (anche quelli del suo Instagram).
-    await graph(`/${page.id}/subscribed_apps`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ subscribed_fields: 'messages,messaging_postbacks,feed', access_token: page.access_token }),
-    }).catch((error) => console.warn('meta subscribe:', page.id, error instanceof Error ? error.message : error))
+    const subscribed = await subscribePage(page.id, page.access_token)
 
     const secret: MetaSecret = { pageToken: page.access_token, pageId: page.id, userToken: longLived.access_token }
-    await saveConnection(db, { platform: 'facebook', externalId: page.id, displayName: page.name, meta: { pageName: page.name }, secret, userId })
+    await saveConnection(db, {
+      platform: 'facebook',
+      externalId: page.id,
+      displayName: page.name,
+      meta: { pageName: page.name, subscribed_fields: subscribed ? PAGE_SUBSCRIBED_FIELDS : null },
+      secret,
+      userId,
+    })
     result.pages.push(page.name)
 
     const ig = page.instagram_business_account
@@ -162,6 +205,23 @@ export async function sendMetaText(connection: Connection, recipientId: string, 
     body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { text } }),
   })
   return { id: data.message_id || `meta:${Date.now()}` }
+}
+
+export type SenderAction = 'mark_seen' | 'typing_on'
+
+/** "Visto" o "sta scrivendo..." nella chat (Messenger o Direct). Mai bloccante: gli errori si ignorano. */
+export async function sendMetaSenderAction(connection: Connection, recipientId: string, action: SenderAction): Promise<void> {
+  try {
+    const igSecret = await instagramLoginSecret(connection)
+    if (igSecret) return await sendInstagramLoginAction(connection, igSecret, recipientId, action)
+    const secret = await readConnectionSecret<MetaSecret>(connection.id)
+    await fetch(`${GRAPH}/me/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${secret.pageToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: recipientId }, sender_action: action }),
+      signal: AbortSignal.timeout(5_000),
+    })
+  } catch {}
 }
 
 /** Nome visibile di chi scrive, con il token della Pagina del cliente. */
