@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { asModelChoice, emptyTally, runWithStatus } from '@/lib/ai'
-import { usageSummary } from '@/lib/eur'
+import { asModelChoice, runWithStatus } from '@/lib/ai'
+import { isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
+import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
@@ -63,6 +64,8 @@ export async function POST(req: NextRequest) {
   const model = asModelChoice(body.model)
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)
   if (!message && !images.length) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
+  // AI del piano finita: la richiesta non parte (e non resta in chat).
+  if (await workspaceAIBlocked(access.workspace.id)) return NextResponse.json({ error: AI_BLOCKED_MESSAGE, blocked: true }, { status: 402 })
   // Slide toccata nell'anteprima: la richiesta riguarda solo quella.
   const slide = Number(body.target?.slide)
   const target =
@@ -81,26 +84,27 @@ export async function POST(req: NextRequest) {
   // La richiesta si salva subito: se la pagina si chiude, la risposta arriva lo stesso.
   await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
   let reply: ChatTurn
+  let blocked = false
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
-    // Contatore dei token di questa richiesta: il costo si mostra sotto la risposta.
-    const tally = emptyTally()
-    const result = await runWithStatus({ status: () => {}, model, usage: tally }, async () => {
+    // Tutte le chiamate all'AI di questa richiesta contano per lo spazio (e per il limite del piano).
+    const result = await runWithStatus({ status: () => {}, model, workspaceId: access.workspace.id }, async () => {
       if (images.length) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
       return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
     })
-    const usage = await usageSummary(tally)
-    reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), ...(usage.tokens ? { usage } : {}), at: new Date().toISOString() }
+    reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
-    console.error('saas assistente:', error instanceof Error ? error.message : error)
-    reply = { role: 'assistant', text: 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
+    // Limite raggiunto durante il lavoro: si dice chiaramente, non "qualcosa non è andato".
+    blocked = isAIBlockedError(error)
+    if (!blocked) console.error('saas assistente:', error instanceof Error ? error.message : error)
+    reply = { role: 'assistant', text: blocked ? AI_BLOCKED_MESSAGE : 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns, chatId)
-  return NextResponse.json({ turns: await refreshPostActions(access.db, turns), chatId })
+  return NextResponse.json({ turns: await refreshPostActions(access.db, turns), chatId, ...(blocked ? { blocked: true } : {}) })
 }
 
 export async function DELETE(req: NextRequest) {

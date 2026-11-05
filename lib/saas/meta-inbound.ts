@@ -1,4 +1,5 @@
 import { workspaceDb } from '@/lib/workspace-db'
+import { channelFeature } from '@/lib/usage-limits'
 import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib/meta/media-context'
 import { connectionForAccount, contactName } from './meta'
 import { respondToMessage } from './responder'
@@ -22,7 +23,11 @@ async function handleClientMessage(platform: 'facebook' | 'instagram', accountId
   if (!connection) return
   const db = workspaceDb(connection.workspace_id)
 
-  const context = await describeAttachments(message.attachments, message.reply_to?.story).catch(() => null)
+  // Foto e video del Direct letti dall'AI: consumo dello spazio del cliente, con il canale.
+  const context = await describeAttachments(message.attachments, message.reply_to?.story, {
+    workspaceId: connection.workspace_id,
+    feature: channelFeature('saas_lettura_media', platform),
+  }).catch(() => null)
   const body = [message.text?.trim(), context].filter(Boolean).join('\n\n') || '[allegato]'
   const { data, error } = await db
     .from('social_messages')

@@ -3,6 +3,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { fontPreset } from '@/lib/font-presets'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
+import { assertAIAllowed } from '@/lib/usage-limits'
 import { asPhotoLayout, asTextLayout, checkFont, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, TEXT_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide, type TextLayout } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -120,6 +121,7 @@ async function geminiImage(prompt: string, reference?: { mimeType: string; data:
 /** Modifica una foto con l'AI (es. "togli lo sfondo", "luce piu' calda", "aggiungi una scritta"). */
 export async function editImage(workspaceId: string, url: string, instruction: string): Promise<string> {
   if (!getGeminiApiKey()) throw new Error('modifica delle immagini non disponibile (manca la chiave Gemini)')
+  await assertAIAllowed(workspaceId)
   const original = await sharp(await download(url)).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()
   const prompt = `Edit the attached photo following this instruction from a small business owner (in Italian): "${instruction.slice(0, 600)}".
 Keep the same subject, people, products and composition unless the instruction asks otherwise. Photorealistic, high quality, suitable for an Instagram post.
@@ -134,6 +136,7 @@ If the instruction asks for text in the image, write it exactly as requested and
 /** Immagine creata da zero dall'AI (es. "una foto di un piatto di pasta su un tavolo in terrazza"). */
 export async function generateImage(workspaceId: string, description: string): Promise<string> {
   if (!getGeminiApiKey()) throw new Error('creazione delle immagini non disponibile (manca la chiave Gemini)')
+  await assertAIAllowed(workspaceId)
   const { imageUrl } = await geminiImage(
     `Photorealistic image for an Instagram post of a small business. ${description.slice(0, 800)}
 Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`

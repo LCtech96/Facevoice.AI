@@ -3,6 +3,7 @@ import { facevoiceDb } from '@/lib/workspace-db'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ChatAuthError, currentPeriodStart } from '@/lib/chat-auth'
 import { canAccess, getStaffAccess } from '@/lib/staff-access'
+import { baseFeature } from '@/lib/usage-limits'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,9 +69,11 @@ export async function GET(req: NextRequest) {
     for (const row of rows) {
       add(month, row)
       if (new Date(row.created_at) >= startOfToday) add(today, row)
-      const f = byFeature.get(row.feature) || totals()
+      // "saas_risposte:instagram" conta come "saas_risposte": il canale serve solo per i limiti dei clienti.
+      const feature = baseFeature(row.feature)
+      const f = byFeature.get(feature) || totals()
       add(f, row)
-      byFeature.set(row.feature, f)
+      byFeature.set(feature, f)
       if (row.outcome === 'limit' && !lastLimitAt) lastLimitAt = row.created_at
       if (row.provider === 'claude' && row.outcome === 'ok' && !lastClaudeAt) lastClaudeAt = row.created_at
     }

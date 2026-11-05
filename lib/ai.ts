@@ -9,6 +9,7 @@ import {
 } from '@/lib/gemini'
 import { getAnthropicApiKey } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { afterAIUsage, assertAIAllowed } from '@/lib/usage-limits'
 
 // ---------------------------------------------------------------------
 // Gemini + Claude combinati: si lavora con Gemini (gratuito) finché regge;
@@ -38,7 +39,10 @@ type AIOptions = {
   maxOutputTokens?: number
   /** Funzione che usa l'AI, per la pagina Consumi (es. "chat_sito", "assistente_clienti"). */
   feature?: string
-  /** Spazio di lavoro a cui addebitare il consumo (default: Facevoice). */
+  /**
+   * Spazio di lavoro a cui addebitare il consumo (default: quello del lavoro in corso,
+   * vedi runWithStatus, altrimenti Facevoice). Al limite del piano la chiamata non parte.
+   */
   workspaceId?: string
   /**
    * Conversazione che si rimanda piu' volte (es. i passi dell'assistente): con Claude
@@ -79,6 +83,7 @@ function recordUsage(row: {
 }) {
   const input = row.input || 0
   const output = row.output || 0
+  const workspaceId = row.workspaceId || work.getStore()?.workspaceId
   const price = priceOf(row.model)
   const read = row.cacheRead || 0
   const write = row.cacheWrite || 0
@@ -95,8 +100,8 @@ function recordUsage(row: {
       work.getStore()?.onUsage?.()
     } catch {}
   }
-  void Promise.resolve(
-    (row.workspaceId ? workspaceDb(row.workspaceId) : facevoiceDb).from('ai_usage').insert({
+  const logged = Promise.resolve(
+    (workspaceId ? workspaceDb(workspaceId) : facevoiceDb).from('ai_usage').insert({
       feature: row.feature || 'altro',
       provider: row.provider,
       model: row.model,
@@ -108,8 +113,11 @@ function recordUsage(row: {
   )
     .then(({ error }) => {
       if (error) console.warn('ai_usage:', error.message)
+      return !error
     })
-    .catch(() => undefined)
+    .catch(() => false)
+  // Soglie del piano del cliente (gettoni, blocco, avvisi a Facevoice): dopo la risposta.
+  if ((row.outcome || 'ok') === 'ok') afterAIUsage(workspaceId, cost, logged)
 }
 export type AIResult = { message: string; provider: 'gemini' | 'claude'; model: string }
 
@@ -135,8 +143,13 @@ type WorkContext = {
   onUsage?: () => void
   /** Limite di spesa chiesto da Luca per questa richiesta: true quando e' (quasi) raggiunto. */
   overBudget?: () => boolean
+  /** Spazio di lavoro del cliente per cui si lavora: consumo e limite del piano vanno li'. */
+  workspaceId?: string
 }
 const work = new AsyncLocalStorage<WorkContext>()
+
+/** Spazio a cui va la chiamata: quello indicato, altrimenti quello del lavoro in corso. */
+const workspaceOf = (options?: AIOptions) => options?.workspaceId || work.getStore()?.workspaceId
 
 export function runWithStatus<T>(context: WorkContext, fn: () => Promise<T>): Promise<T> {
   return work.run(context, fn)
@@ -278,13 +291,13 @@ async function tryGemini(
   throw lastError
 }
 
-function noteGeminiFailure(error: unknown, feature?: string): string {
+function noteGeminiFailure(error: unknown, feature?: string, workspaceId?: string): string {
   const message = error instanceof Error ? error.message : String(error)
   if (isLimitError(message)) {
     console.warn(`Tutti i modelli Gemini sono al limite, passo a Claude: ${message}`)
     if (getAnthropicApiKey()) reportStatus('Gemini ha raggiunto il limite: continuo con Claude…')
   } else {
-    recordUsage({ feature, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
+    recordUsage({ feature, workspaceId, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
     console.warn(`Gemini non disponibile, passo a Claude: ${message}`)
   }
   return message
@@ -296,6 +309,8 @@ export async function callAI(
   system?: string,
   options?: AIOptions
 ): Promise<AIResult> {
+  // AI del piano finita: la chiamata non parte (lo spazio Facevoice non ha limiti).
+  await assertAIAllowed(workspaceOf(options))
   const pref = preferredModel()
   const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
   if (pref.startsWith('claude') && claudeReady) return callClaudeText(messages, system, options, pref)
@@ -303,7 +318,7 @@ export async function callAI(
     try {
       return await tryGemini(messages, system, options)
     } catch (error) {
-      noteGeminiFailure(error, options?.feature)
+      noteGeminiFailure(error, options?.feature, workspaceOf(options))
       if (!claudeReady) throw geminiOnlyError(pref, error)
     }
   }
@@ -322,7 +337,16 @@ function geminiOnlyError(pref: AIModelChoice, error: unknown) {
  * alla volta e distanziate. Al limite si passa subito a Claude; senza chiave
  * Claude si aspetta e si riprova come prima.
  */
-export function callAIPaced(
+export async function callAIPaced(
+  messages: GeminiChatMessage[],
+  system?: string,
+  options?: AIOptions
+): Promise<AIResult> {
+  await assertAIAllowed(workspaceOf(options))
+  return pacedCall(messages, system, options)
+}
+
+function pacedCall(
   messages: GeminiChatMessage[],
   system?: string,
   options?: AIOptions
@@ -342,7 +366,7 @@ export function callAIPaced(
       try {
         return await tryGemini(messages, system, options)
       } catch (error) {
-        const message = noteGeminiFailure(error, options?.feature)
+        const message = noteGeminiFailure(error, options?.feature, workspaceOf(options))
         if (claudeReady) return callClaudeText(messages, system, options)
         if (!isLimitError(message) || attempt >= RATE_LIMIT_WAITS_MS.length) throw error
         geminiCooling.clear()
@@ -374,6 +398,7 @@ Niente commenti, niente consigli.`
  */
 export async function readImages(images: ImageInput[], request: string): Promise<string> {
   if (!images.length) return ''
+  await assertAIAllowed(workspaceOf())
   const pref = preferredModel()
   const prompt = `${IMAGE_PROMPT}\n\nRichiesta di Luca: ${request || '(nessun testo)'}`
   const viaClaude = async () => {
@@ -419,7 +444,7 @@ export async function readImages(images: ImageInput[], request: string): Promise
       })
       if (result.message.trim()) return result.message.trim()
     } catch (error) {
-      noteGeminiFailure(error, 'lettura_immagini')
+      noteGeminiFailure(error, 'lettura_immagini', workspaceOf())
       if (!claudeReady) throw error
     }
   }
@@ -438,6 +463,8 @@ Niente commenti, niente consigli, niente risposta al cliente.`
  */
 export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, feature = 'lettura_media_direct', workspaceId?: string): Promise<string> {
   if (!media.length) return ''
+  workspaceId = workspaceId || workspaceOf()
+  await assertAIAllowed(workspaceId)
   if (geminiUsable()) {
     try {
       const result = await tryGemini([{ role: 'user', content: prompt, attachments: media }], undefined, {
@@ -448,7 +475,7 @@ export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, 
       })
       if (result.message.trim()) return result.message.trim()
     } catch (error) {
-      noteGeminiFailure(error, 'lettura_media_direct')
+      noteGeminiFailure(error, feature, workspaceId)
     }
   }
   const images = media.filter((m) => m.mimeType.startsWith('image/'))

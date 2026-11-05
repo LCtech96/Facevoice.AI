@@ -6,7 +6,8 @@ import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections, readConnectionSecret, type Connection } from './connections'
 import { GRAPH, connectionForAccount, type MetaSecret } from './meta'
 import { IG_GRAPH, igFetch, instagramLoginToken } from './instagram'
-import { RULES, languageFor, readInstructions, workspaceName, type InstructionChannel, type ReplyOutcome } from './responder'
+import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
+import { BLOCKED_OUTCOME, RULES, languageFor, readInstructions, workspaceName, type InstructionChannel, type ReplyOutcome } from './responder'
 
 // Commenti sotto i post dei clienti (Instagram e Pagine Facebook): arrivano dal
 // webhook, finiscono nella pagina Commenti dello spazio e l'AI prepara (o invia)
@@ -189,6 +190,7 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
   if (mode === 'off' && !options.force) return { status: 'skipped', reason: 'automazione spenta' }
   if (!options.force && Date.now() - new Date(comment.created_at).getTime() > 48 * 3600_000) return { status: 'skipped', reason: 'commento vecchio' }
   if (!hasAIProvider()) return { status: 'skipped', reason: 'AI non configurata' }
+  if (await workspaceAIBlocked(db.workspaceId)) return BLOCKED_OUTCOME
 
   const { count } = await db
     .from('social_messages')
@@ -229,11 +231,12 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     const result = await callAI([{ role: 'user', content: comment.body }], system, {
       temperature: 0.4,
       maxOutputTokens: 300,
-      feature: 'saas_commenti',
+      feature: channelFeature('saas_commenti', platform),
       workspaceId: db.workspaceId,
     })
     draft = result.message.trim()
   } catch (error) {
+    if (isAIBlockedError(error)) return BLOCKED_OUTCOME
     console.error('saas commenti AI:', error instanceof Error ? error.message : error)
     return { status: 'failed', reason: 'AI non disponibile' }
   }

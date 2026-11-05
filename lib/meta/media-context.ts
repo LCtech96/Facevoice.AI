@@ -50,14 +50,20 @@ async function download(url: string): Promise<ImageInput | null> {
  * Testo da dare all'AI per gli allegati di un Direct, es.
  * "[Ha inviato un reel. Didascalia: "...". Cosa si vede: ...]". null se non ci sono allegati.
  */
-export async function describeAttachments(attachments: MetaAttachment[] | undefined, story?: StoryReply | null): Promise<string | null> {
+export async function describeAttachments(
+  attachments: MetaAttachment[] | undefined,
+  story?: StoryReply | null,
+  /** Per i clienti del SaaS: spazio a cui va il consumo e nome della funzione (con il canale). */
+  usage?: { workspaceId: string; feature: string }
+): Promise<string | null> {
   const items = (attachments || []).slice(0, 3)
   if (!items.length && !story?.url) return null
+  const see = (media: ImageInput) => describeMedia([media], undefined, usage?.feature, usage?.workspaceId).catch(() => '')
 
   const parts: string[] = []
   if (story?.url) {
     const media = await download(story.url)
-    const seen = media ? await describeMedia([media]).catch(() => '') : ''
+    const seen = media ? await see(media) : ''
     parts.push(`[Sta rispondendo a una nostra storia${seen ? `. Cosa si vede nella storia: ${seen}` : ''}]`)
   }
 
@@ -72,7 +78,7 @@ export async function describeAttachments(attachments: MetaAttachment[] | undefi
     const mediaId = item.payload?.ig_post_media_id || item.payload?.reel_video_id
     if (!caption && mediaId) caption = ((await fetchPostCaption('instagram', mediaId).catch(() => null)) || '').replace(/^(Reel|Post): /, '')
     const media = item.payload?.url ? await download(item.payload.url) : null
-    const seen = media ? await describeMedia([media]).catch(() => '') : ''
+    const seen = media ? await see(media) : ''
     const details = [caption && `Didascalia: "${caption.slice(0, 1200)}"`, seen && `Cosa si vede: ${seen}`].filter(Boolean).join('. ')
     parts.push(details ? `[Ha inviato ${label}. ${details}]` : `[Ha inviato ${label}, ma non riesco a vederne il contenuto]`)
   }

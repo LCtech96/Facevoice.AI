@@ -4,6 +4,8 @@ import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { replyLanguage } from '@/lib/reply-language'
 import type { WorkspaceDb } from '@/lib/workspace-db'
+import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
+import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
 import { listConnections } from './connections'
 import { sendEmailReply } from './email'
 import { sendMetaText } from './meta'
@@ -71,7 +73,16 @@ export async function workspaceName(workspaceId: string): Promise<string> {
   return (data?.name as string | undefined) || 'la nostra attività'
 }
 
-export type ReplyOutcome = { status: 'sent' | 'pending' | 'skipped' | 'failed'; reason?: string; messageId?: string }
+export type ReplyOutcome = {
+  status: 'sent' | 'pending' | 'skipped' | 'failed'
+  reason?: string
+  messageId?: string
+  /** AI del piano finita: nessuna risposta (e nessun nuovo tentativo) fino al periodo dopo. */
+  blocked?: boolean
+}
+
+/** Risposta non preparata perche' l'AI inclusa nel piano e' finita. */
+export const BLOCKED_OUTCOME: ReplyOutcome = { status: 'skipped', reason: AI_BLOCKED_MESSAGE, blocked: true }
 
 /**
  * Prepara (ed eventualmente invia) la risposta a un messaggio in arrivo.
@@ -93,6 +104,7 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
   // Email vecchie arrivate con la prima lettura della casella: niente risposte automatiche a giorni di distanza.
   if (!options.force && Date.now() - new Date(message.created_at).getTime() > 48 * 3600_000) return { status: 'skipped', reason: 'messaggio vecchio' }
   if (!hasAIProvider()) return { status: 'skipped', reason: 'AI non configurata' }
+  if (await workspaceAIBlocked(db.workspaceId)) return BLOCKED_OUTCOME
 
   // Gia' risposto o bozza gia' pronta dopo questo messaggio: niente doppioni.
   const { count } = await db
@@ -152,9 +164,16 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
 
   let draft: string
   try {
-    const result = await callAI(turns, system, { temperature: 0.4, maxOutputTokens: 900, feature: 'saas_risposte', workspaceId: db.workspaceId })
+    const result = await callAI(turns, system, {
+      temperature: 0.4,
+      maxOutputTokens: 900,
+      // Con il canale (es. "saas_risposte:instagram"): la spesa si vede per collegamento.
+      feature: channelFeature('saas_risposte', message.platform),
+      workspaceId: db.workspaceId,
+    })
     draft = result.message.trim()
   } catch (error) {
+    if (isAIBlockedError(error)) return BLOCKED_OUTCOME
     console.error('saas responder:', error instanceof Error ? error.message : error)
     return { status: 'failed', reason: 'AI non disponibile' }
   }
