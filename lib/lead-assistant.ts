@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { parseToolStep, looksLikeToolCall, cleanReplyText, FORMAT_RETRY } from '@/lib/tool-step'
 import { budgetReached, callAIPaced, hasAIProvider, reportStatus, timeIsUp } from '@/lib/ai'
 import { describeBudget, type Budget } from '@/lib/assistant-budget'
 import {
@@ -621,7 +622,7 @@ const AGENT_PROMPT = `Sei l'assistente operativo di Luca nella pagina "Ricerca c
 Se nella richiesta c'è "[Contenuto delle immagini allegate da Luca]", è la trascrizione degli screenshot o delle foto che Luca ti ha mandato: usala come se la vedessi (nomi, email, oggetti, importi, conversazioni) e per cercare le persone con list_conversations o list_leads. Le immagini stesse sono salvate e si possono usare nei caroselli (create_carousel).
 Non rispondere MAI "non posso" o "devi farlo tu" se c'è uno strumento che lo fa: usalo. Per post, caroselli, blog e contenuti hai gli strumenti della sezione "Contenuti di Facevoice".
 
-A ogni passo rispondi SOLO con un JSON, in uno di questi due formati:
+A ogni passo rispondi SOLO con un JSON (niente testo prima o dopo, niente tag come <function_calls>), in uno di questi due formati:
 {"tool": "nome_strumento", "args": {...}}
 {"reply": "risposta finale breve per Luca, in italiano", "confirm_send": false}
 
@@ -695,12 +696,7 @@ Scrivi le risposte finali in testo semplice: niente markdown, niente asterischi.
 type ToolCall = { tool?: string; args?: Record<string, unknown>; reply?: string; confirm_send?: boolean }
 
 function parseStep(raw: string): ToolCall | null {
-  try {
-    const json = raw.match(/\{[\s\S]*\}/)?.[0]
-    return json ? (JSON.parse(json) as ToolCall) : null
-  } catch {
-    return null
-  }
+  return parseToolStep(raw) as ToolCall | null
 }
 
 const asIds = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined)
@@ -816,6 +812,7 @@ export async function runAssistant(
   const withLuca = (instructions?: string) =>
     [instructions?.trim(), `Richiesta di Luca, da rispettare per tono e contenuto: ${message}`].filter(Boolean).join('\n')
 
+  let formatRetried = false
   for (let step = 0; step < MAX_STEPS; step++) {
     if (budget && step > 0 && budgetReached()) {
       // Limite di spesa: un'ultima risposta breve con quello che e' stato fatto, niente altri strumenti.
@@ -842,8 +839,20 @@ export async function runAssistant(
     })
     const raw = response.message || ''
     const call = parseStep(raw)
-    if (!call) return finish(raw.trim() || 'Non ho capito, puoi riformulare?')
-    if (call.reply !== undefined && !call.tool) return finish(call.reply, Boolean(call.confirm_send))
+    if (!call) {
+      // Formato sbagliato (es. <function_calls> o JSON rotto): si fa rifare il passo una volta,
+      // invece di mostrare il testo grezzo con lo strumento mai partito.
+      if (looksLikeToolCall(raw) && !formatRetried) {
+        formatRetried = true
+        console.warn('Super chat: passo in formato sbagliato, lo faccio rifare')
+        transcript.push({ role: 'assistant', content: raw.slice(0, 6000) })
+        transcript.push({ role: 'user', content: FORMAT_RETRY })
+        continue
+      }
+      const text = cleanReplyText(raw)
+      return finish(text && !looksLikeToolCall(text) ? text : 'Non sono riuscito a completare la richiesta, puoi riprovare?')
+    }
+    if (call.reply !== undefined && !call.tool) return finish(cleanReplyText(call.reply) || call.reply, Boolean(call.confirm_send))
 
     const args = call.args || {}
     let result: unknown
