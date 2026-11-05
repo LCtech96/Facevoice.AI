@@ -4,6 +4,10 @@ const nextConfig = {
   outputFileTracingIncludes: {
     '/api/blog/post': ['./lib/fonts/**'],
     '/api/admin/blog-auto/run': ['./lib/fonts/**'],
+    // Area clienti: slide con i font del marchio e prova dei font caricati.
+    '/api/app/assistant': ['./lib/fonts/**'],
+    '/api/app/posts': ['./lib/fonts/**'],
+    '/api/app/brand': ['./lib/fonts/**'],
   },
   async redirects() {
     return [

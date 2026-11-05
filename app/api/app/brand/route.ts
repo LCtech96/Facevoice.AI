@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { removeBrandFont, setBrandFont, setBrandLogo, setWorkspaceBrand, workspaceBrand, type WorkspaceBrand } from '@/lib/saas/posts'
+import { removeBrandFont, setBrandFont, setBrandLogo, setBrandPresetFont, setWorkspaceBrand, workspaceBrand, type WorkspaceBrand } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +13,11 @@ const view = (b: WorkspaceBrand) => ({
   light: b.palette.blueLight,
   handle: b.handle,
   logo: b.logo || null,
-  fonts: { heading: b.fonts?.heading?.name || null, body: b.fonts?.body?.name || null },
+  // Per ogni ruolo: nome, id del font della lista (se e' della lista) e se e' un font caricato.
+  fonts: {
+    heading: b.fonts?.heading ? { name: b.fonts.heading.name, preset: b.fonts.heading.preset || null, uploaded: Boolean(b.fonts.heading.key) } : null,
+    body: b.fonts?.body ? { name: b.fonts.body.name, preset: b.fonts.body.preset || null, uploaded: Boolean(b.fonts.body.key) } : null,
+  },
 })
 
 const fail = (error: unknown) => NextResponse.json({ error: error instanceof Error ? error.message : 'Non salvato, riprova.' }, { status: 400 })
@@ -24,12 +28,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ brand: view(await workspaceBrand(access.workspace.id)) })
 }
 
-/** Colori e firma. */
+/** Colori e firma, oppure un font della lista ({ fontRole, fontPreset }; null = predefinito). */
 export async function PATCH(req: NextRequest) {
   const access = await requireWorkspace(req, 'admin')
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
   try {
+    if (body.fontRole === 'heading' || body.fontRole === 'body') {
+      const brand = await setBrandPresetFont(access.workspace.id, body.fontRole, typeof body.fontPreset === 'string' && body.fontPreset ? body.fontPreset : null)
+      return NextResponse.json({ brand: view(brand) })
+    }
     const brand = await setWorkspaceBrand(access.workspace.id, {
       dark: typeof body.dark === 'string' ? body.dark : undefined,
       accent: typeof body.accent === 'string' ? body.accent : undefined,

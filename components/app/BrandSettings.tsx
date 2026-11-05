@@ -3,12 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ImagePlus, Loader2, Palette, Trash2, Type } from 'lucide-react'
 import { useWorkspace } from './WorkspaceContext'
+import { FONT_PRESETS } from '@/lib/font-presets'
+
+// Anteprima dei font della lista nella pagina (Google Fonts, solo per mostrarli qui:
+// le slide usano i file in lib/fonts/presets).
+const PREVIEW_WEIGHTS: Record<string, string> = { 'bebas-neue': '400', 'dm-serif-display': '400', lora: '400;700', oswald: '400;700', 'josefin-sans': '400;700', 'dancing-script': '400;700' }
+function usePresetPreviews() {
+  useEffect(() => {
+    if (document.querySelector('link[data-fv-font-preview]')) return
+    for (const f of FONT_PRESETS) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.dataset.fvFontPreview = f.id
+      link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(f.family).replace(/%20/g, '+')}:wght@${PREVIEW_WEIGHTS[f.id] || '400;800'}&display=swap`
+      document.head.appendChild(link)
+    }
+  }, [])
+}
 
 // Marchio dello spazio, nella pagina Istruzioni: logo, colori, font (titoli e testi) e
 // firma in fondo alle slide. Vale per i caroselli nuovi; quelli gia' fatti si aggiornano
 // tutti alla prima modifica (cambio di stile, slide corretta…).
 
-type Brand = { dark: string; accent: string; light: string; handle: string; logo: string | null; fonts: { heading: string | null; body: string | null } }
+type FontInfo = { name: string; preset: string | null; uploaded: boolean } | null
+type Brand = { dark: string; accent: string; light: string; handle: string; logo: string | null; fonts: { heading: FontInfo; body: FontInfo } }
 
 const readFile = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -28,6 +46,7 @@ export default function BrandSettings({ canEdit }: { canEdit: boolean }) {
   const logoRef = useRef<HTMLInputElement>(null)
   const fontRef = useRef<HTMLInputElement>(null)
   const fontRole = useRef<'heading' | 'body' | 'both'>('both')
+  usePresetPreviews()
 
   const apply = (next: Brand) => {
     setBrand(next)
@@ -167,49 +186,80 @@ export default function BrandSettings({ canEdit }: { canEdit: boolean }) {
             )}
           </div>
 
-          {/* Font */}
+          {/* Font: dalla lista (menu a tendina) o caricato */}
           <div>
             <p className="text-sm font-semibold">Font</p>
             <input ref={fontRef} type="file" accept=".ttf,.otf,.woff,font/ttf,font/otf,font/woff" className="hidden" onChange={(e) => upload('font', e.target.files?.[0])} />
-            <div className="mt-2 space-y-2">
+            <div className="mt-2 space-y-3">
               {(
                 [
                   ['heading', 'Titoli'],
                   ['body', 'Testi'],
                 ] as const
-              ).map(([role, label]) => (
-                <div key={role} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm">
-                  <Type className="h-4 w-4 text-[var(--accent-blue)]" />
-                  <span className="w-14 text-[var(--text-secondary)]">{label}</span>
-                  <span className="min-w-0 flex-1 truncate font-semibold">
-                    {brand.fonts[role] || (role === 'body' && brand.fonts.heading ? `${brand.fonts.heading} (come i titoli)` : 'Predefinito (Inter Tight)')}
-                  </span>
-                  {canEdit && (
-                    <>
-                      <button onClick={() => pickFont(role)} disabled={busy !== null} className="rounded-full border border-[var(--border-color)] px-2.5 py-1 text-xs disabled:opacity-50">
-                        {busy === `font-${role}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : brand.fonts[role] ? 'Cambia' : 'Carica'}
-                      </button>
-                      {brand.fonts[role] && (
+              ).map(([role, label]) => {
+                const current = brand.fonts[role]
+                const value = current?.uploaded ? 'uploaded' : current?.preset || ''
+                const family = current?.preset ? FONT_PRESETS.find((f) => f.id === current.preset)?.family : null
+                return (
+                  <div key={role} className="rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Type className="h-4 w-4 shrink-0 text-[var(--accent-blue)]" />
+                      <span className="w-12 shrink-0 text-[var(--text-secondary)]">{label}</span>
+                      <select
+                        value={value}
+                        disabled={!canEdit || busy !== null}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          if (next === 'upload') return pickFont(role)
+                          if (next === 'uploaded') return
+                          call(`font-${role}`, { method: 'PATCH', body: JSON.stringify({ fontRole: role, fontPreset: next || null }) }, undefined, 'Font salvato.')
+                        }}
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1.5 text-[16px] text-[var(--text-primary)] md:text-sm"
+                      >
+                        <option value="">{role === 'body' && brand.fonts.heading && !current ? `Come i titoli (${brand.fonts.heading.name})` : 'Predefinito (Inter Tight)'}</option>
+                        {FONT_PRESETS.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.label} · {f.kind}
+                          </option>
+                        ))}
+                        {current?.uploaded && <option value="uploaded">{current.name} (tuo file)</option>}
+                        <option value="upload">Carica il tuo font…</option>
+                      </select>
+                      {busy === `font-${role}` && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
+                      {canEdit && current && (
                         <button
                           onClick={() => call(`font-${role}-off`, { method: 'DELETE' }, `/api/app/brand?what=${role}`, 'Font tolto.')}
                           disabled={busy !== null}
                           aria-label={`Togli il font dei ${label.toLowerCase()}`}
-                          className="p-1 text-[var(--text-secondary)] disabled:opacity-50"
+                          className="shrink-0 p-1 text-[var(--text-secondary)] disabled:opacity-50"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       )}
-                    </>
-                  )}
-                </div>
-              ))}
+                    </label>
+                    {/* Anteprima con il font scelto (per i font della lista). */}
+                    <p
+                      className="mt-2 truncate text-[var(--text-primary)]"
+                      style={{
+                        fontFamily: family ? `'${family}', sans-serif` : role === 'body' && !current && brand.fonts.heading?.preset ? `'${FONT_PRESETS.find((f) => f.id === brand.fonts.heading?.preset)?.family}', sans-serif` : undefined,
+                        fontWeight: role === 'heading' ? 800 : 400,
+                        fontSize: role === 'heading' ? 22 : 15,
+                      }}
+                    >
+                      {current?.uploaded ? `Il tuo font: ${current.name}` : role === 'heading' ? 'Nuovo Host su Nomadiqe' : 'Ogni angolo racconta la tua struttura.'}
+                    </p>
+                  </div>
+                )
+              })}
             </div>
             {canEdit && (
               <button onClick={() => pickFont('both')} disabled={busy !== null} className="mt-2 text-xs font-semibold text-[var(--accent-blue)] disabled:opacity-50">
-                {busy === 'font-both' ? 'Carico…' : 'Hai un solo font? Caricalo qui per titoli e testi insieme'}
+                {busy === 'font-both' ? 'Carico…' : 'Hai un tuo font unico? Caricalo qui per titoli e testi insieme'}
               </button>
             )}
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">File .ttf, .otf o .woff (non .woff2), massimo 3 MB. Se carichi solo il font dei titoli, si usa anche per i testi.</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+              I font della lista sono gratuiti anche per uso commerciale. Puoi anche caricare il tuo: .ttf, .otf o .woff (non .woff2), massimo 3 MB.
+            </p>
           </div>
 
           {error && <p className="text-sm text-[#FF3B30]">{error}</p>}

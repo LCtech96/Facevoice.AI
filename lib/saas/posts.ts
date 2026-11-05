@@ -1,4 +1,7 @@
 import sharp from 'sharp'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
+import { fontPreset } from '@/lib/font-presets'
 import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
 import { asPhotoLayout, checkFont, createCarousel, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
@@ -142,8 +145,11 @@ Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`
 
 // --- Marchio del cliente ---------------------------------------------------------
 
-/** Font del marchio: nome mostrato e chiave in app_settings dove sta il file (base64). */
-export type BrandFont = { name: string; key: string }
+/**
+ * Font del marchio: nome mostrato e, per un font caricato, la chiave in app_settings dove
+ * sta il file (base64); per un font della lista, il suo id (file in lib/fonts/presets).
+ */
+export type BrandFont = { name: string; key?: string; preset?: string }
 export type WorkspaceBrand = { palette: Palette; handle: string; logo?: string | null; fonts?: { heading?: BrandFont | null; body?: BrandFont | null } }
 
 const DEFAULT_PALETTE: Palette = { night: '#0f1218', navy: '#141922', deep: '#222a38', blue: '#3b82f6', blueLight: '#bfd4ff', ink: '#f7f7f2' }
@@ -210,10 +216,17 @@ export async function setWorkspaceBrand(workspaceId: string, input: { dark?: str
   return next
 }
 
-const brandSignature = (b: WorkspaceBrand) => JSON.stringify([b.palette, b.handle, b.logo || '', b.fonts?.heading?.key || '', b.fonts?.body?.key || ''])
+const fontId = (f?: BrandFont | null) => f?.key || (f?.preset ? `preset:${f.preset}` : '')
+const brandSignature = (b: WorkspaceBrand) => JSON.stringify([b.palette, b.handle, b.logo || '', fontId(b.fonts?.heading), fontId(b.fonts?.body)])
 
 const fontCache = new Map<string, Buffer>()
-async function loadFont(font?: BrandFont | null): Promise<Buffer | null> {
+/** File del font: per quelli della lista il grassetto (titoli) o il normale (testi). */
+async function loadFont(font: BrandFont | null | undefined, role: 'heading' | 'body'): Promise<Buffer | null> {
+  if (font?.preset && fontPreset(font.preset)) {
+    const id = `preset:${font.preset}:${role}`
+    if (!fontCache.has(id)) fontCache.set(id, await readFile(join(process.cwd(), 'lib', 'fonts', 'presets', `${font.preset}-${role === 'heading' ? 'bold' : 'regular'}.woff`)))
+    return fontCache.get(id)!
+  }
   if (!font?.key) return null
   if (fontCache.has(font.key)) return fontCache.get(font.key)!
   const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', font.key).maybeSingle()
@@ -221,6 +234,14 @@ async function loadFont(font?: BrandFont | null): Promise<Buffer | null> {
   const buffer = Buffer.from(data.value, 'base64')
   fontCache.set(font.key, buffer)
   return buffer
+}
+
+/** Font della lista (o null = predefinito) per i titoli o per i testi. */
+export async function setBrandPresetFont(workspaceId: string, role: 'heading' | 'body', presetId: string | null) {
+  const preset = presetId ? fontPreset(presetId) : null
+  if (presetId && !preset) throw new Error('font non trovato nella lista')
+  const current = await workspaceBrand(workspaceId)
+  return saveBrand(workspaceId, { ...current, fonts: { ...(current.fonts || {}), [role]: preset ? { name: preset.label, preset: preset.id } : null } })
 }
 
 /** Logo del marchio: PNG con la trasparenza (niente riquadro bianco), lato lungo max 800 px. */
@@ -431,7 +452,9 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, 
   const outdated = (source.style ?? 1) < SLIDE_STYLE || Boolean(source.brand && source.brand !== sig)
   source.style = SLIDE_STYLE
   source.brand = sig
-  const [heading, body] = await Promise.all([loadFont(brand.fonts?.heading), loadFont(brand.fonts?.body)])
+  // Testi senza un font loro: quello dei titoli (per un font della lista, nel peso normale).
+  const bodyFont = brand.fonts?.body || (brand.fonts?.heading?.preset ? brand.fonts.heading : null)
+  const [heading, body] = await Promise.all([loadFont(brand.fonts?.heading, 'heading'), loadFont(bodyFont, 'body')])
   return createPhotoCarousel({
     fonts: { heading, body },
     keep: outdated ? undefined : keep,
