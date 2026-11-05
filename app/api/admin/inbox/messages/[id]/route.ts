@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
+import { releaseVerificationCode } from '@/lib/identity-verify'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,6 +78,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   // Bozza inviata cosi' com'era o corretta da Luca: diventa un esempio per le prossime risposte.
   if (!sent.error) await setOrigin(id, text === String(draft.body).trim() ? 'ai_approved' : 'ai_edited')
+  // Era la risposta che annuncia l'email di verifica: solo ora parte il codice, all'email registrata.
+  if (!sent.error) {
+    await releaseVerificationCode(draft.platform, draft.contact_id, id).catch((e) => console.error('verifica identità, codice:', e))
+  }
   if (sent.error) return NextResponse.json({ error: `Invio non riuscito: ${sent.error}`, message: data }, { status: 502 })
   return NextResponse.json({ message: data })
 }
