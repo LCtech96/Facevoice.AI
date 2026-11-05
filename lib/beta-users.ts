@@ -15,6 +15,16 @@ export type BetaConnection = { key: string; label: string; eur: number; calls: n
 
 export type BetaThresholds = { orange: number; red: number; limit: number }
 
+/** Abbonamento a pagamento (Stripe) come lo manda la beta. */
+export type BetaSubscription = {
+  /** Stato di Stripe: trialing, active, past_due, canceled, unpaid, incomplete... */
+  status: string
+  plan: string
+  renewsAt: string | null
+  trialEndsAt: string | null
+  cancelAtPeriodEnd: boolean
+}
+
 export type BetaUser = {
   id: string
   email: string
@@ -38,6 +48,8 @@ export type BetaUser = {
   shown: ShownLight
   blocked: boolean
   byConnection: BetaConnection[]
+  /** null: nessun abbonamento. Assente: la beta (versione vecchia) non lo manda. */
+  subscription?: BetaSubscription | null
 }
 
 export type BetaUsersResponse = { updatedAt: string; users: BetaUser[] }
@@ -60,6 +72,90 @@ const PLAN_LABELS: Record<string, string> = {
 
 export const planLabelFor = (plan: string) => PLAN_LABELS[plan.trim().toLowerCase()] ?? PLAN_LABELS.free
 
+/** Piani a pagamento e prezzo al mese, IVA esclusa. */
+export const PAID_PLANS = ['start', 'pro', 'business'] as const
+const PLAN_PRICES_EUR: Record<string, number> = { start: 49, pro: 99, business: 199 }
+
+/** Prezzo al mese del piano (0 se non e' un piano a pagamento noto). */
+export const planPriceEur = (plan: string) => PLAN_PRICES_EUR[plan.trim().toLowerCase()] ?? 0
+
+/** Nome del piano di un abbonamento (un piano sconosciuto resta com'e'). */
+export const subscriptionPlanLabel = (plan: string) => PLAN_LABELS[plan.trim().toLowerCase()] ?? (plan.trim() || 'Abbonamento')
+
+const SUBSCRIPTION_STATUS: Record<string, string> = {
+  trialing: 'in prova',
+  active: 'attivo',
+  past_due: 'pagamento non riuscito',
+  unpaid: 'non pagato',
+  incomplete: 'pagamento da completare',
+  incomplete_expired: 'mai partito',
+  canceled: 'chiuso',
+  paused: 'in pausa',
+}
+
+export const subscriptionStatusLabel = (status: string) => SUBSCRIPTION_STATUS[status] ?? status.replace(/_/g, ' ')
+
+export type SubscriptionTone = 'green' | 'blue' | 'orange' | 'red' | 'grey'
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
+
+/** Etichetta breve per la lista: "Prova fino al 12/11", "Pro · attivo", "Pagamento non riuscito"... */
+export function subscriptionBadge(sub: BetaSubscription | null): { text: string; tone: SubscriptionTone } {
+  if (!sub) return { text: 'Senza abbonamento', tone: 'grey' }
+  const plan = subscriptionPlanLabel(sub.plan)
+  switch (sub.status) {
+    case 'trialing':
+      return { text: sub.trialEndsAt ? `Prova fino al ${shortDate(sub.trialEndsAt)}` : 'In prova', tone: 'blue' }
+    case 'active':
+      return sub.cancelAtPeriodEnd
+        ? { text: `${plan} · si chiude${sub.renewsAt ? ` il ${shortDate(sub.renewsAt)}` : ''}`, tone: 'orange' }
+        : { text: `${plan} · attivo`, tone: 'green' }
+    case 'past_due':
+    case 'unpaid':
+      return { text: 'Pagamento non riuscito', tone: 'red' }
+    case 'incomplete':
+      return { text: 'Pagamento da completare', tone: 'orange' }
+    case 'canceled':
+      return { text: 'Abbonamento chiuso', tone: 'grey' }
+    case 'incomplete_expired':
+      return { text: 'Senza abbonamento', tone: 'grey' }
+    default:
+      return { text: `${plan} · ${subscriptionStatusLabel(sub.status)}`, tone: 'grey' }
+  }
+}
+
+export type SubscriptionSummary = {
+  /** Abbonamenti attivi per piano (sempre Start, Pro, Business; altri piani se ci sono). */
+  active: { plan: string; label: string; count: number }[]
+  trialing: number
+  failed: number
+  /** Somma dei prezzi dei piani attivi, IVA esclusa (le prove non contano). */
+  monthlyEur: number
+}
+
+/** Riepilogo degli abbonamenti; null se la beta non manda ancora il campo. */
+export function subscriptionSummary(users: BetaUser[]): SubscriptionSummary | null {
+  if (!users.some((u) => u.subscription !== undefined)) return null
+  const counts = new Map<string, number>(PAID_PLANS.map((p) => [p, 0]))
+  let trialing = 0
+  let failed = 0
+  let monthlyEur = 0
+  for (const { subscription: sub } of users) {
+    if (!sub) continue
+    if (sub.status === 'active') {
+      counts.set(sub.plan, (counts.get(sub.plan) ?? 0) + 1)
+      monthlyEur += planPriceEur(sub.plan)
+    } else if (sub.status === 'trialing') trialing++
+    else if (sub.status === 'past_due' || sub.status === 'unpaid') failed++
+  }
+  return {
+    active: [...counts].map(([plan, count]) => ({ plan, label: subscriptionPlanLabel(plan), count })),
+    trialing,
+    failed,
+    monthlyEur,
+  }
+}
+
 export const isLightMode = (v: unknown): v is LightMode => typeof v === 'string' && (LIGHT_MODES as string[]).includes(v)
 export const isAlertLevel = (v: unknown): v is AlertLevel =>
   v === 'green' || v === 'orange' || v === 'red' || v === 'blocked'
@@ -71,6 +167,22 @@ export function shownFor(level: UsageLevel, override: LightOverride | null): Sho
 
 const str = (v: unknown, fallback = '') => (typeof v === 'string' ? v : fallback)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+const isoOrNull = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null)
+
+function subscriptionFrom(v: unknown): BetaSubscription | null {
+  if (!v || typeof v !== 'object') return null
+  const s = v as Record<string, unknown>
+  const status = str(s.status).trim().toLowerCase()
+  if (!status) return null
+  return {
+    status,
+    plan: str(s.plan).trim().toLowerCase(),
+    renewsAt: isoOrNull(s.renewsAt),
+    trialEndsAt: isoOrNull(s.trialEndsAt),
+    cancelAtPeriodEnd: s.cancelAtPeriodEnd === true,
+  }
+}
 
 function thresholdsFrom(v: unknown): BetaThresholds | null {
   if (!v || typeof v !== 'object') return null
@@ -125,6 +237,8 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
           .map((c: any) => ({ key: str(c.key, 'other'), label: str(c.label) || 'Altro', eur: num(c.eur), calls: num(c.calls) }))
           .filter((c: BetaConnection) => c.eur > 0 || c.calls > 0)
           .sort((a: BetaConnection, b: BetaConnection) => b.eur - a.eur),
+        // Solo se la beta lo manda: senza il campo la pagina non mostra gli abbonamenti.
+        ...(u.subscription !== undefined ? { subscription: subscriptionFrom(u.subscription) } : {}),
       }
     })
   return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users }
@@ -134,6 +248,11 @@ const EUR = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR',
 
 /** 3,10 € */
 export const formatEur = (value: number) => EUR.format(Number.isFinite(value) ? value : 0)
+
+const EUR_ROUND = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })
+
+/** 99 € (per i prezzi dei piani) */
+export const formatEurRound = (value: number) => EUR_ROUND.format(Number.isFinite(value) ? value : 0)
 
 export function daysLeftText(days: number) {
   if (days <= 0) return 'Rinnovo oggi'
