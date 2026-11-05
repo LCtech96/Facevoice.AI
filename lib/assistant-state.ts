@@ -252,7 +252,11 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
 
   const history = start.turns
     .slice(-9, -1)
-    .map((t) => ({ role: t.role, text: `${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500) }))
+    .map((t) => {
+      // Caroselli mostrati in anteprima: l'agente ne conosce il draftId (per correggerli).
+      const posts = (t.actions || []).flatMap((a) => (a.kind === 'post_preview' ? [`\n[Carosello in anteprima: draftId ${a.draftId}, ${a.urls.length} slide]`] : []))
+      return { role: t.role, text: `${`${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500)}${posts.slice(-3).join('')}` }
+    })
   // Token di questo giro; il totale della richiesta somma anche i giri precedenti.
   const tally: UsageTally = emptyTally()
   const base: UsageTally = job.usage && (job.round ?? 0) > 0 ? job.usage : emptyTally()

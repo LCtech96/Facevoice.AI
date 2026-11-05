@@ -150,7 +150,10 @@ const hookSize = (text: string) => (text.length <= 24 ? 132 : text.length <= 36 
  * Prima slide: foto (se c'e') in alto, GANCIO in caratteri grandi e, sotto, il
  * titolo dell'articolo in piccolo (se diverso dal gancio), poi "SCORRI".
  */
-function coverSlide(t: Theme, hook: string, title: string, n: number, photo: string | null, label = 'NOVITÀ SULL’INTELLIGENZA ARTIFICIALE') {
+/** Etichetta della copertina quando non ne e' stata scelta un'altra. */
+export const DEFAULT_LABEL = 'NOVITÀ SULL’INTELLIGENZA ARTIFICIALE'
+
+function coverSlide(t: Theme, hook: string, title: string, n: number, photo: string | null, label = DEFAULT_LABEL) {
   const subtitle = title.trim() !== hook.trim() ? title : null
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: photo ? t.solid : t.bg, color: t.ink, fontFamily: 'Inter Tight', position: 'relative' }}>
@@ -229,7 +232,7 @@ function contentSlide(t: Theme, slide: Slide, i: number, n: number, image: strin
 }
 
 export type Cta = { title: string; text: string; button: string }
-const BLOG_CTA: Cta = {
+export const BLOG_CTA: Cta = {
   title: 'Vuoi portare l’AI nella tua azienda?',
   text: 'Leggi l’articolo completo sul nostro blog e scrivici: ti mostriamo cosa si può fare, in concreto.',
   button: 'facevoice.ai/blog',
@@ -319,8 +322,8 @@ async function photoFromUrl(url: string, width = W, height = 720): Promise<strin
 export const toJpeg = (input: Buffer) =>
   sharp(input).rotate().resize(W, H, { fit: 'cover', position: 'attention' }).flatten({ background: BRAND.night }).jpeg({ quality: 88 }).toBuffer()
 
-async function upload(jpeg: Buffer): Promise<string> {
-  const path = `auto/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
+async function upload(jpeg: Buffer, folder = 'auto'): Promise<string> {
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`
   const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, jpeg, { contentType: 'image/jpeg', upsert: false })
   if (error) throw new Error(`caricamento immagine non riuscito: ${error.message}`)
   return supabaseAdmin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
@@ -349,20 +352,102 @@ export type CarouselOptions = {
   imageSeconds?: number
 }
 
-/** Crea e carica il carosello; restituisce gli indirizzi pubblici delle slide (la prima e' la copertina). */
+/**
+ * Tutto quello che serve per rifare una sola slide piu' avanti (testi, colori e
+ * indirizzi delle immagini gia' salvate), senza toccare le altre.
+ */
+export type CarouselSource = {
+  v: 1
+  /** Riga piccola sotto il gancio della copertina (non si vede se uguale al gancio). */
+  subtitle: string
+  hook: string
+  /** Etichetta sopra il gancio: undefined = quella predefinita, '' = nessuna. */
+  label?: string
+  /** Immagine della copertina: foto di Luca o del blog, oppure immagine AI salvata. */
+  cover: string | null
+  /** Solo le slide di contenuto, in ordine (senza copertina e slide finale). */
+  slides: SourceSlide[]
+  /** Ultima slide (invito all'azione); null = carosello senza slide finale. */
+  cta: Cta | null
+  mix: number
+}
+/** mine: foto o screenshot di Luca (mostrata intera al centro). */
+export type SourceSlide = { title: string; text: string; image: string | null; mine: boolean }
+
+const mixOf = (mix: number) => (((Math.round(mix) || 0) % MIXES.length) + MIXES.length) % MIXES.length
+const contentTheme = (mix: (typeof MIXES)[number], k: number) => THEMES[mix.content[k % mix.content.length]]
+/** Misura dell'immagine della slide di contenuto k (da 0): dipende dalla posizione. */
+const slideImageSize = (k: number, mine: boolean): [number, number] => (mine ? [936, 660] : (k + 2) % 2 === 0 ? [W, 560] : [920, 500])
+
+/** Numero di immagini del carosello: copertina, slide di contenuto e (se c'e') slide finale. */
+export const carouselLength = (source: Pick<CarouselSource, 'slides' | 'cta'>) => source.slides.length + 1 + (source.cta ? 1 : 0)
+
+/** Le slide da disegnare; images: immagini gia' pronte (data URL) per copertina e slide. */
+function slideNodes(source: CarouselSource, images: { cover: string | null; slides: (string | null)[] }) {
+  const n = carouselLength(source)
+  const mix = MIXES[mixOf(source.mix)]
+  return [
+    coverSlide(THEMES[mix.cover], source.hook || source.subtitle, source.subtitle, n, images.cover, source.label),
+    ...source.slides.map((s, k) => contentSlide(contentTheme(mix, k), s, k + 2, n, images.slides[k] ?? null, Boolean(s.mine && images.slides[k]))),
+    ...(source.cta ? [ctaSlide(THEMES[mix.cta], n, n, source.cta)] : []),
+  ]
+}
+
+const dataToJpeg = (data: string) => Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64')
+
+/**
+ * Rifa' le slide del carosello dai testi salvati. keep[k]: indirizzo della slide k
+ * da tenere cosi' com'e' (non si scarica e non si ridisegna niente: torna lo stesso
+ * file). Le altre si ridisegnano e si caricano come file nuovi.
+ */
+export async function renderCarouselSlides(source: CarouselSource, keep: (string | null | undefined)[] = []): Promise<string[]> {
+  const kept = (k: number) => keep[k] || null
+  // Una slide da rifare senza la sua immagine sarebbe diversa: meglio fermarsi.
+  const need = async (url: string, [width, height]: [number, number]) => {
+    const data = await photoFromUrl(url, width, height)
+    if (!data) throw new Error('immagine non scaricata, riprova')
+    return data
+  }
+  const [cover, ...slides] = await Promise.all([
+    !kept(0) && source.cover ? need(source.cover, [W, 720]) : Promise.resolve(null),
+    ...source.slides.map((s, k) => (!kept(k + 1) && s.image ? need(s.image, slideImageSize(k, s.mine)) : Promise.resolve(null))),
+  ])
+  const nodes = slideNodes(source, { cover, slides })
+  return Promise.all(nodes.map(async (node, k) => kept(k) || upload(await toJpeg(await render(node)))))
+}
+
+/**
+ * Immagine nuova creata dall'AI per una slide (0 = copertina, poi le slide di
+ * contenuto da 1), salvata come file: restituisce l'indirizzo o null se non riesce.
+ */
+export async function newSlideImage(source: CarouselSource, k: number, description: string, deadline = Date.now() + 90_000): Promise<string | null> {
+  const mix = MIXES[mixOf(source.mix)]
+  const wish = `\nWhat the image must show (request of the brand owner, in Italian): ${description.slice(0, 500)}`
+  const data =
+    k === 0
+      ? await aiImage(IMAGE_PROMPT(source.subtitle || source.hook, source.hook, THEMES[mix.cover].mood) + wish, W, 720, 'nuova foto della copertina', deadline)
+      : source.slides[k - 1]
+        ? await aiImage(SLIDE_IMAGE_PROMPT(source.slides[k - 1], contentTheme(mix, k - 1).mood) + wish, ...slideImageSize(k - 1, false), `nuova immagine della slide ${k + 1}`, deadline)
+        : null
+  return data ? upload(dataToJpeg(data), 'auto/src') : null
+}
+
+/**
+ * Crea e carica il carosello; restituisce gli indirizzi pubblici delle slide (la prima e' la copertina)
+ * e source, i dati per rifare piu' avanti una slide sola (null se le immagini non si sono salvate).
+ */
 export async function createCarousel(
   title: string,
   slides: Slide[],
   summary: string,
   ownPhotoUrl?: string | null,
   options: CarouselOptions = {}
-): Promise<{ urls: string[]; photo: 'ai' | 'grafica' | 'esistente'; slideImages: number; mix: number }> {
-  const content = slides.slice(0, Math.min(8, Math.max(1, options.maxSlides ?? 4)))
-  const n = content.length + 2
-  const mixIndex = (((options.mix ?? 0) % MIXES.length) + MIXES.length) % MIXES.length
+): Promise<{ urls: string[]; photo: 'ai' | 'grafica' | 'esistente'; slideImages: number; mix: number; source: CarouselSource | null }> {
+  const content = slides.slice(0, Math.min(8, Math.max(0, options.maxSlides ?? 4)))
+  const mixIndex = mixOf(options.mix ?? 0)
   const mix = MIXES[mixIndex]
   const coverTheme = THEMES[mix.cover]
-  const themes = content.map((_, k) => THEMES[mix.content[k % mix.content.length]])
+  const themes = content.map((_, k) => contentTheme(mix, k))
   const notes = options.imageNotes?.trim() ? `\nExtra art direction from the brand owner: ${options.imageNotes.trim().slice(0, 400)}` : ''
 
   // Foto di Luca subito (in parallelo); le immagini AI una alla volta, prima la
@@ -377,17 +462,35 @@ export async function createCarousel(
   for (const [k, slide] of content.entries()) {
     if (minePhotos[k]) images.push(minePhotos[k])
     else if (options.slideImages === false || options.onlyMyImages) images.push(null)
-    else images.push(await aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, (k + 2) % 2 === 0 ? W : 920, (k + 2) % 2 === 0 ? 560 : 500, `immagine della slide ${k + 2}`, deadline))
+    else images.push(await aiImage(SLIDE_IMAGE_PROMPT(slide, themes[k].mood) + notes, ...slideImageSize(k, false), `immagine della slide ${k + 2}`, deadline))
   }
-  const hook = options.hook?.trim() || title
-  const nodes = [
-    coverSlide(coverTheme, hook, title, n, cover, options.label),
-    ...content.map((s, k) => contentSlide(themes[k], s, k + 2, n, images[k], Boolean(mine[k] && images[k]))),
-    ctaSlide(THEMES[mix.cta], n, n, options.cta),
-  ]
-  const jpegs = await Promise.all(nodes.map(async (node) => toJpeg(await render(node))))
-  const urls = await Promise.all(jpegs.map(upload))
-  return { urls, photo: own ? 'esistente' : cover ? 'ai' : 'grafica', slideImages: images.filter(Boolean).length, mix: mixIndex }
+  const source: CarouselSource = {
+    v: 1,
+    subtitle: title,
+    hook: options.hook?.trim() || title,
+    ...(options.label !== undefined ? { label: options.label } : {}),
+    cover: null,
+    slides: content.map((s, k) => ({ title: s.title, text: s.text, image: null, mine: Boolean(minePhotos[k]) })),
+    cta: options.cta ?? BLOG_CTA,
+    mix: mixIndex,
+  }
+  const nodes = slideNodes(source, { cover, slides: images })
+  // Le immagini AI si salvano anche a parte: servono per rifare una sola slide.
+  const [urls, stored] = await Promise.all([
+    Promise.all(nodes.map(async (node) => upload(await toJpeg(await render(node))))),
+    Promise.all([
+      own ? ownPhotoUrl! : cover ? upload(dataToJpeg(cover), 'auto/src') : null,
+      ...content.map((_, k) => (minePhotos[k] ? mine[k]! : images[k] ? upload(dataToJpeg(images[k]!), 'auto/src') : null)),
+    ]).catch((error) => {
+      console.warn('blog image: immagini del carosello non salvate a parte (slide non modificabili):', error instanceof Error ? error.message : error)
+      return null
+    }),
+  ])
+  if (stored) {
+    source.cover = stored[0]
+    source.slides.forEach((s, k) => (s.image = stored[k + 1]))
+  }
+  return { urls, photo: own ? 'esistente' : cover ? 'ai' : 'grafica', slideImages: images.filter(Boolean).length, mix: mixIndex, source: stored ? source : null }
 }
 
 /** Solo per le prove: le slide in JPEG senza caricarle (immagini passate gia' pronte, come data URL). */
