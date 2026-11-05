@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import UsageStrip from './UsageStrip'
 import { ArrowUp, Check, Facebook, ImagePlus, Instagram, Loader2, Mail, Mic, Plus, Send, Sparkles, Square, X } from 'lucide-react'
 import { prepareImage, type PreparedImage } from '@/lib/client-image'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
@@ -221,6 +222,7 @@ export default function SuperChat() {
 
   return (
     <div className="fixed inset-x-0 top-14 md:top-16 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:bottom-0 flex flex-col bg-[var(--background)]">
+      <UsageStrip />
       {/* Messaggi */}
       <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain">
         <div className="max-w-3xl mx-auto px-4 pt-6 pb-4">
