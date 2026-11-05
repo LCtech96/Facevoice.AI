@@ -9,12 +9,20 @@ import { isAdminEmail } from '@/lib/admin-auth'
 import {
   daysLeftText,
   formatEur,
+  formatEurRound,
   planLabelFor,
+  planPriceEur,
   shownFor,
+  subscriptionBadge,
+  subscriptionPlanLabel,
+  subscriptionStatusLabel,
+  subscriptionSummary,
+  type BetaSubscription,
   type BetaUser,
   type BetaUsersResponse,
   type LightMode,
   type ShownLight,
+  type SubscriptionTone,
 } from '@/lib/beta-users'
 
 // Pagina "Utenti": chi e' iscritto alla beta, quanto ha speso di AI nel periodo
@@ -153,6 +161,66 @@ function Badges({ user }: { user: BetaUser }) {
   )
 }
 
+const TONE_TEXT: Record<SubscriptionTone, string> = {
+  green: 'text-[#34C759]',
+  blue: 'text-[var(--accent-blue)]',
+  orange: 'text-[#FF9500]',
+  red: 'text-[#FF3B30]',
+  grey: 'text-[var(--text-secondary)]',
+}
+const TONE_BG: Record<SubscriptionTone, string> = {
+  green: 'bg-[#34C759]/15',
+  blue: 'bg-[var(--accent-blue)]/15',
+  orange: 'bg-[#FF9500]/15',
+  red: 'bg-[#FF3B30]/15',
+  grey: 'border border-[var(--border-color)]',
+}
+
+/** Stato dell'abbonamento in piccolo (nulla se la beta non lo manda). */
+function SubscriptionBadge({ user }: { user: BetaUser }) {
+  if (user.subscription === undefined) return null
+  const { text, tone } = subscriptionBadge(user.subscription)
+  return (
+    <span className={`inline-block max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium ${TONE_BG[tone]} ${TONE_TEXT[tone]}`}>
+      {text}
+    </span>
+  )
+}
+
+/** Riga "Abbonamento" della scheda: piano, prezzo, stato e prossima scadenza. */
+function SubscriptionRow({ sub }: { sub: BetaSubscription | null }) {
+  if (!sub) {
+    return (
+      <div className="col-span-2 rounded-xl bg-[var(--background)] p-3">
+        <p className="text-xs text-[var(--text-secondary)]">Abbonamento</p>
+        <p className="text-sm font-medium text-[var(--text-primary)]">Senza abbonamento</p>
+      </div>
+    )
+  }
+  const price = planPriceEur(sub.plan)
+  const ended = sub.status === 'canceled' || sub.status === 'incomplete_expired'
+  const when: string[] = []
+  if (sub.status === 'trialing' && sub.trialEndsAt) when.push(`prova fino al ${date(sub.trialEndsAt)}`)
+  else if (sub.renewsAt && !sub.cancelAtPeriodEnd && !ended) when.push(`prossimo rinnovo ${date(sub.renewsAt)}`)
+  if (sub.cancelAtPeriodEnd && !ended) {
+    when.push(`si chiude a fine periodo${sub.renewsAt && sub.status !== 'trialing' ? ` (${date(sub.renewsAt)})` : ''}`)
+  }
+  const whenLine = when.join(' · ')
+  return (
+    <div className="col-span-2 rounded-xl bg-[var(--background)] p-3">
+      <p className="text-xs text-[var(--text-secondary)]">Abbonamento</p>
+      <p className="text-sm font-medium text-[var(--text-primary)]">
+        {subscriptionPlanLabel(sub.plan)}
+        {price > 0 && ` · ${formatEurRound(price)}/mese + IVA`} ·{' '}
+        <span className={TONE_TEXT[subscriptionBadge(sub).tone]}>{subscriptionStatusLabel(sub.status)}</span>
+      </p>
+      {whenLine && (
+        <p className="text-xs text-[var(--text-secondary)]">{whenLine.charAt(0).toUpperCase() + whenLine.slice(1)}</p>
+      )}
+    </div>
+  )
+}
+
 const workspacesLine = (user: BetaUser) =>
   user.workspaces.length
     ? user.workspaces.map((w) => `${w.name} · ${planLabelFor(w.plan)}`).join(', ')
@@ -240,6 +308,7 @@ export default function UtentiClient() {
   const notFound = Boolean(openId && data && !selected)
   const using = users.filter((u) => u.eur > 0).length
   const blocked = users.filter((u) => u.blocked).length
+  const subs = useMemo(() => subscriptionSummary(users), [users])
 
   const updateUser = (id: string, patch: Partial<BetaUser>) =>
     setData((d) => (d ? { ...d, users: d.users.map((u) => (u.id === id ? { ...u, ...patch } : u)) } : d))
@@ -266,6 +335,14 @@ export default function UtentiClient() {
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               {users.length} {users.length === 1 ? 'utente' : 'utenti'} · {using} con consumi · {blocked}{' '}
               {blocked === 1 ? 'bloccato' : 'bloccati'} · aggiornato {dateTime(data.updatedAt)}
+            </p>
+          )}
+          {subs && (
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+              Abbonamenti attivi: {subs.active.map((a) => `${a.label} ${a.count}`).join(' · ')} · {subs.trialing} in prova
+              {subs.failed > 0 && ` · ${subs.failed} con pagamento non riuscito`} ·{' '}
+              <span className="font-medium text-[var(--text-primary)]">{formatEurRound(subs.monthlyEur)}/mese</span> stimati, IVA
+              esclusa
             </p>
           )}
         </div>
@@ -333,6 +410,11 @@ export default function UtentiClient() {
                   <Badges user={user} />
                 </div>
                 <p className="truncate text-xs text-[var(--text-secondary)]">{user.email}</p>
+                {user.subscription !== undefined && (
+                  <div className="mt-1 flex min-w-0">
+                    <SubscriptionBadge user={user} />
+                  </div>
+                )}
                 <div className="mt-2 flex items-baseline justify-between gap-2">
                   <span className="text-lg font-bold tabular-nums text-[var(--text-primary)]">{formatEur(user.eur)}</span>
                   <span className="shrink-0 text-xs text-[var(--text-secondary)]">{daysLeftText(user.period.daysLeft)}</span>
@@ -460,6 +542,7 @@ function UserSheet({
             <p className="text-xs text-[var(--text-secondary)]">Rinnovo</p>
             <p className="text-sm font-medium text-[var(--text-primary)]">{daysLeftText(user.period.daysLeft)}</p>
           </div>
+          {user.subscription !== undefined && <SubscriptionRow sub={user.subscription} />}
         </div>
 
         <div className="mt-3 rounded-xl bg-[var(--background)] p-3">
