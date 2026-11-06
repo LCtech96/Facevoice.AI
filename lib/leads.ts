@@ -41,6 +41,26 @@ export const LEAD_STATUSES = ['new', 'contacted', 'no_answer', 'replied', 'clien
 export const MAX_RESULTS = 60
 // Tetto giornaliero di primi contatti via email: protegge la reputazione di facevoice.ai.
 export const DAILY_EMAIL_LIMIT = 30
+// L'automazione giornaliera invia solo alle schede con almeno questo punteggio
+// (sotto: catene, enti pubblici, attivita' non adatte). A mano si puo' sempre inviare.
+export const MIN_AUTOPILOT_SCORE = 5
+
+// Frasi con cui l'AI segnala un'attivita' non adatta invece di scrivere un'email vera
+// (nell'oggetto, o all'inizio del testo: un'email vera comincia con un saluto).
+const NOT_A_DRAFT = /non\s+applicabil|not\s+applicable|^\s*n\/?a\s*$|cliente\s+non\s+(idone|promettent|adatt)|target\s+esclus|fuori\s+target|da\s+non\s+contattare|nessuna\s+email/i
+const NOT_A_DRAFT_START = /^\s*(non\s+applicabil|not\s+applicable|n\/a\b|cliente\s+non\b|target\s+esclus|fuori\s+target|non\s+(idone|adatt|promettent)|scartat|esclus)/i
+// Una prima email vera ha almeno qualche frase: sotto questa lunghezza e' un'etichetta, non un messaggio.
+const MIN_DRAFT_BODY = 120
+
+/** Motivo per cui oggetto e testo non sono un'email da inviare, o null se vanno bene. */
+export function draftProblem(subject: string | null | undefined, body: string | null | undefined): string | null {
+  const s = String(subject || '').trim()
+  const b = String(body || '').trim()
+  if (!s || !b) return 'Oggetto e testo sono obbligatori'
+  if (NOT_A_DRAFT.test(s) || NOT_A_DRAFT_START.test(b)) return `La bozza non è un'email ma una nota dell'AI ("${b.slice(0, 60)}")`
+  if (b.length < MIN_DRAFT_BODY) return `Testo troppo corto per una prima email (${b.length} caratteri)`
+  return null
+}
 
 export function placesKey() {
   return process.env.GOOGLE_PLACES_API_KEY?.trim() || ''
@@ -287,11 +307,11 @@ Ricevi i dati di un'attività locale trovata su Google Maps e il testo del suo s
 /** Istruzioni dell'analisi: blocchi modificabili + formato della risposta (fisso, serve al codice). */
 async function analysisPrompt() {
   const [head, rules] = await Promise.all([sectionText(LEAD_ANALYSIS), firstEmailRules()])
-  return `${head}\n\n## Regole della prima email\nScrivi la prima email ${rules}\n\nRispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
+  return `${head}\n\n## Regole della prima email\nScrivi la prima email ${rules}\n\nSe l'attività non è adatta (punteggio da 1 a 3), lascia vuoti email_subject, email_body e dm_text (""): non scrivere mai al loro posto note come "Non applicabile", perché quei campi vengono inviati così come sono.\n\nRispondi SOLO con JSON valido, senza testo prima o dopo, in questo formato:
 {"score": 7, "analysis": "- punto 1\\n- punto 2", "email_subject": "...", "email_body": "...", "dm_text": "..."}`
 }
 
-type Analysis = { score: number; analysis: string; email_subject: string; email_body: string; dm_text: string }
+type Analysis = { score: number; analysis: string; email_subject: string | null; email_body: string | null; dm_text: string | null }
 
 function parseAnalysis(raw: string): Analysis | null {
   const json = raw.match(/\{[\s\S]*\}/)?.[0]
@@ -299,13 +319,17 @@ function parseAnalysis(raw: string): Analysis | null {
   try {
     const data = JSON.parse(json)
     const score = Math.max(1, Math.min(10, Math.round(Number(data.score) || 0)))
-    if (!data.email_body) return null
+    const subject = String(data.email_subject || '').slice(0, 150).trim()
+    const body = String(data.email_body || '').slice(0, 4000).trim()
+    const dm = String(data.dm_text || '').slice(0, 1000).trim()
+    // Attivita' non adatta o nota dell'AI al posto dell'email: niente bozze, cosi' non parte nulla.
+    const noDraft = !body || draftProblem(subject, body) !== null
     return {
       score,
       analysis: String(data.analysis || ''),
-      email_subject: String(data.email_subject || '').slice(0, 150),
-      email_body: String(data.email_body || '').slice(0, 4000),
-      dm_text: String(data.dm_text || '').slice(0, 1000),
+      email_subject: noDraft ? null : subject,
+      email_body: noDraft ? null : body,
+      dm_text: !dm || noDraft ? null : dm,
     }
   } catch {
     return null
