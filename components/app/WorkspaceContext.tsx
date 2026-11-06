@@ -8,7 +8,7 @@ import { USAGE_REFRESH_EVENT } from '@/lib/usage-shared'
 // Stato dell'area clienti: sessione, spazi di lavoro dell'utente e spazio scelto.
 // Tutte le chiamate alle API dell'area clienti passano da appFetch, che aggiunge
 // il token e lo spazio di lavoro. Con gli spazi arriva anche se la persona ha
-// l'Assistente attivo (lo accende Facevoice, persona per persona).
+// l'Assistente attivo e se vede le Automazioni (le accende Facevoice, persona per persona).
 
 export type Workspace = { id: string; name: string; plan: string; role: 'owner' | 'admin' | 'member' }
 
@@ -23,6 +23,10 @@ type State = {
   assistant: boolean | null
   /** Rilegge soltanto lo stato dell'Assistente (es. tornando sulla pagina dopo aver chiesto di attivarlo); null: non letto. */
   refreshAssistant: () => Promise<boolean | null>
+  /** Pagina Automazioni visibile per questa persona; null: non si sa, decide il server. */
+  automations: boolean | null
+  /** Rilegge lo stato delle Automazioni; null: non letto. */
+  refreshAutomations: () => Promise<boolean | null>
   selectWorkspace: (id: string) => void
   reload: () => Promise<void>
   signOut: () => Promise<void>
@@ -50,6 +54,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [assistant, setAssistant] = useState<boolean | null>(null)
+  const [automations, setAutomations] = useState<boolean | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -77,6 +82,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspaces(data.workspaces || [])
       setEmail(data.email || null)
       setAssistant(typeof data.assistant === 'boolean' ? data.assistant : null)
+      setAutomations(typeof data.automations === 'boolean' ? data.automations : null)
     }
     setLoaded(true)
   }, [token])
@@ -93,7 +99,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const data = res?.ok ? await res.json().catch(() => null) : null
     if (typeof data?.assistant !== 'boolean') return null
     setAssistant(data.assistant)
+    if (typeof data.automations === 'boolean') setAutomations(data.automations)
     return data.assistant
+  }, [token])
+
+  const refreshAutomations = useCallback(async (): Promise<boolean | null> => {
+    if (!token) return null
+    const res = await fetch('/api/app/workspaces', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (typeof data?.automations !== 'boolean') return null
+    setAutomations(data.automations)
+    if (typeof data.assistant === 'boolean') setAssistant(data.assistant)
+    return data.automations
   }, [token])
 
   const workspace = useMemo(() => {
@@ -126,12 +143,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             window.dispatchEvent(new Event(USAGE_REFRESH_EVENT))
           } catch {}
         }
-        // 403 assistant_disabled: Facevoice ha spento l'Assistente per questa persona.
+        // 403 assistant_disabled / automations_disabled: Facevoice ha spento l'Assistente o le Automazioni per questa persona.
         if (res.status === 403) {
           res
             .clone()
             .json()
-            .then((data) => data?.code === 'assistant_disabled' && setAssistant(false))
+            .then((data) => {
+              if (data?.code === 'assistant_disabled') setAssistant(false)
+              if (data?.code === 'automations_disabled') setAutomations(false)
+            })
             .catch(() => undefined)
         }
         return res
@@ -143,6 +163,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
     setWorkspaces([])
     setAssistant(null)
+    setAutomations(null)
   }, [supabase])
 
   const value: State = {
@@ -154,6 +175,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     error,
     assistant,
     refreshAssistant,
+    automations,
+    refreshAutomations,
     selectWorkspace,
     reload,
     signOut,

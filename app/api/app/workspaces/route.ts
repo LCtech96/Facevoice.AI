@@ -1,25 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createWorkspace, membershipsOf, renameWorkspace, requireWorkspace, userFromRequest } from '@/lib/workspace'
 import { assistantAccess } from '@/lib/assistant-access'
+import { automationsAccess } from '@/lib/automations-access'
 
 export const dynamic = 'force-dynamic'
 
 // Spazi di lavoro dell'utente collegato: elenco e creazione del primo spazio
 // (dopo la registrazione) o di uno nuovo, cambio del nome. Con l'elenco, se la persona
-// ha l'Assistente attivo (assistant: true/false; null se non si e' potuto leggere).
+// ha l'Assistente attivo (assistant: true/false; null se non si e' potuto leggere) e
+// se vede la pagina Automazioni (automations, stesse regole).
 
 export async function GET(req: NextRequest) {
   const user = await userFromRequest(req)
   if (!user?.email) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
   try {
     const workspaces = await membershipsOf(user.id)
-    const assistant = await assistantAccess(user.id, workspaces.map((w) => w.id))
-      .then((a) => a.enabled)
-      .catch((error) => {
-        console.error('app workspaces assistente:', error instanceof Error ? error.message : error)
-        return null
-      })
-    return NextResponse.json({ email: user.email, workspaces, assistant })
+    const ids = workspaces.map((w) => w.id)
+    const [assistant, automations] = await Promise.all([
+      assistantAccess(user.id, ids)
+        .then((a) => a.enabled)
+        .catch((error) => {
+          console.error('app workspaces assistente:', error instanceof Error ? error.message : error)
+          return null
+        }),
+      automationsAccess(user.id, ids)
+        .then((a) => a.enabled)
+        .catch((error) => {
+          console.error('app workspaces automazioni:', error instanceof Error ? error.message : error)
+          return null
+        }),
+    ])
+    return NextResponse.json({ email: user.email, workspaces, assistant, automations })
   } catch (error) {
     console.error('app workspaces:', error)
     return NextResponse.json({ error: 'Spazi di lavoro non disponibili, riprova.' }, { status: 500 })

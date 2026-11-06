@@ -6,6 +6,7 @@ import { eurPerUsd, eurPerUsdNow } from '@/lib/eur'
 import { updateSetting } from '@/lib/settings-store'
 import { workspaceOwnerId } from '@/lib/workspace'
 import { accessFrom, enabledAssistantUsers, type AssistantAccess } from '@/lib/assistant-access'
+import { automationsFrom, automationsSentToday, enabledAutomationsUsers } from '@/lib/automations-access'
 import {
   allBillingStates,
   billingConfigured,
@@ -238,6 +239,8 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   saas_estrai_foto: 'content',
   // Ricerca sul web (eventi e immagini per i caroselli): senza questa riga "web" la metterebbe in "Chat del sito".
   saas_ricerca_web: 'content',
+  // Automazioni: email scritte dall'AI a ogni invio (lib/saas/automations.ts).
+  saas_automazioni: 'email',
   // Funzioni dello spazio Facevoice (se compaiono in uno spazio cliente).
   chat_sito: 'web',
   risposte_email: 'email',
@@ -805,6 +808,10 @@ export type BridgeUser = {
   subscription?: BridgeSubscription | null
   /** Pagina Assistente: attiva per questa persona; locked = sempre attiva (spazio Facevoice), non si spegne. */
   assistant: AssistantAccess
+  /** Pagina Automazioni (email programmate) visibile per questa persona (stesse regole dell'Assistente). */
+  automations: boolean
+  /** Email inviate oggi (giorno italiano) dalle automazioni dei suoi spazi (di cui e' titolare; se non ne ha, quelli di cui e' membro). */
+  automationsSentToday: number
 }
 
 export type BridgeSubscription = {
@@ -871,13 +878,15 @@ async function allOverrides(): Promise<Map<string, UsageLight>> {
 export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeUser[] }> {
   const now = new Date()
   const withBilling = billingConfigured()
-  const [users, memberships, overrides, rate, billingStates, assistantOn] = await Promise.all([
+  const [users, memberships, overrides, rate, billingStates, assistantOn, automationsOn, sentToday] = await Promise.all([
     allAuthUsers(),
     allMemberships(),
     allOverrides(),
     eurPerUsd(),
     withBilling ? allBillingStates() : Promise.resolve(null),
     enabledAssistantUsers(),
+    enabledAutomationsUsers(),
+    automationsSentToday(),
   ])
 
   const spacesOf = new Map<string, BridgeUser['workspaces']>()
@@ -939,6 +948,8 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
           ? { subscription: bridgeSubscription(resolved.billing ?? latestBilling(owned.map((w) => billingStates.get(w.id) ?? null))) }
           : {}),
         assistant: accessFrom(spaces.map((w) => w.id), assistantOn.has(user.id)),
+        automations: automationsFrom(spaces.map((w) => w.id), automationsOn.has(user.id)),
+        automationsSentToday: (owned.length ? owned : spaces).reduce((sum, w) => sum + (sentToday.get(w.id) || 0), 0),
       })
     }
   }

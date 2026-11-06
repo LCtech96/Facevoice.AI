@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, CalendarClock, CreditCard, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal } from 'lucide-react'
+import { Bot, CalendarClock, CreditCard, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal, Zap } from 'lucide-react'
 import AppAuth from './AppAuth'
 import LanguageSwitch from './LanguageSwitch'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
@@ -13,7 +13,7 @@ import { UsageBlockedBanner, UsageProvider, UserUsageBadge, useUsage } from './U
 // Cornice dell'area clienti: accesso, creazione del primo spazio di lavoro,
 // menu delle pagine e scelta dello spazio. Accanto all'icona dell'utente i tre
 // gettoni del consumo AI; se l'AI del piano e' finita, l'avviso in cima a ogni pagina.
-// "Assistente AI" compare solo a chi ce l'ha attivo (lo accende Facevoice).
+// "Assistente AI" e "Automazioni" compaiono solo a chi ce li ha attivi (li accende Facevoice).
 
 const NAV = [
   { href: '/app', label: 'Panoramica', icon: LayoutGrid },
@@ -21,6 +21,7 @@ const NAV = [
   { href: '/app/commenti', label: 'Commenti', icon: MessageSquareText },
   { href: '/app/istruzioni', label: 'Istruzioni', icon: SlidersHorizontal },
   { href: '/app/assistente', label: 'Assistente AI', short: 'Assistente', icon: Bot },
+  { href: '/app/automazioni', label: 'Automazioni', icon: Zap },
 ]
 
 function CreateWorkspace() {
@@ -92,7 +93,7 @@ function useSaveDashboardLanguage() {
 }
 
 function Frame({ children }: { children: ReactNode }) {
-  const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant } = useWorkspace()
+  const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant, automations } = useWorkspace()
   const pathname = usePathname()
   useSaveDashboardLanguage()
   // "Piano" solo con i pagamenti online attivi: prima del lancio tutto resta com'era.
@@ -119,7 +120,7 @@ function Frame({ children }: { children: ReactNode }) {
   if (!workspace) return <CreateWorkspace />
 
   const active = (href: string) => (href === '/app' ? pathname === '/app' : pathname?.startsWith(href))
-  const nav = NAV.filter((item) => item.href !== '/app/assistente' || assistant === true)
+  const nav = NAV.filter((item) => (item.href !== '/app/assistente' || assistant === true) && (item.href !== '/app/automazioni' || automations === true))
 
   return (
     <div className="min-h-[100dvh] pb-20 md:pb-0 md:pl-60">
@@ -211,10 +212,14 @@ function Frame({ children }: { children: ReactNode }) {
 
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-10">{children}</div>
 
-      <nav className={`fixed inset-x-0 bottom-0 grid ${nav.length > 4 ? 'grid-cols-5' : 'grid-cols-4'} border-t border-[var(--border-color)] bg-[var(--background-secondary)] md:hidden`}>
+      <nav className={`fixed inset-x-0 bottom-0 grid ${nav.length > 5 ? 'grid-cols-6' : nav.length > 4 ? 'grid-cols-5' : 'grid-cols-4'} border-t border-[var(--border-color)] bg-[var(--background-secondary)] md:hidden`}>
         {nav.map(({ href, label, short, icon: Icon }) => (
-          <Link key={href} href={href} className={`flex flex-col items-center gap-1 py-2 text-[11px] ${active(href) ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'}`}>
-            <Icon className="h-5 w-5" /> {short || label}
+          <Link
+            key={href}
+            href={href}
+            className={`flex min-w-0 flex-col items-center gap-1 py-2 ${nav.length > 5 ? 'text-[10px]' : 'text-[11px]'} ${active(href) ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'}`}
+          >
+            <Icon className="h-5 w-5 shrink-0" /> <span className="max-w-full truncate px-0.5">{short || label}</span>
           </Link>
         ))}
       </nav>
