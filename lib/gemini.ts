@@ -127,32 +127,78 @@ function getGeminiFailureReason(data: any): string | null {
   return null
 }
 
+/**
+ * Dettagli di un errore dell'API Gemini, solo per i log e per decidere quanto lasciare a
+ * riposo il modello: non si mostrano mai al cliente (il limite e' del piano Gemini di
+ * Facevoice, non del suo).
+ */
+export type GeminiErrorInfo = {
+  httpStatus: number
+  /** Stato di Google, es. RESOURCE_EXHAUSTED, INVALID_ARGUMENT. */
+  status: string
+  /** Testo originale di Google con le quote superate (quotaId, quotaMetric). */
+  detail: string
+  /** Quota del giorno esaurita (quotaId "...PerDay...", "per day"). */
+  daily: boolean
+  /** Attesa suggerita da Google (RetryInfo.retryDelay, es. "36s"), in ms. */
+  retryDelayMs: number | null
+}
+
+/** Errore dell'API Gemini: il messaggio e' neutro, i dettagli di Google restano in info. */
+export class GeminiAPIError extends Error {
+  info: GeminiErrorInfo
+  constructor(message: string, info: GeminiErrorInfo) {
+    super(message)
+    this.name = 'GeminiAPIError'
+    this.info = info
+  }
+}
+
+/** Dettagli di Google di un errore Gemini (null se l'errore non viene dall'API Gemini). */
+export function geminiErrorInfo(error: unknown): GeminiErrorInfo | null {
+  const info = (error as { info?: GeminiErrorInfo } | null)?.info
+  return info && typeof info.httpStatus === 'number' ? info : null
+}
+
+/** "36s", "1.5s" -> millisecondi. */
+const delayMs = (value: unknown) => {
+  const m = typeof value === 'string' ? value.trim().match(/^(\d+(?:\.\d+)?)s$/) : null
+  return m ? Math.round(Number(m[1]) * 1000) : null
+}
+
 function parseGeminiError(response: Response, data: any): Error {
   const errorMessage = data?.error?.message || `Gemini API error: ${response.status}`
+  const details: any[] = Array.isArray(data?.error?.details) ? data.error.details : []
+  const quotas = details
+    .flatMap((d) => (Array.isArray(d?.violations) ? d.violations : []))
+    .map((v: any) => [v?.quotaId, v?.quotaMetric].filter((x) => typeof x === 'string').join(' '))
+    .filter(Boolean)
+  const retryDelayMs = details.map((d) => delayMs(d?.retryDelay)).find((ms): ms is number => ms !== null) ?? null
+  const status = typeof data?.error?.status === 'string' ? data.error.status : ''
+  const detail = [`HTTP ${response.status}`, status, errorMessage, ...quotas].filter(Boolean).join(' · ').replace(/\s+/g, ' ').slice(0, 1000)
+  const info: GeminiErrorInfo = { httpStatus: response.status, status, detail, daily: /PerDay|per[ -]day|daily/i.test([errorMessage, ...quotas].join(' ')), retryDelayMs }
 
   if (response.status === 429) {
     if (errorMessage.includes('prepayment credits are depleted')) {
-      return new Error(errorMessage)
+      return new GeminiAPIError(errorMessage, info)
     }
-    return new Error(
-      'Rate limit raggiunto. Il piano gratuito ha limiti di richieste per minuto. Riprova tra qualche secondo.'
-    )
+    // "Rate limit" resta nel testo: lo riconoscono i controlli dei limiti (isLimitError e simili).
+    return new GeminiAPIError('Rate limit raggiunto: il servizio AI ha ricevuto troppe richieste. Riprova tra qualche minuto.', info)
   }
 
   if (response.status === 403 && errorMessage.toLowerCase().includes('quota')) {
-    return new Error(
-      'Quota giornaliera esaurita. Il piano gratuito ha limiti giornalieri. Riprova domani.'
-    )
+    return new GeminiAPIError('Quota giornaliera del servizio AI esaurita: riprova più tardi.', { ...info, daily: true })
   }
 
-  return new Error(errorMessage)
+  return new GeminiAPIError(errorMessage, info)
 }
 
 export async function callGeminiAPI(
   messages: GeminiChatMessage[],
   model: string,
   systemMessage?: string,
-  options?: { temperature?: number; maxOutputTokens?: number }
+  /** withoutThinkingConfig: per i modelli che rifiutano thinkingConfig (400 INVALID_ARGUMENT). */
+  options?: { temperature?: number; maxOutputTokens?: number; withoutThinkingConfig?: boolean }
 ) {
   const apiKey = getGeminiApiKey()
   if (!apiKey) {
@@ -191,7 +237,7 @@ export async function callGeminiAPI(
       // come se fosse completa. Qui non serve un ragionamento
       // profondo — sono risposte da chat, non problemi complessi —
       // quindi lo disattiviamo.
-      thinkingConfig: { thinkingBudget: 0 },
+      ...(options?.withoutThinkingConfig ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
     },
   }
 

@@ -1,4 +1,4 @@
-import { callAI, hasAIProvider } from '@/lib/ai'
+import { callAI, hasAIProvider, isWebSearchUnavailable } from '@/lib/ai'
 import { parseToolStep, looksLikeToolCall, cleanReplyText, stripMarkdown, FORMAT_RETRY } from '@/lib/tool-step'
 import { isAIBlockedError } from '@/lib/usage-limits'
 import { detectLanguage } from '@/lib/detect-language'
@@ -176,6 +176,14 @@ const MAX_STEPS = 8
  * a ~2 minuti e poi il carosello (fino a 10 slide) ne chiede un altro, entro i 300 s della funzione.
  */
 const SEARCH_START_LIMIT_MS = 90_000
+/** Ricerca sul web al limite per pochi secondi: si riprova una volta sola, dopo 3-5 s. */
+const SEARCH_RETRY_MIN_MS = 3_000
+const SEARCH_RETRY_MAX_MS = 5_000
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Risultato di find_event_images quando la ricerca sul web non e' riuscita: cosa e' successo e cosa offrire. */
+const SEARCH_FAILED_NOTE =
+  'La ricerca sul web non è riuscita: nessun evento trovato. Di\' al cliente, in una o due frasi vere, che in questo momento non riesci a cercare sul web e che può riprovare lui tra qualche minuto; offrigli di creare intanto il carosello con immagini generate dall\'AI. Non inventare eventi, date o locandine. Non dire che riproverai tu o che stai riprovando, non parlare di pause del sistema, di piani, di limiti o del servizio AI.'
 
 export const postView = (p: PostRow): PostView => ({
   id: p.id,
@@ -467,6 +475,9 @@ export function slideCountFrom(message: string): number | undefined {
  */
 export type SlideFacts = { total: number; photos: number; requested?: number; events?: number; generic?: number }
 
+/** Frasi di una risposta (anche divise dal punto e virgola), con la punteggiatura. */
+const replySentences = (reply: string) => reply.match(/[^.!?;\n]*(?:[.!?;]+["»”)]*|\n|$)/g) || [reply]
+
 const SLIDE_CLAIM = new RegExp(`(?<![\\p{L}\\d/])${COUNT}\\s+(slides?|immagini|images?|foto|photos?)(?![\\p{L}])`, 'giu')
 const ASKED = /chiest|richiest|volevi|avevi chiesto|asked|requested|wanted/i
 /** Il numero parla solo di una parte delle slide (eventi reali, foto generiche di Wikimedia...), non di tutte. */
@@ -485,7 +496,7 @@ const OTHER_PART = /\baltr[ei]\b|\bother\b|remaining|restanti/i
 export function honestSlideCount(reply: string, facts: SlideFacts, language: 'it' | 'en' = 'it'): string {
   const known = [facts.total, facts.photos, facts.events, facts.generic].filter((n): n is number => typeof n === 'number')
   // Frasi (anche divise dal punto e virgola): si toglie solo quella con il numero sbagliato.
-  const pieces = reply.match(/[^.!?;\n]*(?:[.!?;]+["»”)]*|\n|$)/g) || [reply]
+  const pieces = replySentences(reply)
   const kept = pieces.filter((piece) => {
     for (const m of piece.matchAll(SLIDE_CLAIM)) {
       const n = countOf(m[1])
@@ -634,10 +645,54 @@ export function webClaimCorrection(reply: string, state: { tried: boolean; found
   if (!state.tried && CANNOT_WEB.test(reply)) {
     return 'Nella risposta dici di non poter cercare sul web o scaricare immagini, ma non è vero: con find_event_images cerchi eventi reali e prendi le loro immagini (con credito e fonte). Se il cliente le ha chieste usalo adesso, altrimenti riscrivi la risposta senza dire che non puoi. Rispondi SOLO con il JSON.'
   }
-  if (!state.found && !state.earlier && WEB_IMAGES_CLAIM.test(reply) && !/non (ho )?trovat|nessun|not find|no (posters|images)/i.test(reply)) {
+  if (!state.found && !state.earlier && WEB_IMAGES_CLAIM.test(reply) && !/non (ho )?trovat|nessun|non riesc|non sono riuscit|not find|no (posters|images)|could(n['’]t| not)|can(['’]t|not)/i.test(reply)) {
     return 'Nella risposta parli di locandine o immagini prese dal web, ma in questa richiesta non ne è stata trovata né usata nessuna. Se il cliente le vuole usa find_event_images; altrimenti riscrivi la risposta senza dire che ci sono. Rispondi SOLO con il JSON.'
   }
   return null
+}
+
+/**
+ * Dopo una ricerca sul web non riuscita, frasi non vere o da non dire al cliente: che si riprova
+ * da soli ("Riprovo tra un momento"), che il sistema e' in pausa, che basta aspettare qualche
+ * secondo, piani, limiti e nomi del servizio AI.
+ */
+const FAILED_SEARCH_CLAIM =
+  /(?<![\p{L}])(riprovo|ci riprovo|riproverò|riprovero|sto riprovando|ritento|ritenterò|tento di nuovo|tenterò di nuovo|i['’]ll (try|retry)|i will (try|retry)|retrying|trying again)(?![\p{L}])|(?<![\p{L}])(in pausa|paused|piano gratuit\p{L}*|free (tier|plan)|rate limit|quota|gemini|claude|anthropic)(?![\p{L}])|limit[ei] (di richieste|del piano|del servizio)|aspetta (solo )?(qualche|pochi|un paio di) second|wait (a few|some) seconds/iu
+/** La risposta dice gia' che la ricerca sul web non e' riuscita. */
+const SAYS_SEARCH_FAILED = /non (riesco|sono riuscit\p{L}*) a cercare (sul|nel) web|ricerca sul web non (funziona|è disponibile|e' disponibile|è riuscita|e' riuscita)|can['’]t search the web|couldn['’]t search the web|unable to search the web/iu
+/** La risposta offre gia' le immagini generate dall'AI. */
+const OFFERS_AI_IMAGES = /immagin[ei] (generat[ei]|creat[ei]) (dall['’]\s?AI|con l['’]\s?AI)|AI-generated|generated (by|with) AI/iu
+
+/**
+ * Risposta finale dopo una ricerca sul web non riuscita (come honestSlideCount, sul server): le
+ * frasi non vere (FAILED_SEARCH_CLAIM) si tolgono e, se la risposta non lo dice, si aggiunge che in
+ * questo momento non si riesce a cercare sul web e di riprovare tra qualche minuto; se non e' stato
+ * creato niente, anche la proposta di fare intanto il carosello con immagini generate dall'AI.
+ */
+export function honestSearchFailure(reply: string, opts: { created: boolean; language?: 'it' | 'en' }): string {
+  const language = opts.language || 'it'
+  let text = replySentences(reply)
+    .filter((piece) => !FAILED_SEARCH_CLAIM.test(piece))
+    .join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  // Rimasti solo emoji o punteggiatura: non resta niente da dire.
+  if (!/[\p{L}\d]/u.test(text)) text = ''
+  // Prima che cosa e' successo, poi il resto della risposta, in fondo la proposta.
+  const head = SAYS_SEARCH_FAILED.test(text)
+    ? ''
+    : language === 'en'
+    ? 'I can’t search the web right now: please try again in a few minutes.'
+    : 'In questo momento non riesco a cercare sul web: riprova tra qualche minuto.'
+  const tail =
+    opts.created || OFFERS_AI_IMAGES.test(text)
+      ? ''
+      : language === 'en'
+      ? 'If you like, I can create the carousel with AI-generated images in the meantime.'
+      : 'Se vuoi, intanto creo il carosello con immagini generate dall’AI.'
+  if (text && tail && !/[.!?]$/.test(text)) text = `${text}.`
+  return [head, text, tail].filter(Boolean).join(' ').trim()
 }
 
 /** Parole di un nome o di un testo, senza accenti, @, punti e trattini bassi (almeno 3 lettere). */
@@ -783,6 +838,8 @@ export async function runClientAssistant(
   let webFound = 0
   /** Ricerche sul web fatte in questa richiesta (al massimo una). */
   let webSearches = 0
+  /** La ricerca sul web non e' riuscita (nessun servizio disponibile): la risposta lo dice in modo vero. */
+  let webSearchFailed = false
   /** Post creato in questa richiesta: il numero VERO di slide (non quello che l'AI voleva fare). */
   let created: SlideFacts | null = null
   let createdId = ''
@@ -790,7 +847,12 @@ export async function runClientAssistant(
   // riconosce nessuna parola, dice "en": qui il default e' l'italiano).
   const replyLanguage = (text: string): 'it' | 'en' =>
     detectLanguage(text) === 'en' && /\b(the|and|you|is|are|with|for|this|that|please|carousel|slides)\b/i.test(text) ? 'en' : 'it'
-  const finish = (text: string) => (created ? honestSlideCount(text, created, replyLanguage(`${text} ${message}`)) : text)
+  const finish = (raw: string) => {
+    const language = replyLanguage(`${raw} ${message}`)
+    // Ricerca sul web non riuscita: niente "riprovo tra un momento" o "il sistema è in pausa".
+    const text = webSearchFailed && !webFound ? honestSearchFailure(raw, { created: actions.some((a) => a.kind === 'post'), language }) : raw
+    return created ? honestSlideCount(text, created, language) : text
+  }
   /** Risposta finale: se dice cose non vere (messaggi, web) si fa correggere una volta per tipo; il numero di slide e' sempre quello vero. */
   const finalOrRetry = async (raw: string, text: string): Promise<string | null> => {
     if (!webRetried) {
@@ -940,7 +1002,9 @@ export async function runClientAssistant(
           // Una ricerca per richiesta (ognuna costa la tariffa della ricerca Google e circa un minuto),
           // e solo se resta il tempo per fare anche il carosello prima della fine della richiesta.
           if (webSearches > 0) {
-            result = { errore: 'find_event_images si usa una volta sola per richiesta: usa gli elementi che hai già trovato. Se ne mancano, dillo al cliente con il numero vero e proponi di completare con foto generiche nella prossima richiesta ("solo_generiche": true).' }
+            result = webSearchFailed
+              ? { errore: 'la ricerca sul web non funziona in questo momento: non riprovarla in questa richiesta.', nota: SEARCH_FAILED_NOTE }
+              : { errore: 'find_event_images si usa una volta sola per richiesta: usa gli elementi che hai già trovato. Se ne mancano, dillo al cliente con il numero vero e proponi di completare con foto generiche nella prossima richiesta ("solo_generiche": true).' }
             break
           }
           if (Date.now() - startedAt > SEARCH_START_LIMIT_MS) {
@@ -954,17 +1018,40 @@ export async function runClientAssistant(
           }
           const onlyGeneric = args.solo_generiche === true || args.only_generic === true
           webSearches++
-          const found = await findEventImages(db.workspaceId, {
-            query: asText(args.query) || message,
-            place,
-            fromDate: asText(args.from_date),
-            toDate: asText(args.to_date),
-            count: Number(args.count) || slideCountFrom(message) || 6,
-            includeGeneric: onlyGeneric || args.include_generic === true,
-            onlyGeneric,
-            // Foto gia' trovate prima (anche modificate): mai la stessa due volte.
-            exclude: { sources: [...webKnown.values()].map((it) => it.image_source_url), titles: [...webKnown.values()].map((it) => it.title) },
-          })
+          const search = () =>
+            findEventImages(db.workspaceId, {
+              query: asText(args.query) || message,
+              place,
+              fromDate: asText(args.from_date),
+              toDate: asText(args.to_date),
+              count: Number(args.count) || slideCountFrom(message) || 6,
+              includeGeneric: onlyGeneric || args.include_generic === true,
+              onlyGeneric,
+              // Foto gia' trovate prima (anche modificate): mai la stessa due volte.
+              exclude: { sources: [...webKnown.values()].map((it) => it.image_source_url), titles: [...webKnown.values()].map((it) => it.title) },
+            })
+          let found: Awaited<ReturnType<typeof findEventImages>>
+          try {
+            try {
+              found = await search()
+            } catch (error) {
+              // Limite di pochi secondi: una sola nuova prova (3-5 s dopo), se c'e' ancora il tempo per la ricerca.
+              const wait = isWebSearchUnavailable(error) ? error.retryAfterMs : null
+              if (wait === null || wait > SEARCH_RETRY_MAX_MS) throw error
+              const pause = Math.min(SEARCH_RETRY_MAX_MS, Math.max(SEARCH_RETRY_MIN_MS, wait))
+              if (Date.now() - startedAt + pause > SEARCH_START_LIMIT_MS) throw error
+              console.warn(`saas assistente: ricerca sul web al limite per pochi secondi, riprovo una volta tra ${pause / 1000} s`)
+              await sleep(pause)
+              found = await search()
+            }
+          } catch (error) {
+            if (!isWebSearchUnavailable(error)) throw error
+            webSearchFailed = true
+            errors.push('find_event_images: ricerca sul web non disponibile')
+            console.warn('saas assistente: find_event_images non riuscito: nessun servizio di ricerca sul web disponibile')
+            result = { trovato: false, errore: 'in questo momento la ricerca sul web non funziona: non è stato trovato nessun evento', nota: SEARCH_FAILED_NOTE }
+            break
+          }
           const items = found.items.map(webItemView)
           for (const it of items) webKnown.set(it.image_url, it)
           webFound += items.length
@@ -1158,6 +1245,8 @@ export async function runClientAssistant(
   return {
     reply: actions.length
       ? finish('Ecco qui sotto quello che ho fatto finora.')
+      : webSearchFailed
+      ? finish('')
       : `Non sono riuscito a finire${errors.length ? ` (${errors[errors.length - 1].slice(0, 200)})` : ''}. Se vuoi cambiare i testi delle slide, toccale (anche «Tutte») e scrivi la correzione lì.`,
     actions,
   }

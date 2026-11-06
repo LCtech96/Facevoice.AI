@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { createHash } from 'node:crypto'
-import { groundedSearch } from '@/lib/ai'
+import { groundedSearch, type GroundedResult } from '@/lib/ai'
 import type { GroundedAnswer } from '@/lib/gemini'
 import { assertAIAllowed } from '@/lib/usage-limits'
 import { storeWebImage } from './posts'
@@ -10,6 +10,8 @@ import { checkWebUrl, domainOf, safeWebGet, WEB_USER_AGENT } from './web-fetch'
 // find_event_images dell'assistente):
 // 1. ricerca Google dentro Gemini (grounding): eventi con date e luogo, e per ognuno le
 //    pagine che lo confermano (dai metadati della ricerca, non da indirizzi scritti dall'AI);
+//    se Gemini non puo' cercare, la stessa ricerca con Claude (web_search), con una regola
+//    altrettanto stretta sulle pagine che confermano ogni evento (vedi claudeSourcePages);
 // 2. per ogni evento si legge la pagina (sito ufficiale prima dei social, che si saltano) e
 //    si prende l'immagine di anteprima (og:image / twitter:image), si scarica, si controlla
 //    (JPEG, PNG o WebP, max 8 MB, almeno 400 px sul lato corto) e si salva nel nostro archivio;
@@ -228,13 +230,106 @@ const sameSite = (host: string, chunkTitle: string) => {
 }
 
 /**
+ * Indirizzo confrontabile: host in minuscolo senza "www.", percorso senza "/" finale, senza "#"
+ * e senza parametri di tracciamento (utm_*, fbclid, gclid…); http e https contano uguali.
+ */
+export function normalizeUrl(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  const host = url.hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '')
+  let path = url.pathname
+  try {
+    path = decodeURI(path)
+  } catch {}
+  path = path.replace(/\/+$/, '')
+  const params = [...url.searchParams]
+    .filter(([k]) => !/^(utm_.*|fbclid|gclid|dclid|msclkid|mc_cid|mc_eid|ref|ref_src|_ga|igshid)$/i.test(k))
+    .sort(([a], [b]) => a.localeCompare(b))
+  return `${host}${path}${params.length ? `?${new URLSearchParams(params)}` : ''}`
+}
+
+const plainWords = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+
+/** Parole dei nomi di eventi che non distinguono un evento da un altro. */
+const GENERIC_NAME_WORDS = new Set(
+  (
+    'evento eventi event events mostra mostre concerto concerti concert festa feste festival sagra sagre fiera fiere mercatino mercatini mercato mercati ' +
+    'spettacolo spettacoli show stagione rassegna edizione serata serate giornata giornate notte notti natale natalizio natalizia natalizi capodanno ' +
+    'teatro museo piazza centro citta city live tour open days week weekend anno nuovo nuova gran grande della delle degli dello nella nelle negli ' +
+    'sulla sulle alla alle agli dalla dalle tutti tutte ' +
+    'gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre ' +
+    'lunedi martedi mercoledi giovedi venerdi sabato domenica'
+  ).split(' ')
+)
+
+/** Parole che distinguono il nome di un evento (almeno 4 lettere, niente parole comuni, numeri o il luogo cercato). */
+export function distinctiveWords(title: string, place = ''): string[] {
+  const placeWords = new Set(plainWords(place))
+  return [...new Set(plainWords(title).filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !GENERIC_NAME_WORDS.has(w) && !placeWords.has(w)))]
+}
+
+const hostOf = (url: string) => (normalizeUrl(url) || '').split(/[/?]/)[0]
+
+/**
+ * Regola per la ricerca con Claude (Gemini non la usa). Claude spesso non mette citazioni
+ * dentro un JSON: un evento senza pezzi citati e' confermato solo se
+ * 1. la sua "fonte" (normalizzata, vedi normalizeUrl) e' una pagina che la ricerca ha davvero
+ *    restituito (web_search_tool_result) o citato, oppure
+ * 2. la "fonte" e' dello stesso sito (stesso host, senza "www.") di una pagina restituita il cui
+ *    titolo o testo citato contiene le parole distintive del nome dell'evento (distinctiveWords:
+ *    almeno 2, o l'unica se ne ha una sola).
+ * Le fonti dell'evento sono le pagine della ricerca (l'indirizzo scritto dall'AI si aggiunge solo
+ * se e' dello stesso sito, come con Gemini). Senza fonte, con una fonte di un sito che la ricerca
+ * non ha restituito, o con un nome fatto solo di parole comuni ("Concerto di Natale") e una fonte
+ * che non e' una pagina restituita: l'evento si scarta. E' la regola piu' stretta che non lascia
+ * vuote le risposte vere (Claude copia gli indirizzi delle pagine trovate, a volte con "/" o
+ * parametri in piu', o indica la pagina dell'evento dello stesso sito della pagina trovata).
+ */
+export function claudeSourcePages(given: string, title: string, place: string, answer: Pick<GroundedResult, 'chunks' | 'cited'>): number[] {
+  const target = given ? normalizeUrl(given) : null
+  if (!target) return []
+  const all = answer.chunks.map((c, k) => ({ k, norm: normalizeUrl(c.uri) })).filter((c) => c.norm)
+  const exact = all.filter((c) => c.norm === target).map((c) => c.k)
+  if (exact.length) return exact
+  const needed = distinctiveWords(title, place)
+  if (!needed.length) return []
+  const host = hostOf(given)
+  const enough = Math.min(2, needed.length)
+  return all
+    .filter((c) => hostOf(answer.chunks[c.k].uri) === host)
+    .filter((c) => {
+      const said = new Set(plainWords(`${answer.chunks[c.k].title} ${(answer.cited?.[c.k] || []).join(' ')}`))
+      return needed.filter((w) => said.has(w)).length >= enough
+    })
+    .map((c) => c.k)
+}
+
+/**
  * Eventi della risposta con le loro fonti. Le fonti vengono dai metadati della ricerca
  * (pezzi di testo dell'evento sostenuti da quali pagine); l'indirizzo scritto dall'AI si
  * aggiunge solo se e' dello stesso sito di una pagina che sostiene quell'evento. Un evento
  * senza nessun pezzo sostenuto dalla ricerca, senza data d'inizio o fuori dal periodo si
  * scarta: niente eventi inventati.
  */
-export async function eventsFromAnswer(answer: GroundedAnswer, range: { from: string; to: string }, max: number): Promise<{ events: FoundEvent[]; themes: FoundTheme[] }> {
+export async function eventsFromAnswer(
+  answer: GroundedAnswer & Partial<Pick<GroundedResult, 'provider' | 'cited'>>,
+  range: { from: string; to: string },
+  max: number,
+  /** Luogo cercato: con Claude le sue parole non contano come parole distintive del nome. */
+  place = ''
+): Promise<{ events: FoundEvent[]; themes: FoundTheme[] }> {
+  const claude = answer.provider === 'claude'
   const leaves = leafObjects(answer.text)
   const spans = answer.supports.map((s) => ({ span: supportSpan(answer.text, s), chunks: s.chunks }))
   const resolved = new Map<number, Promise<string | null>>()
@@ -270,23 +365,28 @@ export async function eventsFromAnswer(answer: GroundedAnswer, range: { from: st
     const inside = spans.filter((s) => s.span && s.span[0] >= leaf.start && s.span[1] <= leaf.end)
     const touching = inside.length ? inside : spans.filter((s) => s.span && s.span[0] < leaf.end && s.span[1] > leaf.start && s.span[1] - s.span[0] < (leaf.end - leaf.start) * 2)
     const indices = [...new Set(touching.flatMap((s) => s.chunks))].filter((k) => k >= 0 && k < answer.chunks.length).slice(0, 6)
+    const given = str(v.fonte ?? v.source, 500)
+    // Con Claude, senza pezzi citati: la fonte deve essere una pagina restituita dalla ricerca (claudeSourcePages).
+    const pages = indices.length || !claude ? indices : claudeSourcePages(given, title, place, answer).slice(0, 6)
     // Nessun pezzo dell'evento sostenuto dalla ricerca: niente lo conferma (l'indirizzo scritto
     // dall'AI da solo non basta), si scarta.
-    if (!indices.length) {
+    if (!pages.length) {
       console.log(`ricerca web: evento scartato (nessuna pagina della ricerca lo sostiene): ${title}`)
       continue
     }
-    const urls = (await Promise.all(indices.map(chunkUrl))).filter((u): u is string => Boolean(u))
+    const urls = (await Promise.all(pages.map(chunkUrl))).filter((u): u is string => Boolean(u))
     // Indirizzo scritto dall'AI: si aggiunge solo se e' dello stesso sito di una delle pagine che
     // sostengono QUESTO evento (non di una pagina qualsiasi della ricerca).
-    const given = str(v.fonte ?? v.source, 500)
     if (given) {
       try {
         const url = checkWebUrl(given)
-        if (indices.some((k) => sameSite(url.hostname, answer.chunks[k]?.title || '')) || urls.some((u) => domainOf(u) === domainOf(url))) urls.push(url.href)
+        if (pages.some((k) => sameSite(url.hostname, answer.chunks[k]?.title || '')) || urls.some((u) => domainOf(u) === domainOf(url))) urls.push(url.href)
       } catch {}
     }
-    const sources = [...new Set(urls)].sort((a, b) => sourceScore(b, title) - sourceScore(a, title))
+    // Con Claude la stessa pagina puo' tornare con "/" o parametri in piu': una volta sola.
+    const same = (a: string, b: string) => (normalizeUrl(a) || a) === (normalizeUrl(b) || b)
+    const unique = claude ? urls.filter((u, i) => urls.findIndex((x) => same(x, u)) === i) : [...new Set(urls)]
+    const sources = unique.sort((a, b) => sourceScore(b, title) - sourceScore(a, title))
     if (!sources.length) {
       console.log(`ricerca web: evento scartato (nessuna pagina lo conferma): ${title}`)
       continue
@@ -334,9 +434,13 @@ Rispondi SOLO con JSON: {"eventi": [{"titolo": "", "date": "es. 15-17 novembre 2
     temperature: 0.2,
     maxOutputTokens: 6000,
     timeoutMs: 60_000,
+    // Solo per la ricerca con Claude (riserva): posizione approssimata e fonti copiate dalla ricerca.
+    place: { city: input.place, region: SICILY.test(input.place) ? 'Sicilia' : undefined },
+    claudeSystem:
+      'In "fonte" metti l\'indirizzo esatto, copiato uguale, di una pagina che la ricerca ti ha restituito e che parla di quell\'evento (la pagina dell\'evento se c\'è); se non ce l\'hai metti "". Gli eventi senza una pagina della ricerca che li conferma vengono scartati.',
   })
-  const { events, themes } = await eventsFromAnswer(answer, { from: input.from, to: input.to }, input.count)
-  console.log(`ricerca web: ${events.length} eventi confermati, ${answer.chunks.length} pagine, ricerche: ${answer.queries.join(' | ').slice(0, 300)}`)
+  const { events, themes } = await eventsFromAnswer(answer, { from: input.from, to: input.to }, input.count, input.place)
+  console.log(`ricerca web (${answer.provider}): ${events.length} eventi confermati, ${answer.chunks.length} pagine, ricerche: ${answer.queries.join(' | ').slice(0, 300)}`)
   return { events, themes, queries: answer.queries }
 }
 

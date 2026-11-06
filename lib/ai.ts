@@ -5,9 +5,12 @@ import {
   GEMINI_DEFAULT_MODEL,
   callGeminiAPI,
   callGeminiGrounded,
+  geminiErrorInfo,
   getGeminiApiKey,
   type GeminiChatMessage,
   type GroundedAnswer,
+  type GroundingChunk,
+  type GroundingSupport,
 } from '@/lib/gemini'
 import { getAnthropicApiKey } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -31,6 +34,8 @@ export const CLAUDE_FALLBACK_MODEL = 'claude-haiku-4-5'
 const GEMINI_ROTATION = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest']
 const DAILY_QUOTA_COOLDOWN_MS = 60 * 60_000
 const MISSING_MODEL_COOLDOWN_MS = 6 * 60 * 60_000
+/** Modello che rifiuta la richiesta (400 INVALID_ARGUMENT) anche senza thinkingConfig: a riposo per mezz'ora. */
+const INVALID_ARGUMENT_COOLDOWN_MS = 30 * 60_000
 
 const GEMINI_COOLDOWN_MS = 60_000
 const PACE_MS = 4500
@@ -190,6 +195,33 @@ function isLimitError(message: string): boolean {
   return /rate limit|quota|prepayment|credits are depleted|RESOURCE_EXHAUSTED|429/i.test(message)
 }
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/**
+ * Quanto resta a riposo un modello Gemini al limite: quota del giorno esaurita (dai dettagli di
+ * Google: quotaId "...PerDay...", "per day") = DAILY_QUOTA_COOLDOWN_MS; limite al minuto = l'attesa
+ * suggerita da Google (retryDelay) se c'e', altrimenti GEMINI_COOLDOWN_MS.
+ */
+function limitCooldownMs(error: unknown): number {
+  const info = geminiErrorInfo(error)
+  if (info?.daily || /giornalier|daily|per day/i.test(errorText(error))) return DAILY_QUOTA_COOLDOWN_MS
+  if (info?.retryDelayMs) return Math.min(DAILY_QUOTA_COOLDOWN_MS, Math.max(1_000, info.retryDelayMs))
+  return GEMINI_COOLDOWN_MS
+}
+
+/** Dettagli di Google per i log (mai per il cliente). */
+const geminiDetail = (error: unknown) => geminiErrorInfo(error)?.detail || errorText(error)
+
+/** 400 "Request contains an invalid argument" (INVALID_ARGUMENT): vale solo per quel modello, non per tutti. */
+function isInvalidArgument(error: unknown): boolean {
+  const message = errorText(error)
+  if (isLimitError(message)) return false
+  return geminiErrorInfo(error)?.status === 'INVALID_ARGUMENT' || /invalid argument|INVALID_ARGUMENT/i.test(message)
+}
+
+/** Modelli Gemini che rifiutano thinkingConfig (400 INVALID_ARGUMENT): d'ora in poi si chiamano senza. */
+const noThinkingConfig = new Set<string>()
+
 const availableGeminiModels = () => GEMINI_ROTATION.filter((m) => Date.now() >= (geminiCooling.get(m) || 0))
 
 function geminiUsable(): boolean {
@@ -264,22 +296,111 @@ async function callClaudeText(
  * se la ricerca e' partita davvero (nella risposta ci sono ricerche o pagine trovate).
  */
 export const GROUNDING_FEE_USD = 0.035
+/**
+ * Ricerca sul web con Claude (strumento web_search di Anthropic), la riserva quando Gemini non
+ * puo' cercare: 10 USD ogni 1000 ricerche (0,01 USD l'una) piu' i token (le pagine trovate
+ * contano come token in ingresso). Si addebita per le ricerche fatte davvero
+ * (usage.server_tool_use.web_search_requests), nella stessa riga di ai_usage dei token.
+ */
+export const CLAUDE_WEB_SEARCH_FEE_USD = 0.01
+/** Ricerche al massimo per ogni richiesta a Claude. */
+const CLAUDE_SEARCH_MAX_USES = 4
+/** Spazio per la risposta JSON con gli eventi. */
+const CLAUDE_SEARCH_MAX_TOKENS = 8000
+/** Volte che si riprende una risposta in pausa (stop_reason "pause_turn"). */
+const CLAUDE_SEARCH_MAX_RESUMES = 2
+/** Se Gemini ha gia' consumato il suo tempo (es. non ha risposto), Claude ha al massimo questo in piu'. */
+const CLAUDE_SEARCH_EXTRA_MS = 30_000
+/** Limite breve: si consiglia di riprovare dopo questa attesa (una volta, nella stessa richiesta). */
+const SHORT_LIMIT_RETRY_MS = 4_000
+const SHORT_LIMIT_MAX_MS = 5_000
+
+const CLAUDE_SEARCH_SYSTEM = `Per cercare usa lo strumento web_search: poche ricerche mirate (al massimo ${CLAUDE_SEARCH_MAX_USES}). Riporta solo quello che è scritto nelle pagine trovate. Dopo le ricerche rispondi SOLO con il JSON richiesto, senza testo prima o dopo.`
 
 /** Modelli Gemini che hanno rifiutato la ricerca Google (o non esistono): istante fino a cui non si riprovano. */
 const groundingUnsupported = new Map<string, number>()
 
-/** Risposta di Gemini scritta dalle pagine trovate con la ricerca Google, con le fonti. */
-export type GroundedResult = GroundedAnswer & { provider: 'gemini' }
+/**
+ * Risposta scritta dalle pagine trovate con la ricerca sul web, con le fonti: Gemini (ricerca
+ * Google) o Claude (web_search). Con Claude: chunks = le pagine restituite dalla ricerca e
+ * quelle citate (indirizzi veri, senza rimandi), supports = i pezzi di testo citati (indici in
+ * byte UTF-8 nel testo, come Gemini), cited = i testi citati di ogni pagina (stesso indice di chunks).
+ */
+export type GroundedResult = GroundedAnswer & { provider: 'gemini' | 'claude'; cited?: string[][] }
+
+export type GroundedSearchOptions = AIOptions & {
+  system?: string
+  timeoutMs?: number
+  /** Luogo della ricerca: posizione approssimata della ricerca con Claude (in Italia). */
+  place?: { city?: string; region?: string }
+  /** Istruzioni in piu' solo per la ricerca con Claude (es. come scrivere le fonti). */
+  claudeSystem?: string
+}
 
 /**
- * Chiamata con la ricerca Google (solo Gemini: Claude non ha questo strumento). Prima si
- * controlla il limite del piano (AI finita: non parte); si provano i modelli Gemini come in
- * callAI (quello al limite resta a riposo). Il consumo va nello spazio con la tariffa della ricerca.
+ * Ricerca sul web non riuscita con nessun servizio (Gemini e Claude). Il messaggio si puo'
+ * mostrare al cliente: niente nomi di fornitori, piani o limiti (i dettagli vanno nei log).
  */
-export async function groundedSearch(prompt: string, options: AIOptions & { system?: string; timeoutMs?: number }): Promise<GroundedResult> {
+export class WebSearchUnavailableError extends Error {
+  /** Limite breve (troppe richieste in pochi secondi): si puo' riprovare una volta dopo questa attesa. Null = non conviene riprovare ora. */
+  retryAfterMs: number | null
+  constructor(retryAfterMs: number | null) {
+    super('ricerca sul web non disponibile in questo momento')
+    this.name = 'WebSearchUnavailableError'
+    this.retryAfterMs = retryAfterMs
+  }
+}
+
+export const isWebSearchUnavailable = (error: unknown): error is WebSearchUnavailableError =>
+  error instanceof WebSearchUnavailableError || (error as { name?: unknown } | null)?.name === 'WebSearchUnavailableError'
+
+/** Errore della ricerca con Claude per troppe richieste in pochi secondi (anche dentro la risposta: too_many_requests). */
+class ShortLimitError extends Error {
+  retryAfterMs: number
+  constructor(message: string, retryAfterMs = SHORT_LIMIT_RETRY_MS) {
+    super(message)
+    this.name = 'ShortLimitError'
+    this.retryAfterMs = retryAfterMs
+  }
+}
+
+/**
+ * Chiamata con la ricerca sul web. Prima si controlla il limite del piano (AI finita: non parte).
+ * Si provano i modelli Gemini con la ricerca Google come in callAI (quello al limite resta a
+ * riposo; quello che rifiuta la richiesta si salta); se nessun modello Gemini puo' cercare
+ * (nessuna chiave, tutti al limite o a riposo, richiesta rifiutata, qualsiasi altro errore) e
+ * c'e' la chiave Anthropic, la stessa ricerca si fa con Claude (web_search). Il consumo va nello
+ * spazio con la tariffa della ricerca di chi l'ha fatta. Se non riesce nessuno: WebSearchUnavailableError.
+ */
+export async function groundedSearch(prompt: string, options: GroundedSearchOptions): Promise<GroundedResult> {
   const workspaceId = workspaceOf(options)
   await assertAIAllowed(workspaceId)
-  if (!getGeminiApiKey()) throw new Error('ricerca sul web non disponibile (manca la chiave Gemini)')
+  const startedAt = Date.now()
+  let geminiError: unknown = null
+  if (getGeminiApiKey()) {
+    try {
+      return await geminiGroundedSearch(prompt, options, workspaceId)
+    } catch (error) {
+      geminiError = error
+    }
+  }
+  const why = geminiError ? `${errorText(geminiError)}${geminiErrorInfo(geminiError) ? ` · ${geminiDetail(geminiError)}` : ''}` : 'manca la chiave Gemini'
+  // Come in callAI: con "Gemini" scelto dal cliente non si passa a Claude.
+  if (!getAnthropicApiKey() || preferredModel() === 'gemini') {
+    console.warn(`Ricerca sul web: Gemini non può cercare (${why}) e non c'è la riserva Claude`)
+    throw new WebSearchUnavailableError(geminiError && isLimitError(errorText(geminiError)) ? geminiRetryAfterMs() : null)
+  }
+  console.warn(`Ricerca sul web: Gemini non può cercare (${why}), passo a Claude`)
+  try {
+    return await claudeWebSearch(prompt, options, workspaceId, startedAt)
+  } catch (error) {
+    console.warn(`Ricerca sul web con Claude non riuscita: ${errorText(error)}`)
+    throw new WebSearchUnavailableError(claudeRetryAfterMs(error))
+  }
+}
+
+/** Prova i modelli Gemini con la ricerca Google; quello al limite resta a riposo, quello che rifiuta la richiesta si salta. */
+async function geminiGroundedSearch(prompt: string, options: GroundedSearchOptions, workspaceId?: string): Promise<GroundedResult> {
   let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
   for (const model of availableGeminiModels().filter((m) => Date.now() >= (groundingUnsupported.get(m) || 0))) {
     try {
@@ -297,16 +418,25 @@ export async function groundedSearch(prompt: string, options: AIOptions & { syst
       return { ...answer, provider: 'gemini' }
     } catch (error) {
       lastError = error
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error)
       if (isLimitError(message)) {
-        geminiCooling.set(model, Date.now() + (/giornalier|daily|per day/i.test(message) ? DAILY_QUOTA_COOLDOWN_MS : GEMINI_COOLDOWN_MS))
+        const cooldown = limitCooldownMs(error)
+        geminiCooling.set(model, Date.now() + cooldown)
         recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'limit' })
+        console.warn(`Ricerca sul web: Gemini ${model} al limite (a riposo ${Math.round(cooldown / 1000)} s), provo il modello successivo · ${geminiDetail(error)}`)
         continue
       }
       // Modello che non c'e' o che non fa la ricerca Google: a riposo solo per la ricerca
       // (per le altre chiamate puo' andare benissimo).
       if (isMissingModel(message)) {
         groundingUnsupported.set(model, Date.now() + MISSING_MODEL_COOLDOWN_MS)
+        continue
+      }
+      // Richiesta rifiutata da questo modello (400 INVALID_ARGUMENT): a riposo per la ricerca, si prova il successivo.
+      if (isInvalidArgument(error)) {
+        groundingUnsupported.set(model, Date.now() + INVALID_ARGUMENT_COOLDOWN_MS)
+        recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'error' })
+        console.warn(`Ricerca sul web: Gemini ${model} rifiuta la richiesta (a riposo 30 min), provo il modello successivo · ${geminiDetail(error)}`)
         continue
       }
       recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'error' })
@@ -316,41 +446,215 @@ export async function groundedSearch(prompt: string, options: AIOptions & { syst
   throw lastError
 }
 
+/** Attesa fino al primo modello Gemini che torna a cercare, se e' di pochi secondi (limite breve), altrimenti null. */
+function geminiRetryAfterMs(): number | null {
+  const now = Date.now()
+  const soonest = Math.min(...GEMINI_ROTATION.map((m) => Math.max(geminiCooling.get(m) || 0, groundingUnsupported.get(m) || 0)))
+  const wait = soonest - now
+  return wait <= SHORT_LIMIT_MAX_MS ? Math.max(1_000, wait) : null
+}
+
+/** Limite breve di Claude (429 con poca attesa, o ricerche rifiutate per troppe richieste): attesa consigliata, altrimenti null. */
+function claudeRetryAfterMs(error: unknown): number | null {
+  if (error instanceof ShortLimitError) return error.retryAfterMs
+  const e = error as { status?: unknown; headers?: { get?: (name: string) => string | null } } | null
+  if (e?.status !== 429) return null
+  const header = Number(e.headers?.get?.('retry-after'))
+  if (!Number.isFinite(header) || header <= 0) return SHORT_LIMIT_RETRY_MS
+  return header * 1000 <= SHORT_LIMIT_MAX_MS ? Math.max(1_000, header * 1000) : null
+}
+
+/**
+ * La stessa ricerca con Claude e lo strumento web_search (messages.create, senza streaming).
+ * Modello: quello scelto dal cliente se e' un Claude, altrimenti la riserva di sempre
+ * (CLAUDE_FALLBACK_MODEL, Haiku 4.5: niente "thinking"). Tempo: options.timeoutMs per tutta la
+ * ricerca (riprese comprese), al massimo CLAUDE_SEARCH_EXTRA_MS oltre il tempo gia' usato da Gemini.
+ */
+async function claudeWebSearch(prompt: string, options: GroundedSearchOptions, workspaceId: string | undefined, startedAt: number): Promise<GroundedResult> {
+  if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
+  const pref = preferredModel()
+  const model = pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL
+  const isHaiku = model.startsWith('claude-haiku')
+  const limit = options.timeoutMs ?? 60_000
+  const deadline = Math.min(Date.now() + limit, startedAt + limit + CLAUDE_SEARCH_EXTRA_MS)
+  const city = options.place?.city?.trim()
+  const region = options.place?.region?.trim()
+  const tool: Anthropic.WebSearchTool20250305 = {
+    type: 'web_search_20250305',
+    name: 'web_search',
+    max_uses: CLAUDE_SEARCH_MAX_USES,
+    user_location: { type: 'approximate', country: 'IT', timezone: 'Europe/Rome', ...(city ? { city: city.slice(0, 80) } : {}), ...(region ? { region: region.slice(0, 80) } : {}) },
+  }
+  const system = [options.system, CLAUDE_SEARCH_SYSTEM, options.claudeSystem].filter(Boolean).join('\n\n')
+  const content: Anthropic.ContentBlock[] = []
+  let usedModel: string = model
+  for (let resume = 0; ; resume++) {
+    const left = deadline - Date.now()
+    if (left < 5_000) throw new Error('tempo finito per la ricerca sul web')
+    const response = await claudeClient.messages.create(
+      {
+        model,
+        max_tokens: CLAUDE_SEARCH_MAX_TOKENS,
+        system,
+        tools: [tool],
+        // Ripresa dopo "pause_turn": si rimanda la risposta in pausa cosi' com'e' (niente "continua").
+        messages: [{ role: 'user', content: prompt }, ...(content.length ? [{ role: 'assistant' as const, content: content as Anthropic.ContentBlockParam[] }] : [])],
+        // Haiku accetta la temperatura; Sonnet/Opus 5.5 no, e con effort basso costano meno.
+        ...(isHaiku ? (options.temperature !== undefined ? { temperature: options.temperature } : {}) : { output_config: { effort: 'low' as const } }),
+      },
+      // Un solo tentativo per chiamata: una chiamata lenta non si moltiplica.
+      { timeout: left, maxRetries: 0 }
+    )
+    usedModel = response.model || model
+    const usage = response.usage
+    // Ricerche fatte davvero (quelle finite in errore non si pagano).
+    const searches =
+      usage.server_tool_use?.web_search_requests ??
+      response.content.filter((b) => b.type === 'web_search_tool_result' && Array.isArray(b.content)).length
+    recordUsage({
+      feature: options.feature,
+      workspaceId,
+      provider: 'claude',
+      model: usedModel,
+      input: (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0),
+      output: usage.output_tokens || 0,
+      cacheRead: usage.cache_read_input_tokens || 0,
+      cacheWrite: usage.cache_creation_input_tokens || 0,
+      extraCost: Math.max(0, searches) * CLAUDE_WEB_SEARCH_FEE_USD,
+    })
+    content.push(...response.content)
+    if (response.stop_reason === 'refusal') throw new Error('Claude non ha fatto la ricerca')
+    if (response.stop_reason !== 'pause_turn') break
+    if (resume >= CLAUDE_SEARCH_MAX_RESUMES || deadline - Date.now() < 15_000) {
+      console.warn('Ricerca sul web con Claude: risposta ancora in pausa, uso quello che c\'è')
+      break
+    }
+  }
+  const answer = claudeGroundedAnswer(content, usedModel)
+  if (!answer.chunks.length && answer.searchErrors.length) {
+    // Nessuna pagina trovata: tutte le ricerche sono state rifiutate.
+    const message = `ricerche rifiutate (${answer.searchErrors.join(', ')})`
+    throw answer.searchErrors.includes('too_many_requests') ? new ShortLimitError(message) : new Error(message)
+  }
+  if (!answer.text.trim()) throw new Error('Claude non ha restituito una risposta')
+  console.log(`Ricerca sul web con Claude (${usedModel}): ${answer.queries.length} ricerche, ${answer.chunks.length} pagine, ${answer.supports.length} pezzi citati`)
+  const { searchErrors: _errors, ...result } = answer
+  return result
+}
+
+/**
+ * Risposta di Claude con web_search nella forma di quella di Gemini: text = i blocchi di testo
+ * uniti (senza separatori: le citazioni dividono il testo in piu' blocchi, anche dentro il JSON);
+ * queries = le ricerche fatte; chunks = le pagine restituite dalla ricerca e quelle citate (una
+ * volta sola); supports = i pezzi di testo con citazioni, con la posizione in byte UTF-8 nel
+ * testo e le pagine citate; cited = i testi citati di ogni pagina; searchErrors = errori delle ricerche.
+ */
+export function claudeGroundedAnswer(content: Anthropic.ContentBlock[], model: string): GroundedResult & { searchErrors: string[] } {
+  let text = ''
+  const queries: string[] = []
+  const chunks: GroundingChunk[] = []
+  const cited: string[][] = []
+  const supports: GroundingSupport[] = []
+  const searchErrors: string[] = []
+  const index = new Map<string, number>()
+  const chunkOf = (url: string, title: string | null) => {
+    const key = url.trim()
+    let k = index.get(key)
+    if (k === undefined) {
+      k = chunks.length
+      index.set(key, k)
+      chunks.push({ uri: key, title: title || '' })
+      cited.push([])
+    } else if (title && !chunks[k].title) chunks[k].title = title
+    return k
+  }
+  for (const block of content) {
+    if (block.type === 'server_tool_use') {
+      const query = (block.input as { query?: unknown } | null)?.query
+      if (block.name === 'web_search' && typeof query === 'string' && query.trim()) queries.push(query.trim())
+    } else if (block.type === 'web_search_tool_result') {
+      // Errore della ricerca: arriva dentro la risposta (HTTP 200), non come eccezione.
+      if (Array.isArray(block.content)) {
+        for (const result of block.content) if (result.type === 'web_search_result' && result.url) chunkOf(result.url, result.title)
+      } else searchErrors.push(block.content.error_code)
+    } else if (block.type === 'text') {
+      const startIndex = Buffer.byteLength(text, 'utf8')
+      text += block.text
+      const pages: number[] = []
+      for (const c of block.citations || []) {
+        if (c.type !== 'web_search_result_location' || !c.url) continue
+        const k = chunkOf(c.url, c.title)
+        if (c.cited_text && !cited[k].includes(c.cited_text)) cited[k].push(c.cited_text.slice(0, 1000))
+        pages.push(k)
+      }
+      if (pages.length && block.text.trim()) supports.push({ text: block.text, startIndex, endIndex: Buffer.byteLength(text, 'utf8'), chunks: [...new Set(pages)] })
+    }
+  }
+  return { text, model, queries, chunks, supports, provider: 'claude', cited, searchErrors }
+}
+
 const isMissingModel = (message: string) => /not found|NOT_FOUND|is not supported|no longer available/i.test(message)
 
-/** Prova i modelli Gemini gratuiti uno dopo l'altro; quello al limite resta a riposo. */
+/**
+ * Prova i modelli Gemini gratuiti uno dopo l'altro; quello al limite resta a riposo. Un modello
+ * che rifiuta la richiesta (400 INVALID_ARGUMENT, es. per thinkingConfig) si riprova una volta
+ * senza thinkingConfig (se va, si ricorda); se rifiuta ancora resta a riposo mezz'ora e si passa
+ * al successivo. Solo quando tutti falliscono si passa a Claude (chi chiama).
+ */
 async function tryGemini(
   messages: GeminiChatMessage[],
   system: string | undefined,
   options?: AIOptions
 ): Promise<AIResult> {
   let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
+  const record = (model: string, outcome: 'limit' | 'error') =>
+    recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'gemini', model, outcome })
   for (const model of availableGeminiModels()) {
-    try {
-      const result = await callGeminiAPI(messages, model, system, options)
-      recordUsage({
-        feature: options?.feature, workspaceId: options?.workspaceId,
-        provider: 'gemini',
-        model,
-        input: result.usage?.prompt_tokens,
-        output: result.usage?.completion_tokens,
-      })
-      return { message: result.message || '', provider: 'gemini', model }
-    } catch (error) {
-      lastError = error
-      const message = error instanceof Error ? error.message : String(error)
-      if (isLimitError(message)) {
-        const cooldown = /giornalier|daily|per day/i.test(message) ? DAILY_QUOTA_COOLDOWN_MS : GEMINI_COOLDOWN_MS
-        geminiCooling.set(model, Date.now() + cooldown)
-        recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'gemini', model, outcome: 'limit' })
-        console.warn(`Gemini ${model} al limite, provo il modello successivo`)
-        continue
+    let withoutThinkingConfig = noThinkingConfig.has(model)
+    for (;;) {
+      try {
+        const result = await callGeminiAPI(messages, model, system, { ...options, withoutThinkingConfig })
+        if (withoutThinkingConfig && !noThinkingConfig.has(model)) {
+          noThinkingConfig.add(model)
+          console.warn(`Gemini ${model} non accetta thinkingConfig: d'ora in poi lo chiamo senza`)
+        }
+        recordUsage({
+          feature: options?.feature, workspaceId: options?.workspaceId,
+          provider: 'gemini',
+          model,
+          input: result.usage?.prompt_tokens,
+          output: result.usage?.completion_tokens,
+        })
+        return { message: result.message || '', provider: 'gemini', model }
+      } catch (error) {
+        lastError = error
+        const message = errorText(error)
+        const retriedWithout = withoutThinkingConfig && !noThinkingConfig.has(model)
+        if (isLimitError(message)) {
+          const cooldown = limitCooldownMs(error)
+          geminiCooling.set(model, Date.now() + cooldown)
+          record(model, 'limit')
+          console.warn(`Gemini ${model} al limite (a riposo ${Math.round(cooldown / 1000)} s), provo il modello successivo · ${geminiDetail(error)}`)
+          break
+        }
+        if (isMissingModel(message)) {
+          geminiCooling.set(model, Date.now() + MISSING_MODEL_COOLDOWN_MS)
+          break
+        }
+        if (isInvalidArgument(error) && !withoutThinkingConfig) {
+          console.warn(`Gemini ${model} rifiuta la richiesta, riprovo senza thinkingConfig · ${geminiDetail(error)}`)
+          withoutThinkingConfig = true
+          continue
+        }
+        // Rifiutata anche senza thinkingConfig (o la seconda prova e' fallita): a riposo, si passa al successivo.
+        if (isInvalidArgument(error) || retriedWithout) {
+          geminiCooling.set(model, Date.now() + INVALID_ARGUMENT_COOLDOWN_MS)
+          record(model, 'error')
+          console.warn(`Gemini ${model} non risponde a questa richiesta (a riposo 30 min), provo il modello successivo · ${geminiDetail(error)}`)
+          break
+        }
+        throw error
       }
-      if (isMissingModel(message)) {
-        geminiCooling.set(model, Date.now() + MISSING_MODEL_COOLDOWN_MS)
-        continue
-      }
-      throw error
     }
   }
   throw lastError
@@ -359,7 +663,7 @@ async function tryGemini(
 function noteGeminiFailure(error: unknown, feature?: string, workspaceId?: string): string {
   const message = error instanceof Error ? error.message : String(error)
   if (isLimitError(message)) {
-    console.warn(`Tutti i modelli Gemini sono al limite, passo a Claude: ${message}`)
+    console.warn(`Tutti i modelli Gemini sono al limite, passo a Claude: ${message} · ${geminiDetail(error)}`)
     if (getAnthropicApiKey()) reportStatus('Gemini ha raggiunto il limite: continuo con Claude…')
   } else {
     recordUsage({ feature, workspaceId, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
@@ -392,7 +696,7 @@ export async function callAI(
 
 function geminiOnlyError(pref: AIModelChoice, error: unknown) {
   if (pref === 'gemini' && isLimitError(error instanceof Error ? error.message : '')) {
-    return new Error('Gemini gratuito è al limite in questo momento: scegli "Automatico" o un modello Claude per continuare.')
+    return new Error('Gemini è al limite in questo momento: scegli "Automatico" o un modello Claude per continuare.')
   }
   return error
 }
