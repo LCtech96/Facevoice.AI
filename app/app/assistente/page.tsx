@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Pause, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
@@ -48,7 +48,14 @@ type SentAction = { kind: 'message'; platform: string; contactId: string; name: 
 /** Eventi e immagini trovati sul web dall'assistente (find_event_images). */
 type WebItem = { kind: 'event' | 'generic'; title: string; dates: string | null; place: string | null; image_url: string; image_source_url: string; image_source_domain: string; credit: string }
 type WebImagesAction = { kind: 'web_images'; items: WebItem[]; at: string }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction
+/** Email programmata (Automazioni) creata, cambiata, in pausa, ripresa o eliminata dall'assistente. */
+type AutomationAction = {
+  kind: 'automation'
+  op: 'created' | 'updated' | 'paused' | 'resumed' | 'deleted'
+  at: string
+  automation: { id: string; name: string; recipients: string[]; subject: string; mode: 'fixed' | 'ai'; when: string; nextRun: string | null; active: boolean; from: string }
+}
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -121,7 +128,9 @@ function AssistantLocked() {
 }
 
 function AssistantChat() {
-  const { appFetch, workspace } = useWorkspace()
+  const { appFetch, workspace, automations } = useWorkspace()
+  // Con le Automazioni attive anche un esempio di email programmata.
+  const examples = automations === true ? [...EXAMPLES, 'Ogni lunedì alle 9 manda un’email a mario@esempio.it con le novità della settimana'] : EXAMPLES
   const [turns, setTurns] = useState<Turn[] | null>(null)
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -311,7 +320,7 @@ function AssistantChat() {
               Scrivimi o dettami cosa vuoi fare. Allega le foto con il pulsante <ImagePlus className="inline h-4 w-4" />: creo il post, sistemo le immagini e lo pubblico quando vuoi tu.
             </p>
             <div className="mt-4 flex flex-col gap-2">
-              {EXAMPLES.map((e) => (
+              {examples.map((e) => (
                 <button key={e} onClick={() => setInput(e)} className="rounded-xl border border-[var(--border-color)] px-3 py-2 text-left text-sm text-[var(--text-primary)] hover:border-[var(--accent-blue)]">
                   {e}
                 </button>
@@ -353,6 +362,8 @@ function AssistantChat() {
                   {turn.actions?.map((action, k) =>
                     action.kind === 'message' ? (
                       <SentMessageCard key={`m${k}`} action={action} />
+                    ) : action.kind === 'automation' ? (
+                      <AutomationActionCard key={`a${k}`} action={action} />
                     ) : action.kind === 'web_images' ? (
                       // Con il post fatto da queste immagini basta l'anteprima (con le fonti sotto).
                       turn.actions?.some((a) => a.kind === 'post') ? null : (
@@ -1167,6 +1178,73 @@ function SentMessageCard({ action }: { action: SentAction }) {
       </p>
       <Link href={href} className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
         <Icon className="h-4 w-4" /> Apri la conversazione in Omnichat
+      </Link>
+    </div>
+  )
+}
+
+const AUTOMATION_TITLES: Record<AutomationAction['op'], string> = {
+  created: 'Email programmata',
+  updated: 'Automazione modificata',
+  paused: 'Automazione in pausa',
+  resumed: 'Automazione ripresa',
+  deleted: 'Automazione eliminata',
+}
+
+/** Email programmata dall'assistente: i dati salvati (destinatari, quando, da quale casella) e il link alla pagina. */
+function AutomationActionCard({ action }: { action: AutomationAction }) {
+  const a = action.automation
+  const deleted = action.op === 'deleted'
+  // Una volta sola: "Quando" dice gia' giorno e ora; ogni giorno: anche il prossimo invio.
+  const once = a.when.startsWith('una volta')
+  const next = a.nextRun
+    ? `${new Date(a.nextRun).toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long' })} alle ${new Date(a.nextRun).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' })}`
+    : null
+  return (
+    <div className="mt-3 w-full max-w-md rounded-2xl border border-[var(--border-color)] p-3">
+      <p className="flex items-start gap-2 text-sm font-semibold">
+        {deleted ? (
+          <Trash2 className="mt-0.5 h-4 w-4 shrink-0 text-[#ff6b6b]" />
+        ) : action.op === 'paused' ? (
+          <Pause className="mt-0.5 h-4 w-4 shrink-0 text-[#FF9500]" />
+        ) : (
+          <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />
+        )}
+        <span className="min-w-0">
+          {AUTOMATION_TITLES[action.op]}: <span translate="no">{a.name}</span>
+        </span>
+      </p>
+      {!deleted && (
+        <div className="mt-2 space-y-1 text-xs text-[var(--text-secondary)]">
+          <p className="break-words">
+            A: <span translate="no" className="text-[var(--text-primary)]">{a.recipients.join(', ')}</span>
+            {a.recipients.length > 1 ? ' · una email per destinatario' : ''}
+          </p>
+          <p>
+            Quando: <span className="text-[var(--text-primary)]">{a.when}</span> (ora italiana)
+          </p>
+          {!a.active ? (
+            <p>In pausa</p>
+          ) : next && !once ? (
+            <p>
+              Prossimo invio: <span className="font-semibold text-[var(--text-primary)]">{next}</span>
+            </p>
+          ) : null}
+          {a.from ? (
+            <p className="truncate">
+              Invia da: <span translate="no" className="text-[var(--text-primary)]">{a.from}</span>
+            </p>
+          ) : null}
+          {a.subject ? (
+            <p className="truncate">
+              Oggetto: <span translate="no">{a.subject}</span>
+            </p>
+          ) : null}
+          {a.mode === 'ai' ? <p>Testo scritto dall’AI a ogni invio</p> : null}
+        </div>
+      )}
+      <Link href="/app/automazioni" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
+        <Zap className="h-4 w-4" /> Apri le Automazioni
       </Link>
     </div>
   )

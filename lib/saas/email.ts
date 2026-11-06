@@ -296,18 +296,46 @@ export async function sendEmailReply(
   connection: Connection,
   input: { to: string; subject: string | null; inReplyTo: string | null; text: string; fromName: string | null }
 ): Promise<{ messageId: string }> {
-  const secret = await readConnectionSecret<EmailSecret>(connection.id)
-  const meta = (connection.meta || {}) as EmailMeta
   const base = (input.subject || '').trim()
   const subject = !base ? 'La nostra risposta' : /^re:/i.test(base) ? base : `Re: ${base}`
   const reference = input.inReplyTo && !input.inReplyTo.startsWith('uid:') ? input.inReplyTo : undefined
-  const mail = {
-    from: input.fromName ? { name: input.fromName, address: connection.external_id } : connection.external_id,
+  return sendFromMailbox(connection, {
     to: input.to,
     subject,
     text: input.text,
+    fromName: input.fromName,
     inReplyTo: reference,
     references: reference ? [reference] : undefined,
+  })
+}
+
+/**
+ * Email nuova (non una risposta) dalla casella collegata dal cliente, a UN solo
+ * destinatario: usata dalle Automazioni (lib/saas/automations.ts). Stessa strada
+ * delle risposte: SMTP della casella e copia in "Inviata".
+ */
+export async function sendNewEmail(
+  connection: Connection,
+  input: { to: string; subject: string; text: string; fromName: string | null }
+): Promise<{ messageId: string }> {
+  const subject = input.subject.replace(/[\r\n]+/g, ' ').trim().slice(0, 200) || 'Messaggio'
+  return sendFromMailbox(connection, { to: input.to, subject, text: input.text, fromName: input.fromName })
+}
+
+/** Compone e invia dalla casella collegata (un destinatario), poi salva la copia in "Inviata". */
+async function sendFromMailbox(
+  connection: Connection,
+  input: { to: string; subject: string; text: string; fromName: string | null; inReplyTo?: string; references?: string[] }
+): Promise<{ messageId: string }> {
+  const secret = await readConnectionSecret<EmailSecret>(connection.id)
+  const meta = (connection.meta || {}) as EmailMeta
+  const mail = {
+    from: input.fromName ? { name: input.fromName, address: connection.external_id } : connection.external_id,
+    to: input.to,
+    subject: input.subject,
+    text: input.text,
+    inReplyTo: input.inReplyTo,
+    references: input.references,
   }
   const node = new MailComposer(mail).compile()
   const raw = await node.build()

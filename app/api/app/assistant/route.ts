@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAssistant } from '@/lib/assistant-access'
+import { automationsAccess } from '@/lib/automations-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
@@ -11,7 +12,8 @@ export const maxDuration = 300
 // Assistente AI dell'area clienti: conversazione (GET, anche ?chat=<id> o ?post=<id> per
 // riaprire la chat in cui si e' lavorato a un post), nuova richiesta con le foto gia'
 // caricate (POST), nuova conversazione (DELETE: le altre restano salvate).
-// Solo per chi ha l'assistente attivo (lo accende Facevoice: lib/assistant-access.ts).
+// Solo per chi ha l'assistente attivo (lo accende Facevoice: lib/assistant-access.ts). Con le
+// Automazioni attive per la persona (lib/automations-access.ts) programma anche le email.
 
 export async function GET(req: NextRequest) {
   const access = await requireAssistant(req)
@@ -80,6 +82,10 @@ export async function POST(req: NextRequest) {
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < 4 * 60_000) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta un momento.' }, { status: 409 })
   }
+  // Automazioni (email programmate) per chi scrive: senza, l'assistente non ha gli strumenti e lo dice.
+  const automations = await automationsAccess(access.userId)
+    .then((a) => a.enabled)
+    .catch(() => false)
   const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }
   // La richiesta si salva subito: se la pagina si chiude, la risposta arriva lo stesso.
   await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
@@ -96,7 +102,7 @@ export async function POST(req: NextRequest) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
-      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions)
+      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions, { automations })
     })
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
