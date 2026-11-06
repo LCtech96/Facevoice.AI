@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { syncWorkspace } from '@/lib/saas/sync'
+import { processDueReplies } from '@/lib/saas/reply-queue'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -12,6 +13,8 @@ export async function POST(req: NextRequest) {
   const access = await requireWorkspace(req)
   if (access instanceof NextResponse) return access
   const force = req.nextUrl.searchParams.get('force') === '1'
+  // Risposte in coda gia' scadute di questo spazio (anche se il cron non gira), dopo la risposta.
+  after(() => processDueReplies({ workspaceId: access.workspace.id, limit: 5 }).catch(() => 0))
   try {
     return NextResponse.json(await syncWorkspace(access.workspace.id, { force }))
   } catch (error) {

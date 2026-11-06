@@ -3,12 +3,13 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { syncAllWorkspaces } from '@/lib/saas/sync'
 import { renewInstagramTokens } from '@/lib/saas/instagram'
 import { publishDuePosts } from '@/lib/saas/posts'
+import { processDueReplies } from '@/lib/saas/reply-queue'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Lavori periodici della piattaforma clienti: post programmati, caselle email,
-// rinnovo degli accessi Instagram. Le anteprime non hanno il cron di Vercel:
+// rinnovo degli accessi Instagram, risposte automatiche col ritardo. Le anteprime non hanno il cron di Vercel:
 // il sito vero, a ogni minuto, chiama questo indirizzo con una firma fatta con
 // la chiave dell'app Meta (uguale nei due ambienti), valida 5 minuti.
 
@@ -27,12 +28,16 @@ export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   // Risposta subito (chi chiama non aspetta): il lavoro prosegue dopo.
   after(async () => {
-    const [posts, mail, renewed] = await Promise.all([
+    const [posts, mail, renewed, replies] = await Promise.all([
       publishDuePosts().catch((error) => (console.error('saas cron post:', error), 0)),
       syncAllWorkspaces(4).catch((error) => (console.error('saas cron email:', error), null)),
       renewInstagramTokens().catch((error) => (console.error('saas cron instagram:', error), 0)),
+      // Anche quelle in scadenza entro il prossimo passaggio: partono all'ora prevista.
+      processDueReplies({ horizonMs: 55_000, limit: 30 }).catch((error) => (console.error('saas cron risposte:', error), 0)),
     ])
-    if (posts || renewed || mail?.inserted) console.log(`saas cron: ${posts} post, ${mail?.inserted ?? 0} email nuove, ${renewed} accessi rinnovati`)
+    if (posts || renewed || mail?.inserted || replies) {
+      console.log(`saas cron: ${posts} post, ${mail?.inserted ?? 0} email nuove, ${renewed} accessi rinnovati, ${replies} risposte in coda inviate`)
+    }
   })
   return NextResponse.json({ ok: true })
 }

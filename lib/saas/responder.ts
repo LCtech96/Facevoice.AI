@@ -9,6 +9,7 @@ import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
 import { listConnections } from './connections'
 import { sendEmailReply } from './email'
 import { sendMetaText } from './meta'
+import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, syncConversationHistory } from './meta-history'
 
 // Risposte AI per i clienti del SaaS. L'AI scrive come l'attivita' del cliente,
 // seguendo le sue istruzioni (generali + del canale). Se l'automazione del canale
@@ -66,7 +67,50 @@ export async function languageFor(workspaceId: string, current: string, previous
   return { language: await dashboardLanguage(workspaceId), source: 'dashboard' }
 }
 
-type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; created_at: string }
+type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; origin?: string | null; reply_to?: string | null; created_at: string }
+
+const PLATFORM_NAMES: Record<string, string> = { email: 'email', instagram: 'Instagram', facebook: 'Messenger', whatsapp: 'WhatsApp', web: 'chat del sito' }
+/** Messaggi nostri scritti da una persona (non dall'AI). */
+const HAND_ORIGINS = [APP_ORIGIN, 'manual', 'mailbox']
+
+const stamp = (iso: string) =>
+  new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+/**
+ * La conversazione in ordine, con chi ha scritto ogni messaggio: NOI (la nostra
+ * attivita', anche i messaggi scritti a mano dall'app) e PERSONA.
+ */
+export function conversationTranscript(rows: HistoryRow[], platform: string, options: { gapAfterFirst?: boolean } = {}): string {
+  const lines = rows.map((row, i) => {
+    const who = row.direction === 'in' ? 'PERSONA' : HAND_ORIGINS.includes(row.origin || '') ? 'NOI · scritto a mano' : 'NOI'
+    const gap = options.gapAfterFirst && i === 1 ? '[…messaggi più vecchi non mostrati…]\n\n' : ''
+    return `${gap}[${who} · ${stamp(row.created_at)}]\n${row.body.trim()}`
+  })
+  return [
+    `Conversazione su ${PLATFORM_NAMES[platform] || platform}, dal messaggio più vecchio al più recente. NOI = la nostra attività (messaggi già inviati, anche quelli scritti a mano dall’app). PERSONA = chi ci scrive.`,
+    lines.join('\n\n'),
+    'Scrivi ora il prossimo messaggio di NOI: rispondi all’ultimo messaggio della PERSONA. Solo il testo del messaggio, senza etichette.',
+  ].join('\n\n')
+}
+
+/** Istruzioni sul contesto: messaggi nostri gia' inviati e conversazione aperta da noi. */
+export function conversationRules(openedByUs: boolean): string {
+  const rules = [
+    '## Conversazione',
+    '- Leggi tutta la conversazione. I messaggi NOI sono nostri e sono già stati inviati: non ripeterli, non contraddirli e non presentarti di nuovo se lo abbiamo già fatto.',
+  ]
+  if (openedByUs) {
+    rules.push(
+      '- La conversazione l’abbiamo aperta NOI: il primo messaggio è la NOSTRA proposta. Continua da lì in modo naturale e rispondi alla domanda della persona su quella proposta.',
+      '- Non chiedere mai a cosa si riferisce e non ricominciare da zero con domande per capire chi è (es. "sei un creator o una struttura?"): lo sappiamo già, l’abbiamo contattata noi.',
+      '- Se un dettaglio (es. il nome del partner, l’indirizzo, una data) non è nella conversazione né nelle istruzioni, di’ che lo confermi a breve: non inventarlo.'
+    )
+  }
+  return rules.join('\n')
+}
+
+/** Toglie un'eventuale etichetta copiata dalla conversazione ("[NOI · ...]" o "NOI:"). */
+export const stripLabel = (text: string) => text.replace(/^\s*\[NOI[^\]\n]*\]\s*/, '').replace(/^\s*NOI\s*:\s*/, '')
 
 export async function workspaceName(workspaceId: string): Promise<string> {
   const { data } = await supabaseAdmin.from('workspaces').select('name').eq('id', workspaceId).maybeSingle()
@@ -88,7 +132,15 @@ export const BLOCKED_OUTCOME: ReplyOutcome = { status: 'skipped', reason: AI_BLO
  * Prepara (ed eventualmente invia) la risposta a un messaggio in arrivo.
  * Non risponde se l'automazione del canale e' spenta o se c'e' gia' una risposta dopo.
  */
-export async function respondToMessage(db: WorkspaceDb, messageId: string, options: { force?: boolean } = {}): Promise<ReplyOutcome> {
+export async function respondToMessage(
+  db: WorkspaceDb,
+  messageId: string,
+  options: {
+    force?: boolean
+    /** Controllo finale prima di salvare/inviare (es. coda: nessuno ha risposto a mano nel frattempo). */
+    stillWanted?: () => Promise<boolean>
+  } = {}
+): Promise<ReplyOutcome> {
   const { data: message } = await db
     .from('social_messages')
     .select('id, platform, kind, contact_id, contact_name, direction, body, subject, external_id, channel_account_id, created_at')
@@ -106,34 +158,81 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
   if (!hasAIProvider()) return { status: 'skipped', reason: 'AI non configurata' }
   if (await workspaceAIBlocked(db.workspaceId)) return BLOCKED_OUTCOME
 
+  // Messenger e Direct: se manca il nostro lato della chat (es. il primo messaggio
+  // scritto a mano dall'app) si legge da Meta. Mai bloccante.
+  await syncConversationHistory(db, {
+    platform: message.platform,
+    contactId: message.contact_id,
+    accountId: message.channel_account_id,
+    contactName: message.contact_name,
+  })
+
   // Gia' risposto o bozza gia' pronta dopo questo messaggio: niente doppioni.
-  const { count } = await db
-    .from('social_messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('platform', message.platform)
-    .eq('contact_id', message.contact_id)
-    .eq('kind', 'message')
-    .eq('direction', 'out')
-    .in('status', ['pending', 'sent'])
-    .gte('created_at', message.created_at)
-  if (count) return { status: 'skipped', reason: 'risposta già presente' }
+  // Una risposta scritta da una persona dopo il messaggio vale sempre (dall'app
+  // solo se non e' la risposta automatica di Meta, pochi secondi dopo); una
+  // dell'AI solo se risponde a questo messaggio o a uno piu' recente (l'AI che
+  // scriveva per un messaggio precedente non ha letto questo).
+  const answered = async () => {
+    const since = message.created_at as string
+    const automaticUntil = new Date(since).getTime() + AUTOMATIC_REPLY_GRACE_MS
+    const [{ data: replies }, { data: later }] = await Promise.all([
+      db
+        .from('social_messages')
+        .select('origin, reply_to, created_at')
+        .eq('platform', message.platform)
+        .eq('contact_id', message.contact_id)
+        .eq('kind', 'message')
+        .eq('direction', 'out')
+        .in('status', ['pending', 'sent', 'sending'])
+        .gte('created_at', since),
+      db
+        .from('social_messages')
+        .select('external_id')
+        .eq('platform', message.platform)
+        .eq('contact_id', message.contact_id)
+        .eq('kind', 'message')
+        .eq('direction', 'in')
+        .gte('created_at', since)
+        .limit(200),
+    ])
+    const covered = new Set([message.external_id, ...(later || []).map((row) => row.external_id)].filter(Boolean))
+    return (replies || []).some((row) =>
+      row.origin === APP_ORIGIN
+        ? new Date(row.created_at).getTime() >= automaticUntil
+        : !String(row.origin || '').startsWith('ai') || covered.has(row.reply_to)
+    )
+  }
+  if (await answered()) return { status: 'skipped', reason: 'risposta già presente' }
 
-  const { data: history } = await db
-    .from('social_messages')
-    .select('direction, body, status, created_at')
-    .eq('platform', message.platform)
-    .eq('contact_id', message.contact_id)
-    .eq('kind', 'message')
-    .lte('created_at', message.created_at)
-    .order('created_at', { ascending: false })
-    .limit(12)
-  const turns = ((history || []) as HistoryRow[])
-    .filter((row) => row.direction === 'in' || row.status === 'sent')
-    .reverse()
-    .map((row) => ({ role: row.direction === 'in' ? ('user' as const) : ('assistant' as const), content: row.body }))
-  if (!turns.length || turns[turns.length - 1].role !== 'user') turns.push({ role: 'user', content: message.body })
+  const conversation = () =>
+    db
+      .from('social_messages')
+      .select('direction, body, status, origin, reply_to, created_at')
+      .eq('platform', message.platform)
+      .eq('contact_id', message.contact_id)
+      .eq('kind', 'message')
+      // Solo messaggi ricevuti e risposte davvero inviate (non bozze o scartate).
+      .or('direction.eq.in,status.eq.sent')
+  const [{ data: history }, { data: first }, { data: firstIn }] = await Promise.all([
+    conversation().lte('created_at', message.created_at).order('created_at', { ascending: false }).limit(12),
+    conversation().order('created_at', { ascending: true }).limit(1).maybeSingle(),
+    conversation().eq('direction', 'in').order('created_at', { ascending: true }).limit(1).maybeSingle(),
+  ])
+  const rows = ((history || []) as HistoryRow[]).reverse()
+  // Chi ha aperto la conversazione: se siamo stati noi, il primo messaggio e' la nostra proposta.
+  // Non vale la risposta privata a un commento (li' ha scritto prima la persona) ne' la
+  // risposta automatica di Meta al primo messaggio della persona.
+  const opener = (first as HistoryRow | null) ?? rows[0]
+  const firstInAt = (firstIn as HistoryRow | null)?.created_at
+  const automaticOpener =
+    opener?.origin === APP_ORIGIN && Boolean(firstInAt) && looksAutomatic(new Date(opener.created_at).getTime(), [new Date(firstInAt as string).getTime()])
+  const openedByUs = opener?.direction === 'out' && !opener.reply_to && !automaticOpener
+  const openerShown = rows.some((row) => row.created_at === opener?.created_at && row.body === opener?.body)
+  if (openedByUs && opener && !openerShown) rows.unshift(opener)
+  if (!rows.length || rows[rows.length - 1].direction !== 'in') rows.push({ direction: 'in', body: message.body, status: null, created_at: message.created_at })
+  const turns = [{ role: 'user' as const, content: conversationTranscript(rows, message.platform, { gapAfterFirst: openedByUs && !openerShown }) }]
 
-  const inbound = ((history || []) as HistoryRow[]).filter((row) => row.direction === 'in').map((row) => row.body)
+  const inbound = rows.filter((row) => row.direction === 'in').map((row) => row.body)
   const [instructions, name, lang] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
@@ -156,6 +255,7 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
     `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
     specific ? `## Istruzioni per questo canale\n${specific}` : '',
     hasInstructions ? '' : 'Non hai istruzioni: rispondi in modo cortese e generico, ringrazia e di\' che verrà ricontattato a breve.',
+    conversationRules(openedByUs),
     buildRealtimeDateTimeInstructionsItalian(),
     RULES,
   ]
@@ -171,7 +271,7 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
       feature: channelFeature('saas_risposte', message.platform),
       workspaceId: db.workspaceId,
     })
-    draft = result.message.trim()
+    draft = stripLabel(result.message.trim())
   } catch (error) {
     if (isAIBlockedError(error)) return BLOCKED_OUTCOME
     console.error('saas responder:', error instanceof Error ? error.message : error)
@@ -179,6 +279,9 @@ export async function respondToMessage(db: WorkspaceDb, messageId: string, optio
   }
   const { text, reason } = parseSuspicious(draft)
   if (!text) return { status: 'failed', reason: 'risposta vuota' }
+  // Mentre l'AI scriveva ha risposto qualcuno (es. a mano dall'app): niente doppia risposta.
+  if (!options.force && (await answered())) return { status: 'skipped', reason: 'risposta già presente' }
+  if (options.stillWanted && !(await options.stillWanted())) return { status: 'skipped', reason: 'ha risposto una persona' }
 
   const autoSend = !options.force && channel?.reply_mode === 'auto' && !reason && hasInstructions
   const row = {

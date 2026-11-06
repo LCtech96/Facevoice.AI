@@ -216,6 +216,17 @@ export async function sendInstagramLoginText(connection: Connection, secret: Ins
   return { id: data.message_id || `ig:${Date.now()}` }
 }
 
+/** "Visto" o "sta scrivendo..." nel Direct (accesso di Instagram). */
+export async function sendInstagramLoginAction(connection: Connection, secret: InstagramSecret, recipientId: string, action: 'mark_seen' | 'typing_on'): Promise<void> {
+  const token = await tokenFor(connection, secret)
+  await fetch(`${IG_GRAPH}/me/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: recipientId }, sender_action: action }),
+    signal: AbortSignal.timeout(5_000),
+  })
+}
+
 export async function instagramLoginContactName(connection: Connection, secret: InstagramSecret, contactId: string): Promise<string | null> {
   const token = await tokenFor(connection, secret)
   const data = await igFetch<{ name?: string; username?: string }>(`${IG_GRAPH}/${contactId}?fields=name,username&access_token=${encodeURIComponent(token)}`)

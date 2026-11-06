@@ -330,7 +330,8 @@ export async function sendPrivateReply(db: WorkspaceDb, commentRowId: string, bo
   try {
     const connection = await connectionOf(db, comment.platform as CommentPlatform, comment.channel_account_id as string | null)
     const id = await replyPrivate(connection, comment.external_id as string, body)
-    await db.from('social_messages').insert({
+    // upsert: se l'"echo" di Meta e' arrivato prima, la riga diventa questa (risposta privata, non "dall'app").
+    await db.from('social_messages').upsert({
       platform: comment.platform,
       kind: 'message',
       direction: 'out',
@@ -342,7 +343,7 @@ export async function sendPrivateReply(db: WorkspaceDb, commentRowId: string, bo
       external_id: id,
       status: 'sent',
       origin: 'manual',
-    })
+    }, { onConflict: 'workspace_id,external_id' })
     return { ok: true }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'invio non riuscito'
