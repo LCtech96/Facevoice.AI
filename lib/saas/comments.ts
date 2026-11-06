@@ -7,7 +7,7 @@ import { listConnections, readConnectionSecret, type Connection } from './connec
 import { GRAPH, connectionForAccount, type MetaSecret } from './meta'
 import { IG_GRAPH, igFetch, instagramLoginToken } from './instagram'
 import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
-import { BLOCKED_OUTCOME, RULES, languageFor, readInstructions, workspaceName, type InstructionChannel, type ReplyOutcome } from './responder'
+import { BLOCKED_OUTCOME, RULES, languageFor, parseOwnerNote, readInstructions, salesRules, withNote, workspaceName, type InstructionChannel, type ReplyOutcome } from './responder'
 
 // Commenti sotto i post dei clienti (Instagram e Pagine Facebook): arrivano dal
 // webhook, finiscono nella pagina Commenti dello spazio e l'AI prepara (o invia)
@@ -171,8 +171,10 @@ export async function handleClientComment(platform: CommentPlatform, accountId: 
 
 const COMMENT_STYLE = `## Stai rispondendo a un COMMENTO PUBBLICO sotto un post dell'attività
 - Tutti possono leggere la risposta: massimo 1-2 frasi, tono cordiale e umano, un'emoji va bene se il commento ne ha.
-- Complimento o reazione positiva: ringrazia in modo caloroso e breve.
+- Complimento, emoji o reazione positiva: ringrazia in modo caloroso e breve, senza inviti e senza domande.
 - Domanda: rispondi in breve con le informazioni delle istruzioni e del post; per prezzi personalizzati, disponibilità o dati personali invita a scrivere in privato (Direct o Messenger).
+- Nei commenti il passo avanti verso l'obiettivo è un invito leggero a scriverci in Direct o Messenger, oppure il link che le istruzioni indicano (es. per iscriversi o prenotare), SOLO se il commento fa una domanda o mostra interesse (prezzi, date, come partecipare).
+- Se manca un dettaglio (prezzo, data, disponibilità…) non inventarlo: di' che lo confermate a breve in privato e aggiungi in fondo, su una riga a parte, [[DA CONFERMARE: cosa manca, in poche parole]] (la legge solo il titolare, non viene pubblicata).
 - Non chiedere né citare dati personali in pubblico.
 - Commento offensivo, spam, pubblicità di altri o un semplice tag di amici: rispondi solo con ${NO_REPLY}`
 
@@ -220,6 +222,7 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
     specific ? `## Istruzioni per questo canale\n${specific}` : '',
     hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
+    salesRules(name),
     buildRealtimeDateTimeInstructionsItalian(),
     RULES,
   ]
@@ -244,7 +247,10 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     await db.from('social_messages').update({ status: 'skipped' }).eq('id', comment.id)
     return { status: 'skipped', reason: 'nessuna risposta necessaria' }
   }
-  const { text, reason } = parseSuspicious(draft)
+  const suspicious = parseSuspicious(draft)
+  const reason = suspicious.reason
+  // Righe tecniche ([[DA CONFERMARE: …]] o altre) mai in un commento pubblico: la nota resta al titolare.
+  const { text, note } = parseOwnerNote(suspicious.text)
   if (!text) return { status: 'failed', reason: 'risposta vuota' }
 
   const autoSend = !options.force && mode === 'auto' && !reason && hasInstructions
@@ -261,13 +267,16 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
       channel_account_id: comment.channel_account_id,
       status: 'pending',
       origin: 'ai_auto',
-      error_message: reason
-        ? `Resta in bozza perché l’AI ha un dubbio: ${reason}`
-        : options.force
-          ? 'Bozza chiesta con ✨: non parte da sola.'
-          : mode === 'auto' && !hasInstructions
-            ? 'Resta in bozza perché le Istruzioni sono vuote: scrivile per attivare la risposta automatica.'
-            : null,
+      error_message: withNote(
+        reason
+          ? `Resta in bozza perché l’AI ha un dubbio: ${reason}`
+          : options.force
+            ? 'Bozza chiesta con ✨: non parte da sola.'
+            : mode === 'auto' && !hasInstructions
+              ? 'Resta in bozza perché le Istruzioni sono vuote: scrivile per attivare la risposta automatica.'
+              : null,
+        note
+      ),
     })
     .select('id')
     .single()
@@ -276,7 +285,8 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     return { status: 'failed', reason: 'bozza non salvata' }
   }
   if (!autoSend) return { status: 'pending', messageId: saved.id as string, reason: reason || undefined }
-  const sent = await deliverComment(db, saved.id as string, text, 'ai_auto')
+  // Pubblicata: la nota "Da confermare" resta sulla risposta, il titolare la vede nella pagina Commenti.
+  const sent = await deliverComment(db, saved.id as string, text, 'ai_auto', { note })
   return sent.ok ? { status: 'sent', messageId: saved.id as string } : { status: 'failed', reason: sent.error, messageId: saved.id as string }
 }
 
@@ -288,7 +298,14 @@ async function connectionOf(db: WorkspaceDb, platform: CommentPlatform, accountI
 }
 
 /** Pubblica una risposta a un commento gia' salvata come 'pending'. */
-export async function deliverComment(db: WorkspaceDb, draftId: string, body: string, origin: string): Promise<{ ok: boolean; error?: string }> {
+export async function deliverComment(
+  db: WorkspaceDb,
+  draftId: string,
+  body: string,
+  origin: string,
+  /** note: riga per il titolare che resta sulla risposta pubblicata (es. "Da confermare: …"). */
+  options: { note?: string | null } = {}
+): Promise<{ ok: boolean; error?: string }> {
   const { data: draft } = await db
     .from('social_messages')
     .select('id, platform, kind, reply_to, channel_account_id, status')
@@ -306,7 +323,7 @@ export async function deliverComment(db: WorkspaceDb, draftId: string, body: str
   try {
     const connection = await connectionOf(db, draft.platform as CommentPlatform, draft.channel_account_id as string | null)
     const id = await replyPublic(connection, draft.reply_to as string, body)
-    await db.from('social_messages').update({ status: 'sent', external_id: id, origin, error_message: null, created_at: new Date().toISOString() }).eq('id', draftId)
+    await db.from('social_messages').update({ status: 'sent', external_id: id, origin, error_message: options.note ?? null, created_at: new Date().toISOString() }).eq('id', draftId)
     return { ok: true }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'invio non riuscito'
@@ -320,7 +337,13 @@ export async function deliverComment(db: WorkspaceDb, draftId: string, body: str
  * Risposta privata a chi ha commentato: parte come messaggio Direct/Messenger
  * collegato al commento e resta nella conversazione dell'Omnichat.
  */
-export async function sendPrivateReply(db: WorkspaceDb, commentRowId: string, body: string): Promise<{ ok: boolean; error?: string }> {
+export async function sendPrivateReply(
+  db: WorkspaceDb,
+  commentRowId: string,
+  body: string,
+  /** Chi la manda: 'manual' dalla pagina Commenti, 'assistant' dall'Assistente AI. */
+  origin = 'manual'
+): Promise<{ ok: boolean; error?: string; externalId?: string }> {
   const { data: comment } = await db
     .from('social_messages')
     .select('id, platform, kind, direction, contact_id, contact_name, external_id, channel_account_id')
@@ -342,9 +365,9 @@ export async function sendPrivateReply(db: WorkspaceDb, commentRowId: string, bo
       channel_account_id: comment.channel_account_id,
       external_id: id,
       status: 'sent',
-      origin: 'manual',
+      origin,
     }, { onConflict: 'workspace_id,external_id' })
-    return { ok: true }
+    return { ok: true, externalId: id }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'invio non riuscito'
     console.error('saas risposta privata:', message)

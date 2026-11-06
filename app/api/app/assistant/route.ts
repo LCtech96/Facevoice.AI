@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAssistant } from '@/lib/assistant-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
-import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatTurn } from '@/lib/saas/assistant'
+import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
@@ -85,6 +85,9 @@ export async function POST(req: NextRequest) {
   await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
   let reply: ChatTurn
   let blocked = false
+  // Azioni gia' fatte (post, foto, messaggi inviati): restano in chat anche se un passo dopo va in errore,
+  // cosi' il cliente vede che il messaggio e' partito e non lo fa rimandare.
+  const actions: ChatAction[] = []
   try {
     // Ogni foto si legge una per una (nell'ordine di caricamento): l'assistente sa cosa mostra ciascuna.
     // Tutte le chiamate all'AI di questa richiesta contano per lo spazio (e per il limite del piano).
@@ -93,7 +96,7 @@ export async function POST(req: NextRequest) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
-      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target)
+      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions)
     })
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
@@ -101,7 +104,12 @@ export async function POST(req: NextRequest) {
     blocked = isAIBlockedError(error)
     if (!blocked) console.error('saas assistente:', error instanceof Error ? error.message : error)
     // Il testo dell'errore dice se e' finita l'AI del piano o se manca il piano.
-    reply = { role: 'assistant', text: blocked ? (error as Error).message : 'Qualcosa non è andato: riprova tra poco.', at: new Date().toISOString() }
+    reply = {
+      role: 'assistant',
+      text: blocked ? (error as Error).message : actions.length ? 'Mi sono fermato a metà: qui sotto quello che ho già fatto.' : 'Qualcosa non è andato: riprova tra poco.',
+      ...(actions.length ? { actions } : {}),
+      at: new Date().toISOString(),
+    }
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns, chatId)

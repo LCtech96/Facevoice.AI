@@ -106,15 +106,27 @@ export function looksLikeToolCall(raw: string): boolean {
   return /<\/?(function_calls|function_call|tool_call|tool_use|invoke)\b|"tool"\s*:|"tool_name"\s*:|"arguments"\s*:/i.test(raw || '')
 }
 
-/** Testo da mostrare in chat senza blocchi di codice, JSON o tag di strumenti. */
+/**
+ * Toglie l'enfasi markdown che la chat mostrerebbe cosi' com'e': **grassetto**, __grassetto__,
+ * *corsivo*, titoli con # a inizio riga. Restano @nomi_con_trattini, link e simboli normali.
+ */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '$1')
+    .replace(/(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1$2')
+    .replace(/(^|[\s(“"'])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?=$|[\s).,;:!?”"'])/gm, '$1$2')
+    .replace(/\*\*/g, '')
+}
+
+/** Testo da mostrare in chat senza blocchi di codice, JSON, tag di strumenti o markdown. */
 export function cleanReplyText(raw: string): string {
   let text = (raw || '').replace(/<(function_calls|function_call|tool_call|tool_use)\b[\s\S]*?<\/\1>/gi, ' ')
   text = text.replace(/```[\s\S]*?```/g, ' ')
   for (const span of balancedSpans(text)) {
     if (looksLikeToolCall(span) || /^\s*[[{]\s*"/.test(span)) text = text.replace(span, ' ')
   }
-  return text
-    .replace(/<\/?[a-z_]+>/gi, ' ')
+  return stripMarkdown(text.replace(/<\/?[a-z_]+>/gi, ' '))
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')

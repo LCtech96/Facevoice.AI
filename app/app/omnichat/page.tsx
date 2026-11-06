@@ -21,6 +21,8 @@ type Conversation = {
   last: { body: string; direction: 'in' | 'out'; at: string; status: string | null }
   unread: number
   pending: number
+  /** Risposta dell'AI gia' inviata con un dettaglio da confermare alla persona. */
+  toConfirm?: boolean
 }
 type Message = {
   id: string
@@ -97,6 +99,14 @@ export default function OmnichatPage() {
     },
     [appFetch, loadInbox]
   )
+
+  // Link dall'Assistente AI (?platform=…&contact=…): si apre subito quella conversazione.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const platform = params.get('platform')
+    const contactId = params.get('contact')
+    if (platform && contactId) setOpen({ platform, contactId })
+  }, [])
 
   useEffect(() => {
     loadChannels()
@@ -230,6 +240,7 @@ export default function OmnichatPage() {
                         <span className="mt-1 flex gap-2">
                           {c.unread > 0 && <span className="rounded-full bg-[var(--accent-blue)] px-2 text-[10px] text-white">{c.unread} nuovi</span>}
                           {c.pending > 0 && <span className="rounded-full bg-[#FF9500] px-2 text-[10px] text-white">bozza da approvare</span>}
+                          {c.toConfirm && <span className="rounded-full border border-[#FF9500] px-2 text-[10px] text-[#FF9500]">da confermare</span>}
                         </span>
                       </span>
                     </button>
@@ -387,8 +398,12 @@ function Thread({
                 {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
                 {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
                 {mine && m.origin === 'manual_app' ? ' · dall’app' : ''}
+                {mine && m.origin === 'assistant' ? ' · dall’Assistente' : ''}
                 {m.status === 'sending' ? ' · invio…' : ''}
               </p>
+              {mine && m.status === 'sent' && m.error_message?.startsWith('Da confermare') && (
+                <p className="mt-0.5 text-right text-[11px] font-medium text-[#FF9500]">{m.error_message}</p>
+              )}
             </div>
           )
         })}

@@ -259,6 +259,7 @@ function CommentCard({ comment, language, onChange, onNotice }: { comment: Comme
           <p translate="no" className="mt-1 whitespace-pre-wrap">
             {r.text}
           </p>
+          {r.note?.startsWith('Da confermare') && <p className="mt-1 text-[11px] font-medium text-[#FF9500]">{r.note}</p>}
         </div>
       ))}
 

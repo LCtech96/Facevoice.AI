@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, MessageCircle, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
@@ -40,7 +40,9 @@ type Post = {
   snapshot?: boolean
   sameAsLive?: boolean
 }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string }
+/** Messaggio inviato dall'assistente a chi ci aveva scritto (send_message). */
+type SentAction = { kind: 'message'; platform: string; contactId: string; name: string; text: string; subject?: string; via: 'dm' | 'comment' | 'email'; at: string }
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -343,7 +345,9 @@ function AssistantChat() {
                 <div className="min-w-0 flex-1">
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
                   {turn.actions?.map((action, k) =>
-                    action.kind === 'post' ? (
+                    action.kind === 'message' ? (
+                      <SentMessageCard key={`m${k}`} action={action} />
+                    ) : action.kind === 'post' ? (
                       action.post.snapshot ? (
                         <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} model={model} chatId={chatId} onTurns={setTurns} onReload={load} />
                       ) : (
@@ -1074,6 +1078,37 @@ function SnapshotCard({
         </button>
       )}
       {busy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Per le versioni di prima rileggo i testi delle slide: ci vuole fino a un minuto.</p>}
+    </div>
+  )
+}
+
+const CHANNEL_NAMES: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', email: 'email', whatsapp: 'WhatsApp' }
+const CHANNEL_ICONS: Record<string, typeof Mail> = { instagram: Instagram, facebook: Facebook, email: Mail, whatsapp: MessageCircle }
+
+/** Messaggio partito dall'assistente: a chi, su quale canale, il testo e il link alla conversazione. */
+function SentMessageCard({ action }: { action: SentAction }) {
+  const Icon = CHANNEL_ICONS[action.platform] || MessageCircle
+  const href = `/app/omnichat?${new URLSearchParams({ platform: action.platform, contact: action.contactId })}`
+  return (
+    <div className="mt-3 w-full max-w-md rounded-2xl border border-[var(--border-color)] p-3">
+      <p className="flex items-start gap-2 text-sm font-semibold">
+        <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />
+        <span className="min-w-0">
+          Messaggio inviato a <span translate="no">{action.name}</span> su {CHANNEL_NAMES[action.platform] || action.platform}
+          {action.via === 'comment' ? <span className="font-normal text-[var(--text-secondary)]"> · risposta privata al commento</span> : null}
+        </span>
+      </p>
+      {action.subject ? (
+        <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
+          Oggetto: <span translate="no">{action.subject}</span>
+        </p>
+      ) : null}
+      <p translate="no" className="mt-2 whitespace-pre-wrap break-words rounded-2xl bg-[var(--accent-blue)] px-3 py-2 text-sm text-white">
+        {action.text}
+      </p>
+      <Link href={href} className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
+        <Icon className="h-4 w-4" /> Apri la conversazione in Omnichat
+      </Link>
     </div>
   )
 }
