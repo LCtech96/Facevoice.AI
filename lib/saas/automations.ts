@@ -360,7 +360,8 @@ export async function readDayCount(workspaceId: string, now = Date.now()): Promi
   return countFrom((await readSetting(countKey(workspaceId))).value, romeDay(now))
 }
 
-async function appendLog(workspaceId: string, entries: Omit<AutomationLogEntry, 'id'>[]): Promise<void> {
+/** Aggiunge invii al registro (anche quelli di Trova clienti, lib/saas/prospects.ts). */
+export async function appendLog(workspaceId: string, entries: Omit<AutomationLogEntry, 'id'>[]): Promise<void> {
   if (!entries.length) return
   const withIds = entries.map((e) => ({ id: randomUUID(), ...e }))
   await updateSetting<AutomationLogEntry[]>(logKey(workspaceId), parseLog, (log) => [...log, ...withIds].slice(-MAX_LOG)).catch((error) =>
@@ -386,7 +387,7 @@ export async function reserveDaily(workspaceId: string, now = Date.now()): Promi
 }
 
 /** Restituisce un'email del limite (invio non riuscito: non conta). */
-async function releaseDaily(workspaceId: string, now = Date.now()): Promise<void> {
+export async function releaseDaily(workspaceId: string, now = Date.now()): Promise<void> {
   const today = romeDay(now)
   await updateSetting<DayCount>(countKey(workspaceId), (raw) => countFrom(raw, today), (current) =>
     current.used > 0 ? { day: today, used: current.used - 1 } : false
@@ -426,8 +427,11 @@ export async function automationsOverview(db: WorkspaceDb, now = Date.now()): Pr
   }
 }
 
-/** Email previste in un giorno dalle automazioni attive (per avvisare oltre il limite). */
-function capacityWarning(list: Automation[], now: number, used: number): string | null {
+/**
+ * Email previste in un giorno dalle automazioni attive (per avvisare oltre il limite).
+ * extra: email di Trova clienti nei giorni scelti (lib/saas/prospects.ts), nello stesso limite.
+ */
+export function capacityWarning(list: Automation[], now: number, used: number, extra?: { perDay: number; days: number[] }): string | null {
   const active = list.filter((a) => a.active && !a.done)
   let peak = 0
   let peakLabel = ''
@@ -443,13 +447,14 @@ function capacityWarning(list: Automation[], now: number, used: number): string 
       } else if (romeDay(Date.parse(a.schedule.at)) === key) total += a.recipients.length
     }
     if (k === 0) total += used
+    if (extra && runsOn(extra.days, day.wd)) total += extra.perDay
     if (total > peak) {
       peak = total
       peakLabel = k === 0 ? 'oggi' : new Date(Date.UTC(day.y, day.mo - 1, day.d, 12)).toLocaleDateString('it-IT', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' })
     }
   }
   return peak > AUTOMATIONS_DAILY_LIMIT
-    ? `Attenzione: ${peakLabel} sono previste ${peak} email, il limite è ${AUTOMATIONS_DAILY_LIMIT} al giorno. Quelle in più non partono.`
+    ? `Attenzione: ${peakLabel} sono previste ${peak} email${extra ? ' (programmate e Trova clienti)' : ''}, il limite è ${AUTOMATIONS_DAILY_LIMIT} al giorno. Quelle in più non partono.`
     : null
 }
 
@@ -616,7 +621,7 @@ Rispondi SOLO con JSON: {"subject": "oggetto breve", "body": "testo dell'email"}
 // --- Invio ---------------------------------------------------------------------------------
 
 /** Motivo di un invio non riuscito, comprensibile per il cliente (mai credenziali). */
-function sendError(error: unknown): string {
+export function sendError(error: unknown): string {
   const raw = error instanceof Error ? `${error.message} ${(error as { response?: string }).response || ''}` : String(error)
   if (/\b55[0-4]\b|5\.1\.[0-9]|recipient|user unknown|mailbox unavailable|no such user|does not exist/i.test(raw)) return 'indirizzo rifiutato dal server di posta'
   if (/credenziali del collegamento/i.test(raw)) return 'casella email da ricollegare'

@@ -3,6 +3,7 @@ import { FACEVOICE_WORKSPACE_ID, workspaceDb } from '@/lib/workspace-db'
 import { listConnections, type Connection } from './connections'
 import { syncMailbox, type EmailMeta } from './email'
 import { scheduleReply } from './reply-queue'
+import { noteProspectReplies } from './prospects'
 
 // Lettura periodica delle caselle email dei clienti: dal cron ogni minuto in
 // produzione e dall'omnichat quando e' aperta (le anteprime non hanno il cron).
@@ -27,7 +28,13 @@ export async function syncWorkspace(workspaceId: string, options: { force?: bool
     const { inserted, error } = await syncMailbox(db, connection)
     if (error) result.errors.push(`${connection.external_id}: ${error}`)
     result.inserted += inserted.length
-    for (const id of inserted.slice(-MAX_REPLIES_PER_RUN)) {
+    // Risposte delle aziende contattate con Trova clienti: chi chiede di non essere piu' contattato
+    // va nella lista Non contattare e non riceve una risposta automatica.
+    const optOuts = await noteProspectReplies(db, inserted).catch((err) => {
+      console.warn('trova clienti risposte:', err instanceof Error ? err.message : err)
+      return new Set<string>()
+    })
+    for (const id of inserted.filter((m) => !optOuts.has(m)).slice(-MAX_REPLIES_PER_RUN)) {
       // Subito, o in coda con il ritardo scelto dal cliente (la manda il cron).
       const scheduled = await scheduleReply(db, id)
       if (scheduled.status === 'queued' || scheduled.outcome.status === 'sent' || scheduled.outcome.status === 'pending') result.replies++

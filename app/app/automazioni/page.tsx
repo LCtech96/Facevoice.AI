@@ -2,16 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Check, Clock, Loader2, Lock, Mail, MessageCircle, Mic, PencilLine, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { AlertTriangle, Check, Clock, Loader2, Lock, Mail, MessageCircle, Mic, PencilLine, Plus, Search, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { AUTOMATIONS_DAILY_LIMIT, MAX_RECIPIENTS, WEEKDAYS, parseRecipients } from '@/lib/automations-shared'
+import TrovaClienti from './TrovaClienti'
 
 // Automazioni: email programmate (un orario ogni giorno, nei giorni scelti o una volta
-// sola) che partono dalla casella email collegata dal cliente, una per destinatario.
-// Al massimo 20 al giorno. Solo per chi ce l'ha attiva (la accende Facevoice dal suo
-// pannello): agli altri la pagina dice come chiederla. Si comandano anche dall'Assistente.
+// sola) che partono dalla casella email collegata dal cliente, una per destinatario, e
+// "Trova clienti" (TrovaClienti.tsx: aziende trovate su Google Maps e prime email scritte
+// dall'AI). Al massimo 20 email al giorno in tutto. Solo per chi ce l'ha attiva (la accende
+// Facevoice dal suo pannello): agli altri la pagina dice come chiederla. Si comandano anche
+// dall'Assistente.
 
 type Content = { mode: 'fixed'; body: string } | { mode: 'ai'; brief: string }
 type Schedule = { kind: 'daily'; time: string; days: number[] } | { kind: 'once'; at: string }
@@ -161,7 +164,22 @@ function AutomationsBoard() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'warn' | 'error' } | null>(null)
   const [showAll, setShowAll] = useState(false)
+  // Sezione aperta: email programmate o Trova clienti (#trova-clienti nell'indirizzo).
+  const [tab, setTab] = useState<'email' | 'clienti'>('email')
   const canManage = data?.canManage ?? workspace?.role !== 'member'
+
+  useEffect(() => {
+    if (window.location.hash === '#trova-clienti') setTab('clienti')
+  }, [])
+  const openTab = (next: 'email' | 'clienti') => {
+    setTab(next)
+    setNotice(null)
+    try {
+      window.history.replaceState(null, '', next === 'clienti' ? '#trova-clienti' : window.location.pathname + window.location.search)
+    } catch {}
+  }
+  // Le email di Trova clienti contano nello stesso limite: il contatore in alto resta giusto.
+  const onToday = useCallback((today: { used: number; limit: number }) => setData((d) => (d && (d.today.used !== today.used || d.today.limit !== today.limit) ? { ...d, today } : d)), [])
 
   const load = useCallback(async () => {
     const res = await appFetch('/api/app/automations').catch(() => null)
@@ -243,7 +261,7 @@ function AutomationsBoard() {
           <h1 className="flex items-center gap-2 text-3xl font-extrabold">
             <Zap className="h-6 w-6 text-[var(--accent-blue)]" /> Automazioni
           </h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">Email che partono da sole, all’ora che scegli.</p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">{tab === 'clienti' ? 'Trova aziende a cui scrivere e manda la prima email.' : 'Email che partono da sole, all’ora che scegli.'}</p>
         </div>
         <span
           className={`mt-1 shrink-0 rounded-full border px-3 py-1 text-sm font-semibold ${
@@ -255,107 +273,132 @@ function AutomationsBoard() {
         </span>
       </div>
 
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
-        {mailbox ? (
-          <p className="flex min-w-0 items-center gap-2 text-sm">
-            <Mail className="h-4 w-4 shrink-0 text-[var(--accent-blue)]" />
-            <span className="shrink-0 text-[var(--text-secondary)]">Invia da:</span>
-            <span translate="no" className="truncate font-semibold">
-              {mailbox.email}
-            </span>
-            {mailbox.status !== 'connected' && <span className="shrink-0 text-xs text-[#FF9500]">da ricollegare</span>}
-          </p>
-        ) : (
-          <div className="text-sm">
-            <p className="flex items-center gap-2 font-semibold">
-              <AlertTriangle className="h-4 w-4 text-[#FF9500]" /> Nessuna email collegata
-            </p>
-            <p className="mt-1 text-[var(--text-secondary)]">Le automazioni partono dalla tua casella: collegala per attivarle.</p>
-            <Link href="/app/canali/email" className="mt-2 inline-block font-semibold text-[var(--accent-blue)]">
-              Collega la tua email →
-            </Link>
-          </div>
-        )}
-        <p className="mt-2 text-xs text-[var(--text-secondary)]">Invia solo a chi ti ha dato il consenso.</p>
-        {full && <p className="mt-1 text-xs text-[#FF3B30]">Oggi hai raggiunto il limite di {limit} email: le altre partono da domani.</p>}
-      </div>
-
-      {notice && (
-        <p className={`rounded-xl px-3 py-2 text-sm ${notice.tone === 'error' ? 'bg-[#FF3B30]/10 text-[#ff6b6b]' : notice.tone === 'warn' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}>
-          {notice.text}
-        </p>
-      )}
-
-      {canManage ? (
-        <button
-          onClick={() => {
-            setNotice(null)
-            setEditing(emptyDraft())
-          }}
-          disabled={!mailbox}
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-3 font-bold text-white disabled:opacity-50 md:w-auto"
-        >
-          <Plus className="h-5 w-5" /> Nuova automazione
-        </button>
-      ) : (
-        <p className="text-sm text-[var(--text-secondary)]">Solo gli amministratori dello spazio possono modificare le automazioni.</p>
-      )}
-
-      <div className="space-y-3">
-        {!data.automations?.length ? (
-          <p className="rounded-2xl border border-dashed border-[var(--border-color)] p-4 text-sm text-[var(--text-secondary)]">
-            Nessuna automazione. Creane una qui o chiedila all’Assistente (es. «manda ogni lunedì alle 9 un’email a…»).
-          </p>
-        ) : (
-          data.automations.map((a) => (
-            <AutomationCard
-              key={a.id}
-              a={a}
-              language={language}
-              canManage={canManage}
-              canActivate={Boolean(mailbox)}
-              busy={busyId === a.id}
-              onToggle={() => toggle(a)}
-              onEdit={() => {
-                setNotice(null)
-                setEditing(draftOf(a))
-              }}
-              onDelete={() => remove(a)}
-            />
-          ))
-        )}
-      </div>
-
-      <section className="pt-2">
-        <h2 className="text-lg font-bold">Ultimi invii</h2>
-        {!entries.length ? (
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">Ancora nessun invio.</p>
-        ) : (
-          <ul className="mt-2 divide-y divide-[var(--border-color)] rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)]">
-            {log.map((e) => (
-              <LogRow key={e.id} entry={e} language={language} />
-            ))}
-          </ul>
-        )}
-        {entries.length > 15 && !showAll && (
-          <button onClick={() => setShowAll(true)} className="mt-2 text-sm font-medium text-[var(--accent-blue)]">
-            Mostra tutti ({entries.length})
+      <div role="tablist" aria-label="Sezioni delle automazioni" className="grid grid-cols-2 gap-1 rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] p-1">
+        {(
+          [
+            ['email', 'Email programmate', Clock],
+            ['clienti', 'Trova clienti', Search],
+          ] as const
+        ).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => openTab(key)}
+            className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2 text-sm font-semibold ${tab === key ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
+          >
+            <Icon className="hidden h-4 w-4 shrink-0 sm:block" /> <span className="whitespace-nowrap">{label}</span>
           </button>
-        )}
-      </section>
+        ))}
+      </div>
 
-      {editing && (
-        <AutomationSheet
-          draft={editing}
-          mailbox={mailbox?.email || null}
-          onClose={() => setEditing(null)}
-          onSaved={(body, message, tone) => {
-            merge(body)
-            setEditing(null)
-            setNotice({ text: message, tone })
-          }}
-          onOverview={merge}
-        />
+      {tab === 'clienti' ? (
+        <TrovaClienti language={language} onToday={onToday} />
+      ) : (
+        <>
+          <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+            {mailbox ? (
+              <p className="flex min-w-0 items-center gap-2 text-sm">
+                <Mail className="h-4 w-4 shrink-0 text-[var(--accent-blue)]" />
+                <span className="shrink-0 text-[var(--text-secondary)]">Invia da:</span>
+                <span translate="no" className="truncate font-semibold">
+                  {mailbox.email}
+                </span>
+                {mailbox.status !== 'connected' && <span className="shrink-0 text-xs text-[#FF9500]">da ricollegare</span>}
+              </p>
+            ) : (
+              <div className="text-sm">
+                <p className="flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="h-4 w-4 text-[#FF9500]" /> Nessuna email collegata
+                </p>
+                <p className="mt-1 text-[var(--text-secondary)]">Le automazioni partono dalla tua casella: collegala per attivarle.</p>
+                <Link href="/app/canali/email" className="mt-2 inline-block font-semibold text-[var(--accent-blue)]">
+                  Collega la tua email →
+                </Link>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">Invia solo a chi ti ha dato il consenso.</p>
+            {full && <p className="mt-1 text-xs text-[#FF3B30]">Oggi hai raggiunto il limite di {limit} email: le altre partono da domani.</p>}
+          </div>
+
+          {notice && (
+            <p className={`rounded-xl px-3 py-2 text-sm ${notice.tone === 'error' ? 'bg-[#FF3B30]/10 text-[#ff6b6b]' : notice.tone === 'warn' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}>
+              {notice.text}
+            </p>
+          )}
+
+          {canManage ? (
+            <button
+              onClick={() => {
+                setNotice(null)
+                setEditing(emptyDraft())
+              }}
+              disabled={!mailbox}
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-3 font-bold text-white disabled:opacity-50 md:w-auto"
+            >
+              <Plus className="h-5 w-5" /> Nuova automazione
+            </button>
+          ) : (
+            <p className="text-sm text-[var(--text-secondary)]">Solo gli amministratori dello spazio possono modificare le automazioni.</p>
+          )}
+
+          <div className="space-y-3">
+            {!data.automations?.length ? (
+              <p className="rounded-2xl border border-dashed border-[var(--border-color)] p-4 text-sm text-[var(--text-secondary)]">
+                Nessuna automazione. Creane una qui o chiedila all’Assistente (es. «manda ogni lunedì alle 9 un’email a…»).
+              </p>
+            ) : (
+              data.automations.map((a) => (
+                <AutomationCard
+                  key={a.id}
+                  a={a}
+                  language={language}
+                  canManage={canManage}
+                  canActivate={Boolean(mailbox)}
+                  busy={busyId === a.id}
+                  onToggle={() => toggle(a)}
+                  onEdit={() => {
+                    setNotice(null)
+                    setEditing(draftOf(a))
+                  }}
+                  onDelete={() => remove(a)}
+                />
+              ))
+            )}
+          </div>
+
+          <section className="pt-2">
+            <h2 className="text-lg font-bold">Ultimi invii</h2>
+            {!entries.length ? (
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">Ancora nessun invio.</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-[var(--border-color)] rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)]">
+                {log.map((e) => (
+                  <LogRow key={e.id} entry={e} language={language} />
+                ))}
+              </ul>
+            )}
+            {entries.length > 15 && !showAll && (
+              <button onClick={() => setShowAll(true)} className="mt-2 text-sm font-medium text-[var(--accent-blue)]">
+                Mostra tutti ({entries.length})
+              </button>
+            )}
+          </section>
+
+          {editing && (
+            <AutomationSheet
+              draft={editing}
+              mailbox={mailbox?.email || null}
+              onClose={() => setEditing(null)}
+              onSaved={(body, message, tone) => {
+                merge(body)
+                setEditing(null)
+                setNotice({ text: message, tone })
+              }}
+              onOverview={merge}
+            />
+          )}
+        </>
       )}
     </div>
   )

@@ -209,6 +209,7 @@ export const CONNECTIONS = {
   web: 'Chat del sito',
   assistant: 'Assistente',
   content: 'Post e caroselli',
+  prospecting: 'Trova clienti',
   other: 'Altro',
 } as const
 export type ConnectionKey = keyof typeof CONNECTIONS
@@ -241,6 +242,9 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   saas_ricerca_web: 'content',
   // Automazioni: email scritte dall'AI a ogni invio (lib/saas/automations.ts).
   saas_automazioni: 'email',
+  // Trova clienti: ricerche pensate e prime email scritte dall'AI, richieste a Google Maps (lib/saas/prospects.ts, lib/saas/places.ts).
+  saas_trova_clienti: 'prospecting',
+  saas_trova_clienti_maps: 'prospecting',
   // Funzioni dello spazio Facevoice (se compaiono in uno spazio cliente).
   chat_sito: 'web',
   risposte_email: 'email',

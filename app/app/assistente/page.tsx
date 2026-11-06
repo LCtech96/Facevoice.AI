@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Pause, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Pause, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Search, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
@@ -55,7 +55,14 @@ type AutomationAction = {
   at: string
   automation: { id: string; name: string; recipients: string[]; subject: string; mode: 'fixed' | 'ai'; when: string; nextRun: string | null; active: boolean; from: string }
 }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction
+/** Trova clienti: impostazioni salvate, ricerca avviata, prima email approvata, inviata o scartata dall'assistente. */
+type ProspectAction = {
+  kind: 'prospect'
+  op: 'settings' | 'search' | 'approved' | 'sent' | 'discarded' | 'blocked'
+  at: string
+  prospect: { name: string; id?: string; email?: string | null; subject?: string | null; count?: number; note?: string }
+}
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -364,6 +371,8 @@ function AssistantChat() {
                       <SentMessageCard key={`m${k}`} action={action} />
                     ) : action.kind === 'automation' ? (
                       <AutomationActionCard key={`a${k}`} action={action} />
+                    ) : action.kind === 'prospect' ? (
+                      <ProspectActionCard key={`p${k}`} action={action} />
                     ) : action.kind === 'web_images' ? (
                       // Con il post fatto da queste immagini basta l'anteprima (con le fonti sotto).
                       turn.actions?.some((a) => a.kind === 'post') ? null : (
@@ -1178,6 +1187,47 @@ function SentMessageCard({ action }: { action: SentAction }) {
       </p>
       <Link href={href} className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
         <Icon className="h-4 w-4" /> Apri la conversazione in Omnichat
+      </Link>
+    </div>
+  )
+}
+
+const PROSPECT_TITLES: Record<ProspectAction['op'], string> = {
+  settings: 'Trova clienti salvato',
+  search: 'Ricerca avviata',
+  approved: 'Email approvata, parte al prossimo invio',
+  sent: 'Email inviata',
+  discarded: 'Email scartata',
+  blocked: 'Non contattare',
+}
+
+function ProspectActionCard({ action }: { action: ProspectAction }) {
+  const p = action.prospect
+  const good = action.op === 'sent' || action.op === 'approved' || action.op === 'settings'
+  return (
+    <div className="mt-3 w-full max-w-md rounded-2xl border border-[var(--border-color)] p-3">
+      <p className="flex items-start gap-2 text-sm font-semibold">
+        {good ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" /> : action.op === 'search' ? <Search className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-blue)]" /> : <Trash2 className="mt-0.5 h-4 w-4 shrink-0 text-[#ff6b6b]" />}
+        <span className="min-w-0">
+          {PROSPECT_TITLES[action.op]}
+          {p.count ? ` (${p.count})` : ''}: <span translate="no">{p.name}</span>
+        </span>
+      </p>
+      <div className="mt-2 space-y-1 text-xs text-[var(--text-secondary)]">
+        {p.email ? (
+          <p className="truncate">
+            A: <span translate="no" className="text-[var(--text-primary)]">{p.email}</span>
+          </p>
+        ) : null}
+        {p.subject ? (
+          <p className="truncate">
+            Oggetto: <span translate="no">{p.subject}</span>
+          </p>
+        ) : null}
+        {p.note ? <p>{p.note}</p> : null}
+      </div>
+      <Link href="/app/automazioni#trova-clienti" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
+        <Zap className="h-4 w-4" /> Apri Trova clienti
       </Link>
     </div>
   )
