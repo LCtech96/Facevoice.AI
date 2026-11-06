@@ -7,10 +7,12 @@ import { readSetting, updateSetting } from '@/lib/settings-store'
 //
 //   app_settings campaign:<spazio> = Campaign (JSON)
 //
-// Le risposte scritte con la campagna si segnano (per il chip "Campagna" nell'Omnichat
-// e nei Commenti) senza toccare le tabelle:
+// Le risposte scritte con la campagna si segnano (chip "Campagna" nell'Omnichat e nei
+// Commenti; correzioni e bozze modificate di quelle risposte valgono solo per la
+// campagna) senza toccare le tabelle:
 //
-//   app_settings campaign_replies:<spazio> = [{ id, name, at }] (le ultime 300)
+//   app_settings campaign_replies:<spazio> = { marks: [{ id, name, at, since }], horizon }
+//   (segni degli ultimi 60 giorni, al massimo 2000; horizon = ora dell'ultimo segno tolto)
 //
 // Canali e superfici: email (risposte email), instagram_dm e instagram_comments,
 // facebook_messenger e facebook_comments. WhatsApp e chat del sito: sempre Istruzioni.
@@ -28,8 +30,9 @@ export type Campaign = {
   text: string
   scopes: CampaignScopes
   /**
-   * Da quando vale questa campagna (accesa, oppure testo cambiato mentre era accesa):
-   * le correzioni della chat fatte dopo quest'ora valgono piu' della campagna.
+   * Da quando vale questa campagna (accesa, oppure testo cambiato mentre era accesa). Fa
+   * anche da "numero" della campagna: le risposte scritte con lei lo tengono nel segno, e
+   * le correzioni di quelle risposte valgono piu' della campagna solo finche' e' lo stesso.
    */
   activeSince: string | null
   updatedAt: string | null
@@ -246,41 +249,78 @@ export function campaignSection(campaign: Campaign, platform: string, surface: R
 
 // --- Risposte scritte con la campagna (chip "Campagna") --------------------------------
 
-export type CampaignMark = { id: string; name: string; at: string }
-const MAX_MARKS = 300
+/** since = activeSince della campagna con cui e' stata scritta la risposta. */
+export type CampaignMark = { id: string; name: string; at: string; since: string }
+type CampaignMarks = { marks: CampaignMark[]; horizon: string | null }
+/**
+ * Segni tenuti: 60 giorni (una bozza o una correzione arrivano molto prima), al massimo 2000.
+ * horizon: ora del segno tolto piu' recente; una risposta di prima di quest'ora senza segno
+ * potrebbe averlo perso, quindi non si sa se era della campagna.
+ */
+const MARK_DAYS = 60
+const MAX_MARKS = 2000
+const DAY_MS = 86_400_000
 
-function parseMarks(raw: string | null): CampaignMark[] {
-  if (!raw) return []
+function parseMarks(raw: string | null): CampaignMarks {
+  if (!raw) return { marks: [], horizon: null }
   try {
     const value = JSON.parse(raw)
-    return Array.isArray(value)
-      ? value.filter((m): m is CampaignMark => Boolean(m) && typeof m.id === 'string' && typeof m.at === 'string').map((m) => ({ id: m.id, name: str(m.name, MAX_CAMPAIGN_NAME), at: m.at }))
-      : []
+    const list: unknown[] = Array.isArray(value) ? value : Array.isArray(value?.marks) ? value.marks : []
+    return {
+      marks: list
+        .filter((m): m is CampaignMark => Boolean(m) && typeof (m as CampaignMark).id === 'string' && typeof (m as CampaignMark).at === 'string')
+        .map((m) => ({ id: m.id, name: str(m.name, MAX_CAMPAIGN_NAME), at: m.at, since: typeof m.since === 'string' ? m.since : '' })),
+      horizon: !Array.isArray(value) && typeof value?.horizon === 'string' ? value.horizon : null,
+    }
   } catch {
-    return []
+    return { marks: [], horizon: null }
   }
 }
 
 /** Segna una risposta (bozza o inviata) scritta con la campagna. Mai bloccante. */
-export async function markCampaignReply(workspaceId: string, messageId: string, campaign: Pick<Campaign, 'name'>): Promise<void> {
+export async function markCampaignReply(workspaceId: string, messageId: string, campaign: Pick<Campaign, 'name' | 'activeSince'>): Promise<void> {
   try {
-    await updateSetting(campaignRepliesKey(workspaceId), parseMarks, (list) => [
-      { id: messageId, name: campaign.name.trim(), at: new Date().toISOString() },
-      ...list.filter((m) => m.id !== messageId),
-    ].slice(0, MAX_MARKS))
+    await updateSetting(campaignRepliesKey(workspaceId), parseMarks, (store) => {
+      const now = new Date()
+      const cutoff = new Date(now.getTime() - MARK_DAYS * DAY_MS).toISOString()
+      const all = [
+        { id: messageId, name: campaign.name.trim(), at: now.toISOString(), since: campaign.activeSince || '' },
+        ...store.marks.filter((m) => m.id !== messageId),
+      ]
+      const marks = all.filter((m) => m.at >= cutoff).slice(0, MAX_MARKS)
+      const kept = new Set(marks)
+      const horizon = all.filter((m) => !kept.has(m)).reduce<string | null>((h, m) => (!h || m.at > h ? m.at : h), store.horizon)
+      return { marks, horizon }
+    })
   } catch (error) {
     console.warn('saas campagna (segno risposta):', error instanceof Error ? error.message : error)
   }
 }
 
-/** Risposte scritte con la campagna, tra quelle indicate: id → nome della campagna ('' se senza nome). */
+/** Risposte scritte con la campagna, tra quelle indicate: id → nome della campagna ('' se senza nome). Solo per i chip: errore = nessun chip. */
 export async function campaignMarks(workspaceId: string, ids: string[]): Promise<Map<string, string>> {
   if (!ids.length) return new Map()
   try {
     const wanted = new Set(ids)
     const { value } = await readSetting(campaignRepliesKey(workspaceId))
-    return new Map(parseMarks(value).filter((m) => wanted.has(m.id)).map((m) => [m.id, m.name]))
+    return new Map(parseMarks(value).marks.filter((m) => wanted.has(m.id)).map((m) => [m.id, m.name]))
   } catch {
     return new Map()
   }
+}
+
+/**
+ * Con quale campagna e' stata scritta una risposta: { since } (activeSince di quella
+ * campagna), null = con le Istruzioni, 'unknown' = non si sa (risposta piu' vecchia dei
+ * segni tenuti). createdAt: created_at della risposta. Errore del database = errore.
+ */
+export async function campaignOfReply(workspaceId: string, messageId: string, createdAt: string | null | undefined): Promise<{ since: string } | null | 'unknown'> {
+  const { value } = await readSetting(campaignRepliesKey(workspaceId))
+  const store = parseMarks(value)
+  const mark = store.marks.find((m) => m.id === messageId)
+  if (mark) return { since: mark.since }
+  if (!store.horizon) return null
+  // Un minuto di margine: il segno si scrive subito dopo la risposta.
+  const created = createdAt ? new Date(createdAt).getTime() : NaN
+  return Number.isFinite(created) && created > new Date(store.horizon).getTime() + 60_000 ? null : 'unknown'
 }

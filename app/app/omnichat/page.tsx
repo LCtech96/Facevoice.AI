@@ -116,18 +116,23 @@ export default function OmnichatPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [delay, setDelay] = useState<ReplyDelay | null>(null)
   const [campaign, setCampaign] = useState<Campaign | null>(null)
+  /** Spazio a cui appartiene la campagna letta (cambiando spazio la scheda riparte da zero). */
+  const [campaignWs, setCampaignWs] = useState<string | null>(null)
   const [campaignChannels, setCampaignChannels] = useState<string[]>([])
   const [campaignOpen, setCampaignOpen] = useState(false)
   const canManage = workspace?.role !== 'member'
 
+  const workspaceId = workspace?.id ?? null
   const loadCampaign = useCallback(async () => {
     const res = await appFetch('/api/app/campaign').catch(() => null)
     if (!res?.ok) return
     const data = await res.json().catch(() => null)
     if (!data?.campaign) return
     setCampaign(data.campaign)
+    setCampaignWs(workspaceId)
     setCampaignChannels(data.connected || [])
-  }, [appFetch])
+  }, [appFetch, workspaceId])
+  const currentCampaign = campaign && campaignWs === workspaceId ? campaign : null
 
   /** Dalle schede dei canali (e da Istruzioni, #campagna): apre la scheda Campagna e ci porta lì. */
   const showCampaign = useCallback(() => {
@@ -183,9 +188,9 @@ export default function OmnichatPage() {
 
   // Link "Campagna" dalla pagina Istruzioni: si apre la scheda quando e' pronta.
   useEffect(() => {
-    if (campaign && window.location.hash === '#campagna') showCampaign()
+    if (currentCampaign && window.location.hash === '#campagna') showCampaign()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(campaign)])
+  }, [Boolean(currentCampaign)])
 
   useEffect(() => {
     loadCampaign()
@@ -270,28 +275,31 @@ export default function OmnichatPage() {
                     ))}
                   </div>
                   <p className="mt-1.5 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">{MODES.find((m) => m.id === c.mode)?.hint}</p>
-                  {campaignOn(campaign, c.platform).length > 0 && (
+                  {campaignOn(currentCampaign, c.platform).length > 0 && (
                     <button
                       onClick={showCampaign}
-                      title={`Qui l’AI usa la campagna per: ${campaignOn(campaign, c.platform).map((o) => SCOPE_LABELS[o.id]).join(', ')}`}
+                      title={`Qui l’AI usa la campagna per: ${campaignOn(currentCampaign, c.platform).map((o) => SCOPE_LABELS[o.id]).join(', ')}`}
                       className="mt-2 flex max-w-[16rem] items-center gap-1.5 rounded-full bg-[#AF52DE]/15 px-2.5 py-1 text-left text-[11px] font-medium text-[#BF5AF2]"
                     >
                       <Megaphone className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">
-                        Campagna attiva{campaign?.name ? ': ' : ''}
-                        {campaign?.name ? <span translate="no">{campaign.name}</span> : null}
+                        Campagna attiva{currentCampaign?.name ? ': ' : ''}
+                        {currentCampaign?.name ? <span translate="no">{currentCampaign.name}</span> : null}
                       </span>
                     </button>
                   )}
                 </div>
               )
             })}
-            {campaign && campaignChannels.length > 0 && (
+            {currentCampaign && campaignWs && campaignChannels.length > 0 && (
               <CampaignCard
-                campaign={campaign}
+                key={campaignWs}
+                workspaceId={campaignWs}
+                campaign={currentCampaign}
                 connected={campaignChannels}
                 canManage={canManage}
                 open={campaignOpen}
+                hidden={open !== null}
                 onOpenChange={setCampaignOpen}
                 onSaved={(c, connected) => {
                   setCampaign(c)
@@ -871,25 +879,50 @@ Dal 10 al 30 novembre: menù degustazione a 35 € a persona, bevande escluse.
 Solo su prenotazione, da giovedì a domenica. Link per prenotare: www.esempio.it/prenota
 Obiettivo: far prenotare un tavolo.`
 
+/** Modifiche non salvate della scheda Campagna, in questo browser (una per spazio). */
+const campaignDraftKey = (workspaceId: string) => `fv_app_campaign_draft:${workspaceId}`
+type CampaignDraft = CampaignForm & { base: string | null }
+
+/** Bozza salvata nel browser → modifiche da rimettere nella scheda (rotta o assente: null). */
+function readCampaignDraft(workspaceId: string, campaign: Campaign): { form: CampaignForm; base: string | null } | null {
+  try {
+    const raw = localStorage.getItem(campaignDraftKey(workspaceId))
+    const draft = raw ? (JSON.parse(raw) as Partial<CampaignDraft> | null) : null
+    if (!draft || typeof draft.name !== 'string' || typeof draft.text !== 'string') return null
+    const scopes = draft.scopes && CAMPAIGN_SCOPES.every((o) => typeof draft.scopes?.[o.id] === 'boolean') ? { ...draft.scopes } : { ...campaign.scopes }
+    return { form: { name: draft.name.slice(0, 80), text: draft.text.slice(0, CAMPAIGN_MAX), scopes }, base: typeof draft.base === 'string' ? draft.base : null }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Campagna (una per spazio): informazioni che, accese, l'AI usa al posto delle
  * Istruzioni nei canali scelti. L'interruttore salva subito: accendendo si salva
  * anche quello che e' scritto nella scheda (si accende quello che si vede);
  * spegnendo, il testo non salvato resta nella scheda. Nome, testo e canali: Salva.
+ * Le modifiche non salvate restano nel browser (localStorage) finche' non si salvano
+ * o si annullano: cambiando pagina o chiudendo l'app si ritrovano qui. Il microfono
+ * si ferma quando la scheda si chiude o si nasconde (chat aperta sul telefono).
  */
 function CampaignCard({
+  workspaceId,
   campaign,
   connected,
   canManage,
   open,
+  hidden,
   onOpenChange,
   onSaved,
 }: {
+  workspaceId: string
   campaign: Campaign
   /** Canali collegati tra email, instagram, facebook. */
   connected: string[]
   canManage: boolean
   open: boolean
+  /** Una chat e' aperta: sul telefono la parte alta della pagina (con questa scheda) e' nascosta. */
+  hidden: boolean
   onOpenChange: (open: boolean) => void
   onSaved: (campaign: Campaign, connected?: string[]) => void
 }) {
@@ -906,6 +939,35 @@ function CampaignCard({
     (said) => setForm((f) => ({ ...f, text: (f.text && !/\s$/.test(f.text) ? `${f.text} ${said}` : `${f.text}${said}`).slice(0, CAMPAIGN_MAX) })),
     language === 'it' ? 'it-IT' : 'en-US'
   )
+  const stopDictation = dictation.stop
+
+  // Il microfono resta acceso solo con la scheda in vista: chiusa, o nascosta dalla chat aperta sul telefono, si ferma.
+  useEffect(() => {
+    if (!open || (hidden && window.matchMedia('(max-width: 767px)').matches)) stopDictation()
+  }, [open, hidden, stopDictation])
+
+  // Modifiche non salvate di prima (altra pagina dell'app, app chiusa): tornano nella scheda, aperta.
+  const [draftReady, setDraftReady] = useState(false)
+  useEffect(() => {
+    const draft = canManage ? readCampaignDraft(workspaceId, campaign) : null
+    if (draft && !sameForm(draft.form, formOf(campaign))) {
+      setForm(draft.form)
+      onOpenChange(true)
+      if (draft.base !== campaign.updatedAt) setError('Hai modifiche non salvate, ma intanto la campagna è cambiata: controllale prima di salvare.')
+    }
+    setDraftReady(true)
+    // Solo all'apertura della scheda.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (!draftReady || !canManage) return
+    try {
+      if (dirty) localStorage.setItem(campaignDraftKey(workspaceId), JSON.stringify({ ...form, base: campaign.updatedAt } satisfies CampaignDraft))
+      else localStorage.removeItem(campaignDraftKey(workspaceId))
+    } catch {
+      // Spazio del browser non disponibile (navigazione privata): resta solo l'avviso "modifiche non salvate".
+    }
+  }, [draftReady, canManage, dirty, form, campaign.updatedAt, workspaceId])
 
   // Testo scritto e non salvato: il browser chiede conferma prima di chiudere la pagina.
   useEffect(() => {
@@ -915,14 +977,23 @@ function CampaignCard({
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
-  const put = async (body: Record<string, unknown>): Promise<{ campaign: Campaign; connected?: string[] } | null> => {
+  /** sent: la scheda com'era quando si e' mandata la richiesta. */
+  const put = async (body: Record<string, unknown>, sent: CampaignForm): Promise<{ campaign: Campaign; connected?: string[] } | null> => {
     const res = await appFetch('/api/app/campaign', { method: 'PUT', body: JSON.stringify(body) }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     if (res?.ok && data.campaign) return { campaign: data.campaign as Campaign, connected: data.connected as string[] | undefined }
     if (res?.status === 409 && data.campaign) {
-      // Cambiata da un'altra persona: si aggiorna la versione salvata, il testo scritto qui resta.
-      onSaved(data.campaign as Campaign)
-      setError('Un’altra persona ha appena cambiato la campagna. Quello che hai scritto è ancora qui: controllalo e salva di nuovo.')
+      // Cambiata da un'altra persona: si aggiorna la versione salvata.
+      const fresh = data.campaign as Campaign
+      onSaved(fresh)
+      if (!sameForm(sent, formOf(campaign))) {
+        // C'erano modifiche fatte qui: restano, da controllare.
+        setError('Un’altra persona ha appena cambiato la campagna. Quello che hai scritto è ancora qui: controllalo e salva di nuovo.')
+      } else {
+        // Niente scritto qui: la scheda mostra la versione nuova (mai quella vecchia come se fosse da salvare).
+        setForm((f) => (sameForm(f, sent) ? formOf(fresh) : f))
+        setError('La campagna è stata cambiata da un’altra persona: controlla e riattiva.')
+      }
     } else setError(data.error || 'Connessione non riuscita, riprova.')
     return null
   }
@@ -939,7 +1010,7 @@ function CampaignCard({
     setBusy('toggle')
     setError(null)
     const sent = form
-    const result = await put(turnOn ? { active: true, ...sent, baseUpdatedAt: campaign.updatedAt } : { active: false })
+    const result = await put(turnOn ? { active: true, ...sent, baseUpdatedAt: campaign.updatedAt } : { active: false }, sent)
     setBusy(null)
     if (!result) {
       // Non si accende (testo vuoto, nessun canale…): si apre la scheda per sistemarla.
@@ -957,13 +1028,20 @@ function CampaignCard({
     setBusy('save')
     setError(null)
     const sent = form
-    const result = await put({ ...sent, baseUpdatedAt: campaign.updatedAt })
+    const result = await put({ ...sent, baseUpdatedAt: campaign.updatedAt }, sent)
     setBusy(null)
     if (!result) return
     onSaved(result.campaign, result.connected)
     // Scritto altro mentre si salvava: resta (e resta da salvare).
     setForm((f) => (sameForm(f, sent) ? formOf(result.campaign) : f))
     flash()
+  }
+
+  /** Torna alla versione salvata (anche una bozza ritrovata che non serve piu'). */
+  const discard = () => {
+    stopDictation()
+    setForm(formOf(campaign))
+    setError(null)
   }
 
   return (
@@ -1124,6 +1202,11 @@ function CampaignCard({
                 <span className="flex items-center gap-1 text-sm text-[#34C759]">
                   <Check className="h-4 w-4" /> Salvato
                 </span>
+              )}
+              {dirty && (
+                <button onClick={discard} disabled={busy !== null} className="text-sm text-[var(--text-secondary)] disabled:opacity-40">
+                  Annulla modifiche
+                </button>
               )}
               <button
                 onClick={save}

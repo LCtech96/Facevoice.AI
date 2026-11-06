@@ -3,14 +3,16 @@ import { callAI, hasAIProvider } from '@/lib/ai'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { channelFeature } from '@/lib/usage-limits'
 import type { WorkspaceDb } from '@/lib/workspace-db'
-import { campaignMarks } from './campaign'
+import { campaignOfReply } from './campaign'
 
 // Correzioni delle risposte dell'AI fatte dal cliente nell'Omnichat ("Correggi").
 //
 // - "Solo in questa chat": nota per la conversazione (spazio + canale + persona),
 //   app_settings chat_corrections:<spazio>:<canale>:<persona> = lista di
-//   { at, incoming, wrong, corrected, by, messageId }. Ogni risposta successiva in
-//   quella chat la segue con la priorita' piu' alta.
+//   { at, incoming, wrong, corrected, by, messageId, campaign? }. Ogni risposta
+//   successiva in quella chat la segue con la priorita' piu' alta. campaign: la
+//   risposta corretta era scritta con una Campagna (campaign.ts) → la correzione vale
+//   solo mentre quella campagna vale per la chat; spenta o canale tolto, non entra.
 // - "Sempre, per messaggi cosi'": una sola chiamata AI la trasforma in una regola
 //   breve ("Quando … → …") con l'esempio, app_settings reply_rules:<spazio> = lista
 //   di ReplyRule (massimo 60). Le regole si vedono e si modificano in Istruzioni.
@@ -32,6 +34,12 @@ export type ChatCorrection = {
   by: string
   /** Risposta corretta: una nuova correzione dello stesso messaggio sostituisce la precedente. */
   messageId?: string
+  /**
+   * La risposta corretta era scritta con una Campagna: activeSince di quella campagna.
+   * La correzione entra nel prompt solo quando vale una campagna (sopra la campagna se e'
+   * la stessa, sotto se e' un'altra); con le Istruzioni no.
+   */
+  campaign?: string
 }
 
 export type RuleSource = 'manual' | 'edited_draft'
@@ -102,6 +110,7 @@ function asCorrection(value: unknown): ChatCorrection | null {
     corrected: v.corrected.slice(0, MAX_CORRECTED_CHARS),
     by: str(v.by, 100),
     ...(typeof v.messageId === 'string' ? { messageId: v.messageId } : {}),
+    ...(typeof v.campaign === 'string' ? { campaign: v.campaign } : {}),
   }
 }
 
@@ -384,7 +393,8 @@ Applica lo stesso criterio ai messaggi dello stesso tipo, senza copiare le frasi
  * Stessa sezione con una campagna accesa (campaign.ts): al posto delle Istruzioni ci sono le
  * informazioni della campagna. Correzioni e regole restano (tono, cosa chiedere, come
  * rispondere), ma quasi tutte sono nate prima della campagna: se dicono altro, vince la
- * campagna. Vincono sulla campagna solo le correzioni di questa chat fatte durante la campagna.
+ * campagna. Vincono sulla campagna solo le correzioni di questa chat fatte su risposte
+ * scritte con questa stessa campagna.
  */
 export const CAMPAIGN_CORRECTIONS_HEADER = `## Correzioni alle nostre risposte (valgono più di "Come lavori")
 Il titolare e il suo team hanno corretto alcune nostre risposte: seguile per il modo di rispondere (tono, lunghezza, cosa chiedere). Restano sopra solo le Regole fisse in fondo.
@@ -392,8 +402,16 @@ C'è una campagna in corso: quasi tutte queste correzioni sono nate prima. Se un
 Se due indicazioni si contraddicono vale, in quest'ordine: 1) le correzioni in questa conversazione segnate [durante la campagna]; 2) le informazioni della campagna; 3) le altre correzioni in questa conversazione; 4) le regole corrette dal titolare; 5) le regole corrette dal team; 6) le regole imparate da una bozza modificata; 7) "Come lavori". Tra due dello stesso tipo vale la più recente.
 Applica lo stesso criterio ai messaggi dello stesso tipo, senza copiare le frasi parola per parola; una regola che non c'entra con questo messaggio ignorala. Non dire mai alla persona che una risposta è stata corretta.`
 
-/** Campagna accesa per questa risposta: since = da quando vale (correzioni della chat dopo quest'ora: [durante la campagna]). */
+/** Campagna accesa per questa risposta: since = sua activeSince (correzioni di risposte scritte con lei: [durante la campagna]). */
 export type CorrectionsCampaign = { since: string | null }
+
+/**
+ * Correzioni della chat che valgono per questa risposta: quelle di risposte scritte con
+ * una campagna solo se ora vale una campagna (senza campagna la chat torna come prima).
+ */
+export function chatCorrectionsFor(chat: ChatCorrection[], campaign: CorrectionsCampaign | null | undefined): ChatCorrection[] {
+  return campaign ? chat : chat.filter((c) => c.campaign === undefined)
+}
 
 /**
  * Sezione del prompt con le correzioni della chat (dalla piu' recente) e le regole
@@ -407,15 +425,16 @@ export function correctionsSection(
 ): string {
   const examples = options.examples !== false
   const rules = examples ? ranked : ranked.filter((r) => !needsExample(r))
-  if (!chat.length && !rules.length) return ''
   const campaign = options.campaign || null
-  const duringCampaign = (c: ChatCorrection) => Boolean(campaign?.since) && c.at >= (campaign?.since as string)
+  const kept = chatCorrectionsFor(chat, campaign)
+  if (!kept.length && !rules.length) return ''
+  const duringCampaign = (c: ChatCorrection) => c.campaign !== undefined && c.campaign === (campaign?.since ?? '')
   const parts = [campaign ? CAMPAIGN_CORRECTIONS_HEADER : CORRECTIONS_HEADER]
-  if (chat.length) {
+  if (kept.length) {
     parts.push(
       [
         '### In questa conversazione il titolare ha corretto così: segui queste correzioni (dalla più recente)',
-        ...chat.map((c, i) =>
+        ...kept.map((c, i) =>
           [
             `${i + 1}.${campaign && duringCampaign(c) ? ' [durante la campagna]' : ''} ${c.incoming.trim() ? `La persona aveva scritto: ${quote(c.incoming, 300)}` : 'Nostro messaggio corretto:'}`,
             c.wrong.trim() ? `   Avevamo risposto: ${quote(c.wrong, 200)}` : '',
@@ -463,7 +482,10 @@ export async function replyGuidance(
       input.contactId ? readChatCorrections(workspaceId, input.platform, input.contactId) : Promise.resolve([] as ChatCorrection[]),
       readRules(workspaceId),
     ])
-    return correctionsSection(chat.slice(0, PROMPT_CHAT_CORRECTIONS), rankRules(rules, input), { examples: input.examples, campaign: input.campaign })
+    return correctionsSection(chatCorrectionsFor(chat, input.campaign).slice(0, PROMPT_CHAT_CORRECTIONS), rankRules(rules, input), {
+      examples: input.examples,
+      campaign: input.campaign,
+    })
   } catch (error) {
     console.warn('saas correzioni non lette:', error instanceof Error ? error.message : error)
     return ''
@@ -599,15 +621,16 @@ export async function answeredMessage(db: WorkspaceDb, reply: ReplyRow): Promise
 export async function learnFromEditedDraft(db: WorkspaceDb, input: { messageId: string; original: string; edited: string }): Promise<ReplyRule | null> {
   try {
     if (!isSubstantialEdit(input.original, input.edited) || !hasAIProvider()) return null
-    // Bozza scritta con la Campagna: la modifica riguarda la campagna (finira'), non diventa
-    // una regola per sempre. "Correggi → Sempre" resta possibile, se il titolare lo sceglie.
-    if ((await campaignMarks(db.workspaceId, [input.messageId])).size) return null
     const { data: draft } = await db
       .from('social_messages')
       .select('id, platform, kind, contact_id, reply_to, created_at')
       .eq('id', input.messageId)
       .maybeSingle()
     if (!draft) return null
+    // Bozza scritta con la Campagna: la modifica riguarda la campagna (finira'), non diventa
+    // una regola per sempre. "Correggi → Sempre" resta possibile, se il titolare lo sceglie.
+    // Non si sa (segno troppo vecchio) o segni non letti (errore → catch): non si impara.
+    if ((await campaignOfReply(db.workspaceId, input.messageId, draft.created_at as string)) !== null) return null
     const [chat, rules] = await Promise.all([
       draft.kind === 'comment' ? Promise.resolve([] as ChatCorrection[]) : readChatCorrections(db.workspaceId, draft.platform, draft.contact_id),
       readRules(db.workspaceId),

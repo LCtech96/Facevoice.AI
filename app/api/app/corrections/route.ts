@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { deliverDraft, saveTeamMessage } from '@/lib/saas/responder'
 import { MAX_TEXT, chatSendWindow, type SendPlatform } from '@/lib/saas/assistant-send'
+import { campaignOfReply } from '@/lib/saas/campaign'
 import {
   MAX_CORRECTED_CHARS,
   addChatCorrection,
@@ -23,7 +24,8 @@ export const maxDuration = 60
 // sendNow una bozza prende il testo corretto (resta da controllare e inviare).
 // Possono correggere tutti quelli che possono rispondere nell'Omnichat; le regole
 // "Sempre" di titolare e amministratori valgono piu' delle Istruzioni, quelle dei
-// membri del team no.
+// membri del team no. Correzione "solo in questa chat" di una risposta scritta con la
+// Campagna: si segna (campaign) e vale solo mentre vale quella campagna.
 
 export async function POST(req: NextRequest) {
   const access = await requireWorkspace(req)
@@ -88,6 +90,8 @@ export async function POST(req: NextRequest) {
   let learned = false
   try {
     if (scope === 'chat') {
+      // Segni non letti = errore (meglio riprovare che salvare una correzione della campagna come se fosse per sempre).
+      const written = await campaignOfReply(access.workspace.id, reply.id as string, reply.created_at as string)
       await addChatCorrection(access.workspace.id, platform, contactId, {
         at: new Date().toISOString(),
         incoming,
@@ -95,6 +99,7 @@ export async function POST(req: NextRequest) {
         corrected,
         by: access.userId,
         messageId: reply.id as string,
+        ...(written && written !== 'unknown' ? { campaign: written.since } : {}),
       })
     } else {
       const saved = await saveGeneralCorrection(access.workspace.id, {
