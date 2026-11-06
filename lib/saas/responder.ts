@@ -7,6 +7,7 @@ import type { WorkspaceDb } from '@/lib/workspace-db'
 import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
 import { listConnections } from './connections'
+import { replyGuidance } from './corrections'
 import { sendEmailReply } from './email'
 import { sendMetaText } from './meta'
 import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, syncConversationHistory } from './meta-history'
@@ -39,10 +40,11 @@ const CHANNEL_STYLE: Record<string, string> = {
 /**
  * Metodo di tutte le risposte (messaggi, email, commenti): l'AI e' il miglior commerciale
  * e community manager dell'attivita' e porta ogni conversazione verso il suo obiettivo.
- * Le Istruzioni del titolare vincono su queste regole; quelle fisse (RULES) restano sopra.
+ * Le Istruzioni e le correzioni del titolare (corrections.ts) vincono su queste regole;
+ * quelle fisse (RULES) restano sopra.
  */
 export function salesRules(name: string): string {
-  return `## Come lavori (se le Istruzioni dell'attività dicono altro, valgono le Istruzioni)
+  return `## Come lavori (se le Istruzioni dell'attività o le correzioni del titolare dicono altro, valgono quelle)
 Sei il miglior commerciale e community manager di "${name}": non rispondi e basta, curi gli interessi dell'attività in ogni messaggio.
 Prima di scrivere ricava dalle Istruzioni e da tutta la conversazione:
 - cosa fa l'attività, cosa offre e da dove le arrivano i clienti;
@@ -298,10 +300,17 @@ export async function respondToMessage(
   const turns = [{ role: 'user' as const, content: conversationTranscript(rows, message.platform, { gapAfterFirst: openedByUs && !openerShown }) }]
 
   const inbound = rows.filter((row) => row.direction === 'in').map((row) => row.body)
-  const [instructions, name, lang] = await Promise.all([
+  const [instructions, name, lang, corrections] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
     languageFor(db.workspaceId, `${message.subject || ''}\n${message.body}`, inbound),
+    // Correzioni del team in questa chat e regole "Sempre" piu' vicine al messaggio (nessuna AI in piu').
+    replyGuidance(db.workspaceId, {
+      platform: message.platform,
+      contactId: message.contact_id,
+      incoming: `${message.subject || ''}\n${message.body}`,
+      recent: rows.slice(-6, -1).map((row) => row.body),
+    }),
   ])
   const general = instructions.general.trim()
   const specific = (instructions[message.platform as InstructionChannel] || '').trim()
@@ -320,6 +329,7 @@ export async function respondToMessage(
     `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
     specific ? `## Istruzioni per questo canale\n${specific}` : '',
     hasInstructions ? '' : 'Non hai istruzioni: ricava il contesto dalla conversazione, rispondi in modo cortese e non dare informazioni che non conosci; per i dettagli di\' che glieli confermi a breve.',
+    corrections,
     salesRules(name),
     conversationRules(openedByUs),
     buildRealtimeDateTimeInstructionsItalian(),
@@ -393,6 +403,48 @@ export async function respondToMessage(
 
 /** Motivo della bozza piu' la nota "Da confermare" (una delle due puo' mancare). */
 export const withNote = (base: string | null, note: string | null): string | null => [base, note].filter(Boolean).join(' · ') || null
+
+/**
+ * Messaggio del team (origin 'manual') salvato come 'pending' nel filo dell'ultimo
+ * messaggio ricevuto (oggetto, filo e casella da cui rispondere): poi lo invia deliverDraft.
+ */
+export async function saveTeamMessage(
+  db: WorkspaceDb,
+  platform: string,
+  contactId: string,
+  text: string
+): Promise<{ id: string } | { error: 'not_found' | 'not_saved' }> {
+  const { data: last } = await db
+    .from('social_messages')
+    .select('contact_name, subject, external_id, channel_account_id')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('kind', 'message')
+    .eq('direction', 'in')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!last) return { error: 'not_found' }
+  const { data: saved, error } = await db
+    .from('social_messages')
+    .insert({
+      platform,
+      kind: 'message',
+      direction: 'out',
+      contact_id: contactId,
+      contact_name: last.contact_name,
+      subject: last.subject,
+      reply_to: last.external_id,
+      channel_account_id: last.channel_account_id,
+      body: text,
+      status: 'pending',
+      origin: 'manual',
+    })
+    .select('id')
+    .single()
+  if (error || !saved) return { error: 'not_saved' }
+  return { id: saved.id as string }
+}
 
 /** Invia una bozza (o un messaggio scritto a mano) gia' salvata come 'pending'. */
 export async function deliverDraft(

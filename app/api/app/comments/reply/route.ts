@@ -1,13 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { deliverComment, sendPrivateReply } from '@/lib/saas/comments'
+import { learnFromEditedDraft } from '@/lib/saas/corrections'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 // Pagina Commenti: pubblica la risposta sotto un commento (bozza dell'AI,
 // eventualmente modificata, o testo scritto a mano), oppure scrive in privato a
-// chi ha commentato.
+// chi ha commentato. Una bozza dell'AI modificata in modo sostanziale insegna
+// una regola (dopo la pubblicazione).
 
 export async function POST(req: NextRequest) {
   const access = await requireWorkspace(req)
@@ -26,10 +28,13 @@ export async function POST(req: NextRequest) {
 
   let draftId = typeof body.draftId === 'string' ? body.draftId : ''
   let origin = 'manual'
+  /** Testo dell'AI prima della modifica (solo per le bozze dell'AI). */
+  let aiText: string | null = null
   if (draftId) {
-    const { data: draft } = await access.db.from('social_messages').select('id, body, kind, direction').eq('id', draftId).maybeSingle()
+    const { data: draft } = await access.db.from('social_messages').select('id, body, kind, direction, origin').eq('id', draftId).maybeSingle()
     if (!draft || draft.kind !== 'comment' || draft.direction !== 'out') return NextResponse.json({ error: 'Bozza non trovata' }, { status: 404 })
     origin = draft.body.trim() === text ? 'ai_approved' : 'ai_edited'
+    if (String(draft.origin || '').startsWith('ai')) aiText = String(draft.body)
   } else {
     const { data: comment } = await access.db
       .from('social_messages')
@@ -59,5 +64,10 @@ export async function POST(req: NextRequest) {
 
   const sent = await deliverComment(access.db, draftId, text, origin)
   if (!sent.ok) return NextResponse.json({ error: `Risposta non pubblicata: ${sent.error}` }, { status: 502 })
+  if (origin === 'ai_edited' && aiText !== null) {
+    const original = aiText
+    const id = draftId
+    after(() => learnFromEditedDraft(access.db, { messageId: id, original, edited: text }).catch(() => null))
+  }
   return NextResponse.json({ ok: true })
 }

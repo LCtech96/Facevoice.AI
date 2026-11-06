@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, RefreshCw, Send, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Clock, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, PencilLine, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // Omnichat: tutte le conversazioni dei canali collegati, la risposta a mano o
-// con le bozze dell'AI, e l'automazione di ogni canale.
+// con le bozze dell'AI, e l'automazione di ogni canale. "Correggi" sotto ogni
+// risposta dell'AI: come avrebbe dovuto rispondere, solo in questa chat o sempre.
 
 type Mode = 'off' | 'approval' | 'auto'
 type Channel = { platform: string; status: string; handle: string | null; mode: Mode }
@@ -32,8 +33,19 @@ type Message = {
   status: string | null
   origin: string | null
   error_message: string | null
+  external_id?: string | null
+  reply_to?: string | null
   created_at: string
 }
+/** Se ora si puo' scrivere in questa chat (24 ore di Meta, email sempre). */
+type SendWindow = { ok: boolean; until?: string; reason?: string }
+type CorrectionResult = { scope: 'chat' | 'always'; rule: { rule: string } | null; learned: boolean; sent: boolean; draftUpdated?: boolean; sendError?: string }
+
+/** Risposte scritte dall'AI che si possono correggere: inviate da sola, approvate, o bozze. */
+const correctable = (m: Message) =>
+  m.direction === 'out' &&
+  (m.status === 'pending' || m.status === 'failed' ? String(m.origin || '').startsWith('ai') : m.status === 'sent' && (m.origin === 'ai_auto' || m.origin === 'ai_approved'))
+const sameText = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
 
 const ICONS: Record<string, typeof Mail> = { email: Mail, instagram: Instagram, facebook: Facebook, whatsapp: MessageCircle, web: Globe }
 const LABELS: Record<string, string> = { email: 'Email', instagram: 'Instagram', facebook: 'Facebook', whatsapp: 'WhatsApp', web: 'Chat del sito' }
@@ -291,11 +303,17 @@ function Thread({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
+  const [sendWindow, setSendWindow] = useState<SendWindow | null>(null)
+  const [correcting, setCorrecting] = useState<Message | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     const res = await appFetch(`/api/app/inbox/thread?platform=${encodeURIComponent(platform)}&contact=${encodeURIComponent(contactId)}`).catch(() => null)
-    if (res?.ok) setMessages((await res.json()).messages || [])
+    if (!res?.ok) return
+    const data = await res.json()
+    setMessages(data.messages || [])
+    setSendWindow(data.sendWindow || null)
   }, [appFetch, platform, contactId])
 
   useEffect(() => {
@@ -330,6 +348,39 @@ function Thread({
 
   const subject = messages?.find((m) => m.subject)?.subject || conversation?.subject
 
+  /** Il messaggio della persona a cui rispondeva l'AI (quello indicato, se no l'ultimo prima). */
+  const answered = (m: Message) => {
+    const list = messages || []
+    const exact = m.reply_to ? list.find((x) => x.direction === 'in' && x.external_id === m.reply_to) : undefined
+    if (exact) return exact.body
+    for (let i = list.indexOf(m) - 1; i >= 0; i--) if (list[i].direction === 'in') return list[i].body
+    return ''
+  }
+
+  const corrected = async (m: Message, result: CorrectionResult) => {
+    setCorrecting(null)
+    const pending = m.status === 'pending' || m.status === 'failed'
+    const parts = [
+      result.scope === 'always'
+        ? `Regola salvata: «${result.rule?.rule || ''}». La trovi in Istruzioni.${result.learned ? '' : ' L’AI non era disponibile: la regola usa il tuo esempio, puoi riscriverla lì.'}`
+        : 'Correzione salvata: l’AI la segue da ora in questa chat.',
+    ]
+    if (result.sent) parts.push('Messaggio inviato.')
+    else if (result.sendError) parts.push(`Invio non riuscito: ${result.sendError}.`)
+    else if (pending && result.draftUpdated) {
+      // La bozza resta, salvata col testo corretto: si mostra quella (non una modifica locale).
+      setDrafts((d) => {
+        const next = { ...d }
+        delete next[m.id]
+        return next
+      })
+      parts.push('Il testo corretto è nella bozza: controllalo e invialo.')
+    }
+    setSaved(parts.join(' '))
+    await load()
+    onChanged()
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-[var(--border-color)] px-4 py-3">
@@ -363,7 +414,17 @@ function Thread({
                   rows={Math.min(14, Math.max(4, value.split('\n').length + 1))}
                   className="mt-2 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-[16px] text-[var(--text-primary)] md:text-sm"
                 />
-                <div className="mt-2 flex justify-end gap-2">
+                <div className="mt-2 flex flex-wrap justify-end gap-2">
+                  {correctable(m) && (
+                    <button
+                      onClick={() => setCorrecting(m)}
+                      disabled={Boolean(busy)}
+                      className="mr-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--text-secondary)]"
+                      title="Insegna all’AI come avrebbe dovuto rispondere"
+                    >
+                      <PencilLine className="h-4 w-4" /> Correggi
+                    </button>
+                  )}
                   <button
                     onClick={() => post('/api/app/inbox/draft', { action: 'reject', id: m.id }, `reject:${m.id}`)}
                     disabled={Boolean(busy)}
@@ -400,6 +461,14 @@ function Thread({
                 {mine && m.origin === 'manual_app' ? ' · dall’app' : ''}
                 {mine && m.origin === 'assistant' ? ' · dall’Assistente' : ''}
                 {m.status === 'sending' ? ' · invio…' : ''}
+                {correctable(m) && (
+                  <>
+                    {' · '}
+                    <button onClick={() => setCorrecting(m)} className="font-medium text-[var(--accent-blue)]" title="Insegna all’AI come avrebbe dovuto rispondere">
+                      Correggi
+                    </button>
+                  </>
+                )}
               </p>
               {mine && m.status === 'sent' && m.error_message?.startsWith('Da confermare') && (
                 <p className="mt-0.5 text-right text-[11px] font-medium text-[#FF9500]">{m.error_message}</p>
@@ -412,6 +481,14 @@ function Thread({
 
       <div className="border-t border-[var(--border-color)] p-3">
         {error && <p className="mb-2 text-sm text-[#ff6b6b]">{error}</p>}
+        {saved && (
+          <p className="mb-2 flex items-start gap-2 text-sm text-[var(--text-secondary)]">
+            <span className="flex-1">{saved}</span>
+            <button onClick={() => setSaved(null)} aria-label="Chiudi">
+              <X className="h-4 w-4" />
+            </button>
+          </p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={text}
@@ -436,6 +513,164 @@ function Thread({
             className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--accent-blue)] text-white disabled:opacity-50"
           >
             {busy === 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
+
+      {correcting && (
+        <CorrectionSheet
+          message={correcting}
+          initial={drafts[correcting.id] ?? correcting.body}
+          incoming={answered(correcting)}
+          sendWindow={sendWindow}
+          onClose={() => setCorrecting(null)}
+          onSaved={(result) => corrected(correcting, result)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Correggi: il messaggio della persona e la risposta dell'AI (da leggere), come
+ * avrebbe dovuto rispondere, per cosa vale e se mandarla anche ora.
+ */
+function CorrectionSheet({
+  message,
+  initial,
+  incoming,
+  sendWindow,
+  onClose,
+  onSaved,
+}: {
+  message: Message
+  /** Testo di partenza: quello dell'AI (o la bozza gia' ritoccata). */
+  initial: string
+  incoming: string
+  sendWindow: SendWindow | null
+  onClose: () => void
+  onSaved: (result: CorrectionResult) => void
+}) {
+  const { appFetch } = useWorkspace()
+  const [text, setText] = useState(initial)
+  const [scope, setScope] = useState<'chat' | 'always'>('chat')
+  const [sendNow, setSendNow] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pending = message.status === 'pending' || message.status === 'failed'
+  const canSend = Boolean(sendWindow?.ok)
+  const changed = text.trim() !== '' && !sameText(text, message.body)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !saving && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [saving, onClose])
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    const res = await appFetch('/api/app/corrections', {
+      method: 'POST',
+      body: JSON.stringify({ messageId: message.id, corrected: text, scope, sendNow: canSend && sendNow }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setSaving(false)
+    if (!res?.ok) return setError(data.error || 'Connessione non riuscita, riprova.')
+    onSaved(data as CorrectionResult)
+  }
+
+  const box = 'mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--background-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]'
+  const scopes: { id: 'chat' | 'always'; label: string; hint: string }[] = [
+    { id: 'chat', label: 'Solo in questa chat', hint: 'L’AI la segue da ora in questa conversazione.' },
+    { id: 'always', label: 'Sempre, per messaggi così', hint: 'L’AI ne ricava una regola per i messaggi simili, su tutti i canali. La trovi in Istruzioni.' },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center" onClick={() => !saving && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Correggi la risposta"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[var(--background)] p-5 shadow-xl md:max-w-lg md:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold">Correggi la risposta</h2>
+            <p className="text-sm text-[var(--text-secondary)]">L’AI impara da come l’avresti scritta tu.</p>
+          </div>
+          <button onClick={onClose} disabled={saving} aria-label="Chiudi">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs font-semibold text-[var(--text-secondary)]">Messaggio della persona</p>
+        <div translate="no" className={box}>
+          {incoming || <span className="text-[var(--text-secondary)]">Nessun messaggio</span>}
+        </div>
+        <p className="mt-3 text-xs font-semibold text-[var(--text-secondary)]">Risposta dell’AI</p>
+        <div translate="no" className={box}>
+          {message.body}
+        </div>
+
+        <label htmlFor="correction-text" className="mt-4 block text-sm font-semibold">
+          Come avrebbe dovuto rispondere
+        </label>
+        <textarea
+          id="correction-text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={2000}
+          rows={Math.min(10, Math.max(4, text.split('\n').length + 1))}
+          className="mt-1 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+        />
+        {text.length > 1800 && <p className="text-right text-[11px] text-[var(--text-secondary)]">{text.length}/2000</p>}
+
+        <p className="mt-3 text-sm font-semibold">Vale per</p>
+        <div className="mt-1 flex flex-wrap rounded-full bg-[var(--background-secondary)] p-0.5" role="radiogroup" aria-label="Vale per">
+          {scopes.map((s) => (
+            <button
+              key={s.id}
+              role="radio"
+              aria-checked={scope === s.id}
+              onClick={() => setScope(s.id)}
+              className={`flex-1 rounded-full px-3 py-1.5 text-xs ${scope === s.id ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{scopes.find((s) => s.id === scope)?.hint}</p>
+
+        <label className={`mt-4 flex items-start gap-2 text-sm ${canSend ? '' : 'opacity-50'}`}>
+          <input type="checkbox" checked={canSend && sendNow} disabled={!canSend} onChange={(e) => setSendNow(e.target.checked)} className="mt-0.5 h-4 w-4" />
+          <span>
+            Mandala anche ora in questa chat
+            <span className="block text-[11px] text-[var(--text-secondary)]">
+              {!canSend
+                ? sendWindow?.reason || 'Ora non si può scrivere in questa chat.'
+                : pending
+                  ? sendNow
+                    ? 'Parte al posto della bozza.'
+                    : 'Se non la mandi ora, la trovi nella bozza.'
+                  : 'Parte come nuovo messaggio.'}
+            </span>
+          </span>
+        </label>
+
+        {error && <p className="mt-3 text-sm text-[#ff6b6b]">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} disabled={saving} className="rounded-full px-4 py-2 text-sm text-[var(--text-secondary)]">
+            Annulla
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || !changed}
+            title={changed ? undefined : 'Cambia il testo per correggere la risposta'}
+            className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Salva
           </button>
         </div>
       </div>

@@ -1,12 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Facebook, Instagram, Loader2, Mail, SlidersHorizontal } from 'lucide-react'
+import { Check, Facebook, GraduationCap, Instagram, Loader2, Mail, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import BrandSettings from '@/components/app/BrandSettings'
 
 // Istruzioni per l'AI: una base comune a tutti i canali e una parte per ogni
 // canale (tono, cosa dire e cosa no). L'AI usa solo quello che c'e' scritto qui.
+// In fondo le "Correzioni imparate" dall'Omnichat (Correggi → Sempre) e dalle
+// bozze modificate: si modificano e si cancellano qui (titolare e amministratori).
 
 type ChannelId = 'general' | 'email' | 'instagram' | 'facebook'
 
@@ -132,6 +134,193 @@ export default function InstructionsPage() {
           })}
         </div>
       )}
+      <LearnedRules canEdit={canEdit} />
     </div>
+  )
+}
+
+type Rule = {
+  id: string
+  rule: string
+  example: { incoming: string; corrected: string }
+  platform: string | null
+  learnedOn?: string | null
+  createdAt: string
+  updatedAt: string
+  source: 'manual' | 'edited_draft'
+  /** false = scritta da un membro del team: vale meno delle Istruzioni finche' non la riscrive un amministratore. */
+  byAdmin?: boolean
+}
+
+const RULE_CHANNELS: { id: string; label: string }[] = [
+  { id: '', label: 'Tutti i canali' },
+  { id: 'email', label: 'Email' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'facebook', label: 'Facebook' },
+  { id: 'whatsapp', label: 'WhatsApp' },
+  { id: 'web', label: 'Chat del sito' },
+]
+const channelLabel = (id: string | null | undefined) => RULE_CHANNELS.find((c) => c.id === (id || ''))?.label || id || ''
+const day = (iso: string) => new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })
+
+/** Regole nate dalle correzioni: testo e canale modificabili, eliminabili. */
+function LearnedRules({ canEdit }: { canEdit: boolean }) {
+  const { appFetch } = useWorkspace()
+  const [rules, setRules] = useState<Rule[] | null>(null)
+  const [edits, setEdits] = useState<Record<string, { rule: string; platform: string }>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    const res = await appFetch('/api/app/reply-rules').catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (!data) return setError('Correzioni non disponibili, ricarica la pagina.')
+    setRules(data.rules || [])
+  }, [appFetch])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const valueOf = (r: Rule) => edits[r.id] || { rule: r.rule, platform: r.platform || '' }
+
+  const save = async (r: Rule) => {
+    const v = valueOf(r)
+    if (!v.rule.trim()) return setError('Scrivi la regola, oppure eliminala.')
+    setBusy(r.id)
+    setError(null)
+    const res = await appFetch('/api/app/reply-rules', { method: 'PATCH', body: JSON.stringify({ id: r.id, rule: v.rule, platform: v.platform || null }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setBusy(null)
+    if (!res?.ok) return setError(data.error || 'Non salvata, riprova.')
+    setRules((list) => (list || []).map((x) => (x.id === r.id ? data.rule : x)))
+    setEdits((all) => {
+      const next = { ...all }
+      delete next[r.id]
+      return next
+    })
+    setDone(r.id)
+    setTimeout(() => setDone((d) => (d === r.id ? null : d)), 2500)
+  }
+
+  const remove = async (r: Rule) => {
+    if (!confirm('Eliminare questa correzione? L’AI non la seguirà più.')) return
+    setBusy(r.id)
+    setError(null)
+    const res = await appFetch('/api/app/reply-rules', { method: 'DELETE', body: JSON.stringify({ id: r.id }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setBusy(null)
+    if (!res?.ok) return setError(data.error || 'Non eliminata, riprova.')
+    setRules((list) => (list || []).filter((x) => x.id !== r.id))
+  }
+
+  return (
+    <section className="mt-10">
+      <h2 className="flex items-center gap-2 text-lg font-bold">
+        <GraduationCap className="h-5 w-5 text-[var(--accent-blue)]" /> Correzioni imparate
+      </h2>
+      <p className="mt-1 text-sm text-[var(--text-secondary)]">
+        Nate quando correggi una risposta nell’Omnichat (con «Sempre, per messaggi così») o modifichi una bozza dell’AI prima di inviarla. L’AI le segue nei
+        messaggi simili, prima delle regole generali.
+      </p>
+      {error && <p className="mt-3 text-sm text-[#ff6b6b]">{error}</p>}
+      {!rules ? (
+        !error && <Loader2 className="mt-4 h-5 w-5 animate-spin text-[var(--text-secondary)]" />
+      ) : !rules.length ? (
+        <p className="mt-4 rounded-2xl border border-dashed border-[var(--border-color)] p-4 text-sm text-[var(--text-secondary)]">
+          Nessuna correzione per ora. Nell’Omnichat tocca «Correggi» sotto una risposta dell’AI e scegli «Sempre, per messaggi così».
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-3">
+          {rules.map((r) => {
+            const v = valueOf(r)
+            const changed = v.rule !== r.rule || v.platform !== (r.platform || '')
+            return (
+              <li key={r.id} className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+                  <span>{day(r.createdAt)}</span>
+                  {r.learnedOn && <span>· da {channelLabel(r.learnedOn)}</span>}
+                  {r.source === 'edited_draft' && (
+                    <span className="rounded-full border border-[var(--border-color)] px-2 py-0.5">imparata da una bozza modificata</span>
+                  )}
+                  {r.source === 'manual' && !r.byAdmin && (
+                    <span className="rounded-full border border-[var(--border-color)] px-2 py-0.5">corretta dal team</span>
+                  )}
+                </div>
+                <textarea
+                  value={v.rule}
+                  onChange={(e) => setEdits((all) => ({ ...all, [r.id]: { ...v, rule: e.target.value } }))}
+                  readOnly={!canEdit}
+                  maxLength={400}
+                  rows={2}
+                  aria-label="Regola"
+                  className="mt-2 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+                />
+                {(r.example.incoming || r.example.corrected) && (
+                  <div className="mt-2 space-y-1 text-xs text-[var(--text-secondary)]">
+                    {r.example.incoming && (
+                      <p>
+                        Messaggio: <span translate="no" className="text-[var(--text-primary)]">«{r.example.incoming.slice(0, 200)}{r.example.incoming.length > 200 ? '…' : ''}»</span>
+                      </p>
+                    )}
+                    {r.example.corrected && (
+                      <p>
+                        Risposta giusta: <span translate="no" className="text-[var(--text-primary)]">«{r.example.corrected.slice(0, 300)}{r.example.corrected.length > 300 ? '…' : ''}»</span>
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    Vale per
+                    <select
+                      value={v.platform}
+                      disabled={!canEdit || busy === r.id}
+                      onChange={(e) => setEdits((all) => ({ ...all, [r.id]: { ...v, platform: e.target.value } }))}
+                      className="rounded-full border border-[var(--border-color)] bg-[var(--background)] px-3 py-1 text-[16px] text-[var(--text-primary)] md:text-xs"
+                    >
+                      {RULE_CHANNELS.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {canEdit && (
+                    <div className="ml-auto flex items-center gap-2">
+                      {done === r.id && (
+                        <span className="flex items-center gap-1 text-sm text-[#34C759]">
+                          <Check className="h-4 w-4" /> Salvata
+                        </span>
+                      )}
+                      <button
+                        onClick={() => remove(r)}
+                        disabled={busy === r.id}
+                        aria-label="Elimina"
+                        title="Elimina"
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] disabled:opacity-40"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      {changed && (
+                        <button
+                          onClick={() => save(r)}
+                          disabled={busy === r.id}
+                          className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+                        >
+                          {busy === r.id && <Loader2 className="h-4 w-4 animate-spin" />} Salva
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {!canEdit && rules?.length ? <p className="mt-2 text-xs text-[var(--text-secondary)]">Le modificano il titolare o un amministratore.</p> : null}
+    </section>
   )
 }

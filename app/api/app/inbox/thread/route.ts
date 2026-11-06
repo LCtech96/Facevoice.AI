@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
+import { chatSendWindow } from '@/lib/saas/assistant-send'
 
 export const dynamic = 'force-dynamic'
 
 // Omnichat: i messaggi di una conversazione. Aprendola, i messaggi ricevuti
-// diventano letti.
+// diventano letti. sendWindow: se ora si puo' scrivere in questa chat (Correggi).
 
 export async function GET(req: NextRequest) {
   const access = await requireWorkspace(req)
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
   if (!platform || !contact) return NextResponse.json({ error: 'Conversazione non indicata' }, { status: 400 })
   const { data, error } = await access.db
     .from('social_messages')
-    .select('id, direction, body, subject, status, origin, error_message, contact_name, created_at')
+    .select('id, direction, body, subject, status, origin, error_message, contact_name, external_id, reply_to, created_at')
     .eq('platform', platform)
     .eq('contact_id', contact)
     .eq('kind', 'message')
@@ -23,6 +24,16 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: true })
     .limit(200)
   if (error) return NextResponse.json({ error: 'Messaggi non disponibili, riprova.' }, { status: 500 })
+  const { data: lastIn } = await access.db
+    .from('social_messages')
+    .select('created_at')
+    .eq('platform', platform)
+    .eq('contact_id', contact)
+    .eq('kind', 'message')
+    .eq('direction', 'in')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
   await access.db
     .from('social_messages')
     .update({ read_at: new Date().toISOString() })
@@ -31,5 +42,5 @@ export async function GET(req: NextRequest) {
     .eq('kind', 'message')
     .eq('direction', 'in')
     .is('read_at', null)
-  return NextResponse.json({ messages: data || [] })
+  return NextResponse.json({ messages: data || [], sendWindow: chatSendWindow(platform, lastIn?.created_at as string | undefined) })
 }

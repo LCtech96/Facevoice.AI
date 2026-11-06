@@ -4,6 +4,7 @@ import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections, readConnectionSecret, type Connection } from './connections'
+import { replyGuidance } from './corrections'
 import { GRAPH, connectionForAccount, type MetaSecret } from './meta'
 import { IG_GRAPH, igFetch, instagramLoginToken } from './instagram'
 import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
@@ -203,10 +204,13 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     .in('status', ['pending', 'sent', 'sending'])
   if (count) return { status: 'skipped', reason: 'risposta già presente' }
 
-  const [instructions, name, lang] = await Promise.all([
+  const [instructions, name, lang, corrections] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
     languageFor(db.workspaceId, comment.body, []),
+    // Regole "Sempre" imparate dalle correzioni (quelle "solo in questa chat" valgono per i messaggi privati).
+    // Senza esempi: vengono da messaggi privati e questa risposta e' pubblica.
+    replyGuidance(db.workspaceId, { platform, incoming: comment.body, recent: comment.subject ? [comment.subject] : [], examples: false }),
   ])
   const general = instructions.general.trim()
   const specific = (instructions[platform as InstructionChannel] || '').trim()
@@ -222,6 +226,7 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
     specific ? `## Istruzioni per questo canale\n${specific}` : '',
     hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
+    corrections,
     salesRules(name),
     buildRealtimeDateTimeInstructionsItalian(),
     RULES,

@@ -22,7 +22,7 @@ export const CHANNEL_LABELS: Record<SendPlatform, string> = { instagram: 'Instag
 export const MESSAGING_WINDOW_MS = 24 * 3600_000
 /** Meta: risposta privata a un commento entro 7 giorni (una per commento). */
 export const PRIVATE_REPLY_WINDOW_MS = 7 * 24 * 3600_000
-const MAX_TEXT: Record<SendPlatform, number> = { instagram: 1000, facebook: 2000, whatsapp: 4000, email: 10000 }
+export const MAX_TEXT: Record<SendPlatform, number> = { instagram: 1000, facebook: 2000, whatsapp: 4000, email: 10000 }
 /**
  * Stesso testo alla stessa persona negli ultimi minuti: non si rimanda (passo ripetuto dall'AI).
  * Un altro testo dall'Assistente alla stessa persona negli stessi minuti: prima si chiede al cliente.
@@ -193,6 +193,24 @@ export function writableNote(platform: string, kind: string, lastAt: string, now
   if (p === 'whatsapp') return 'no, invio da qui non ancora disponibile'
   if (kind === 'comment') return now - at < PRIVATE_REPLY_WINDOW_MS ? `sì, una risposta privata fino al ${stamp(new Date(at + PRIVATE_REPLY_WINDOW_MS).toISOString())}` : 'no, commento di oltre 7 giorni fa'
   return now - at < MESSAGING_WINDOW_MS ? `sì, fino al ${stamp(new Date(at + MESSAGING_WINDOW_MS).toISOString())}` : 'no, ultimo messaggio di oltre 24 ore fa'
+}
+
+export type ChatSendWindow = { ok: boolean; until?: string; reason?: string }
+
+/**
+ * Omnichat ("Mandala anche ora" di Correggi): si puo' scrivere ora in questa chat?
+ * Email sempre (nel filo della sua ultima email); Direct e Messenger entro 24 ore
+ * dall'ultimo messaggio della persona; gli altri canali non ancora.
+ */
+export function chatSendWindow(platform: string, lastIncomingAt: string | null | undefined, now = Date.now()): ChatSendWindow {
+  if (!lastIncomingAt) return { ok: false, reason: 'Si può scrivere solo a chi ci ha già scritto.' }
+  if (platform === 'email') return { ok: true }
+  if (platform === 'instagram' || platform === 'facebook') {
+    const until = new Date(lastIncomingAt).getTime() + MESSAGING_WINDOW_MS
+    if (now < until) return { ok: true, until: new Date(until).toISOString() }
+    return { ok: false, reason: `${CHANNEL_LABELS[platform]} permette di scrivere solo entro 24 ore dall’ultimo messaggio della persona.` }
+  }
+  return { ok: false, reason: 'Da questo canale non si può ancora inviare da qui.' }
 }
 
 /** Invia il messaggio chiesto dal titolare, se la persona ci ha scritto prima e Meta lo permette. */
