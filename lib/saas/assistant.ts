@@ -475,8 +475,8 @@ export function slideCountFrom(message: string): number | undefined {
  */
 export type SlideFacts = { total: number; photos: number; requested?: number; events?: number; generic?: number }
 
-/** Frasi di una risposta (anche divise dal punto e virgola), con la punteggiatura. */
-const replySentences = (reply: string) => reply.match(/[^.!?;\n]*(?:[.!?;]+["»”)]*|\n|$)/g) || [reply]
+/** Frasi di una risposta (anche divise dal punto e virgola o dai puntini «…»), con la punteggiatura. */
+const replySentences = (reply: string) => reply.match(/[^.!?;…\n]*(?:[.!?;…]+["»”)]*|\n|$)/g) || [reply]
 
 const SLIDE_CLAIM = new RegExp(`(?<![\\p{L}\\d/])${COUNT}\\s+(slides?|immagini|images?|foto|photos?)(?![\\p{L}])`, 'giu')
 const ASKED = /chiest|richiest|volevi|avevi chiesto|asked|requested|wanted/i
@@ -636,6 +636,14 @@ const CANNOT_WEB =
 const WEB_IMAGES_CLAIM =
   /\b(locandin[ae]|poster|immagin[ei]|foto|images?|photos?|pictures?)\s+(vere|reali|ufficiali|autentiche|gi[àa] pubblicate|trovat[ei] (online|sul web|in rete))(?![\p{L}])|\b(dal web|dalla rete|da internet|dai social|from the web|from social media|found online)\b|\b(real|official|existing) (images|photos|pictures|posters)\b/iu
 
+/** Nella stessa frase dell'affermazione la nega ("non ho trovato le locandine vere", "nessuna foto dal web"). */
+const NEGATED_IN_SENTENCE = /non (ho )?trovat|nessun|non riesc|non sono riuscit|not find|no (posters|images)|could(n['’]t| not)|can(['’]t|not)/iu
+/** In tutta la risposta: dice che la ricerca non ha trovato niente o non si e' potuta fare (non un "non riesco" qualsiasi). */
+const SAYS_NOTHING_FOUND =
+  /non (ho )?trovat|nessun\p{L}* (locandin|immagin|foto|poster|event|risultat)|not find|no (posters|images)|non (riesco|sono riuscit\p{L}*) a (cercare|trovare)|(couldn['’]t|can['’]t|cannot|unable to) (search|find)/iu
+/** Frasi che parlano di locandine o immagini prese dal web senza negarlo nella stessa frase. */
+const falseWebClaims = (reply: string) => replySentences(reply).filter((piece) => WEB_IMAGES_CLAIM.test(piece) && !NEGATED_IN_SENTENCE.test(piece))
+
 /**
  * Correzione da chiedere (una volta) quando la risposta non e' vera sul web: dice di non
  * poter cercare o scaricare (senza aver provato find_event_images), oppure parla di locandine
@@ -645,7 +653,7 @@ export function webClaimCorrection(reply: string, state: { tried: boolean; found
   if (!state.tried && CANNOT_WEB.test(reply)) {
     return 'Nella risposta dici di non poter cercare sul web o scaricare immagini, ma non è vero: con find_event_images cerchi eventi reali e prendi le loro immagini (con credito e fonte). Se il cliente le ha chieste usalo adesso, altrimenti riscrivi la risposta senza dire che non puoi. Rispondi SOLO con il JSON.'
   }
-  if (!state.found && !state.earlier && WEB_IMAGES_CLAIM.test(reply) && !/non (ho )?trovat|nessun|non riesc|non sono riuscit|not find|no (posters|images)|could(n['’]t| not)|can(['’]t|not)/i.test(reply)) {
+  if (!state.found && !state.earlier && falseWebClaims(reply).length && !SAYS_NOTHING_FOUND.test(reply)) {
     return 'Nella risposta parli di locandine o immagini prese dal web, ma in questa richiesta non ne è stata trovata né usata nessuna. Se il cliente le vuole usa find_event_images; altrimenti riscrivi la risposta senza dire che ci sono. Rispondi SOLO con il JSON.'
   }
   return null
@@ -656,23 +664,42 @@ export function webClaimCorrection(reply: string, state: { tried: boolean; found
  * da soli ("Riprovo tra un momento"), che il sistema e' in pausa, che basta aspettare qualche
  * secondo, piani, limiti e nomi del servizio AI.
  */
-const FAILED_SEARCH_CLAIM =
-  /(?<![\p{L}])(riprovo|ci riprovo|riproverò|riprovero|sto riprovando|ritento|ritenterò|tento di nuovo|tenterò di nuovo|i['’]ll (try|retry)|i will (try|retry)|retrying|trying again)(?![\p{L}])|(?<![\p{L}])(in pausa|paused|piano gratuit\p{L}*|free (tier|plan)|rate limit|quota|gemini|claude|anthropic)(?![\p{L}])|limit[ei] (di richieste|del piano|del servizio)|aspetta (solo )?(qualche|pochi|un paio di) second|wait (a few|some) seconds/iu
+const FAILED_SEARCH_CLAIM = new RegExp(
+  [
+    // Che si riprova o si fa da soli piu' tardi.
+    "(?<![\\p{L}])(riprovo|ci riprovo|riproverò|riprovero|proverò|provero|provo di nuovo|provo ancora|sto riprovando|ritento|ritenterò|tento di nuovo|tenterò di nuovo|rifaccio|rifarò|rifaro|(un )?altro tentativo|i['’]ll (try|retry)|i will (try|retry)|retrying|trying again|another (try|attempt))(?![\\p{L}])",
+    "ti (avviso|aggiorno|riscrivo|scrivo|faccio sapere|mando|invio|preparo)[^.!?…\\n]{0,60}(appena|non appena|tra poco|tra un|tra qualche|quando (torna|tornerà|sarà|sara'|la ricerca))",
+    "appena (torna|tornerà|ritorna|è di nuovo|e' di nuovo|sarà|sara')|(torna|tornerà|ritorna) (disponibil|attiv|a funzionare)",
+    "i['’]ll (let you know|get back|send|notify)|as soon as (it|the search) (is|works|comes)",
+    // Che basta aspettare un attimo, pause e sovraccarichi del sistema.
+    "(?<![\\p{L}])(attendi|in pausa|paused|sospes\\p{L}*|suspended|sovraccaric\\p{L}*|overloaded)(?![\\p{L}])",
+    "aspett\\p{L}* (solo )?(qualche|pochi|un paio di|un attimo|un momento|un istante)|qualche second\\p{L}*|pochi second\\p{L}*|un attimo|un istante|tra un momento|wait (a|a few|some) (moment|seconds?|minutes?)|in a (moment|few seconds)|give me a (moment|second)",
+    // Piani, limiti e nomi del servizio AI (sono di Facevoice, non del cliente).
+    "(?<![\\p{L}])(piano gratuit\\p{L}*|free (tier|plan)|rate limit|quota|gemini|claude|anthropic)(?![\\p{L}])|limit[ei] (di richieste|del piano|del servizio)",
+  ].join('|'),
+  'iu'
+)
 /** La risposta dice gia' che la ricerca sul web non e' riuscita. */
 const SAYS_SEARCH_FAILED = /non (riesco|sono riuscit\p{L}*) a cercare (sul|nel) web|ricerca sul web non (funziona|è disponibile|e' disponibile|è riuscita|e' riuscita)|can['’]t search the web|couldn['’]t search the web|unable to search the web/iu
 /** La risposta offre gia' le immagini generate dall'AI. */
 const OFFERS_AI_IMAGES = /immagin[ei] (generat[ei]|creat[ei]) (dall['’]\s?AI|con l['’]\s?AI)|AI-generated|generated (by|with) AI/iu
 
 /**
- * Risposta finale dopo una ricerca sul web non riuscita (come honestSlideCount, sul server): le
- * frasi non vere (FAILED_SEARCH_CLAIM) si tolgono e, se la risposta non lo dice, si aggiunge che in
- * questo momento non si riesce a cercare sul web e di riprovare tra qualche minuto; se non e' stato
- * creato niente, anche la proposta di fare intanto il carosello con immagini generate dall'AI.
+ * Risposta finale dopo una ricerca sul web non riuscita (come honestSlideCount, sul server). Se in
+ * questa richiesta non e' stato fatto niente (acted: nessun post, immagine o messaggio) il testo
+ * dell'AI non si usa: la risposta e' quella fissa e vera (non si riesce a cercare sul web, riprova
+ * tra qualche minuto, intanto il carosello con immagini generate dall'AI), cosi' non passa nessun
+ * "Riprovo tra un momento" scritto in altro modo. Se e' stato fatto qualcosa: le frasi non vere
+ * (FAILED_SEARCH_CLAIM e, senza immagini del web, quelle che dicono di averle usate) si tolgono e,
+ * se la risposta non lo dice, si aggiunge che in questo momento non si riesce a cercare sul web; se
+ * non e' stato creato nessun post, anche la proposta del carosello con immagini generate dall'AI.
  */
-export function honestSearchFailure(reply: string, opts: { created: boolean; language?: 'it' | 'en' }): string {
+export function honestSearchFailure(reply: string, opts: { created: boolean; acted?: boolean; webImages?: boolean; language?: 'it' | 'en' }): string {
   const language = opts.language || 'it'
-  let text = replySentences(reply)
+  const acted = opts.acted ?? opts.created
+  let text = (acted ? replySentences(reply) : [])
     .filter((piece) => !FAILED_SEARCH_CLAIM.test(piece))
+    .filter((piece) => opts.webImages || !(WEB_IMAGES_CLAIM.test(piece) && !NEGATED_IN_SENTENCE.test(piece)))
     .join('')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -847,15 +874,20 @@ export async function runClientAssistant(
   // riconosce nessuna parola, dice "en": qui il default e' l'italiano).
   const replyLanguage = (text: string): 'it' | 'en' =>
     detectLanguage(text) === 'en' && /\b(the|and|you|is|are|with|for|this|that|please|carousel|slides)\b/i.test(text) ? 'en' : 'it'
+  /** Ricerca sul web non riuscita e niente trovato: la risposta finale la riscrive honestSearchFailure. */
+  const searchFailedReply = () => webSearchFailed && !webFound
   const finish = (raw: string) => {
     const language = replyLanguage(`${raw} ${message}`)
     // Ricerca sul web non riuscita: niente "riprovo tra un momento" o "il sistema è in pausa".
-    const text = webSearchFailed && !webFound ? honestSearchFailure(raw, { created: actions.some((a) => a.kind === 'post'), language }) : raw
+    const text = searchFailedReply()
+      ? honestSearchFailure(raw, { created: actions.some((a) => a.kind === 'post'), acted: actions.length > 0, webImages: earlierWeb.length > 0, language })
+      : raw
     return created ? honestSlideCount(text, created, language) : text
   }
   /** Risposta finale: se dice cose non vere (messaggi, web) si fa correggere una volta per tipo; il numero di slide e' sempre quello vero. */
   const finalOrRetry = async (raw: string, text: string): Promise<string | null> => {
-    if (!webRetried) {
+    // Ricerca non riuscita e niente fatto: la risposta sara' quella fissa, farla correggere costerebbe un passo per niente.
+    if (!webRetried && !(searchFailedReply() && !actions.length)) {
       const fix = webClaimCorrection(text, { tried: used.includes('find_event_images'), found: webFound, earlier: earlierWeb.length })
       if (fix) {
         webRetried = true

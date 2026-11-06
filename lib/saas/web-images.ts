@@ -281,37 +281,69 @@ export function distinctiveWords(title: string, place = ''): string[] {
 
 const hostOf = (url: string) => (normalizeUrl(url) || '').split(/[/?]/)[0]
 
+/** Parole del percorso di un indirizzo (".../eventi/presepe-vivente-2026" -> eventi, presepe, vivente, 2026). */
+const pathWords = (url: string) => {
+  try {
+    const path = new URL(url).pathname
+    let decoded = path
+    try {
+      decoded = decodeURIComponent(path)
+    } catch {}
+    return plainWords(decoded)
+  } catch {
+    return []
+  }
+}
+
+/** Articolate e preposizioni lunghe: non servono a riconoscere il nome di un evento. */
+const LINK_WORDS = new Set('della delle degli dello nella nelle negli sulla sulle alla alle agli dalla dalle tutti tutte'.split(' '))
+
+/**
+ * La pagina k restituita dalla ricerca parla dell'evento: nel suo titolo, nei testi citati o nel
+ * percorso del suo indirizzo (tutti dati della ricerca, non scritti dall'AI) ci sono le parole
+ * distintive del nome (almeno 2, o l'unica se ne ha una sola). Con un nome fatto solo di parole
+ * comuni ("Mercatino di Natale") servono tutte le sue parole (la pagina ha il nome dell'evento);
+ * con strict (stesso sito, pagina diversa) un nome cosi' non basta mai.
+ */
+function pageNamesEvent(k: number, title: string, place: string, answer: Pick<GroundedResult, 'chunks' | 'cited'>, strict: boolean): boolean {
+  const chunk = answer.chunks[k]
+  const said = new Set([...plainWords(`${chunk.title} ${(answer.cited?.[k] || []).join(' ')}`), ...pathWords(chunk.uri)])
+  const needed = distinctiveWords(title, place)
+  if (needed.length) return needed.filter((w) => said.has(w)).length >= Math.min(2, needed.length)
+  if (strict) return false
+  const placeWords = new Set(plainWords(place))
+  const all = [...new Set(plainWords(title).filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !placeWords.has(w) && !LINK_WORDS.has(w)))]
+  return all.length > 0 && all.every((w) => said.has(w))
+}
+
 /**
  * Regola per la ricerca con Claude (Gemini non la usa). Claude spesso non mette citazioni
- * dentro un JSON: un evento senza pezzi citati e' confermato solo se
- * 1. la sua "fonte" (normalizzata, vedi normalizeUrl) e' una pagina che la ricerca ha davvero
- *    restituito (web_search_tool_result) o citato, oppure
- * 2. la "fonte" e' dello stesso sito (stesso host, senza "www.") di una pagina restituita il cui
- *    titolo o testo citato contiene le parole distintive del nome dell'evento (distinctiveWords:
- *    almeno 2, o l'unica se ne ha una sola).
+ * dentro un JSON: un evento senza pezzi citati e' confermato solo se la sua "fonte" porta a una
+ * pagina che la ricerca ha davvero restituito (web_search_tool_result) o citato E quella pagina
+ * parla dell'evento (pageNamesEvent: il nome nel titolo, nei testi citati o nel percorso
+ * dell'indirizzo), cioe'
+ * 1. la "fonte" (normalizzata, vedi normalizeUrl) e' una pagina restituita che ha il nome
+ *    dell'evento (le parole distintive, o tutte le parole se il nome e' fatto di parole comuni):
+ *    una pagina generica restituita ("Eventi a Palermo a novembre") non basta per un evento che
+ *    non nomina (si passa al punto 2); oppure
+ * 2. la "fonte" e' dello stesso sito (stesso host, senza "www.") di una pagina restituita che
+ *    ha le parole distintive del nome (qui un nome fatto solo di parole comuni non basta).
  * Le fonti dell'evento sono le pagine della ricerca (l'indirizzo scritto dall'AI si aggiunge solo
  * se e' dello stesso sito, come con Gemini). Senza fonte, con una fonte di un sito che la ricerca
- * non ha restituito, o con un nome fatto solo di parole comuni ("Concerto di Natale") e una fonte
- * che non e' una pagina restituita: l'evento si scarta. E' la regola piu' stretta che non lascia
- * vuote le risposte vere (Claude copia gli indirizzi delle pagine trovate, a volte con "/" o
- * parametri in piu', o indica la pagina dell'evento dello stesso sito della pagina trovata).
+ * non ha restituito o con pagine che non nominano l'evento: l'evento si scarta. E' la regola piu'
+ * stretta che non lascia vuote le risposte vere (Claude copia gli indirizzi delle pagine trovate,
+ * a volte con "/" o parametri in piu', o indica la pagina dell'evento dello stesso sito).
  */
 export function claudeSourcePages(given: string, title: string, place: string, answer: Pick<GroundedResult, 'chunks' | 'cited'>): number[] {
   const target = given ? normalizeUrl(given) : null
   if (!target) return []
   const all = answer.chunks.map((c, k) => ({ k, norm: normalizeUrl(c.uri) })).filter((c) => c.norm)
-  const exact = all.filter((c) => c.norm === target).map((c) => c.k)
+  const exact = all.filter((c) => c.norm === target && pageNamesEvent(c.k, title, place, answer, false)).map((c) => c.k)
   if (exact.length) return exact
-  const needed = distinctiveWords(title, place)
-  if (!needed.length) return []
   const host = hostOf(given)
-  const enough = Math.min(2, needed.length)
   return all
     .filter((c) => hostOf(answer.chunks[c.k].uri) === host)
-    .filter((c) => {
-      const said = new Set(plainWords(`${answer.chunks[c.k].title} ${(answer.cited?.[c.k] || []).join(' ')}`))
-      return needed.filter((w) => said.has(w)).length >= enough
-    })
+    .filter((c) => pageNamesEvent(c.k, title, place, answer, true))
     .map((c) => c.k)
 }
 

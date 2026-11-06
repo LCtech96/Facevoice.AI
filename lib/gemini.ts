@@ -280,6 +280,8 @@ export async function callGeminiAPI(
     return {
       message: text,
       model: (data.modelVersion as string) || geminiModel,
+      /** Motivo della fine (es. "MAX_TOKENS" = testo interrotto a meta'). */
+      finishReason: (data?.candidates?.[0]?.finishReason as string | undefined) || null,
       usage: data.usageMetadata
         ? {
             prompt_tokens: data.usageMetadata.promptTokenCount,

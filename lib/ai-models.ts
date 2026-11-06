@@ -1,13 +1,17 @@
 // Modelli tra cui scegliere nella Super chat (file senza dipendenze server:
 // lo usano sia l'API sia la pagina).
 
-/** "auto" = Gemini gratuito, poi Claude Haiku al limite. */
+/**
+ * "auto" = Gemini gratuito, poi Claude Haiku al limite. hint = per la Super chat di Facevoice;
+ * customerHint = per i clienti (area clienti): niente piani o limiti dei fornitori AI, che sono di
+ * Facevoice e non del cliente.
+ */
 export const AI_MODEL_CHOICES = [
-  { id: 'auto', label: 'Automatico', hint: 'Gemini gratis, poi Claude Haiku' },
-  { id: 'gemini', label: 'Gemini Flash', hint: 'gratis, si ferma al limite' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: '$1 / $5 per milione di token' },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', hint: '$2 / $10 per milione di token' },
-  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', hint: '$4 / $20 per milione di token' },
+  { id: 'auto', label: 'Automatico', hint: 'Gemini gratis, poi Claude Haiku', customerHint: 'sceglie il modello migliore' },
+  { id: 'gemini', label: 'Gemini Flash', hint: 'gratis, si ferma al limite', customerHint: 'solo Gemini' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: '$1 / $5 per milione di token', customerHint: '$1 / $5 per milione di token' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', hint: '$2 / $10 per milione di token', customerHint: '$2 / $10 per milione di token' },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', hint: '$4 / $20 per milione di token', customerHint: '$4 / $20 per milione di token' },
 ] as const
 export type AIModelChoice = (typeof AI_MODEL_CHOICES)[number]['id']
 export const asModelChoice = (value: unknown): AIModelChoice =>

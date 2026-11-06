@@ -418,7 +418,7 @@ function AssistantChat() {
             >
               {AI_MODEL_CHOICES.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.label} · {m.hint}
+                  {m.label} · {m.customerHint}
                 </option>
               ))}
             </select>
