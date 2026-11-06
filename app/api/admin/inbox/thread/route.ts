@@ -28,12 +28,12 @@ export async function GET(req: NextRequest) {
   const members = await readMembers(req)
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
-  const { data, error } = await supabaseAdmin
-    .from('social_messages')
-    .select(SELECT)
-    .or(membersFilter(members))
-    .order('created_at', { ascending: true })
-    .limit(800)
+  // origin: i messaggi scritti a mano dall'app di Instagram/Facebook si vedono come "dall'app".
+  const read = (columns: string) =>
+    supabaseAdmin.from('social_messages').select(columns).or(membersFilter(members)).order('created_at', { ascending: true }).limit(800)
+  let { data, error } = await read(`${SELECT}, origin`)
+  // Senza la colonna origin (migrazione non eseguita) la conversazione si vede lo stesso.
+  if (error) ({ data, error } = await read(SELECT))
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -46,7 +46,8 @@ export async function GET(req: NextRequest) {
 
   // Dopo un'eliminazione dalla casella si vedono solo i messaggi nuovi (come su WhatsApp).
   const hidden = await loadHidden()
-  const visible = (data || []).filter((m) => !isHidden(hidden, m.platform, m.contact_id, m.created_at))
+  const rows = (data || []) as unknown as { platform: string; contact_id: string; created_at: string }[]
+  const visible = rows.filter((m) => !isHidden(hidden, m.platform, m.contact_id, m.created_at))
 
   return NextResponse.json({ messages: visible, members })
 }

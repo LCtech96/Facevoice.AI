@@ -1,6 +1,7 @@
 import { handleIncoming } from '@/lib/meta/agent'
 import { fetchContactProfile, fetchPostCaption, getPageToken } from '@/lib/meta/graph'
 import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib/meta/media-context'
+import { ensureEchoSubscription, recordEcho } from '@/lib/meta/echoes'
 
 // Messenger e i Direct di Instagram arrivano con lo stesso formato ("messaging").
 // I commenti arrivano come "changes": "feed" su Facebook, "comments" su Instagram.
@@ -9,7 +10,17 @@ import { describeAttachments, type MetaAttachment, type StoryReply } from '@/lib
 type MessagingEvent = {
   sender?: { id?: string }
   recipient?: { id?: string }
-  message?: { mid?: string; text?: string; is_echo?: boolean; attachments?: MetaAttachment[]; reply_to?: { story?: StoryReply } }
+  timestamp?: number
+  message?: {
+    mid?: string
+    text?: string
+    is_echo?: boolean
+    // Solo nelle eco di Messenger: l'app che ha inviato il messaggio.
+    app_id?: string | number
+    is_deleted?: boolean
+    attachments?: MetaAttachment[]
+    reply_to?: { story?: StoryReply }
+  }
 }
 
 type CommentChange = {
@@ -35,11 +46,34 @@ export type MessagingPayload = {
 
 type Platform = 'facebook' | 'instagram'
 
+/**
+ * is_echo = messaggio inviato dal nostro account: le nostre risposte via API (gia' salvate)
+ * o un messaggio scritto a mano dall'app (es. il primo messaggio di una proposta). La persona
+ * e' il destinatario. Si salva come messaggio nostro: mai risposta AI, verifica o collegamento.
+ */
+async function handleEcho(platform: Platform, accountId: string | undefined, event: MessagingEvent) {
+  const message = event.message
+  const contactId = event.recipient?.id
+  if (!message?.mid || !contactId || message.is_deleted) return
+  const result = await recordEcho({
+    platform,
+    accountId: accountId ?? event.sender?.id ?? null,
+    contactId,
+    mid: message.mid,
+    text: message.text,
+    attachments: message.attachments,
+    timestamp: event.timestamp,
+    appId: message.app_id,
+  })
+  const what = { stored: 'scritto a mano dall’app, salvato', known: 'già salvato', api: 'nostra risposta via API', ignored: 'ignorato' }[result]
+  console.log(`${platform} eco: ${what}`)
+}
+
 async function handleEvent(platform: Platform, accountId: string | undefined, event: MessagingEvent) {
   const message = event.message
+  if (message?.is_echo) return handleEcho(platform, accountId, event)
   const senderId = event.sender?.id
-  // is_echo = messaggi inviati dalla Pagina stessa (anche le nostre risposte): da ignorare.
-  if (!message?.mid || message.is_echo || !senderId) return
+  if (!message?.mid || !senderId) return
 
   // Post, reel, storie e foto: didascalia e cosa si vede diventano contesto per l'AI.
   const context = await describeAttachments(message.attachments, message.reply_to?.story).catch((error) => {
@@ -63,6 +97,8 @@ async function handleEvent(platform: Platform, accountId: string | undefined, ev
     fallbackLabel: '[allegato]',
     // Solo allegati, senza testo: se ne arrivano piu' di fila si risponde una volta sola.
     burstGuard: !userText && Boolean(context),
+    // Ora di Meta: si confronta con quella delle eco (risposte scritte a mano dall'app).
+    sentAt: event.timestamp,
   })
 }
 
@@ -113,9 +149,13 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
 
 export async function handleMessagingWebhook(payload: MessagingPayload) {
   const platform: Platform = payload.object === 'instagram' ? 'instagram' : 'facebook'
+  // Una volta al giorno: la Pagina deve mandare anche le eco dei messaggi scritti a mano (in parallelo, mai bloccante).
+  const echoCheck = ensureEchoSubscription()
 
   for (const entry of payload.entry || []) {
-    for (const event of entry.messaging || []) {
+    // Prima le eco: se nello stesso invio c'e' anche una risposta scritta a mano, l'AI la vede gia'.
+    const events = [...(entry.messaging || [])].sort((a, b) => Number(Boolean(b.message?.is_echo)) - Number(Boolean(a.message?.is_echo)))
+    for (const event of events) {
       try {
         await handleEvent(platform, entry.id, event)
       } catch (error) {
@@ -127,7 +167,12 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
         if (change.field === 'messages') {
           const value = change.value
           if (value && typeof value.message === 'object') {
-            await handleEvent(platform, entry.id, { sender: value.sender, recipient: value.recipient, message: value.message })
+            await handleEvent(platform, entry.id, {
+              sender: value.sender,
+              recipient: value.recipient,
+              timestamp: value.timestamp,
+              message: value.message,
+            })
           }
           continue
         }
@@ -137,4 +182,5 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
       }
     }
   }
+  await echoCheck
 }

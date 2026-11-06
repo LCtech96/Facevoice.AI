@@ -7,6 +7,7 @@ import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { cleanEmail, emailsInText, isAutomaticEmail } from '@/lib/email-address'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { SOURCE_MANUAL } from '@/lib/contacts'
+import { APP_ORIGIN, incomingTimesAround, looksAutomaticReply } from '@/lib/meta/echoes'
 
 // Verifica dell'identita' tra canali. Chi scrive "ci siamo gia' sentiti su
 // Instagram", "sono gia' vostro cliente", "sono l'host di..." non viene creduto
@@ -56,7 +57,10 @@ const RECORD_MIN_AGE_MS = DAY_MS
 /** Storico di qualche giorno: conversazione gia' avviata (per email le risposte scritte da Gmail non arrivano qui). */
 const KNOWN_HISTORY_AGE_MS = 3 * DAY_MS
 
-/** Risposte inviate davvero dal team (scritte, approvate o corrette da Luca, primo contatto della Ricerca clienti). */
+/**
+ * Risposte inviate davvero dal team (scritte, approvate o corrette da Luca, primo contatto della Ricerca clienti).
+ * I messaggi scritti a mano dall'app (eco) contano a parte: tra loro ci sono le risposte automatiche di Meta.
+ */
 const TEAM_ORIGINS = ['manual', 'ai_approved', 'ai_edited', 'outreach']
 const TEAM_FILTER = `origin.in.(${TEAM_ORIGINS.join(',')})`
 
@@ -335,6 +339,29 @@ export function claimedNameIn(text: string): string | null {
 }
 
 /**
+ * Messaggio scritto davvero a mano dall'app (eco) per questa persona. Non contano le risposte automatiche
+ * di Meta (risposta istantanea, messaggio di assenza): arrivano a chiunque scriva, pochi secondi dopo.
+ */
+async function handWrittenFromApp(m: Member): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('social_messages')
+    .select('created_at')
+    .eq('platform', m.platform)
+    .eq('contact_id', m.contactId)
+    .eq('direction', 'out')
+    .eq('status', 'sent')
+    .eq('origin', APP_ORIGIN)
+    .order('created_at', { ascending: true })
+    .limit(10)
+  if (error || !data?.length) return false
+  for (const row of data) {
+    const at = Date.parse(row.created_at)
+    if (!looksAutomaticReply(at, await incomingTimesAround(m.platform, m.contactId, at))) return true
+  }
+  return false
+}
+
+/**
  * Conversazione gia' avviata davvero con noi: collegata ad altri account, con una
  * risposta del team (non solo automatica) o con messaggi di almeno qualche giorno fa.
  * Qui lo storico basta all'AI e una frase come "ti ho mandato una mail" non apre una verifica.
@@ -354,6 +381,7 @@ async function knownConversation(members: Member[]): Promise<boolean> {
         .or(m.platform === 'web' ? TEAM_FILTER : `origin.is.null,${TEAM_FILTER}`)
         .limit(1)
       if (!error && data?.length) return true
+      if ((m.platform === 'facebook' || m.platform === 'instagram') && (await handWrittenFromApp(m))) return true
       const { count } = await supabaseAdmin
         .from('social_messages')
         .select('id', { count: 'exact', head: true })

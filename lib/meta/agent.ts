@@ -12,6 +12,8 @@ import {
 import { notifyNewMessage } from '@/lib/meta/notify'
 import { linkedMembers } from '@/lib/meta/identities'
 import { autoLink, autoLinkContact } from '@/lib/meta/auto-link'
+import { APP_ORIGIN, manualReplySince, noteApiSend } from '@/lib/meta/echoes'
+import { syncConversationHistory } from '@/lib/meta/history-sync'
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
 import { replyLanguage } from '@/lib/reply-language'
@@ -319,35 +321,107 @@ export async function loadKnowledge(): Promise<string> {
     .join('\n')
 }
 
+/** Messaggio dello storico per l'AI: i nostri (risposte API e scritti a mano) hanno il ruolo assistant. */
+type HistoryMessage = { role: 'user' | 'assistant'; content: string }
+
+type LoadedHistory = {
+  messages: HistoryMessage[]
+  /** Primo messaggio della chat, se l'abbiamo scritto noi (es. a mano dall'app): la persona risponde a quello. */
+  opener: { text: string; byHand: 'app' | 'inbox' | null } | null
+  /** Nello storico c'e' almeno un messaggio scritto a mano dal team dall'app. */
+  handWritten: boolean
+}
+
+/** Etichetta, nello storico dato all'AI, dei messaggi scritti a mano dal team dall'app. */
+const HAND_LABEL = '[scritto a mano dal team]'
+/** Etichette dello storico ("[scritto a mano dal team]", "[su Instagram]") che l'AI puo' copiare in testa alla risposta. */
+const LEADING_HISTORY_LABELS = /^\s*(?:\[(?:scritto a mano dal team|su [^\]\n]{1,30})\]\s*)+/i
+
 /**
  * Messaggi privati gia' scambiati con questa persona, anche sugli altri canali
  * a cui e' stata collegata (es. Instagram + Messenger). Esclude bozze non inviate.
+ * Con il primo messaggio della chat, se l'abbiamo scritto noi.
  */
-async function loadHistory(platform: SocialPlatform, contactId: string) {
+async function loadHistory(platform: SocialPlatform, contactId: string): Promise<LoadedHistory> {
   const members = await linkedMembers(platform, contactId)
   const filter = members
     .map((m) => `and(platform.eq.${m.platform},contact_id.eq.${m.contactId})`)
     .join(',')
 
-  const { data } = await supabaseAdmin
-    .from('social_messages')
-    .select('platform, direction, body, status')
-    .or(filter)
-    .eq('kind', 'message')
-    .order('created_at', { ascending: false })
-    .limit(HISTORY_LIMIT)
+  const recent = (columns: string) =>
+    supabaseAdmin
+      .from('social_messages')
+      .select(columns)
+      .or(filter)
+      .eq('kind', 'message')
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_LIMIT)
+  const first = (columns: string) =>
+    supabaseAdmin
+      .from('social_messages')
+      .select(columns)
+      .eq('platform', platform)
+      .eq('contact_id', contactId)
+      .eq('kind', 'message')
+      .order('created_at', { ascending: true })
+      .limit(5)
+  type Row = { platform: string; direction: string; body: string | null; status: string | null; origin?: string | null; reply_to?: string | null }
+  let [{ data, error }, { data: start }] = await Promise.all([
+    recent('platform, direction, body, status, origin'),
+    first('direction, body, status, origin, reply_to'),
+  ])
+  // Senza la colonna origin (migrazione non eseguita) si legge lo storico come prima.
+  if (error) ({ data } = await recent('platform, direction, body, status'))
+  const rows = ((data || []) as unknown as Row[]).reverse().filter((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
 
-  return (data || [])
-    .reverse()
-    .filter((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
-    .map((m) => ({
+  const messages = rows.map((m): HistoryMessage => {
+    const hand = m.direction === 'out' && m.origin === APP_ORIGIN ? `${HAND_LABEL} ` : ''
+    return {
       role: m.direction === 'in' ? 'user' : 'assistant',
       // Se la persona ha scritto da un altro canale, l'AI lo sa.
       content:
         m.platform !== platform
-          ? `[su ${PLATFORM_LABEL[m.platform as SocialPlatform] ?? m.platform}] ${m.body}`
-          : (m.body as string),
-    }))
+          ? `[su ${PLATFORM_LABEL[m.platform as SocialPlatform] ?? m.platform}] ${hand}${m.body}`
+          : `${hand}${m.body as string}`,
+    }
+  })
+
+  // Primo messaggio vero della chat (niente bozze): se e' nostro, la conversazione l'abbiamo aperta noi.
+  // Non vale la risposta privata a un commento (li' ha scritto prima la persona).
+  const opening = ((start || []) as unknown as Row[]).find((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
+  const opener =
+    platform !== 'email' && opening?.direction === 'out' && !opening.reply_to
+      ? {
+          text: String(opening.body).slice(0, 1500),
+          byHand: opening.origin === APP_ORIGIN ? ('app' as const) : opening.origin === 'manual' ? ('inbox' as const) : null,
+        }
+      : null
+
+  return { messages, opener, handWritten: rows.some((m) => m.direction === 'out' && m.origin === APP_ORIGIN) }
+}
+
+/**
+ * Conversazione aperta da noi (es. primo messaggio scritto a mano da Luca dall'app): l'AI
+ * continua da quella proposta, non chiede "a cosa ti riferisci?" e non riparte da zero.
+ */
+function conversationContext(history: LoadedHistory): string {
+  const parts: string[] = []
+  if (history.handWritten) {
+    parts.push(`\n\n## Messaggi scritti a mano dal team
+Nello storico i nostri messaggi sono quelli con il ruolo dell'assistente. Quelli che iniziano con ${HAND_LABEL} li ha scritti una persona del team dall'app: sono nostri e valgono come i tuoi, continua in modo coerente con quello che c'è scritto. Non scrivere mai etichette tra parentesi quadre nella risposta.`)
+  }
+  const opener = history.opener
+  if (opener) {
+    const who = opener.byHand === 'app' ? "noi, a mano dall'app" : opener.byHand === 'inbox' ? 'noi, a mano' : 'noi'
+    parts.push(`\n\n## Conversazione aperta da noi (regola obbligatoria)
+Il primo messaggio di questa chat l'abbiamo scritto ${who}: è la NOSTRA proposta e la conversazione parte da lì.
+Primo messaggio: «${opener.text.replace(/\s+/g, ' ').trim()}»
+- Continua da lì in modo naturale, come chi ha scritto quel messaggio. Se la persona fa una domanda sulla proposta, rispondi nel merito usando il primo messaggio, lo storico e le informazioni ufficiali.
+- Non chiedere mai a cosa si riferisce e non dire che non hai capito: la proposta l'abbiamo fatta noi. Non ripartire da zero con domande per capire chi è o che attività ha.
+- Quello che c'è scritto nei nostri messaggi è vero: non trattarlo come un'affermazione da verificare.
+- Se un dettaglio non è nel contesto o nelle informazioni ufficiali (es. il nome del partner, l'indirizzo, una data), non inventarlo: di' che glielo confermi a breve.`)
+  }
+  return parts.join('')
 }
 
 type ReplyOptions = {
@@ -538,10 +612,20 @@ async function generateReply(
   // Durante una verifica niente esempi presi da conversazioni di altre persone nel prompt.
   const verifying = Boolean(identity?.hold)
 
+  // Instagram e Messenger: prima si leggono da Meta i messaggi mancanti (es. il primo scritto a mano
+  // dall'app), entro 5 secondi. Se non riesce si risponde con lo storico salvato.
+  if (!fromComment && (platform === 'facebook' || platform === 'instagram')) {
+    await syncConversationHistory(platform, contactId).catch((error) =>
+      console.warn(`${platform} storico da Meta:`, error instanceof Error ? error.message : error)
+    )
+  }
+
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
   const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal] = await Promise.all([
     loadKnowledge(),
-    fromComment ? Promise.resolve([{ role: 'user', content: publicComment! }]) : loadHistory(platform, contactId),
+    fromComment
+      ? Promise.resolve<LoadedHistory>({ messages: [{ role: 'user', content: publicComment! }], opener: null, handWritten: false })
+      : loadHistory(platform, contactId),
     (fromComment && !privateFollowUp) || verifying ? Promise.resolve('') : loadStyleExamples(platform),
     outreach ? loadOutreachReplySettings().catch(() => null) : Promise.resolve(null),
     agentPrompt(platform, fromComment && !privateFollowUp),
@@ -564,7 +648,7 @@ async function generateReply(
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
     styleExamples,
     personal ? `\n\n${personal}` : '',
-    clientBlock(contactName, history.filter((m) => m.role === 'assistant').length),
+    clientBlock(contactName, history.messages.filter((m) => m.role === 'assistant').length),
     instructions !== undefined
       ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
       : '',
@@ -572,16 +656,18 @@ async function generateReply(
     CLARITY_RULES,
     // Regole per i commenti solo nella risposta pubblica; il privato che la segue ha le sue.
     identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
-    languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
+    // Dopo le regole generali (pesa di piu'): la chat aperta da noi si continua, non si riparte da zero.
+    outreach ? '' : conversationContext(history),
+    languageRule(fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content),
   ].join('')
 
   try {
-    const result = await callAI(history, system, {
+    const result = await callAI(history.messages, system, {
       feature: outreach ? 'controrisposte_clienti' : platform === 'email' ? 'risposte_email' : 'risposte_social',
       temperature: 0.5,
       maxOutputTokens: platform === 'email' ? 2048 : 1024,
     })
-    const reply = (result.message || '').trim()
+    const reply = (result.message || '').replace(LEADING_HISTORY_LABELS, '').trim()
     if (reply.includes('NESSUNA_RISPOSTA')) return ''
     return reply.slice(0, platform === 'email' ? 6000 : 1900)
   } catch (error) {
@@ -624,6 +710,10 @@ export async function deliver(target: OutgoingTarget, text: string): Promise<Sen
     if (!target.channel_account_id) return { error: 'Numero WhatsApp di origine mancante' }
     return sendWhatsAppText(target.channel_account_id, target.contact_id, text)
   }
+  // Prima dell'invio: la sua eco (is_echo) non va scambiata per un messaggio scritto a mano dall'app.
+  await noteApiSend(target.platform, target.reply_to ? null : target.contact_id, text).catch((error) =>
+    console.warn('eco: invio non segnato:', error instanceof Error ? error.message : error)
+  )
   if (target.reply_to) {
     // Messaggio privato nato da un commento: si invia tramite l'id del commento.
     const sent = await sendPrivateReply(target.reply_to, text)
@@ -884,6 +974,8 @@ export async function handleIncoming(input: {
   instagramUsername?: string | null
   /** Email: mittente autenticato da Gmail (DMARC/DKIM, nessun Reply-To diverso), per il collegamento automatico. */
   emailAuthenticated?: boolean
+  /** Messenger/Instagram: ora del messaggio data da Meta (ms), per confrontarla con le risposte scritte a mano dall'app. */
+  sentAt?: number
 }) {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
@@ -926,6 +1018,15 @@ export async function handleIncoming(input: {
 
   const settings = await getChannelSettings(input.platform)
   const outreach = input.kind === 'message' ? input.outreach ?? null : null
+
+  // Instagram e Messenger: messaggi della chat che non abbiamo (es. il primo, scritto a mano da Luca
+  // dall'app) letti da Meta prima della verifica e della risposta, cosi' tutti e due li vedono.
+  // Entro 5 secondi; se non riesce si prosegue con lo storico salvato.
+  if (input.kind === 'message' && !input.silent && settings.enabled && (input.platform === 'facebook' || input.platform === 'instagram')) {
+    await syncConversationHistory(input.platform, input.contactId).catch((error) =>
+      console.warn(`${input.platform} storico da Meta:`, error instanceof Error ? error.message : error)
+    )
+  }
 
   // Chi dice di conoscerci gia' (altro canale, cliente, host, creator...): i dati li confronta
   // il codice con gli archivi e solo il codice inviato all'email registrata lo verifica.
@@ -993,6 +1094,15 @@ export async function handleIncoming(input: {
   }
 
   let reply = marker.text
+  // Luca ha risposto a mano (dall'app o dalla casella) mentre l'AI scriveva: niente doppia risposta.
+  let takenOver = false
+  if (reply && input.kind === 'message' && (input.platform === 'facebook' || input.platform === 'instagram')) {
+    // Ora di Meta del messaggio (stesso orologio delle eco), se credibile; altrimenti quella di salvataggio.
+    const sentAt = typeof input.sentAt === 'number' && Math.abs(Date.now() - input.sentAt) < 86_400_000 ? input.sentAt : null
+    const since = sentAt !== null && sentAt < Date.parse(inserted.created_at) ? new Date(sentAt).toISOString() : inserted.created_at
+    takenOver = await manualReplySince(input.platform, input.contactId, since).catch(() => false)
+    if (takenOver) reply = ''
+  }
   // Controrisposta ai contatti cercati da noi: si prepara sempre; parte da sola (dopo qualche
   // minuto) solo con l'interruttore "risposte automatiche ai contatti" acceso.
   let outreachAuto = false
@@ -1088,7 +1198,7 @@ export async function handleIncoming(input: {
   if (draftId && identity?.state?.status === 'code_ready') await noteVerificationDraft(input.platform, input.contactId, draftId)
 
   if (!reply) {
-    const why = outreach ? 'testo mancante o generazione non riuscita' : !settings.enabled ? 'canale non collegato in Canali e AI' : "l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita"
+    const why = takenOver ? 'hai già risposto tu a mano' : outreach ? 'testo mancante o generazione non riuscita' : !settings.enabled ? 'canale non collegato in Canali e AI' : "l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita"
     console.log(`${input.platform} ${input.kind}: nessuna risposta (${why})`)
   } else if (pendingDraft) {
     console.log(`${input.platform} ${input.kind}: ${scheduledAt ? 'controrisposta programmata' : 'risposta in bozza da approvare in Messaggi'}`)
