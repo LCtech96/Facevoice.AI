@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { chatSendWindow } from '@/lib/saas/assistant-send'
+import { campaignMarks } from '@/lib/saas/campaign'
 
 export const dynamic = 'force-dynamic'
 
 // Omnichat: i messaggi di una conversazione. Aprendola, i messaggi ricevuti
 // diventano letti. sendWindow: se ora si puo' scrivere in questa chat (Correggi).
+// campaign: nome della campagna con cui l'AI ha scritto la risposta ('' senza nome), altrimenti null.
 
 export async function GET(req: NextRequest) {
   const access = await requireWorkspace(req)
@@ -42,5 +44,13 @@ export async function GET(req: NextRequest) {
     .eq('kind', 'message')
     .eq('direction', 'in')
     .is('read_at', null)
-  return NextResponse.json({ messages: data || [], sendWindow: chatSendWindow(platform, lastIn?.created_at as string | undefined) })
+  const rows = data || []
+  const marks = await campaignMarks(
+    access.workspace.id,
+    rows.filter((m) => m.direction === 'out' && String(m.origin || '').startsWith('ai')).map((m) => m.id as string)
+  )
+  return NextResponse.json({
+    messages: rows.map((m) => ({ ...m, campaign: marks.get(m.id as string) ?? null })),
+    sendWindow: chatSendWindow(platform, lastIn?.created_at as string | undefined),
+  })
 }

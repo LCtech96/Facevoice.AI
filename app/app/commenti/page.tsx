@@ -12,7 +12,8 @@ import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 type Mode = 'off' | 'approval' | 'auto'
 type Channel = { platform: 'instagram' | 'facebook'; mode: Mode; handle: string; needsReconnect: boolean }
-type Reply = { id: string; text: string; status: string | null; origin: string | null; note: string | null; at: string }
+/** campaign: nome della Campagna con cui l'AI ha scritto la risposta ('' senza nome), altrimenti null. */
+type Reply = { id: string; text: string; status: string | null; origin: string | null; note: string | null; at: string; campaign?: string | null }
 type Comment = {
   id: string
   platform: 'instagram' | 'facebook'
@@ -255,6 +256,7 @@ function CommentCard({ comment, language, onChange, onNotice }: { comment: Comme
           <p className="text-xs text-[var(--text-secondary)]">
             {r.status === 'sending' ? 'Pubblicazione…' : 'Risposta pubblicata'} · {when(r.at, language)}
             {r.origin?.startsWith('ai') ? ' · AI' : ''}
+            {r.campaign != null && <CampaignChip name={r.campaign} />}
           </p>
           <p translate="no" className="mt-1 whitespace-pre-wrap">
             {r.text}
@@ -272,6 +274,7 @@ function CommentCard({ comment, language, onChange, onNotice }: { comment: Comme
           {draft && (
             <p className={`mb-1 text-xs ${draft.status === 'failed' ? 'text-[#ff6b6b]' : 'text-[#FF9500]'}`}>
               {draft.status === 'failed' ? `Non pubblicata: ${draft.note || 'riprova'}` : draft.note || 'Bozza dell’AI: controllala e pubblicala'}
+              {draft.campaign != null && <CampaignChip name={draft.campaign} />}
             </p>
           )}
           <textarea
@@ -341,5 +344,17 @@ function CommentCard({ comment, language, onChange, onNotice }: { comment: Comme
       </div>
       {error && <p className="mt-2 text-sm text-[#ff6b6b]">{error}</p>}
     </article>
+  )
+}
+
+/** Risposta scritta dall'AI con la Campagna (Omnichat → Campagna) invece che con le Istruzioni. */
+function CampaignChip({ name }: { name: string }) {
+  return (
+    <span
+      title={name ? `Scritta con la campagna «${name}»` : 'Scritta con la campagna'}
+      className="ml-1.5 inline-block rounded-full bg-[#AF52DE]/15 px-1.5 align-middle text-[10px] font-medium text-[#BF5AF2]"
+    >
+      Campagna
+    </span>
   )
 }

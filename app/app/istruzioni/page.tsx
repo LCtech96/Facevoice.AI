@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Facebook, GraduationCap, Instagram, Loader2, Mail, SlidersHorizontal, Trash2 } from 'lucide-react'
+import Link from 'next/link'
+import { Check, Facebook, GraduationCap, Instagram, Loader2, Mail, Megaphone, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import BrandSettings from '@/components/app/BrandSettings'
 
@@ -9,6 +10,8 @@ import BrandSettings from '@/components/app/BrandSettings'
 // canale (tono, cosa dire e cosa no). L'AI usa solo quello che c'e' scritto qui.
 // In fondo le "Correzioni imparate" dall'Omnichat (Correggi → Sempre) e dalle
 // bozze modificate: si modificano e si cancellano qui (titolare e amministratori).
+// Con una Campagna accesa (Omnichat) un avviso in alto: nei canali scelti l'AI usa
+// la campagna, non queste istruzioni.
 
 type ChannelId = 'general' | 'email' | 'instagram' | 'facebook'
 
@@ -55,7 +58,15 @@ export default function InstructionsPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [campaign, setCampaign] = useState<{ active: boolean; name: string } | null>(null)
   const canEdit = workspace?.role !== 'member'
+
+  useEffect(() => {
+    appFetch('/api/app/campaign')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setCampaign(data?.campaign ? { active: data.campaign.active === true, name: String(data.campaign.name || '') } : null))
+      .catch(() => null)
+  }, [appFetch])
 
   const load = useCallback(async () => {
     const res = await appFetch('/api/app/instructions').catch(() => null)
@@ -83,6 +94,21 @@ export default function InstructionsPage() {
 
   return (
     <div className="max-w-3xl">
+      {campaign?.active && (
+        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-[#AF52DE]/60 bg-[#AF52DE]/10 p-4 text-sm">
+          <Megaphone className="mt-0.5 h-4 w-4 shrink-0 text-[#BF5AF2]" />
+          <p className="min-w-0">
+            <span className="font-semibold">
+              Campagna attiva{campaign.name ? ': ' : ''}
+              {campaign.name ? <span translate="no">{campaign.name}</span> : null}
+            </span>{' '}
+            — nei canali scelti l’AI usa le informazioni della campagna, non queste.{' '}
+            <Link href="/app/omnichat#campagna" className="whitespace-nowrap font-semibold text-[var(--accent-blue)]">
+              Apri la campagna
+            </Link>
+          </p>
+        </div>
+      )}
       <h1 className="text-3xl font-extrabold">Istruzioni</h1>
       <p className="mt-2 text-[var(--text-secondary)]">
         L’AI risponde solo con quello che scrivi qui: se un’informazione manca, dice che verifica e la conversazione resta a te. Più sei preciso, migliori

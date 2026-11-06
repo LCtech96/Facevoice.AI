@@ -3,6 +3,7 @@ import { parseSuspicious } from '@/lib/clarity-rules'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
+import { campaignFor, campaignSection, markCampaignReply, readCampaign } from './campaign'
 import { listConnections, readConnectionSecret, type Connection } from './connections'
 import { replyGuidance } from './corrections'
 import { GRAPH, connectionForAccount, type MetaSecret } from './meta'
@@ -21,6 +22,9 @@ import { BLOCKED_OUTCOME, RULES, languageFor, parseOwnerNote, readInstructions, 
 //   post, subject = inizio della didascalia del post, status 'skipped' quando
 //   l'AI decide che non serve rispondere (tag di amici, spam);
 // - risposta (direction 'out'): reply_to = id del commento a cui risponde.
+//
+// Con una Campagna accesa per i commenti di quel canale (campaign.ts) le informazioni
+// della campagna prendono il posto delle Istruzioni nella risposta.
 
 export type CommentPlatform = 'instagram' | 'facebook'
 export type CommentMode = 'off' | 'approval' | 'auto'
@@ -204,17 +208,28 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     .in('status', ['pending', 'sent', 'sending'])
   if (count) return { status: 'skipped', reason: 'risposta già presente' }
 
-  const [instructions, name, lang, corrections] = await Promise.all([
+  // Campagna accesa per i commenti di questo canale?
+  const campaignRead = readCampaign(db.workspaceId).then((c) => campaignFor(c, platform, 'comment'))
+  const [instructions, name, lang, campaign, corrections] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
     languageFor(db.workspaceId, comment.body, []),
+    campaignRead,
     // Regole "Sempre" imparate dalle correzioni (quelle "solo in questa chat" valgono per i messaggi privati).
     // Senza esempi: vengono da messaggi privati e questa risposta e' pubblica.
-    replyGuidance(db.workspaceId, { platform, incoming: comment.body, recent: comment.subject ? [comment.subject] : [], examples: false }),
+    campaignRead.then((active) =>
+      replyGuidance(db.workspaceId, {
+        platform,
+        incoming: comment.body,
+        recent: comment.subject ? [comment.subject] : [],
+        examples: false,
+        ...(active ? { campaign: { since: active.activeSince } } : {}),
+      })
+    ),
   ])
   const general = instructions.general.trim()
   const specific = (instructions[platform as InstructionChannel] || '').trim()
-  const hasInstructions = Boolean(general || specific)
+  const hasInstructions = campaign ? true : Boolean(general || specific)
   const system = [
     lang.source === 'dashboard'
       ? `LINGUA DELLA RISPOSTA (regola principale): scrivi la risposta in ${lang.language}.`
@@ -223,9 +238,14 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     COMMENT_STYLE,
     comment.subject ? `## Il post commentato\nDidascalia: "${comment.subject}"` : '',
     comment.contact_name ? `Ha commentato "${comment.contact_name}".` : '',
-    `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
-    specific ? `## Istruzioni per questo canale\n${specific}` : '',
-    hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
+    // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
+    ...(campaign
+      ? [campaignSection(campaign, platform, 'comment')]
+      : [
+          `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
+          specific ? `## Istruzioni per questo canale\n${specific}` : '',
+          hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
+        ]),
     corrections,
     salesRules(name),
     buildRealtimeDateTimeInstructionsItalian(),
@@ -289,6 +309,7 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
     console.error('saas commenti bozza:', error?.message)
     return { status: 'failed', reason: 'bozza non salvata' }
   }
+  if (campaign) await markCampaignReply(db.workspaceId, saved.id as string, campaign)
   if (!autoSend) return { status: 'pending', messageId: saved.id as string, reason: reason || undefined }
   // Pubblicata: la nota "Da confermare" resta sulla risposta, il titolare la vede nella pagina Commenti.
   const sent = await deliverComment(db, saved.id as string, text, 'ai_auto', { note })

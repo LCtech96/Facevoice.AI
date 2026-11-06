@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Facebook, Globe, Instagram, Loader2, Mail, MessageCircle, PencilLine, RefreshCw, Send, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, Clock, Facebook, Globe, Instagram, Loader2, Mail, Megaphone, MessageCircle, Mic, PencilLine, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import { useDictation } from '@/components/useDictation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 
 // Omnichat: tutte le conversazioni dei canali collegati, la risposta a mano o
 // con le bozze dell'AI, e l'automazione di ogni canale. "Correggi" sotto ogni
 // risposta dell'AI: come avrebbe dovuto rispondere, solo in questa chat o sempre.
+// "Campagna": informazioni di una campagna marketing che, accese, prendono il posto
+// delle Istruzioni nei canali scelti (lib/saas/campaign.ts).
 
 type Mode = 'off' | 'approval' | 'auto'
 type Channel = { platform: string; status: string; handle: string | null; mode: Mode }
@@ -36,7 +39,13 @@ type Message = {
   external_id?: string | null
   reply_to?: string | null
   created_at: string
+  /** Scritta dall'AI con la Campagna: nome della campagna ('' senza nome), altrimenti null. */
+  campaign?: string | null
 }
+type CampaignScope = 'email' | 'instagram_dm' | 'instagram_comments' | 'facebook_messenger' | 'facebook_comments'
+type CampaignScopes = Record<CampaignScope, boolean>
+type Campaign = { active: boolean; name: string; text: string; scopes: CampaignScopes; activeSince: string | null; updatedAt: string | null; updatedBy: string | null }
+type CampaignForm = { name: string; text: string; scopes: CampaignScopes }
 /** Se ora si puo' scrivere in questa chat (24 ore di Meta, email sempre). */
 type SendWindow = { ok: boolean; until?: string; reason?: string }
 type CorrectionResult = { scope: 'chat' | 'always'; rule: { rule: string } | null; learned: boolean; sent: boolean; draftUpdated?: boolean; sendError?: string }
@@ -55,6 +64,40 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
   { id: 'auto', label: 'Automatica', hint: 'L’AI risponde da sola. I messaggi dubbi restano in bozza.' },
 ]
 
+const CAMPAIGN_MAX = 6000
+/** Superfici della campagna per ogni canale, nell'ordine delle caselle. */
+const CAMPAIGN_GROUPS: { platform: 'email' | 'instagram' | 'facebook'; options: { id: CampaignScope; label: string }[] }[] = [
+  { platform: 'email', options: [{ id: 'email', label: 'Risposte email' }] },
+  {
+    platform: 'instagram',
+    options: [
+      { id: 'instagram_dm', label: 'DM' },
+      { id: 'instagram_comments', label: 'Commenti' },
+    ],
+  },
+  {
+    platform: 'facebook',
+    options: [
+      { id: 'facebook_messenger', label: 'Messenger' },
+      { id: 'facebook_comments', label: 'Commenti' },
+    ],
+  },
+]
+const CAMPAIGN_SCOPES = CAMPAIGN_GROUPS.flatMap((g) => g.options)
+const SCOPE_LABELS: Record<CampaignScope, string> = {
+  email: 'Email',
+  instagram_dm: 'Instagram DM',
+  instagram_comments: 'commenti Instagram',
+  facebook_messenger: 'Messenger',
+  facebook_comments: 'commenti Facebook',
+}
+/** Superfici accese della campagna attiva per un canale (vuoto = la campagna non vale li'). */
+const campaignOn = (c: Campaign | null, platform: string) =>
+  c?.active ? (CAMPAIGN_GROUPS.find((g) => g.platform === platform)?.options || []).filter((o) => c.scopes[o.id]) : []
+const formOf = (c: Campaign): CampaignForm => ({ name: c.name, text: c.text, scopes: { ...c.scopes } })
+const sameForm = (a: CampaignForm, b: CampaignForm) =>
+  a.name.trim() === b.name.trim() && a.text === b.text && CAMPAIGN_SCOPES.every((o) => a.scopes[o.id] === b.scopes[o.id])
+
 const when = (iso: string, language = 'it') => {
   const d = new Date(iso)
   const locale = language === 'it' ? 'it-IT' : 'en-GB'
@@ -72,7 +115,25 @@ export default function OmnichatPage() {
   const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [delay, setDelay] = useState<ReplyDelay | null>(null)
+  const [campaign, setCampaign] = useState<Campaign | null>(null)
+  const [campaignChannels, setCampaignChannels] = useState<string[]>([])
+  const [campaignOpen, setCampaignOpen] = useState(false)
   const canManage = workspace?.role !== 'member'
+
+  const loadCampaign = useCallback(async () => {
+    const res = await appFetch('/api/app/campaign').catch(() => null)
+    if (!res?.ok) return
+    const data = await res.json().catch(() => null)
+    if (!data?.campaign) return
+    setCampaign(data.campaign)
+    setCampaignChannels(data.connected || [])
+  }, [appFetch])
+
+  /** Dalle schede dei canali (e da Istruzioni, #campagna): apre la scheda Campagna e ci porta lì. */
+  const showCampaign = useCallback(() => {
+    setCampaignOpen(true)
+    setTimeout(() => document.getElementById('campagna')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }, [])
 
   const loadChannels = useCallback(async () => {
     const res = await appFetch('/api/app/channels').catch(() => null)
@@ -119,6 +180,16 @@ export default function OmnichatPage() {
     const contactId = params.get('contact')
     if (platform && contactId) setOpen({ platform, contactId })
   }, [])
+
+  // Link "Campagna" dalla pagina Istruzioni: si apre la scheda quando e' pronta.
+  useEffect(() => {
+    if (campaign && window.location.hash === '#campagna') showCampaign()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(campaign)])
+
+  useEffect(() => {
+    loadCampaign()
+  }, [loadCampaign])
 
   useEffect(() => {
     loadChannels()
@@ -199,9 +270,35 @@ export default function OmnichatPage() {
                     ))}
                   </div>
                   <p className="mt-1.5 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">{MODES.find((m) => m.id === c.mode)?.hint}</p>
+                  {campaignOn(campaign, c.platform).length > 0 && (
+                    <button
+                      onClick={showCampaign}
+                      title={`Qui l’AI usa la campagna per: ${campaignOn(campaign, c.platform).map((o) => SCOPE_LABELS[o.id]).join(', ')}`}
+                      className="mt-2 flex max-w-[16rem] items-center gap-1.5 rounded-full bg-[#AF52DE]/15 px-2.5 py-1 text-left text-[11px] font-medium text-[#BF5AF2]"
+                    >
+                      <Megaphone className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        Campagna attiva{campaign?.name ? ': ' : ''}
+                        {campaign?.name ? <span translate="no">{campaign.name}</span> : null}
+                      </span>
+                    </button>
+                  )}
                 </div>
               )
             })}
+            {campaign && campaignChannels.length > 0 && (
+              <CampaignCard
+                campaign={campaign}
+                connected={campaignChannels}
+                canManage={canManage}
+                open={campaignOpen}
+                onOpenChange={setCampaignOpen}
+                onSaved={(c, connected) => {
+                  setCampaign(c)
+                  if (connected) setCampaignChannels(connected)
+                }}
+              />
+            )}
             {channels.length > 0 && delay && <DelayCard delay={delay} canManage={canManage} onSave={saveDelay} />}
           </div>
         </div>
@@ -406,6 +503,7 @@ function Thread({
               <div key={m.id} className="ml-auto max-w-[92%] rounded-2xl border border-[#FF9500] bg-[var(--background-secondary)] p-3">
                 <p className="text-xs font-semibold text-[#FF9500]">
                   {m.status === 'failed' ? 'Invio non riuscito' : m.origin === 'manual' ? 'Da inviare' : 'Bozza dell’AI: controllala e inviala'}
+                  {m.campaign != null && <CampaignChip name={m.campaign} />}
                 </p>
                 {m.error_message && <p className="mt-1 text-xs text-[var(--text-secondary)]">{m.error_message}</p>}
                 <textarea
@@ -457,6 +555,7 @@ function Thread({
               <p className={`mt-1 text-[11px] text-[var(--text-secondary)] ${mine ? 'text-right' : ''}`}>
                 {when(m.created_at, language)}
                 {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
+                {mine && m.campaign != null && <CampaignChip name={m.campaign} />}
                 {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
                 {mine && m.origin === 'manual_app' ? ' · dall’app' : ''}
                 {mine && m.origin === 'assistant' ? ' · dall’Assistente' : ''}
@@ -642,6 +741,9 @@ function CorrectionSheet({
           ))}
         </div>
         <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{scopes.find((s) => s.id === scope)?.hint}</p>
+        {scope === 'always' && message.campaign != null && (
+          <p className="mt-1 text-[11px] text-[#BF5AF2]">È una risposta della campagna: la regola resta anche quando spegni la campagna.</p>
+        )}
 
         <label className={`mt-4 flex items-start gap-2 text-sm ${canSend ? '' : 'opacity-50'}`}>
           <input type="checkbox" checked={canSend && sendNow} disabled={!canSend} onChange={(e) => setSendNow(e.target.checked)} className="mt-0.5 h-4 w-4" />
@@ -748,6 +850,294 @@ function DelayCard({ delay, canManage, onSave }: { delay: ReplyDelay; canManage:
       </p>
       {!canManage && <p className="mt-1 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">Lo cambiano il titolare o un amministratore.</p>}
       {error && <p className="mt-1 text-[11px] text-[#ff6b6b]">{error}</p>}
+    </div>
+  )
+}
+
+/** Risposta scritta dall'AI con la Campagna invece che con le Istruzioni. */
+function CampaignChip({ name }: { name: string }) {
+  return (
+    <span
+      title={name ? `Scritta con la campagna «${name}»` : 'Scritta con la campagna'}
+      className="ml-1.5 inline-block rounded-full bg-[#AF52DE]/15 px-1.5 align-middle text-[10px] font-medium text-[#BF5AF2]"
+    >
+      Campagna
+    </span>
+  )
+}
+
+const CAMPAIGN_PLACEHOLDER = `Esempio:
+Dal 10 al 30 novembre: menù degustazione a 35 € a persona, bevande escluse.
+Solo su prenotazione, da giovedì a domenica. Link per prenotare: www.esempio.it/prenota
+Obiettivo: far prenotare un tavolo.`
+
+/**
+ * Campagna (una per spazio): informazioni che, accese, l'AI usa al posto delle
+ * Istruzioni nei canali scelti. L'interruttore salva subito: accendendo si salva
+ * anche quello che e' scritto nella scheda (si accende quello che si vede);
+ * spegnendo, il testo non salvato resta nella scheda. Nome, testo e canali: Salva.
+ */
+function CampaignCard({
+  campaign,
+  connected,
+  canManage,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  campaign: Campaign
+  /** Canali collegati tra email, instagram, facebook. */
+  connected: string[]
+  canManage: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: (campaign: Campaign, connected?: string[]) => void
+}) {
+  const { appFetch } = useWorkspace()
+  const { language } = useTranslation()
+  const [form, setForm] = useState<CampaignForm>(() => formOf(campaign))
+  const [busy, setBusy] = useState<'toggle' | 'save' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const dirty = !sameForm(form, formOf(campaign))
+  const groups = CAMPAIGN_GROUPS.filter((g) => connected.includes(g.platform))
+  const chosen = groups.flatMap((g) => g.options).filter((o) => campaign.scopes[o.id])
+  const dictation = useDictation(
+    (said) => setForm((f) => ({ ...f, text: (f.text && !/\s$/.test(f.text) ? `${f.text} ${said}` : `${f.text}${said}`).slice(0, CAMPAIGN_MAX) })),
+    language === 'it' ? 'it-IT' : 'en-US'
+  )
+
+  // Testo scritto e non salvato: il browser chiede conferma prima di chiudere la pagina.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  const put = async (body: Record<string, unknown>): Promise<{ campaign: Campaign; connected?: string[] } | null> => {
+    const res = await appFetch('/api/app/campaign', { method: 'PUT', body: JSON.stringify(body) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (res?.ok && data.campaign) return { campaign: data.campaign as Campaign, connected: data.connected as string[] | undefined }
+    if (res?.status === 409 && data.campaign) {
+      // Cambiata da un'altra persona: si aggiorna la versione salvata, il testo scritto qui resta.
+      onSaved(data.campaign as Campaign)
+      setError('Un’altra persona ha appena cambiato la campagna. Quello che hai scritto è ancora qui: controllalo e salva di nuovo.')
+    } else setError(data.error || 'Connessione non riuscita, riprova.')
+    return null
+  }
+
+  const flash = () => {
+    setDone(true)
+    setTimeout(() => setDone(false), 2500)
+  }
+
+  const toggle = async () => {
+    if (!canManage || busy) return
+    const turnOn = !campaign.active
+    dictation.stop()
+    setBusy('toggle')
+    setError(null)
+    const sent = form
+    const result = await put(turnOn ? { active: true, ...sent, baseUpdatedAt: campaign.updatedAt } : { active: false })
+    setBusy(null)
+    if (!result) {
+      // Non si accende (testo vuoto, nessun canale…): si apre la scheda per sistemarla.
+      if (turnOn) onOpenChange(true)
+      return
+    }
+    onSaved(result.campaign, result.connected)
+    if (turnOn) setForm((f) => (sameForm(f, sent) ? formOf(result.campaign) : f))
+    flash()
+  }
+
+  const save = async () => {
+    if (!canManage || busy) return
+    dictation.stop()
+    setBusy('save')
+    setError(null)
+    const sent = form
+    const result = await put({ ...sent, baseUpdatedAt: campaign.updatedAt })
+    setBusy(null)
+    if (!result) return
+    onSaved(result.campaign, result.connected)
+    // Scritto altro mentre si salvava: resta (e resta da salvare).
+    setForm((f) => (sameForm(f, sent) ? formOf(result.campaign) : f))
+    flash()
+  }
+
+  return (
+    <div
+      id="campagna"
+      className={`scroll-mt-4 rounded-2xl border bg-[var(--background-secondary)] p-3 ${open ? 'w-full md:max-w-2xl' : ''} ${
+        campaign.active ? 'border-[#AF52DE]/60' : 'border-[var(--border-color)]'
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <Megaphone className="h-4 w-4 text-[var(--accent-blue)]" /> Campagna
+        </p>
+        <span className="ml-auto text-xs text-[var(--text-secondary)]">Attiva</span>
+        <button
+          role="switch"
+          aria-checked={campaign.active}
+          aria-label="Attiva la campagna"
+          disabled={!canManage || busy !== null}
+          onClick={toggle}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${campaign.active ? 'bg-[#34C759]' : 'bg-[var(--border-color)]'}`}
+        >
+          <span
+            className={`absolute left-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow transition-transform ${
+              campaign.active ? 'translate-x-5' : ''
+            }`}
+          >
+            {busy === 'toggle' && <Loader2 className="h-3 w-3 animate-spin text-[#8e8e93]" />}
+          </span>
+        </button>
+      </div>
+      <p className={`mt-1.5 text-[11px] text-[var(--text-secondary)] ${open ? '' : 'max-w-[18rem]'}`}>
+        {campaign.active ? (
+          <>
+            <span className="font-medium text-[#BF5AF2]">Attiva</span>
+            {campaign.name ? (
+              <>
+                : <span translate="no">{campaign.name}</span>
+              </>
+            ) : null}
+            {chosen.length ? ` · ${chosen.map((o) => SCOPE_LABELS[o.id]).join(', ')}` : ''}
+          </>
+        ) : (
+          'Spenta: l’AI usa le Istruzioni.'
+        )}
+        {dirty && <span className="text-[#FF9500]"> · modifiche non salvate</span>}
+      </p>
+      {error && <p className={`mt-1.5 text-[11px] text-[#ff6b6b] ${open ? '' : 'max-w-[18rem]'}`}>{error}</p>}
+      <button
+        onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
+        aria-controls="campagna-scheda"
+        className="mt-1.5 flex items-center gap-1 text-xs font-medium text-[var(--accent-blue)]"
+      >
+        {open ? 'Chiudi' : canManage ? 'Modifica' : 'Vedi'}
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div id="campagna-scheda" className="mt-3 space-y-4 border-t border-[var(--border-color)] pt-3">
+          <p className="text-xs text-[var(--text-secondary)]">
+            Quando è attiva, l’AI risponde solo con queste informazioni nei canali scelti. Quando la spegni torna a usare le Istruzioni.
+          </p>
+
+          <div>
+            <label htmlFor="campagna-nome" className="text-xs font-semibold">
+              Nome <span className="font-normal text-[var(--text-secondary)]">(facoltativo)</span>
+            </label>
+            <input
+              id="campagna-nome"
+              translate="no"
+              value={form.name}
+              maxLength={80}
+              readOnly={!canManage}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Es. Saldi di novembre"
+              className="mt-1 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="campagna-testo" className="text-xs font-semibold">
+              Informazioni della campagna
+            </label>
+            <div className="relative mt-1">
+              <textarea
+                id="campagna-testo"
+                translate="no"
+                value={form.text}
+                maxLength={CAMPAIGN_MAX}
+                readOnly={!canManage}
+                onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))}
+                placeholder={CAMPAIGN_PLACEHOLDER}
+                rows={8}
+                className="block w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 pb-12 text-[16px] leading-relaxed text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+              />
+              {canManage && dictation.supported && (
+                <button
+                  type="button"
+                  onClick={dictation.toggle}
+                  aria-label={dictation.listening ? 'Ferma la dettatura' : 'Detta il testo'}
+                  aria-pressed={dictation.listening}
+                  title={dictation.listening ? 'Ferma la dettatura' : 'Detta il testo'}
+                  className={`absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-full border ${
+                    dictation.listening
+                      ? 'border-[#FF3B30] bg-[#FF3B30]/10 text-[#FF3B30]'
+                      : 'border-[var(--border-color)] bg-[var(--background-secondary)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="mt-1 flex justify-between gap-3 text-[11px] text-[var(--text-secondary)]">
+              <span className={dictation.error ? 'text-[#ff6b6b]' : ''}>
+                {dictation.error || (dictation.listening ? 'Ti ascolto… tocca di nuovo il microfono per fermare.' : '')}
+              </span>
+              {form.text.length > CAMPAIGN_MAX - 600 && (
+                <span className="shrink-0">
+                  {form.text.length}/{CAMPAIGN_MAX}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <fieldset>
+            <legend className="text-xs font-semibold">Usa la campagna per</legend>
+            <div className="mt-1 space-y-1">
+              {groups.map((g) => {
+                const Icon = ICONS[g.platform] || Mail
+                return (
+                  <div key={g.platform} className="flex flex-wrap items-center gap-x-4">
+                    <span className="flex w-24 items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                      <Icon className="h-3.5 w-3.5" /> {LABELS[g.platform]}
+                    </span>
+                    {g.options.map((o) => (
+                      <label key={o.id} className={`flex items-center gap-2 py-1.5 text-sm ${canManage ? '' : 'opacity-70'}`}>
+                        <input
+                          type="checkbox"
+                          checked={form.scopes[o.id]}
+                          disabled={!canManage}
+                          onChange={(e) => setForm((f) => ({ ...f, scopes: { ...f.scopes, [o.id]: e.target.checked } }))}
+                          className="h-4 w-4 accent-[var(--accent-blue)]"
+                        />
+                        {o.label}
+                      </label>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          </fieldset>
+
+          {canManage ? (
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <span className="mr-auto text-[11px] text-[var(--text-secondary)]">L’interruttore vale subito; accendendo salva anche questa scheda.</span>
+              {done && (
+                <span className="flex items-center gap-1 text-sm text-[#34C759]">
+                  <Check className="h-4 w-4" /> Salvato
+                </span>
+              )}
+              <button
+                onClick={save}
+                disabled={!dirty || busy !== null}
+                className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                {busy === 'save' && <Loader2 className="h-4 w-4 animate-spin" />} Salva
+              </button>
+            </div>
+          ) : (
+            <p className="text-[11px] text-[var(--text-secondary)]">La cambiano il titolare o un amministratore.</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

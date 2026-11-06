@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { listConnections } from '@/lib/saas/connections'
 import { commentModes, setCommentMode, type CommentMode, type CommentPlatform } from '@/lib/saas/comments'
+import { campaignMarks } from '@/lib/saas/campaign'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,11 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: 'Commenti non disponibili, riprova.' }, { status: 500 })
 
   const rows = (data || []) as Row[]
+  // Risposte scritte con la Campagna (chip "Campagna").
+  const marks = await campaignMarks(
+    access.workspace.id,
+    rows.filter((row) => row.direction === 'out' && String(row.origin || '').startsWith('ai')).map((row) => row.id)
+  )
   const replies = new Map<string, Row[]>()
   for (const row of rows) {
     if (row.direction !== 'out' || !row.reply_to || row.status === 'rejected') continue
@@ -61,7 +67,7 @@ export async function GET(req: NextRequest) {
       at: row.created_at,
       replies: (replies.get(row.external_id || '') || [])
         .sort((a, b) => a.created_at.localeCompare(b.created_at))
-        .map((r) => ({ id: r.id, text: r.body, status: r.status, origin: r.origin, note: r.error_message, at: r.created_at })),
+        .map((r) => ({ id: r.id, text: r.body, status: r.status, origin: r.origin, note: r.error_message, at: r.created_at, campaign: marks.get(r.id) ?? null })),
     }))
 
   // Aprendo la pagina i commenti diventano letti.

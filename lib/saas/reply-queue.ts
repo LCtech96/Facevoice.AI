@@ -15,7 +15,9 @@ import { respondToMessage, type ReplyOutcome } from './responder'
 // dentro il webhook (ritardi fino a 45 s) o il cron di ogni minuto. La risposta
 // si scrive al momento dell'invio, cosi' tiene conto di tutti i messaggi
 // arrivati nel frattempo; se nel frattempo ha risposto una persona (a mano
-// dall'app o dall'omnichat) non parte.
+// dall'app o dall'omnichat) non parte. Anche la fonte si sceglie all'invio: se la
+// Campagna (campaign.ts) e' accesa per il canale in quel momento si usa lei,
+// altrimenti le Istruzioni (spegnerla vale subito anche per le risposte in attesa).
 
 export type DelayUnit = 'secondi' | 'minuti'
 export type ReplyDelay = { seconds: number; unit: DelayUnit }

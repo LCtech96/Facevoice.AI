@@ -6,6 +6,7 @@ import { replyLanguage } from '@/lib/reply-language'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
+import { campaignFor, campaignSection, markCampaignReply, readCampaign } from './campaign'
 import { listConnections } from './connections'
 import { replyGuidance } from './corrections'
 import { sendEmailReply } from './email'
@@ -16,6 +17,8 @@ import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, syncConversationH
 // seguendo le sue istruzioni (generali + del canale). Se l'automazione del canale
 // e' "invio automatico" la risposta parte, altrimenti resta una bozza da approvare
 // nell'omnichat. Messaggi sospetti e spazi senza istruzioni: sempre bozza.
+// Con una Campagna accesa per il canale (campaign.ts) le informazioni della campagna
+// prendono il posto delle Istruzioni; il resto del prompt resta uguale.
 
 export type InstructionChannel = 'general' | 'email' | 'instagram' | 'facebook' | 'whatsapp' | 'web'
 export const INSTRUCTION_CHANNELS: InstructionChannel[] = ['general', 'email', 'instagram', 'facebook', 'whatsapp', 'web']
@@ -300,21 +303,29 @@ export async function respondToMessage(
   const turns = [{ role: 'user' as const, content: conversationTranscript(rows, message.platform, { gapAfterFirst: openedByUs && !openerShown }) }]
 
   const inbound = rows.filter((row) => row.direction === 'in').map((row) => row.body)
-  const [instructions, name, lang, corrections] = await Promise.all([
+  // Campagna accesa per questo canale (email, Direct, Messenger)? Letta adesso: anche le
+  // risposte in coda usano quella valida al momento in cui si scrivono.
+  const campaignRead = readCampaign(db.workspaceId).then((c) => campaignFor(c, message.platform, 'message'))
+  const [instructions, name, lang, campaign, corrections] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
     languageFor(db.workspaceId, `${message.subject || ''}\n${message.body}`, inbound),
+    campaignRead,
     // Correzioni del team in questa chat e regole "Sempre" piu' vicine al messaggio (nessuna AI in piu').
-    replyGuidance(db.workspaceId, {
-      platform: message.platform,
-      contactId: message.contact_id,
-      incoming: `${message.subject || ''}\n${message.body}`,
-      recent: rows.slice(-6, -1).map((row) => row.body),
-    }),
+    campaignRead.then((active) =>
+      replyGuidance(db.workspaceId, {
+        platform: message.platform,
+        contactId: message.contact_id,
+        incoming: `${message.subject || ''}\n${message.body}`,
+        recent: rows.slice(-6, -1).map((row) => row.body),
+        ...(active ? { campaign: { since: active.activeSince } } : {}),
+      })
+    ),
   ])
   const general = instructions.general.trim()
   const specific = (instructions[message.platform as InstructionChannel] || '').trim()
-  const hasInstructions = Boolean(general || specific)
+  // Con la campagna il testo c'e' sempre (non si accende vuota): l'invio automatico resta possibile.
+  const hasInstructions = campaign ? true : Boolean(general || specific)
 
   const languageRule =
     lang.source === 'dashboard'
@@ -326,9 +337,14 @@ export async function respondToMessage(
     CHANNEL_STYLE[message.platform] || '',
     message.contact_name ? `La persona si chiama "${message.contact_name}" (usa il nome di battesimo solo se sembra un nome di persona).` : '',
     message.subject ? `Oggetto dell'email ricevuta: "${message.subject}".` : '',
-    `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
-    specific ? `## Istruzioni per questo canale\n${specific}` : '',
-    hasInstructions ? '' : 'Non hai istruzioni: ricava il contesto dalla conversazione, rispondi in modo cortese e non dare informazioni che non conosci; per i dettagli di\' che glieli confermi a breve.',
+    // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
+    ...(campaign
+      ? [campaignSection(campaign, message.platform, 'message')]
+      : [
+          `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
+          specific ? `## Istruzioni per questo canale\n${specific}` : '',
+          hasInstructions ? '' : 'Non hai istruzioni: ricava il contesto dalla conversazione, rispondi in modo cortese e non dare informazioni che non conosci; per i dettagli di\' che glieli confermi a breve.',
+        ]),
     corrections,
     salesRules(name),
     conversationRules(openedByUs),
@@ -395,6 +411,8 @@ export async function respondToMessage(
     console.error('saas responder save:', error?.message)
     return { status: 'failed', reason: 'bozza non salvata' }
   }
+  // Scritta con la campagna: chip "Campagna" nell'Omnichat (nessuna colonna in piu').
+  if (campaign) await markCampaignReply(db.workspaceId, saved.id as string, campaign)
   if (!autoSend) return { status: 'pending', messageId: saved.id, reason: reason || undefined }
   // Inviato: la nota "Da confermare" resta sul messaggio, il titolare la vede nell'omnichat.
   const sent = await deliverDraft(db, saved.id as string, text, 'ai_auto', { note })
