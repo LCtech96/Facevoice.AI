@@ -46,5 +46,18 @@ export function cleanEmail(raw: string | null | undefined): string | null {
     .replace(/^[^a-z0-9]+/i, '')
     .replace(/[^a-z]+$/i, '')
     .toLowerCase()
-  return VALID_EMAIL.test(value) ? value : null
+  if (!VALID_EMAIL.test(value) || isPlaceholderEmail(value)) return null
+  return value
+}
+
+// Segnaposto letti dai siti o dal codice: "esempio@mail.com", "a@a.it",
+// "components@modals.js" (nome di un file, non un dominio).
+const PLACEHOLDER_LOCAL = /^(esempio|example|tuaemail|tua-email|tuoindirizzo|youremail|your-email|yourname|nome\.cognome|mario\.rossi)$/
+const PLACEHOLDER_DOMAIN = /^(example\.(com|it|org|net)|esempio\.(com|it)|dominio\.(com|it)|domain\.com|tuosito\.it|sito\.it|[a-z]\.[a-z]{2})$/
+const FILE_EXTENSION_TLD = /\.(js|mjs|ts|tsx|jsx|css|scss|php|html?|json|xml|png|jpe?g|gif|svg|webp|ico|map|woff2?)$/
+
+/** Indirizzo che sembra valido ma e' un segnaposto o il nome di un file. */
+export function isPlaceholderEmail(address: string): boolean {
+  const [local = '', domain = ''] = address.toLowerCase().split('@')
+  return PLACEHOLDER_LOCAL.test(local) || PLACEHOLDER_DOMAIN.test(domain) || FILE_EXTENSION_TLD.test(domain)
 }

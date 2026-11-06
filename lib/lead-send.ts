@@ -1,7 +1,7 @@
 import { cleanEmail } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendNewEmail } from '@/lib/gmail'
-import { DAILY_EMAIL_LIMIT, type Lead } from '@/lib/leads'
+import { DAILY_EMAIL_LIMIT, draftProblem, type Lead } from '@/lib/leads'
 
 // Invio del primo contatto via email: lo usano il pulsante "Invia" della pagina
 // Clienti e l'automazione giornaliera, con gli stessi controlli.
@@ -48,6 +48,9 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
   }
   if (to !== raw) await supabaseAdmin.from('leads').update({ email: to }).eq('id', id)
   if (!subject || !text) return { error: 'Oggetto e testo sono obbligatori', status: 400 }
+  // Note dell'AI al posto dell'email ("Non applicabile…") o testi di poche parole: non si inviano mai.
+  const problem = draftProblem(subject, text)
+  if (problem) return { error: problem, status: 422 }
   if (lead.status === 'do_not_contact') return { error: 'Ha chiesto di non essere ricontattato', status: 409 }
   if (lead.contacted_at) return { error: 'Già contattato: rispondi dalla casella Messaggi', status: 409 }
 

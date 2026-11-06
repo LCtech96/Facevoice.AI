@@ -1,7 +1,16 @@
 import { cleanEmail } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { readSetting, updateSetting } from '@/lib/settings-store'
-import { DAILY_EMAIL_LIMIT, MAX_RESULTS, SYSTEM_EMAIL, analyzeLead, searchPlaces, type Lead } from '@/lib/leads'
+import {
+  DAILY_EMAIL_LIMIT,
+  MAX_RESULTS,
+  MIN_AUTOPILOT_SCORE,
+  SYSTEM_EMAIL,
+  analyzeLead,
+  draftProblem,
+  searchPlaces,
+  type Lead,
+} from '@/lib/leads'
 import { sendFirstEmail, sentToday } from '@/lib/lead-send'
 import { sendPushToAdmins } from '@/lib/push'
 import { internalOrigin } from '@/lib/internal-origin'
@@ -457,8 +466,18 @@ async function sendable(limit: number, skip: string[] = []): Promise<Lead[]> {
     .not('email_subject', 'is', null)
     .not('email_body', 'is', null)
     .not('analyzed_at', 'is', null)
+    .gte('score', MIN_AUTOPILOT_SCORE)
     .order('score', { ascending: false, nullsFirst: false })
     .limit(limit + skip.length + 20)
-  // Indirizzi non validi non contano come "pronti": altrimenti la coda sembra piena e non si leggono altri siti.
-  return ((data || []) as Lead[]).filter((l) => cleanEmail(l.email) && !SYSTEM_EMAIL.test(l.email!) && !skip.includes(l.id)).slice(0, limit)
+  // Indirizzi non validi e bozze che non sono email ("Non applicabile…") non contano come "pronti":
+  // altrimenti la coda sembra piena e non si leggono altri siti.
+  return ((data || []) as Lead[])
+    .filter(
+      (l) =>
+        cleanEmail(l.email) &&
+        !SYSTEM_EMAIL.test(l.email!) &&
+        !draftProblem(l.email_subject, l.email_body) &&
+        !skip.includes(l.id)
+    )
+    .slice(0, limit)
 }
