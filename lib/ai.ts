@@ -4,8 +4,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import {
   GEMINI_DEFAULT_MODEL,
   callGeminiAPI,
+  callGeminiGrounded,
   getGeminiApiKey,
   type GeminiChatMessage,
+  type GroundedAnswer,
 } from '@/lib/gemini'
 import { getAnthropicApiKey } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -80,6 +82,8 @@ function recordUsage(row: {
   /** Parte dell'input letta dalla cache (~0,1x) e scritta in cache (1,25x): gia' compresa in input. */
   cacheRead?: number
   cacheWrite?: number
+  /** Costo in piu' oltre ai token, in USD (es. la ricerca Google: GROUNDING_FEE_USD). */
+  extraCost?: number
 }) {
   const input = row.input || 0
   const output = row.output || 0
@@ -88,7 +92,8 @@ function recordUsage(row: {
   const read = row.cacheRead || 0
   const write = row.cacheWrite || 0
   const plain = Math.max(0, input - read - write)
-  const cost = row.provider === 'claude' ? ((plain + read * 0.1 + write * 1.25) * price.input + output * price.output) / 1_000_000 : 0
+  const tokens = row.provider === 'claude' ? ((plain + read * 0.1 + write * 1.25) * price.input + output * price.output) / 1_000_000 : 0
+  const cost = tokens + ((row.outcome || 'ok') === 'ok' ? Math.max(0, row.extraCost || 0) : 0)
   const tally = work.getStore()?.usage
   if (tally && (row.outcome || 'ok') === 'ok') {
     tally.calls++
@@ -249,6 +254,66 @@ async function callClaudeText(
   })
   if (response.stop_reason === 'refusal' || !text) throw new Error('Claude non ha restituito una risposta')
   return { message: text, provider: 'claude', model: response.model }
+}
+
+/**
+ * Ricerca Google dentro Gemini ("grounding"): Google la fa pagare a parte, anche quando i
+ * token sono sul piano gratuito. Prezzo di listino: 35 USD ogni 1000 richieste con la
+ * ricerca (0,035 USD l'una). Si aggiunge al cost_usd della riga di ai_usage, cosi' conta nei
+ * gettoni e nel limite in euro del piano del cliente (lib/usage-limits.ts). Si addebita solo
+ * se la ricerca e' partita davvero (nella risposta ci sono ricerche o pagine trovate).
+ */
+export const GROUNDING_FEE_USD = 0.035
+
+/** Modelli Gemini che hanno rifiutato la ricerca Google (o non esistono): istante fino a cui non si riprovano. */
+const groundingUnsupported = new Map<string, number>()
+
+/** Risposta di Gemini scritta dalle pagine trovate con la ricerca Google, con le fonti. */
+export type GroundedResult = GroundedAnswer & { provider: 'gemini' }
+
+/**
+ * Chiamata con la ricerca Google (solo Gemini: Claude non ha questo strumento). Prima si
+ * controlla il limite del piano (AI finita: non parte); si provano i modelli Gemini come in
+ * callAI (quello al limite resta a riposo). Il consumo va nello spazio con la tariffa della ricerca.
+ */
+export async function groundedSearch(prompt: string, options: AIOptions & { system?: string; timeoutMs?: number }): Promise<GroundedResult> {
+  const workspaceId = workspaceOf(options)
+  await assertAIAllowed(workspaceId)
+  if (!getGeminiApiKey()) throw new Error('ricerca sul web non disponibile (manca la chiave Gemini)')
+  let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
+  for (const model of availableGeminiModels().filter((m) => Date.now() >= (groundingUnsupported.get(m) || 0))) {
+    try {
+      const answer = await callGeminiGrounded(prompt, model, options.system, { temperature: options.temperature, maxOutputTokens: options.maxOutputTokens, timeoutMs: options.timeoutMs })
+      const searched = answer.queries.length > 0 || answer.chunks.length > 0
+      recordUsage({
+        feature: options.feature,
+        workspaceId,
+        provider: 'gemini',
+        model,
+        input: answer.usage?.prompt_tokens,
+        output: answer.usage?.completion_tokens,
+        extraCost: searched ? GROUNDING_FEE_USD : 0,
+      })
+      return { ...answer, provider: 'gemini' }
+    } catch (error) {
+      lastError = error
+      const message = error instanceof Error ? error.message : String(error)
+      if (isLimitError(message)) {
+        geminiCooling.set(model, Date.now() + (/giornalier|daily|per day/i.test(message) ? DAILY_QUOTA_COOLDOWN_MS : GEMINI_COOLDOWN_MS))
+        recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'limit' })
+        continue
+      }
+      // Modello che non c'e' o che non fa la ricerca Google: a riposo solo per la ricerca
+      // (per le altre chiamate puo' andare benissimo).
+      if (isMissingModel(message)) {
+        groundingUnsupported.set(model, Date.now() + MISSING_MODEL_COOLDOWN_MS)
+        continue
+      }
+      recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'error' })
+      throw error
+    }
+  }
+  throw lastError
 }
 
 const isMissingModel = (message: string) => /not found|NOT_FOUND|is not supported|no longer available/i.test(message)

@@ -248,6 +248,72 @@ export async function callGeminiAPI(
   throw new Error(failureReason || 'Invalid response from Gemini API')
 }
 
+/** Pagina trovata dalla ricerca Google (uri spesso e' un rimando vertexaisearch.cloud.google.com). */
+export type GroundingChunk = { uri: string; title: string }
+/** Pezzo della risposta (testo) e pagine che lo sostengono (indici in chunks). */
+export type GroundingSupport = { text: string; startIndex: number | null; endIndex: number | null; chunks: number[] }
+export type GroundedAnswer = {
+  text: string
+  model: string
+  queries: string[]
+  chunks: GroundingChunk[]
+  supports: GroundingSupport[]
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
+/**
+ * Una chiamata con la ricerca Google (strumento "google_search" dell'API Gemini):
+ * la risposta e' scritta dalle pagine trovate, con le fonti nei metadati
+ * (groundingMetadata: pagine, frasi sostenute da quali pagine, ricerche fatte).
+ */
+export async function callGeminiGrounded(
+  prompt: string,
+  model: string,
+  systemMessage?: string,
+  options?: { temperature?: number; maxOutputTokens?: number; timeoutMs?: number }
+): Promise<GroundedAnswer> {
+  const apiKey = getGeminiApiKey()
+  if (!apiKey) throw new Error('Gemini API key not configured.')
+  const geminiModel = GEMINI_MODELS[model] || model
+  const requestBody: Record<string, unknown> = {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { temperature: options?.temperature ?? 0.2, maxOutputTokens: options?.maxOutputTokens ?? 8192 },
+  }
+  if (systemMessage?.trim()) requestBody.systemInstruction = { parts: [{ text: systemMessage.trim() }] }
+  const response = await fetch(`${GEMINI_API_URL}/models/${geminiModel}:generateContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(options?.timeoutMs ?? 60_000),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw parseGeminiError(response, data)
+  const text = extractGeminiText(data)
+  if (!text) throw new Error(getGeminiFailureReason(data) || 'Invalid response from Gemini API')
+  const meta = data?.candidates?.[0]?.groundingMetadata || {}
+  const chunks: GroundingChunk[] = (Array.isArray(meta.groundingChunks) ? meta.groundingChunks : []).map((c: { web?: { uri?: unknown; title?: unknown } }) => ({
+    uri: typeof c?.web?.uri === 'string' ? c.web.uri : '',
+    title: typeof c?.web?.title === 'string' ? c.web.title : '',
+  }))
+  const supports: GroundingSupport[] = (Array.isArray(meta.groundingSupports) ? meta.groundingSupports : []).map(
+    (s: { segment?: { text?: unknown; startIndex?: unknown; endIndex?: unknown }; groundingChunkIndices?: unknown }) => ({
+      text: typeof s?.segment?.text === 'string' ? s.segment.text : '',
+      startIndex: typeof s?.segment?.startIndex === 'number' ? s.segment.startIndex : null,
+      endIndex: typeof s?.segment?.endIndex === 'number' ? s.segment.endIndex : null,
+      chunks: Array.isArray(s?.groundingChunkIndices) ? (s.groundingChunkIndices as unknown[]).filter((i): i is number => typeof i === 'number') : [],
+    })
+  )
+  return {
+    text,
+    model: (data.modelVersion as string) || geminiModel,
+    queries: Array.isArray(meta.webSearchQueries) ? meta.webSearchQueries.filter((q: unknown): q is string => typeof q === 'string') : [],
+    chunks,
+    supports,
+    usage: data.usageMetadata ? { prompt_tokens: data.usageMetadata.promptTokenCount, completion_tokens: data.usageMetadata.candidatesTokenCount } : undefined,
+  }
+}
+
 export async function callGeminiWithFallback(
   messages: GeminiChatMessage[],
   model: string,

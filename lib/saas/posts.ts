@@ -100,6 +100,21 @@ export async function uploadWorkspaceImage(workspaceId: string, input: Buffer): 
 }
 
 /**
+ * Immagine presa dal web (locandina di un evento o foto libera di Wikimedia Commons):
+ * rifatta come JPEG pulito (niente metadati), lato lungo max 2000 px, nello stesso
+ * archivio delle foto caricate (cartella "web" dello spazio).
+ */
+export async function storeWebImage(workspaceId: string, input: Buffer): Promise<string> {
+  const jpeg = await sharp(input, { limitInputPixels: 40_000_000 })
+    .rotate()
+    .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: 88 })
+    .toBuffer()
+  return store(workspaceId, 'web', jpeg)
+}
+
+/**
  * Immagine dall'AI di Gemini (l'unica che crea e modifica le foto): sul piano gratuito
  * a volte risponde "limite di richieste al minuto". Si aspetta e si riprova da soli
  * (fino a due volte, circa un minuto) invece di far fallire la correzione.
@@ -364,7 +379,15 @@ type Texts = { title: string; caption: string; facebook: string; hook: string; l
 
 const trim = (value: unknown, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 
-async function writeTexts(workspaceId: string, brief: string, kind: 'photos' | 'carousel' | 'photo_carousel', photoNotes: string, photoCount: number): Promise<Texts> {
+async function writeTexts(
+  workspaceId: string,
+  brief: string,
+  kind: 'photos' | 'carousel' | 'photo_carousel',
+  photoNotes: string,
+  photoCount: number,
+  /** Carosello di solo testo: slide di contenuto chieste (senza copertina e slide finale). */
+  contentCount?: number
+): Promise<Texts> {
   const [name, context] = await Promise.all([workspaceName(workspaceId), businessContext(workspaceId)])
   const system = `Sei il social media manager di "${name}". Prepari un post per Instagram e Facebook dalle indicazioni del titolare${photoCount ? ' e dalle sue foto (te ne do la descrizione)' : ''}.
 ${context}
@@ -381,7 +404,11 @@ ${
 - Le altre slide: "title" max 45 caratteri e "text" max 140 caratteri, testo che va SOPRA la foto: breve e leggibile.
 - "label": etichetta sopra il gancio (max 26 caratteri, es. "NUOVO HOST") o "". "cta": lascialo vuoto salvo che il titolare chieda una slide finale.`
     : kind === 'carousel'
-    ? `- È un CAROSELLO GRAFICO: "hook" (gancio della prima slide, max 42 caratteri, fortissimo, niente emoji), "label" (etichetta sopra il gancio, max 30 caratteri, o ""), "slides" da 2 a 6 (${photoCount ? `una per foto, nello stesso ordine, ${photoCount} in tutto, poi eventuali altre` : '3-4'}; "title" max 55 caratteri, "text" max 180), "cta" per l'ultima slide ("title" max 45, "text" max 140, "button" max 26).`
+    ? `- È un CAROSELLO GRAFICO: "hook" (gancio della prima slide, max 42 caratteri, fortissimo, niente emoji), "label" (etichetta sopra il gancio, max 30 caratteri, o ""), ${
+        contentCount !== undefined
+          ? `"slides" ESATTAMENTE ${contentCount} slide di contenuto (la copertina con il gancio e la slide finale "cta" sono a parte: in tutto ${contentCount + 2} slide)`
+          : `"slides" da 2 a 6 (${photoCount ? `una per foto, nello stesso ordine, ${photoCount} in tutto, poi eventuali altre` : '3-4'})`
+      } ("title" max 55 caratteri, "text" max 180), "cta" per l'ultima slide ("title" max 45, "text" max 140, "button" max 26).`
     : '- Post con le foto del titolare: lascia "hook", "label", "slides" e "cta" vuoti.'
 }
 Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "", "label": "", "slides": [{"title": "", "text": ""}], "cta": {"title": "", "text": "", "button": ""}}`
@@ -413,12 +440,64 @@ Rispondi SOLO con JSON: {"title": "", "caption": "", "facebook": "", "hook": "",
 
 // --- Creazione, modifica, programmazione -----------------------------------------
 
-export type PhotoSlideInput = { title?: string; text?: string }
+export type PhotoSlideInput = {
+  title?: string
+  text?: string
+  /** Credito della foto scritto piccolo in fondo alla slide (es. "Foto: comune.palermo.it"). */
+  credit?: string
+  /** Pagina da cui viene la foto (immagini prese dal web): mostrata come fonte sotto l'anteprima. */
+  source?: string
+}
+
+/** Slide di un carosello salvato: testi, credito della foto e pagina da cui viene (se presa dal web). */
+export type SourceSlide = { title: string; text: string; credit?: string; source?: string }
+
+const MIN_SLIDES = 2
+const MAX_SLIDES = 10
+
+/** Numero di slide chiesto (copertina e slide finale comprese), da 2 a 10, o undefined. */
+export function slideTotal(value: unknown): number | undefined {
+  const n = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.min(MAX_SLIDES, Math.max(MIN_SLIDES, Math.round(n))) : undefined
+}
+
+/** Credito e fonte di una slide (solo se ci sono), puliti. */
+function creditOf(x: PhotoSlideInput | SourceSlide | undefined): Pick<SourceSlide, 'credit' | 'source'> {
+  const credit = trim(x?.credit, 90)
+  let source = ''
+  try {
+    const url = x?.source ? new URL(x.source) : null
+    if (url && (url.protocol === 'https:' || url.protocol === 'http:')) source = url.href.slice(0, 500)
+  } catch {}
+  return { ...(credit ? { credit } : {}), ...(source ? { source } : {}) }
+}
+
+/** Nome del sito senza "www." (per le fonti). */
+const siteOf = (url: string) => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Didascalia con la riga "Fonti: sito1, sito2" (immagini e notizie prese dal web): prima
+ * della fila di hashtag finale; se c'e' gia' una riga "Fonti:" si completa quella.
+ */
+export function withSourcesLine(text: string, sites: string[]): string {
+  const list = [...new Set(sites.map((d) => d.trim().toLowerCase()).filter(Boolean))].slice(0, 8)
+  if (!list.length || list.every((d) => text.toLowerCase().includes(d))) return text
+  const line = `Fonti: ${list.join(', ')}`
+  if (/^[ \t]*fonti[ \t]*:.*$/im.test(text)) return text.replace(/^[ \t]*fonti[ \t]*:.*$/im, line)
+  const tags = text.match(/\n\s*((?:#[\p{L}\p{N}_]+[ \t]*)+)\s*$/u)
+  return tags && tags.index !== undefined ? `${text.slice(0, tags.index).trimEnd()}\n\n${line}\n\n${tags[1].trim()}` : `${text.trimEnd()}\n\n${line}`
+}
 
 /** Come e' fatto un carosello con le foto: serve per rifarlo quando il cliente chiede modifiche. */
 export type CarouselSource = {
   photos: string[]
-  slides: { title: string; text: string }[]
+  slides: SourceSlide[]
   hook: string
   label: string
   closing: { title: string; text: string; button: string } | null
@@ -497,6 +576,8 @@ async function renderPhotoCarousel(workspaceId: string, source: CarouselSource, 
  * - carousel con foto: UNA SLIDE PER FOTO, nell'ordine in cui le ha caricate, testo sopra
  *   la foto e logo; slides (dall'assistente) = i testi esatti, uno per foto;
  * - carousel senza foto: slide grafiche con i suoi colori e immagini create dall'AI.
+ * total: slide chieste IN TUTTO (copertina e slide finale comprese, come nel sito principale):
+ * il carosello ne ha esattamente tante, se ci sono foto e testi per farle (vedi sotto).
  */
 export async function createPost(
   db: WorkspaceDb,
@@ -515,20 +596,45 @@ export async function createPost(
     label?: string
     /** Slide finale di invito (solo se chiesta). */
     closing?: boolean
+    /** Slide chieste in tutto (copertina e slide finale comprese), da 2 a 10. */
+    total?: number
+    /** Pagine delle notizie prese dal web (es. eventi): i siti finiscono nella riga "Fonti:" della didascalia. */
+    webSources?: string[]
   }
 ): Promise<PostRow> {
   if (!hasAIProvider()) throw new Error('AI non configurata')
-  const images = (input.images || []).filter(isOurMedia).slice(0, 10)
-  const kind = input.kind || (images.length ? 'photos' : 'carousel')
-  if (kind === 'photos' && !images.length) throw new Error('per un post con foto carica almeno una foto (o chiedi un carosello grafico)')
+  const total = slideTotal(input.total)
+  const allImages = (input.images || []).filter(isOurMedia).slice(0, 10)
+  const kind = input.kind || (allImages.length ? 'photos' : 'carousel')
+  if (kind === 'photos' && !allImages.length) throw new Error('per un post con foto carica almeno una foto (o chiedi un carosello grafico)')
+  const mode = kind === 'carousel' && allImages.length ? 'photo_carousel' : kind
+  const given = input.slides || []
 
-  const notes = images.length
-    ? input.photoNotes?.length === images.length && input.photoNotes.every(Boolean)
-      ? input.photoNotes
-      : await describePhotos(images, db.workspaceId)
-    : []
-  const mode = kind === 'carousel' && images.length ? 'photo_carousel' : kind
-  const texts = await writeTexts(db.workspaceId, input.brief, mode, numbered(notes), images.length)
+  // Carosello con le foto e numero di slide chiesto: prima le foto (una slide per foto), poi
+  // le slide di solo testo date oltre le foto, poi la slide finale; al massimo 10.
+  let withClosing = Boolean(input.closing)
+  let photoCount = allImages.length
+  let textOnly = 0
+  if (mode === 'photo_carousel' && !total) {
+    // Nessun numero chiesto: tutte le sue foto (nessuna si toglie), la slide finale solo se c'e' posto.
+    withClosing = withClosing && allImages.length < MAX_SLIDES
+  } else if (mode === 'photo_carousel' && total) {
+    photoCount = Math.min(allImages.length, total - (withClosing ? 1 : 0))
+    let missing = total - photoCount - (withClosing ? 1 : 0)
+    if (missing > 0 && photoCount === allImages.length) {
+      const extra = given.slice(allImages.length).filter((x) => trim(x?.title, 90) || trim(x?.text, 220)).length
+      textOnly = Math.min(missing, extra)
+      missing -= textOnly
+    }
+    // Manca ancora una slide: la slide finale fa parte del conto (copertina e finale comprese).
+    if (missing > 0 && !withClosing) withClosing = true
+  }
+  const images = mode === 'photo_carousel' ? allImages.slice(0, photoCount) : allImages
+  const givenNotes = input.photoNotes?.slice(0, images.length)
+  const notes = images.length ? (givenNotes?.length === images.length && givenNotes.every(Boolean) ? givenNotes : await describePhotos(images, db.workspaceId)) : []
+  // Carosello di solo testo: copertina + slide di contenuto + slide finale = total.
+  const contentWanted = mode === 'carousel' && total !== undefined ? total - 2 : undefined
+  const texts = await writeTexts(db.workspaceId, input.brief, mode, numbered(notes), images.length, contentWanted)
 
   let media: string[]
   let source: CarouselSource | null = null
@@ -537,14 +643,15 @@ export async function createPost(
     media = await Promise.all(fitted.map((jpeg) => store(db.workspaceId, 'posts', jpeg)))
   } else if (mode === 'photo_carousel') {
     // I testi dati dall'assistente (seguendo le indicazioni del cliente) vincono su quelli scritti qui.
-    const given = input.slides || []
-    const closing = input.closing && images.length < 10 ? texts.cta : null
-    const photos = images.slice(0, closing ? 9 : 10)
+    // La "foto" vuota '' e' una slide di solo testo (testi dati oltre le foto).
+    const photos = [...images, ...new Array<string>(textOnly).fill('')]
+    const closing = withClosing && photos.length < MAX_SLIDES ? texts.cta : null
     source = {
       photos,
       slides: photos.map((_, k) => ({
         title: trim(given[k]?.title ?? texts.slides[k]?.title ?? '', 90),
         text: trim(given[k]?.text ?? texts.slides[k]?.text ?? '', 220),
+        ...creditOf(given[k]),
       })),
       hook: trim(input.hook || texts.hook || texts.title, 60),
       label: trim(input.label ?? texts.label, 30),
@@ -557,26 +664,36 @@ export async function createPost(
     // Carosello di solo testo: copertina con il gancio, una slide per testo e la slide
     // finale. Niente immagini AI; i testi si salvano (si correggono, spostano, cambiano
     // stile e colori come nei caroselli con le foto: la "foto" vuota '' vuol dire testo).
-    const content = (texts.slides.length ? texts.slides : [{ title: texts.title, text: '' }]).slice(0, 8)
+    // I testi dati dall'assistente (solo le slide di contenuto) vincono su quelli scritti qui,
+    // se bastano per il numero chiesto.
+    const mine = given.map((x) => ({ title: trim(x?.title, 90), text: trim(x?.text, 220), ...creditOf(x) })).filter((x) => x.title || x.text)
+    const written: SourceSlide[] = texts.slides.map((x) => ({ title: trim(x.title, 90), text: trim(x.text, 220) }))
+    let content: SourceSlide[] =
+      contentWanted === undefined ? (mine.length ? mine : written) : mine.length >= contentWanted || mine.length >= written.length ? mine : written
+    if (contentWanted !== undefined) content = content.slice(0, contentWanted)
+    if (!content.length && contentWanted !== 0) content = [{ title: trim(texts.title, 90), text: '' }]
+    content = content.slice(0, MAX_SLIDES - 2)
     source = {
       photos: ['', ...content.map(() => '')],
-      slides: [{ title: '', text: '' }, ...content.map((x) => ({ title: trim(x.title, 90), text: trim(x.text, 220) }))],
-      hook: trim(texts.hook || texts.title, 60),
-      label: trim(texts.label, 30),
+      slides: [{ title: '', text: '' }, ...content],
+      hook: trim(input.hook || texts.hook || texts.title, 60),
+      label: trim(input.label ?? texts.label, 30),
       closing: texts.cta,
       ...(await workspaceDesign(db.workspaceId)),
     }
     media = await renderPhotoCarousel(db.workspaceId, source)
   }
 
+  // Immagini o notizie prese dal web: i siti di provenienza nella riga "Fonti:" della didascalia.
+  const sites = [...(source?.slides || []).map((x) => x.source || ''), ...(input.webSources || [])].map(siteOf).filter(Boolean)
   const { data, error } = await db
     .from('workspace_posts')
     .insert({
       status: 'draft',
       kind: mode === 'photos' ? 'photos' : 'carousel',
       title: texts.title,
-      caption: texts.caption,
-      facebook_text: texts.facebook,
+      caption: withSourcesLine(texts.caption, sites).slice(0, 2200),
+      facebook_text: withSourcesLine(texts.facebook, sites).slice(0, 5000),
       media,
       platforms: input.platforms?.length ? input.platforms : await defaultPlatforms(db),
       created_by: input.userId || null,
@@ -619,7 +736,8 @@ export async function editCarousel(
       continue
     }
     if (k < 0 || k >= slides.length) continue
-    slides[k] = { title: typeof change.title === 'string' ? trim(change.title, 90) : slides[k].title, text: typeof change.text === 'string' ? trim(change.text, 220) : slides[k].text }
+    // Credito e fonte della foto restano con la slide.
+    slides[k] = { ...slides[k], title: typeof change.title === 'string' ? trim(change.title, 90) : slides[k].title, text: typeof change.text === 'string' ? trim(change.text, 220) : slides[k].text }
   }
   if (changes.remove?.length) {
     const drop = new Set(changes.remove.map((n) => Math.round(n) - 1))
@@ -989,7 +1107,7 @@ ${wantsCaption ? `Se la richiesta chiede di cambiare anche la didascalia (descri
       const sub = str(c.sottotitolo, 90) ?? str(c.titolo, 90)
       if (sub !== undefined) next.slides[0] = { ...next.slides[0], title: sub }
     } else {
-      next.slides[k] = { title: str(c.titolo, 90) ?? next.slides[k].title, text: str(c.testo, 220) ?? next.slides[k].text }
+      next.slides[k] = { ...next.slides[k], title: str(c.titolo, 90) ?? next.slides[k].title, text: str(c.testo, 220) ?? next.slides[k].text }
     }
     if (JSON.stringify([next.slides[k], k === 0 ? [next.hook, next.label] : null]) !== before) {
       redo.add(k)
@@ -1233,7 +1351,13 @@ export type ArrangeMode = 'free' | 'closing' | null
 
 export async function arrangeModes(
   posts: { id: string; kind: string }[]
-): Promise<{ modes: Map<string, ArrangeMode>; outdated: Set<string>; designs: Map<string, { kind: 'photo' | 'text'; layout: string; mix: number }> }> {
+): Promise<{
+  modes: Map<string, ArrangeMode>
+  outdated: Set<string>
+  designs: Map<string, { kind: 'photo' | 'text'; layout: string; mix: number }>
+  /** Pagine da cui vengono le immagini prese dal web (nell'ordine delle slide, senza doppioni). */
+  sources: Map<string, WebSource[]>
+}> {
   const keys = posts.filter((p) => p.kind === 'carousel').map((p) => sourceKey(p.id))
   const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] }
   const sources = new Map<string, CarouselSource>()
@@ -1274,7 +1398,28 @@ export async function arrangeModes(
         : []
     })
   )
-  return { modes, outdated, designs }
+  const webSources = new Map<string, WebSource[]>()
+  for (const p of posts) {
+    const list = postWebSources(sources.get(sourceKey(p.id)))
+    if (list.length) webSources.set(p.id, list)
+  }
+  return { modes, outdated, designs, sources: webSources }
+}
+
+/** Pagina da cui viene un'immagine presa dal web, con il sito (per "Fonti:" sotto l'anteprima). */
+export type WebSource = { url: string; site: string }
+
+/** Fonti delle immagini prese dal web di un carosello (una per pagina, nell'ordine delle slide). */
+export function postWebSources(source: CarouselSource | null | undefined): WebSource[] {
+  const seen = new Set<string>()
+  const out: WebSource[] = []
+  for (const slide of source?.slides || []) {
+    if (!slide?.source || seen.has(slide.source)) continue
+    seen.add(slide.source)
+    const site = siteOf(slide.source)
+    if (site) out.push({ url: slide.source, site })
+  }
+  return out
 }
 
 // Stile e colori: quelli scelti l'ultima volta valgono anche per i caroselli nuovi.
@@ -1403,9 +1548,12 @@ export async function carouselOutline(id: string) {
   if (!source) return null
   return {
     slide: [
-      ...source.slides.map((s, k) =>
-        k === 0 ? { n: 1, copertina: true, gancio: source.hook, etichetta: source.label, sottotitolo: s.title } : { n: k + 1, titolo: s.title, testo: s.text }
-      ),
+      ...source.slides.map((s, k) => ({
+        ...(k === 0 ? { n: 1, copertina: true, gancio: source.hook, etichetta: source.label, sottotitolo: s.title } : { n: k + 1, titolo: s.title, testo: s.text }),
+        // Credito della foto presa dal web (scritto piccolo sulla slide, si aggiunge da solo).
+        ...(s.credit ? { credito_foto: s.credit } : {}),
+        ...(!source.photos[k] && source.photos.some(Boolean) ? { solo_testo: true } : {}),
+      })),
       ...(source.closing ? [{ n: source.slides.length + 1, slide_finale: true, titolo: source.closing.title, testo: source.closing.text, pulsante: source.closing.button }] : []),
     ],
   }

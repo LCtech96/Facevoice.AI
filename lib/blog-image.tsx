@@ -491,7 +491,37 @@ export async function fitPostPhoto(input: Buffer): Promise<Buffer> {
 
 // --- Carosello con le foto del cliente, testo sopra la foto -----------------------
 
-export type PhotoSlide = { title: string; text: string }
+export type PhotoSlide = {
+  title: string
+  text: string
+  /** Credito della foto (es. "Foto: comune.palermo.it"): riga piccola in fondo alla slide. */
+  credit?: string
+}
+
+/** Credito della foto: riga piccola in basso a destra, su un fondo scuro leggibile con ogni stile e ogni foto. */
+function creditLine(credit?: string) {
+  const text = String(credit || '').replace(/\s+/g, ' ').trim().slice(0, 90)
+  if (!text) return null
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        right: 18,
+        bottom: 10,
+        maxWidth: W - 36,
+        display: 'flex',
+        fontSize: 18,
+        lineHeight: 1.2,
+        color: 'rgba(255, 255, 255, 0.92)',
+        background: 'rgba(0, 0, 0, 0.55)',
+        padding: '4px 12px',
+        borderRadius: 999,
+      }}
+    >
+      {text}
+    </div>
+  )
+}
 
 /** Logo del cliente come PNG (trasparenza conservata), lato lungo max 260 px. */
 async function logoData(url: string | null | undefined): Promise<{ src: string; width: number; height: number } | null> {
@@ -545,6 +575,7 @@ function photoSlide(
         ) : null}
         {t.handle ? <div style={{ display: 'flex', fontSize: 28, color: 'rgba(248, 248, 240, 0.8)', marginTop: 30 }}>{t.handle}</div> : null}
       </div>
+      {creditLine(slide.credit)}
     </div>
   )
 }
@@ -595,6 +626,7 @@ function bandSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: num
         ) : null}
         {t.handle ? <div style={{ display: 'flex', fontSize: 25, color: t.soft, marginTop: 'auto' }}>{t.handle}</div> : null}
       </div>
+      {creditLine(slide.credit)}
     </div>
   )
 }
@@ -621,6 +653,7 @@ function frameSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: nu
         {t.handle ? <div style={{ display: 'flex', fontSize: 24, color: t.soft }}>{t.handle}</div> : <div style={{ display: 'flex' }} />}
         {cover ? <div style={{ display: 'flex', fontSize: 24, fontWeight: 800, color: t.accent, letterSpacing: 1 }}>SCORRI →</div> : null}
       </div>
+      {creditLine(slide.credit)}
     </div>
   )
 }
@@ -653,6 +686,7 @@ function minimalSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: 
         {cover && slide.title ? <div style={{ display: 'flex', fontSize: 28, color: 'rgba(248, 248, 240, 0.85)', marginTop: 14 }}>{slide.title}</div> : null}
         {t.handle ? <div style={{ display: 'flex', fontSize: 22, color: 'rgba(248, 248, 240, 0.7)', marginTop: 14 }}>{t.handle}</div> : null}
       </div>
+      {creditLine(slide.credit)}
     </div>
   )
 }
@@ -682,6 +716,7 @@ function splitSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: nu
       </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={photo} width={box.w} height={box.h} style={{ width: box.w, height: box.h, objectFit: 'cover' }} />
+      {creditLine(slide.credit)}
     </div>
   )
 }
@@ -689,15 +724,16 @@ function splitSlide(t: Theme, photo: string, slide: PhotoSlide, i: number, n: nu
 // --- Slide di solo testo (caroselli senza foto) --------------------------------------
 
 /** Cornice comune: logo e numero in alto, firma in basso, contenuto al centro. */
-function textFrame(t: Theme, i: number, n: number, logo: Logo, showCounter: boolean, children: React.ReactNode) {
+function textFrame(t: Theme, i: number, n: number, logo: Logo, showCounter: boolean, children: React.ReactNode, credit?: string) {
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '56px 80px 60px' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: t.bg, color: t.ink, fontFamily: 'Inter Tight', padding: '56px 80px 60px', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 90 }}>
         {logoImg(logo, 84) || <div style={{ display: 'flex' }} />}
         {showCounter ? <div style={{ display: 'flex', fontSize: 28, color: t.soft }}>{counter(i, n)}</div> : <div style={{ display: 'flex' }} />}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto', marginBottom: 'auto' }}>{children}</div>
       {t.handle ? <div style={{ display: 'flex', fontSize: 28, color: t.soft }}>{t.handle}</div> : null}
+      {creditLine(credit)}
     </div>
   )
 }
@@ -717,7 +753,8 @@ function textCover(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo
       <div style={{ display: 'flex', marginTop: 48 }}>
         <div style={{ display: 'flex', background: t.accent, color: t.onAccent, fontSize: 30, fontWeight: 800, padding: '18px 70px', borderRadius: 999, letterSpacing: 1 }}>SCORRI</div>
       </div>
-    </div>
+    </div>,
+    slide.credit
   )
 }
 
@@ -734,7 +771,8 @@ function bigTitleSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: 
       <div style={{ display: 'flex', width: 120, height: 12, borderRadius: 6, background: t.accent, marginBottom: 40 }} />
       <div style={{ display: 'flex', fontSize: slide.title.length > 40 ? 78 : 96, fontWeight: 800, lineHeight: 1.02, letterSpacing: -2 }}>{slide.title}</div>
       {slide.text ? <div style={{ display: 'flex', fontSize: 42, lineHeight: 1.38, color: t.soft, marginTop: 34 }}>{slide.text}</div> : null}
-    </div>
+    </div>,
+    slide.credit
   )
 }
 
@@ -751,7 +789,8 @@ function listSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Logo
       <div style={{ display: 'flex', fontSize: 230, fontWeight: 800, lineHeight: 0.9, letterSpacing: -6, color: t.accent }}>{String(i - 1).padStart(2, '0')}</div>
       <div style={{ display: 'flex', fontSize: slide.title.length > 40 ? 66 : 80, fontWeight: 800, lineHeight: 1.04, letterSpacing: -1.5, marginTop: 30 }}>{slide.title}</div>
       {slide.text ? <div style={{ display: 'flex', fontSize: 40, lineHeight: 1.38, color: t.soft, marginTop: 28 }}>{slide.text}</div> : null}
-    </div>
+    </div>,
+    slide.credit
   )
 }
 
@@ -771,7 +810,8 @@ function quoteSlide(t: Theme, slide: PhotoSlide, i: number, n: number, logo: Log
       {slide.text && slide.title ? (
         <div style={{ display: 'flex', fontSize: 32, fontWeight: 800, color: t.label, letterSpacing: 2, marginTop: 40 }}>— {slide.title.toUpperCase()}</div>
       ) : null}
-    </div>
+    </div>,
+    slide.credit
   )
 }
 

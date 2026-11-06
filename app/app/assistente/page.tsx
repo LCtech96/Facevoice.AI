@@ -39,10 +39,16 @@ type Post = {
   /** Versione precedente (com'era in quel momento della chat): solo da guardare o riprendere. */
   snapshot?: boolean
   sameAsLive?: boolean
+  /** Pagine da cui vengono le immagini prese dal web (avviso sotto l'anteprima). */
+  webSources?: WebSource[]
 }
+type WebSource = { url: string; site: string }
 /** Messaggio inviato dall'assistente a chi ci aveva scritto (send_message). */
 type SentAction = { kind: 'message'; platform: string; contactId: string; name: string; text: string; subject?: string; via: 'dm' | 'comment' | 'email'; at: string }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction
+/** Eventi e immagini trovati sul web dall'assistente (find_event_images). */
+type WebItem = { kind: 'event' | 'generic'; title: string; dates: string | null; place: string | null; image_url: string; image_source_url: string; image_source_domain: string; credit: string }
+type WebImagesAction = { kind: 'web_images'; items: WebItem[]; at: string }
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -347,6 +353,11 @@ function AssistantChat() {
                   {turn.actions?.map((action, k) =>
                     action.kind === 'message' ? (
                       <SentMessageCard key={`m${k}`} action={action} />
+                    ) : action.kind === 'web_images' ? (
+                      // Con il post fatto da queste immagini basta l'anteprima (con le fonti sotto).
+                      turn.actions?.some((a) => a.kind === 'post') ? null : (
+                        <WebImagesCard key={`w${k}`} action={action} />
+                      )
                     ) : action.kind === 'post' ? (
                       action.post.snapshot ? (
                         <SnapshotCard key={action.post.id} post={action.post} at={turn.at} canManage={canManage} busy={busy} model={model} chatId={chatId} onTurns={setTurns} onReload={load} />
@@ -706,6 +717,7 @@ function PostCard({
           )
         })}
       </div>
+      {post.webSources?.length ? <WebSourcesNote sources={post.webSources} /> : null}
       {post.design && !done && canManage && (
         <div className="mt-2 space-y-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
@@ -1078,6 +1090,53 @@ function SnapshotCard({
         </button>
       )}
       {busy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Per le versioni di prima rileggo i testi delle slide: ci vuole fino a un minuto.</p>}
+    </div>
+  )
+}
+
+/** Avviso sotto l'anteprima: immagini prese dal web, da verificare, con i link alle pagine da cui vengono. */
+function WebSourcesNote({ sources }: { sources: WebSource[] }) {
+  return (
+    <p className="mt-2 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-xs text-[var(--text-secondary)]">
+      Immagini prese dal web: verifica di poterle usare. Fonti:{' '}
+      {sources.map((s, k) => (
+        <span key={s.url}>
+          {k > 0 ? ', ' : ''}
+          <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" translate="no" className="font-medium text-[var(--accent-blue)] underline-offset-2 hover:underline">
+            {s.site}
+          </a>
+        </span>
+      ))}
+    </p>
+  )
+}
+
+/** Eventi e immagini trovati sul web (quando non ne e' ancora nato un post): immagine, nome, date e credito. */
+function WebImagesCard({ action }: { action: WebImagesAction }) {
+  const sources = [...new Map(action.items.map((it) => [it.image_source_url, { url: it.image_source_url, site: it.image_source_domain }])).values()]
+  return (
+    <div className="mt-3 w-full max-w-xl rounded-2xl border border-[var(--border-color)] p-3">
+      <p className="text-sm font-semibold">Immagini trovate sul web</p>
+      <div className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
+        {action.items.map((it) => (
+          <a key={it.image_url} href={it.image_source_url} target="_blank" rel="noopener noreferrer nofollow" className="w-32 shrink-0 snap-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={it.image_url} alt={it.title} loading="lazy" className="h-40 w-32 rounded-lg border border-[var(--border-color)] object-cover" />
+            <span translate="no" className="mt-1 line-clamp-2 block text-xs font-medium text-[var(--text-primary)]">
+              {it.title}
+            </span>
+            {it.dates ? (
+              <span translate="no" className="block text-[11px] text-[var(--text-secondary)]">
+                {it.dates}
+              </span>
+            ) : null}
+            <span translate="no" className="block truncate text-[10px] text-[var(--text-secondary)]">
+              {it.credit}
+            </span>
+          </a>
+        ))}
+      </div>
+      <WebSourcesNote sources={sources} />
     </div>
   )
 }

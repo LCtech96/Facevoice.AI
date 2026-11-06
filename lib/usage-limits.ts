@@ -236,6 +236,8 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   saas_lettura_foto: 'content',
   saas_recupero_testi: 'content',
   saas_estrai_foto: 'content',
+  // Ricerca sul web (eventi e immagini per i caroselli): senza questa riga "web" la metterebbe in "Chat del sito".
+  saas_ricerca_web: 'content',
   // Funzioni dello spazio Facevoice (se compaiono in uno spazio cliente).
   chat_sito: 'web',
   risposte_email: 'email',
