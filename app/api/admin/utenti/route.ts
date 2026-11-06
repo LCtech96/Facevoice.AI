@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
 /**
  * Una scelta alla volta per un utente:
  * - { userId, mode: 'auto' | 'green' | 'orange' | 'red' }: il gettone che vede l'utente;
- * - { userId, assistant: true | false }: la chat Assistente della beta accesa o spenta.
+ * - { userId, assistant: true | false }: la chat Assistente della beta accesa o spenta;
+ * - { userId, automations: true | false }: la pagina Automazioni della beta visibile o nascosta.
  */
 export async function POST(req: NextRequest) {
   if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
@@ -34,8 +35,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Utente non valido.' }, { status: 400 })
   }
 
+  const choices = [body.mode, body.assistant, body.automations].filter((v) => v !== undefined).length
+  if (choices > 1) return NextResponse.json({ error: 'Una scelta alla volta.' }, { status: 400 })
+
+  if (body.automations !== undefined) {
+    if (typeof body.automations !== 'boolean') {
+      return NextResponse.json({ error: 'Scelta non valida: Visibile o Nascosta.' }, { status: 400 })
+    }
+    return saveAutomations(userId, body.automations)
+  }
+
   if (body.assistant !== undefined) {
-    if (body.mode !== undefined) return NextResponse.json({ error: 'Una scelta alla volta.' }, { status: 400 })
     if (typeof body.assistant !== 'boolean') {
       return NextResponse.json({ error: 'Scelta non valida: Attivo o Spento.' }, { status: 400 })
     }
@@ -69,6 +79,20 @@ async function saveAssistant(userId: string, enabled: boolean) {
     // La beta ha salvato: se non rimanda lo stato vale quello chiesto.
     const assistant = assistantFrom(data?.assistant) ?? { enabled, locked: false }
     return NextResponse.json({ ok: true, assistant })
+  } catch (error) {
+    return bridgeErrorResponse(error)
+  }
+}
+
+/** La beta salva la scelta (automations_access:<userId>) e rifiuta di spegnerla ai membri di Facevoice. */
+async function saveAutomations(userId: string, enabled: boolean) {
+  try {
+    const data = (await callBeta('/api/bridge/users/automations', { method: 'POST', body: { userId, enabled } })) as {
+      automations?: unknown
+    }
+    // La beta ha salvato: se non rimanda lo stato vale quello chiesto.
+    const automations = typeof data?.automations === 'boolean' ? data.automations : enabled
+    return NextResponse.json({ ok: true, automations })
   } catch (error) {
     return bridgeErrorResponse(error)
   }

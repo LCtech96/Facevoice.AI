@@ -32,6 +32,16 @@ export type BetaAssistant = {
   locked: boolean
 }
 
+/** Email al giorno che le automazioni di uno spazio possono mandare (lo stesso limite della beta). */
+export const AUTOMATIONS_DAILY_LIMIT = 20
+
+/** Pagina Automazioni dell'area clienti della beta (la decide l'admin, utente per utente). */
+export type BetaAutomations = {
+  enabled: boolean
+  /** Email mandate oggi dalle automazioni dei suoi spazi. */
+  sentToday: number
+}
+
 export type BetaUser = {
   id: string
   email: string
@@ -59,6 +69,8 @@ export type BetaUser = {
   subscription?: BetaSubscription | null
   /** Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore. */
   assistant?: BetaAssistant
+  /** Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore. */
+  automations?: BetaAutomations
 }
 
 export type BetaUsersResponse = { updatedAt: string; users: BetaUser[] }
@@ -202,6 +214,25 @@ export function assistantFrom(v: unknown): BetaAssistant | null {
   return { enabled: locked || a.enabled === true, locked }
 }
 
+/**
+ * Stato delle automazioni come lo manda la beta ("automations": true/false e
+ * "automationsSentToday": numero); null se manca o non e' valido.
+ */
+export function automationsFrom(enabled: unknown, sentToday?: unknown): BetaAutomations | null {
+  if (typeof enabled !== 'boolean') return null
+  return { enabled, sentToday: Math.max(0, Math.round(num(sentToday))) }
+}
+
+/**
+ * Chi e' nello spazio Facevoice ha le automazioni sempre visibili (stessa regola
+ * dell'assistente: la beta rifiuta di spegnerle). Lo si sa dal blocco dell'assistente.
+ */
+export const automationsLocked = (user: Pick<BetaUser, 'assistant' | 'automations'>) =>
+  Boolean(user.assistant?.locked && user.automations?.enabled)
+
+/** "oggi 3/20" */
+export const automationsTodayText = (sentToday: number) => `oggi ${sentToday}/${AUTOMATIONS_DAILY_LIMIT}`
+
 function thresholdsFrom(v: unknown): BetaThresholds | null {
   if (!v || typeof v !== 'object') return null
   const t = v as Record<string, unknown>
@@ -225,6 +256,7 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
       const thresholds = thresholdsFrom(u.thresholds)
       const plan = str(u.plan) || 'free'
       const assistant = assistantFrom(u.assistant)
+      const automations = automationsFrom(u.automations, u.automationsSentToday)
       return {
         id: u.id,
         email: str(u.email),
@@ -260,6 +292,8 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
         ...(u.subscription !== undefined ? { subscription: subscriptionFrom(u.subscription) } : {}),
         // Idem per l'assistente: senza il campo l'interruttore resta nascosto.
         ...(assistant ? { assistant } : {}),
+        // Idem per le automazioni.
+        ...(automations ? { automations } : {}),
       }
     })
   return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users }
