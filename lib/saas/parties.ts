@@ -53,32 +53,41 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const CITY_WORD = "[A-ZÀ-Ý][\\p{L}'’]*(?:\\s+[A-ZÀ-Ý][\\p{L}'’]*){0,3}"
 const STREET = '(?:Via|Viale|V\\.le|Piazza|P\\.zza|Piazzale|Corso|C\\.so|Largo|Vicolo|Contrada|C\\.da|Strada|Località|Loc\\.|Borgo|Lungomare|Salita|Traversa)'
 const STREET_WORD = "(?:[A-ZÀ-Ý0-9][\\p{L}0-9'’.]*|di|del|della|delle|dei|degli|de|d['’]|lo|la|le|il)"
-const STREET_RE = new RegExp(`(?<![\\p{L}])${STREET}\\s+${STREET_WORD}(?:\\s+${STREET_WORD}){0,6}?\\s*,?\\s*(?:n\\.?\\s*)?\\d{1,4}[A-Za-z]?(?![\\p{L}\\d])`, 'u')
+const STREET_RE_ALL = new RegExp(`(?<![\\p{L}])${STREET}\\s+${STREET_WORD}(?:\\s+${STREET_WORD}){0,6}?\\s*,?\\s*(?:n\\.?\\s*)?\\d{1,4}[A-Za-z]?(?![\\p{L}\\d])`, 'gu')
 const AFTER_STREET_RE = new RegExp(`^\\s*[,–-]?\\s*(\\d{5})\\s+(${CITY_WORD})(?:\\s*\\(([A-Z]{2})\\))?`, 'u')
 const CAP_CITY_RE = new RegExp(`(?<!\\d)(\\d{5})\\s+(${CITY_WORD})\\s*\\(([A-Z]{2})\\)`, 'u')
 const COURT_RE = new RegExp(`(?<![\\p{L}])(?:[Ff]oro|[Tt]ribunale)\\s+(?:competente\\s+)?(?:è\\s+quello\\s+)?di\\s+(${CITY_WORD})`, 'u')
-const IN_CITY_RE = new RegExp(`(?:^|[\\s(,])(?:a|ad|in|da|di|sede a|sede in)\\s+(${CAPOLUOGHI.map(escapeRe).join('|')})(?![\\p{L}])`, 'u')
+const CAPOLUOGO = `(${CAPOLUOGHI.map(escapeRe).join('|')})(?![\\p{L}])`
+/** "Sede a Palermo", "con sede legale in Roma", "siamo a Palermo": la citta' della sede detta chiaramente. */
+const SEAT_RE = new RegExp(`(?<![\\p{L}])(?:[Ss]ede(?:\\s+legale|\\s+operativa)?|[Ss]iamo|[Cc]i\\s+trovi(?:te)?|[Ss]i\\s+trova|[Ss]ituat[ao])\\s*(?::|\\s(?:a|ad|in))\\s+${CAPOLUOGO}`, 'u')
+/** Indirizzo con l'etichetta subito prima ("Sede: Via Roma 10", "indirizzo: Corso Italia 5"). */
+const LABELLED_ADDRESS = /(?:sede(?:\s+legale|\s+operativa)?|indirizzo)\s*(?::|\s(?:in|a|è))?\s*$/i
 const VAT_RE = /(?<![\p{L}])(?:p\.?\s?iva|partita\s+iva|vat)(?![\p{L}])[^0-9\n]{0,15}((?:IT)?\s?\d{11})(?!\d)/iu
 
 /**
  * Dati di chi prepara il documento dalle Istruzioni: P.IVA, indirizzo della sede, citta' e citta'
- * del foro (scritta nelle Istruzioni, dalla provincia dell'indirizzo, oppure un capoluogo nominato
- * "a Palermo"). Quello che non si trova resta vuoto: diventa un campo che scrive il titolare.
+ * del foro. Solo quando sono scritti chiaramente: l'indirizzo con CAP e citta' (o con "Sede:" /
+ * "Indirizzo:" prima), il foro scritto ("Foro di Palermo"), dalla provincia o dal CAP dell'indirizzo,
+ * oppure la sede detta chiaramente ("sede a Palermo", "Pizzeria Gusto a Palermo"). Una citta'
+ * nominata per altro ("la vera pizza di Napoli", "spediamo da Milano") non conta. Quello che non si
+ * trova resta vuoto: diventa un campo che scrive il titolare.
  */
 export function creatorFromInstructions(name: string, text: string): CreatorIdentity {
   const t = String(text || '').slice(0, 8000)
   const out: CreatorIdentity = { name: String(name || '').trim().slice(0, 120) }
   const vat = t.match(VAT_RE)
   if (vat) out.vat = vat[1].replace(/\s+/g, '').replace(/^IT/i, '')
-  const street = t.match(STREET_RE)
   let province = ''
-  if (street) {
-    const rest = t.slice((street.index ?? 0) + street[0].length).match(AFTER_STREET_RE)
+  for (const street of t.matchAll(STREET_RE_ALL)) {
+    const at = street.index ?? 0
+    const rest = t.slice(at + street[0].length).match(AFTER_STREET_RE)
+    if (!rest && !LABELLED_ADDRESS.test(t.slice(Math.max(0, at - 30), at))) continue
     out.address = `${street[0].replace(/\s+/g, ' ').trim()}${rest ? `, ${rest[1]} ${rest[2]}${rest[3] ? ` (${rest[3]})` : ''}` : ''}`.slice(0, 200)
     if (rest) {
       out.city = rest[2]
       province = rest[3] || ''
     }
+    break
   }
   if (!out.city) {
     const cap = t.match(CAP_CITY_RE)
@@ -88,9 +97,10 @@ export function creatorFromInstructions(name: string, text: string): CreatorIden
     }
   }
   const explicit = t.match(COURT_RE)?.[1]
-  const named = t.match(IN_CITY_RE)?.[1]
-  out.court = explicit || (province && PROVINCES[province]) || (out.city && CAPOLUOGHI.includes(out.city) ? out.city : '') || named || undefined
-  if (!out.city && named) out.city = named
+  const business = out.name.length >= 3 ? t.match(new RegExp(`(?<![\\p{L}])${escapeRe(out.name)}\\s*,?\\s(?:a|ad|in)\\s+${CAPOLUOGO}`, 'u'))?.[1] : undefined
+  const seat = t.match(SEAT_RE)?.[1] || business
+  out.court = explicit || (province && PROVINCES[province]) || (out.city && CAPOLUOGHI.includes(out.city) ? out.city : '') || seat || undefined
+  if (!out.city && seat) out.city = seat
   if (!out.court) delete out.court
   if (!out.city) delete out.city
   return out
@@ -100,13 +110,14 @@ export function creatorFromInstructions(name: string, text: string): CreatorIden
 
 /**
  * «Le parti» per questo testo: campi standard, oppure i campi dell'AI con lo stesso significato
- * (ognuno usato una volta sola, solo della stessa parte). prefill: valori per i campi del titolare
- * scritti dall'AI quando il dato e' gia' nelle Istruzioni (es. la P.IVA).
+ * (ognuno usato una volta sola, solo della stessa parte; mai un campo messo subito dopo un dato
+ * gia' scritto, come «3313738940: [[numero]]»). prefill: valori per i campi del titolare scritti
+ * dall'AI quando il dato e' gia' nelle Istruzioni (es. la P.IVA).
  */
-export function buildParties(content: Pick<DocContent, 'fields'>, creator: CreatorIdentity): { parties: Parties; prefill: Record<string, string> } {
+export function buildParties(content: DocContent, creator: CreatorIdentity): { parties: Parties; prefill: Record<string, string> } {
   const fields = content.fields || []
   const ids = new Set(fields.map((f) => f.id))
-  const taken = new Set<string>()
+  const taken = afterValueIds(content)
   const prefill: Record<string, string> = {}
   const unique = (base: string) => {
     let id = base
@@ -211,6 +222,13 @@ export function documentParties(kind: string, content: DocContent, creator: Crea
 /** "3313738940: [[campo]]", "giusy@x.it: [[campo]]", "@giusy: [[campo]]": un dato gia' scritto e poi una riga vuota. */
 const AFTER_VALUE = /((?:\+?\d[\d .\/-]{4,}\d)|(?:[^\s@:;,()«»"]+@[^\s@:;,()«»"]+\.[a-z]{2,})|(?:(?<![\p{L}\d])@[A-Za-z0-9._]{2,}))(\s*:\s*)\[\[([a-z0-9_]{1,40})\]\]/giu
 
+/** Campi messi subito dopo un dato gia' scritto (contratti di prima gia' firmati): mai dati di identita', mai caselle. */
+export function afterValueIds(content: DocContent): Set<string> {
+  const out = new Set<string>()
+  for (const text of textsOf(content)) for (const m of text.matchAll(AFTER_VALUE)) out.add(m[3])
+  return out
+}
+
 /**
  * Mai un campo da compilare subito dopo un dato gia' scritto (numero, email, @username): il campo
  * si toglie (e sparisce se non e' nominato altrove).
@@ -233,4 +251,31 @@ export function dropFieldsAfterValues(content: DocContent): DocContent {
   if (!dropped.size) return content
   const placed = placedIds(next)
   return { ...next, fields: (next.fields || []).filter((f) => !dropped.has(f.id) || placed.has(f.id)) }
+}
+
+// --- Pulizia del testo dei contratti -------------------------------------------------------------
+
+/**
+ * Testo di un contratto: via le righe «Tra: …» / «E: …» sotto il titolo (le parti sono in «Le
+ * parti») e il nome scritto sotto la firma dell'altra parte (il nome del profilo non e' un dato
+ * verificato: sotto la firma va il nome e cognome che scrive lei). I campi restano.
+ */
+export function withoutPartyLines(content: DocContent): DocContent {
+  const meta = content.meta.filter((m) => !/^\s*(?:tra|fra)\b|^\s*e\s*:/i.test(m))
+  const signatures = content.signatures.map((s, k) => (k === 1 && s.name && !/\[\[[a-z0-9_]{1,40}\]\]/.test(s.name) ? { label: s.label } : s))
+  return meta.length === content.meta.length && signatures.every((s, k) => s === content.signatures[k]) ? content : { ...content, meta, signatures }
+}
+
+/** Contratto, accordo o preventivo scritto dall'AI: senza righe «Tra:/E:» ne' il nome del profilo sotto la firma. */
+export const cleanContractContent = (kind: string, content: DocContent): DocContent => (CONTRACT_KINDS.includes(kind) ? withoutPartyLines(content) : content)
+
+/**
+ * Testo senza «Le parti» in cima (documento di un contratto firmato, con i dati scritti dalle
+ * persone): quello che si manda all'AI per cambiare il documento non contiene mai quei dati.
+ */
+export function withoutParties(content: DocContent): DocContent {
+  if (content.sections[0]?.heading !== PARTIES_HEADING) return content
+  let k = 1
+  while (k < content.sections.length && !content.sections[k].heading && content.sections[k].paragraphs[0] === 'e:') k++
+  return { ...content, sections: content.sections.slice(k) }
 }

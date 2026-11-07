@@ -43,8 +43,10 @@ type Contract = {
   doc: ViewDoc
   content: { sections: { heading: string; paragraphs: string[]; bullets: string[] }[] }
   fields: ViewField[]
-  /** I tuoi dati: 'all' si salvano mentre scrivi, 'empty' solo i vuoti e con la tua firma, null chiusi. */
-  fill: 'all' | 'empty' | null
+  /** I tuoi dati: 'all' si salvano mentre scrivi (fino alla tua firma e prima di quella del destinatario), null chiusi. */
+  fill: 'all' | null
+  /** Impronta dei dati dell'altra parte mostrati qui (va con la firma). */
+  othersRev: string
   /** Dati obbligatori che chi riceve non ha ancora scritto. */
   recipientMissing: string[]
   headings: string[]
@@ -109,7 +111,7 @@ function ContractPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [sharing, setSharing] = useState(search.get('condividi') === '1')
-  // Dati del titolare scritti nel testo: si salvano con «Salva i dati» prima di ogni firma, poi con la firma.
+  // Dati del titolare scritti nelle caselle: si salvano mentre scrive, fino alla sua firma (e prima di quella del destinatario).
   const [values, setValues] = useState<Record<string, string>>({})
   const canManage = workspace?.role !== 'member'
 
@@ -155,12 +157,14 @@ function ContractPage() {
       if (data?.contract) setContract(data.contract as Contract)
       if (!res?.ok) {
         setError((data?.error as string) || 'Non riuscito, riprova.')
+        // Contratto o dati dell'altra parte cambiati nel frattempo: si mostra la versione aggiornata.
+        if (data?.code === 'version_changed') await load()
         return { ok: false, data }
       }
       if (done || data?.message) setMessage((data?.message as string) || done || null)
       return { ok: true, data }
     },
-    [appFetch, id]
+    [appFetch, id, load]
   )
 
   const openPdf = async (download: boolean) => {
@@ -575,15 +579,19 @@ function Preview({
   }, [tick, autosave, contract.id])
 
   const missing = contract.recipientMissing || []
+  const other = contract.recipient.name || 'chi riceve il contratto'
+  // Firmato prima da chi riceve: i tuoi dati vuoti non si scrivono piu' (restano righe da compilare a mano).
+  const lockedEmpty = Boolean(contract.signatures.destinatario && !contract.signatures.creatore && contract.fields.some((f) => f.party === 'creatore' && !f.value))
   return (
     <section className="mt-6">
       <h2 className="text-lg font-bold">Testo del contratto</h2>
       {editable.size > 0 && (
         <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-          {autosave ? 'Scrivi i tuoi dati nelle caselle: si salvano mentre scrivi. Quelli vuoti nel PDF restano righe da compilare a mano.' : 'Puoi scrivere i tuoi dati ancora vuoti: si salvano con la tua firma.'}
+          Scrivi i tuoi dati nelle caselle: si salvano mentre scrivi. Scrivili prima che firmi {other}: dopo, quelli vuoti restano righe da compilare a mano.
           {autosave && saving !== 'idle' && <span className="ml-1" aria-live="polite">{saving === 'saving' ? 'Salvataggio…' : saving === 'saved' ? 'Salvati.' : saveError}</span>}
         </p>
       )}
+      {lockedEmpty && <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{other} ha già firmato: i dati non cambiano più. I tuoi dati vuoti restano righe da compilare a mano.</p>}
       <div className="mt-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
         <ContractBody
           dark
@@ -608,7 +616,7 @@ function Preview({
   )
 }
 
-/** Firma del titolare: stesse tre accettazioni, nome e firma col dito del destinatario (con i suoi dati ancora vuoti scritti nel testo). */
+/** Firma del titolare: stesse tre accettazioni, nome e firma col dito del destinatario (con i suoi dati scritti nelle caselle, se il destinatario non ha ancora firmato). */
 function SignPanel({ contract, busy, op, values, onSigned }: { contract: Contract; busy: string | null; op: Op; values: Record<string, string>; onSigned: () => void }) {
   const [accept, setAccept] = useState<[boolean, boolean, boolean]>([false, false, false])
   const [name, setName] = useState('')
@@ -618,7 +626,8 @@ function SignPanel({ contract, busy, op, values, onSigned }: { contract: Contrac
   const sign = async () => {
     if (!ready) return
     const fields = values
-    const { ok, data } = await op('sign', { versionId: contract.version.id, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields }, 'Firmato.')
+    // othersRev: si firma solo con i dati dell'altra parte come sono mostrati qui.
+    const { ok, data } = await op('sign', { versionId: contract.version.id, othersRev: contract.othersRev, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields }, 'Firmato.')
     if (ok) {
       onSigned()
       setAccept([false, false, false])

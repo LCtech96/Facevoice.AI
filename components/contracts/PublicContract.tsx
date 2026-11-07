@@ -29,6 +29,8 @@ type View = {
   canFill: boolean
   /** Dati obbligatori ancora vuoti (sul server). */
   missing: string[]
+  /** Impronta dei dati di chi ha preparato il contratto mostrati qui (va con la firma). */
+  othersRev: string
   headings: string[]
   statements: [string, string, string]
   signatures: { creatore?: { name: string; at: string }; destinatario?: { name: string; at: string } }
@@ -192,7 +194,10 @@ function Contract({
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const pending = useRef<Record<string, string>>({})
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [tick, setTick] = useState(0)
+  /** Firma rifiutata perche' il contratto o i dati dell'altra parte sono cambiati: la pagina si e' ricaricata. */
+  const [stale, setStale] = useState<string | null>(null)
   const editable = useMemo(() => new Set(view.canFill ? view.fields.filter((f) => f.editable).map((f) => f.id) : []), [view])
   const mineFields = useMemo(() => view.fields.filter((f) => editable.has(f.id)), [view, editable])
   const valueOf = useCallback((id: string) => values[id] ?? view.fields.find((f) => f.id === id)?.own ?? '', [values, view])
@@ -208,11 +213,11 @@ function Contract({
   const [panel, setPanel] = useState<'none' | 'change' | 'sign'>('none')
 
   const post = useCallback(
-    async (body: Record<string, unknown>): Promise<{ ok: boolean; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }> => {
+    async (body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }> => {
       const res = await fetch(api, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
       const data = res ? await res.json().catch(() => null) : null
       if (res?.status === 401 && data?.code === 'pin') onPin()
-      return { ok: Boolean(res?.ok), data: data || (res ? null : { error: 'Connessione non riuscita, riprova.' }) }
+      return { ok: Boolean(res?.ok), status: res?.status ?? 0, data: data || (res ? null : { error: 'Connessione non riuscita, riprova.' }) }
     },
     [api, onPin]
   )
@@ -227,13 +232,19 @@ function Contract({
   // Bozza dei dati: si salva da sola dopo una breve pausa (mai il PIN, mai nei log).
   const latest = useRef({ post, onFresh, reload })
   latest.current = { post, onFresh, reload }
+  useEffect(
+    () => () => {
+      if (retry.current) clearTimeout(retry.current)
+    },
+    []
+  )
   useEffect(() => {
     if (!Object.keys(pending.current).length) return
     const timer = setTimeout(async () => {
       const batch = pending.current
       pending.current = {}
       setSaving('saving')
-      const { ok, data } = await latest.current.post({ op: 'fields', values: batch })
+      const { ok, status, data } = await latest.current.post({ op: 'fields', values: batch })
       if (ok && data?.contract) {
         setSaving('saved')
         setSaveError(null)
@@ -242,11 +253,14 @@ function Contract({
       }
       setSaving('error')
       setSaveError(data?.error || 'Dati non salvati: riprova.')
-      if (data?.code === 'signed' || data?.code === 'closed') await latest.current.reload()
-      else if (data?.code !== 'pin') {
-        // Connessione caduta: si riprova tra poco con gli stessi dati.
+      if (status === 0 || status >= 500) {
+        // Connessione caduta o server occupato: si riprova tra poco con gli stessi dati.
         pending.current = { ...batch, ...pending.current }
-        setTimeout(() => setTick((t) => t + 1), 4000)
+        if (retry.current) clearTimeout(retry.current)
+        retry.current = setTimeout(() => setTick((t) => t + 1), 4000)
+      } else if (status === 404 || data?.code === 'signed' || data?.code === 'closed') {
+        // Link non piu' valido (revocato, contratto annullato) o gia' firmato: la pagina lo mostra.
+        await latest.current.reload()
       }
     }, 800)
     return () => clearTimeout(timer)
@@ -277,6 +291,11 @@ function Contract({
         </p>
       )}
       {notice && <p className="mt-4 rounded-xl bg-[#e6f6ec] px-4 py-3 text-sm text-[#1e5b30]">{notice}</p>}
+      {stale && (
+        <p className="mt-4 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-4 py-3 text-sm text-[#7a4500]">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0" /> {stale}
+        </p>
+      )}
 
       {view.canFill && editable.size > 0 && (
         <p className="mt-4 rounded-xl bg-white px-4 py-3 text-sm text-[#3d4352] shadow-sm">
@@ -347,13 +366,15 @@ function Contract({
           post={post}
           onDone={(v, completed) => {
             onView(v, completed ? 'Contratto firmato da entrambi: puoi scaricare il PDF firmato.' : `Hai firmato. Quando firma anche ${v.creatorName} il contratto è completo.`)
+            setStale(null)
             setPanel('none')
             pending.current = {}
             setValues({})
             window.scrollTo({ top: 0, behavior: 'smooth' })
           }}
-          onStale={async () => {
+          onStale={async (message) => {
             await reload()
+            setStale(message)
             setPanel('none')
           }}
         />
@@ -442,7 +463,8 @@ function SignForm({
   empty: number
   post: (b: Record<string, unknown>) => Promise<{ ok: boolean; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }>
   onDone: (v: View, completed: boolean) => void
-  onStale: () => Promise<void>
+  /** Contratto o dati dell'altra parte cambiati: si ricarica la pagina e si dice perche'. */
+  onStale: (message: string) => Promise<void>
 }) {
   const [accept, setAccept] = useState<[boolean, boolean, boolean]>([false, false, false])
   const [name, setName] = useState(initialName)
@@ -457,12 +479,12 @@ function SignForm({
     setError(null)
     // Tutti i propri dati (anche cancellati): la firma li copre come sono adesso.
     const fields = values
-    const { ok, data } = await post({ op: 'sign', versionId: view.version.id, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields })
+    // othersRev: si firma solo con i dati dell'altra parte come sono mostrati qui.
+    const { ok, data } = await post({ op: 'sign', versionId: view.version.id, othersRev: view.othersRev, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields })
     setBusy(false)
     if (!ok || !data?.contract) {
       if (data?.code === 'version_changed') {
-        setError(data.error || 'Il contratto è cambiato: ricarico la pagina.')
-        await onStale()
+        await onStale(`Il contratto o i dati di ${view.creatorName} sono cambiati mentre leggevi: qui sotto c’è la versione aggiornata. Controllala e firma di nuovo.`)
         return
       }
       return setError(data?.error || 'Firma non riuscita, riprova.')

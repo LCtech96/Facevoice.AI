@@ -144,7 +144,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         opened.contract.workspaceId,
         opened.contract.id,
         'destinatario',
-        { versionId: body.versionId, name: body.name, accept: body.accept, strokes: body.strokes, ratio: body.ratio, fields: body.fields },
+        { versionId: body.versionId, name: body.name, accept: body.accept, strokes: body.strokes, ratio: body.ratio, fields: body.fields, othersRev: body.othersRev },
         { ip, device: clientDevice(req.headers) },
         { hash: opened.hash }
       )

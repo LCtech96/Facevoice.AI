@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
           ws,
           id,
           'creatore',
-          { versionId: body.versionId, name: body.name, accept: body.accept, strokes: body.strokes, ratio: body.ratio, fields: body.fields },
+          { versionId: body.versionId, name: body.name, accept: body.accept, strokes: body.strokes, ratio: body.ratio, fields: body.fields, othersRev: body.othersRev },
           { ip: clientIp(req.headers), device: clientDevice(req.headers), userId: access.userId }
         )
         if (signed.completed) await sendSignedEmails(access.db, signed.contract).catch(() => 0)

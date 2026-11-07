@@ -48,26 +48,49 @@ const words = (text: string) =>
     .replace(/[^a-z0-9@]+/g, ' ')
     .trim()} `
 
+/** Campi dell'altra parte che non sono suoi dati di identita' anche se dicono "nome" o "indirizzo" (consegna, brand, conto…). */
+const NOT_RECIPIENT_IDENTITY = / (consegna|consegne|spedizione|spedire|ritiro|brand|marchio|locale|negozio|ristorante|evento|conto|intestatario|intestataria|banca|bancario|iban|fatturazione|prodotto|prodotti|progetto|campagna|hotel|struttura) /
+/** Campi del titolare che non sono la sua sede o la sua P.IVA (consegna, evento, dati dell'altra parte…). */
+const NOT_CREATOR_IDENTITY = / (consegna|consegne|spedizione|ritiro|evento|fatturazione|cliente|creator|destinatario|destinataria|controparte|influencer) /
+const ROLE = '(?:creator|controparte|cliente|influencer|destinatario|destinataria|collaboratore|collaboratrice)'
+const NAME_LABEL = new RegExp(`^nome(?: (?:del|della|dello|di))? ${ROLE}$`)
+const ADDRESS_LABEL = new RegExp(`^indirizzo(?: completo)?(?: (?:del|della|dello|di) ${ROLE})?$`)
+
 /**
  * Di che dato di identita' parla un campo scritto dall'AI (dall'id e dall'etichetta), per non
- * ripeterlo in «Le parti»: solo i campi della stessa parte. Profilo, @username o nome d'arte no.
+ * ripeterlo in «Le parti»: solo i campi della stessa parte e solo se e' chiaro (es. "Nome e
+ * cognome", "Codice fiscale", "Residenza"). "Nome del brand", "Indirizzo di consegna" o "Nome
+ * intestatario del conto" no: restano campi del testo. Profilo, @username o nome d'arte mai.
  */
 export function identityKind(field: { id: string; label: string; party: string }): IdentityKind | null {
   const w = words(`${field.id} ${field.label}`)
+  const label = words(field.label).trim()
   if (/ (instagram|profilo|username|handle|account|nickname|arte|social|tiktok|youtube) /.test(w)) return null
   if (field.party === 'destinatario') {
+    if (NOT_RECIPIENT_IDENTITY.test(w)) return null
     if (/ (e ?mail|pec) /.test(w)) return 'email'
     if (/ (telefono|telefonico|cellulare|cell|tel|whatsapp|phone|mobile) /.test(w)) return 'telefono'
     if (/ (codice fiscale|cod fisc|c f|cf) /.test(w)) return 'cf'
-    if (/ (ragione sociale|partita iva|p iva|piva|vat|azienda|societa|ditta) /.test(w)) return 'azienda'
+    if (/ (ragione sociale|denominazione sociale|partita iva|p iva|piva|vat) /.test(w) || /^(?:nome (?:dell |della |del |di )?)?(?:azienda|societa|ditta|impresa)$/.test(label)) return 'azienda'
     if (/ (nascita|nato|nata) /.test(w)) return 'nascita'
-    if (/ (indirizzo|residenza|residente|domicilio|via) /.test(w)) return 'indirizzo'
-    if (/ (nome|nominativo|cognome) /.test(w)) return 'nome'
+    if ((/ (residenza|residente|domicilio|domiciliato|domiciliata) /.test(w) || ADDRESS_LABEL.test(label)) && !/ sede /.test(w)) return 'indirizzo'
+    if (/ (nome e cognome|cognome e nome|nome cognome|nominativo|nome completo) /.test(w) || NAME_LABEL.test(label) || label === 'nome') return 'nome'
   } else if (field.party === 'creatore') {
+    if (NOT_CREATOR_IDENTITY.test(w)) return null
     if (/ (partita iva|p iva|piva|vat) /.test(w)) return 'piva'
     if (/ (sede|indirizzo) /.test(w) && !/ (e ?mail|pec) /.test(w)) return 'sede'
   }
   return null
+}
+
+/**
+ * Campi "di entrambi" che ognuno scrive per se': luogo e data della firma (un valore per parte).
+ * Gli altri (es. data del pagamento) sono un valore solo, uguale per tutti.
+ */
+export function perSigner(field: { id: string; label: string }): boolean {
+  const w = words(`${field.id} ${field.label}`)
+  const label = words(field.label).trim()
+  return (/ (firma|firmato|sottoscrizione) /.test(w) && / (luogo|data|citta|giorno) /.test(w)) || ['data', 'luogo', 'luogo e data', 'data e luogo'].includes(label)
 }
 
 const CF_RE = /^[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/
