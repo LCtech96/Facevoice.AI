@@ -35,10 +35,13 @@ import {
 import { sendNewEmail } from './email'
 import {
   PARTIES_HEADING,
+  afterValueIds,
   buildParties,
   creatorFromInstructions,
   creatorOf,
+  dropFieldsAfterValues,
   hiddenInExtras,
+  withoutPartyLines,
   partiesPdfSections,
   partyLines,
   stdFields,
@@ -46,7 +49,7 @@ import {
   type Parties,
   type PartyLine,
 } from './parties'
-import { identityKind, missingRequired, type IdentityInput } from './parties-shared'
+import { identityKind, missingRequired, perSigner, type IdentityInput } from './parties-shared'
 import { readInstructions, workspaceName } from './responder'
 
 // Contratti dell'area clienti (beta): un documento dell'Assistente diventa un contratto quando
@@ -63,9 +66,12 @@ import { readInstructions, workspaceName } from './responder'
 // I dati scritti dalle persone stanno fuori dal testo (values, per parte): il testo di una versione
 // non cambia mai dopo la creazione, cosi' l'impronta di una firma resta verificabile anche quando
 // l'altra parte scrive poi i suoi dati. Ognuno scrive e cambia i propri dati fino alla propria
-// firma (il titolare, dopo la firma del destinatario, solo quelli ancora vuoti, firmando). Ogni
-// firma copre il testo, «Le parti» e i dati gia' bloccati in quel momento (i propri e quelli di chi
-// ha gia' firmato), salvati nella firma stessa: i dati che l'altra parte puo' ancora cambiare no.
+// firma; dopo la firma del destinatario non cambia piu' niente (i dati vuoti del titolare restano
+// righe da compilare a mano). I campi "di entrambi" sono un valore solo, bloccato dalla prima firma,
+// tranne luogo e data della firma (uno per parte). Ogni firma copre il testo, «Le parti» e i dati
+// gia' bloccati in quel momento (i propri, quelli comuni e quelli di chi ha gia' firmato), salvati
+// nella firma stessa: i dati che l'altra parte puo' ancora cambiare no. Si firma solo quello che si
+// e' visto: la firma porta l'impronta dei dati dell'altra parte mostrati nella pagina (othersRev).
 //
 // Tutto in app_settings, sempre per spazio di lavoro (mai visibile da un altro spazio):
 //   contract:<spazio>:<id>       il contratto (id = id del documento), con limiti di dimensione
@@ -157,8 +163,11 @@ export type Signature = {
   values?: Record<string, string>
   hash: string
 }
-/** Dati scritti dalle persone nei campi, per parte (id del campo -> valore; "" = tolto un valore di prima). */
-export type PartyValues = Partial<Record<Party, Record<string, string>>>
+/**
+ * Dati scritti dalle persone nei campi, per parte (id del campo -> valore; "" = tolto un valore di
+ * prima). entrambi: i campi di entrambi con un valore solo (es. data del pagamento).
+ */
+export type PartyValues = Partial<Record<Party | 'entrambi', Record<string, string>>>
 export type ShareInfo = {
   /** Cambia a ogni nuovo link: i cookie dei link di prima non valgono piu'. */
   id: string
@@ -358,7 +367,9 @@ export async function openContract(ws: string, userId: string, documentId: strin
   const latest = doc.versions[doc.versions.length - 1]
   const now = new Date().toISOString()
   const creatorName = (await workspaceName(ws).catch(() => '')) || doc.business || 'La nostra attività'
-  const content = withFields(latest.content)
+  // Documenti di prima: mai un campo subito dopo un dato gia' scritto ("3313738940: ____"), mai
+  // righe «Tra:/E:» con il nome del profilo (le parti sono in «Le parti»).
+  const content = withoutPartyLines(dropFieldsAfterValues(withFields(latest.content)))
   // «Le parti» decise qui (non dall'AI): dati dello spazio e campi di identita' di chi riceve.
   const { parties, prefill } = buildParties(content, await creatorIdentity(ws, creatorName))
   const contract: Contract = {
@@ -448,7 +459,7 @@ const partiesOf = (c: Contract): Parties => c.parties || (c.status === 'firmato'
 function rebuildParties(c: Contract, content: DocContent): { parties: Parties; values: PartyValues } {
   const old = partiesOf(c)
   const built = buildParties(withFields(content), creatorOf(old, c.creatorName))
-  const values: PartyValues = { creatore: { ...(c.values?.creatore || {}) }, destinatario: { ...(c.values?.destinatario || {}) } }
+  const values: PartyValues = { ...(c.values || {}), creatore: { ...(c.values?.creatore || {}) }, destinatario: { ...(c.values?.destinatario || {}) } }
   for (const line of partyLines(built.parties)) {
     const before = partyLines(old).find((o) => o.kind === line.kind && o.party === line.party)
     const mine = values[line.party] as Record<string, string>
@@ -460,7 +471,9 @@ function rebuildParties(c: Contract, content: DocContent): { parties: Parties; v
 
 /**
  * Contratti creati prima di «Le parti»: si aggiungono quando si aprono (pagina del titolare o link),
- * senza toccare il testo ne' le firme gia' date (il blocco sta fuori dal testo firmato).
+ * senza toccare le firme gia' date (il blocco sta fuori dal testo firmato). Il campo vuoto subito
+ * dopo un dato gia' scritto ("3313738940: ____") e le righe «Tra:/E:» si tolgono solo se nessuno
+ * ha firmato (il testo firmato non cambia mai: li' restano, finche' il titolare non rifa' il contratto).
  */
 export async function ensureParties(c: Contract): Promise<Contract> {
   // Gia' firmato da entrambi prima di «Le parti»: il documento firmato non cambia.
@@ -468,37 +481,57 @@ export async function ensureParties(c: Contract): Promise<Contract> {
   const creator = await creatorIdentity(c.workspaceId, c.creatorName)
   const done = await mutate(c.workspaceId, c.id, (x) => {
     if (x.parties || x.status === 'firmato') return { result: false }
-    const { parties, prefill } = buildParties(withFields(x.version.content), creator)
+    const noSignatures = !x.signatures.creatore && !x.signatures.destinatario
+    const base = withFields(x.version.content)
+    const cleaned = noSignatures ? withoutPartyLines(dropFieldsAfterValues(base)) : base
+    const { parties, prefill } = buildParties(cleaned, creator)
     // Prima i campi di entrambi li scriveva nel testo chi firmava per primo.
     const d = x.signatures.destinatario
     const recipientFirst = Boolean(d && (!x.signatures.creatore || x.signatures.creatore.at > d.at))
-    const noSignatures = !x.signatures.creatore && !x.signatures.destinatario
     const values: PartyValues = { ...(x.values || {}) }
     if (noSignatures && Object.keys(prefill).length) values.creatore = { ...prefill, ...(values.creatore || {}) }
-    return { save: { ...x, parties: { ...parties, ...(recipientFirst ? { legacyBoth: 'destinatario' as const } : {}) }, values }, result: true }
+    const version = cleaned !== base ? { ...x.version, content: cleaned } : x.version
+    return { save: { ...x, version, parties: { ...parties, ...(recipientFirst ? { legacyBoth: 'destinatario' as const } : {}) }, values }, result: true }
   }).catch(() => null)
   return done?.contract || { ...c, parties: partiesOf(c) }
 }
 
-/** Un campo del contratto: del testo (contentField) oppure standard di «Le parti» (std), con la sua riga. */
-type FieldInfo = DocField & { std?: true; line?: PartyLine; contentField?: DocField }
+/**
+ * Un campo del contratto: del testo (contentField) oppure standard di «Le parti» (std), con la sua
+ * riga. stray: campo messo subito dopo un dato gia' scritto in un testo gia' firmato (mai una casella).
+ */
+type FieldInfo = DocField & { std?: true; line?: PartyLine; contentField?: DocField; stray?: true }
 
 function fieldInfos(c: Contract): FieldInfo[] {
   const parties = partiesOf(c)
   const lines = new Map(partyLines(parties).flatMap((l) => (l.id ? [[l.id, l] as const] : [])))
+  const stray = afterValueIds(withFields(c.version.content))
   return [
-    ...fieldsOf(c.version.content).map((f): FieldInfo => ({ ...f, contentField: f, ...(lines.get(f.id) ? { line: lines.get(f.id) } : {}) })),
+    ...fieldsOf(c.version.content).map((f): FieldInfo => ({ ...f, contentField: f, ...(lines.get(f.id) ? { line: lines.get(f.id) } : {}), ...(stray.has(f.id) ? { stray: true as const } : {}) })),
     ...stdFields(parties).map((f): FieldInfo => ({ ...f, std: true, ...(lines.get(f.id) ? { line: lines.get(f.id) } : {}) })),
   ]
 }
 
 const owns = (party: Party, f: { party: FieldParty }) => f.party === party || f.party === 'entrambi'
+/** Campo di entrambi con un valore per parte (luogo e data della firma). */
+const isSplit = (f: DocField) => f.party === 'entrambi' && perSigner(f)
+/** Campo di entrambi con un valore solo (es. data del pagamento): lo scrive chiunque prima della prima firma. */
+const isShared = (f: DocField) => f.party === 'entrambi' && !perSigner(f)
+const anySignature = (c: Contract) => Boolean(c.signatures.creatore || c.signatures.destinatario)
 /** Di chi e' un valore scritto nel testo (contratti di prima): i campi di entrambi erano di chi firmava per primo. */
 const legacyOwner = (c: Contract, f: DocField): Party => (f.party === 'entrambi' ? c.parties?.legacyBoth || 'creatore' : f.party)
 const hasOwn = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k)
 
-/** Valore di una parte per un campo: scritto nella pagina, oppure quello di prima nel testo. */
+/** Valore comune di un campo di entrambi: scritto nella pagina, oppure quello di prima nel testo. */
+function sharedValue(c: Contract, f: FieldInfo): string {
+  const both = c.values?.entrambi
+  if (both && hasOwn(both, f.id) && typeof both[f.id] === 'string') return both[f.id]
+  return f.contentField?.value || ''
+}
+
+/** Valore di una parte per un campo: scritto nella pagina, oppure quello di prima nel testo (campi comuni: il valore comune). */
 function ownValue(c: Contract, party: Party, f: FieldInfo): string {
+  if (isShared(f)) return sharedValue(c, f)
   const mine = c.values?.[party]
   if (mine && hasOwn(mine, f.id) && typeof mine[f.id] === 'string') return mine[f.id]
   const legacy = f.contentField?.value
@@ -515,9 +548,10 @@ function identityName(c: Contract): string {
 const partyName = (c: Contract, party: Party) => (party === 'creatore' ? c.creatorName : identityName(c) || c.recipient.name || 'Controparte')
 const SHORT_BLANK = '_'.repeat(16)
 
-/** Valore come si mostra: quello della parte del campo; per i campi di entrambi uno per parte. */
+/** Valore come si mostra: quello della parte del campo; luogo e data della firma uno per parte. */
 function displayValue(c: Contract, f: FieldInfo): string {
   if (f.party !== 'entrambi') return ownValue(c, f.party, f)
+  if (isShared(f)) return sharedValue(c, f)
   const a = ownValue(c, 'creatore', f).trim()
   const b = ownValue(c, 'destinatario', f).trim()
   if (!a && !b) return ''
@@ -542,13 +576,13 @@ function mergedContent(c: Contract): DocContent {
 }
 
 /**
- * Chi puo' scrivere i propri dati adesso: 'all' (anche cambiarli), 'empty' (solo i vuoti, firmando:
- * il titolare dopo la firma del destinatario) oppure null (ha gia' firmato, o il contratto e' chiuso).
+ * Chi puo' scrivere (e cambiare) i propri dati adesso: 'all', oppure null (ha gia' firmato, il
+ * contratto e' chiuso, o per il titolare: il destinatario ha gia' firmato e non cambia piu' niente).
  */
-function fillState(c: Contract, party: Party): 'all' | 'empty' | null {
+function fillState(c: Contract, party: Party): 'all' | null {
   if (!signable(c) || c.signatures[party]) return null
   if (party === 'destinatario') return c.status === 'bozza' ? null : 'all'
-  return c.signatures.destinatario ? 'empty' : 'all'
+  return c.signatures.destinatario ? null : 'all'
 }
 
 /** Dati di identita' obbligatori di chi riceve ancora vuoti (etichette). */
@@ -561,36 +595,60 @@ function missingFor(c: Contract): string[] {
   })
 }
 
-/** Scrive i valori dei campi di questa parte (i suoi e la sua parte di quelli di entrambi). onlyEmpty: mai sopra un valore. */
-function applyValues(c: Contract, party: Party, input: Record<string, unknown>, onlyEmpty: boolean): { values: PartyValues; changed: boolean } {
+/**
+ * Scrive i valori dei campi di questa parte: i suoi, la sua parte di luogo e data della firma e i
+ * campi comuni (solo prima della prima firma). Mai i campi messi dopo un dato gia' scritto.
+ */
+function applyValues(c: Contract, party: Party, input: Record<string, unknown>): { values: PartyValues; changed: boolean } {
   const mine: Record<string, string> = { ...(c.values?.[party] || {}) }
+  const both: Record<string, string> = { ...(c.values?.entrambi || {}) }
+  const sharedLocked = anySignature(c)
   let changed = false
   for (const f of fieldInfos(c)) {
-    if (!owns(party, f) || !hasOwn(input, f.id)) continue
+    if (!owns(party, f) || !hasOwn(input, f.id) || f.stray) continue
+    if (isShared(f) && sharedLocked) continue
     const current = ownValue(c, party, f)
-    if (onlyEmpty && current) continue
     const value = oneLine(input[f.id], MAX_FIELD_VALUE)
     if (value === current) continue
     changed = true
-    const legacy = Boolean(f.contentField?.value && legacyOwner(c, f.contentField) === party)
-    if (value || legacy) mine[f.id] = value
-    else delete mine[f.id]
+    const target = isShared(f) ? both : mine
+    const legacy = Boolean(f.contentField?.value && (isShared(f) || legacyOwner(c, f.contentField) === party))
+    if (value || legacy) target[f.id] = value
+    else delete target[f.id]
   }
-  return { values: { ...(c.values || {}), [party]: mine }, changed }
+  return { values: { ...(c.values || {}), [party]: mine, ...(Object.keys(both).length || c.values?.entrambi ? { entrambi: both } : {}) }, changed }
+}
+
+/** Nuovo destinatario: via i dati scritti da chi riceveva il contratto prima (anche quelli di prima nel testo). */
+function withoutRecipientValues(c: Contract): PartyValues {
+  const cleared: Record<string, string> = {}
+  for (const f of fieldInfos(c)) if (f.contentField?.value && !isShared(f) && f.party !== 'creatore' && legacyOwner(c, f.contentField) === 'destinatario') cleared[f.id] = ''
+  return { ...(c.values || {}), destinatario: cleared }
 }
 
 /**
- * Dati coperti da una firma ("parte:id" -> valore): quelli bloccati da quel momento. Il titolare
- * che firma prima del destinatario non copre i dati del destinatario (li puo' ancora cambiare).
+ * Dati coperti da una firma ("parte:id" -> valore): quelli bloccati da quel momento (i comuni
+ * sempre). Il titolare che firma prima del destinatario non copre i dati del destinatario (li puo'
+ * ancora cambiare).
  */
 function snapshotFor(c: Contract, party: Party | 'all'): Record<string, string> {
   const ids = new Set(fieldInfos(c).map((f) => f.id))
   const out: Record<string, string> = {}
-  for (const p of ['creatore', 'destinatario'] as Party[]) {
+  for (const p of ['creatore', 'destinatario', 'entrambi'] as const) {
     if (party === 'creatore' && p === 'destinatario' && !c.signatures.destinatario) continue
     for (const [id, v] of Object.entries(c.values?.[p] || {}).sort(([a], [b]) => a.localeCompare(b))) if (v && ids.has(id)) out[`${p}:${id}`] = v
   }
   return out
+}
+
+/**
+ * Impronta dei dati dell'altra parte (e di quelli comuni e di «Le parti») che la firma di chi guarda
+ * coprira': la pagina la manda con la firma; se nel frattempo sono cambiati la firma si rifiuta e
+ * la pagina si ricarica (si firma solo quello che si e' visto).
+ */
+export function othersRev(c: Contract, viewer: Party): string {
+  const covered = Object.entries(snapshotFor(c, viewer)).filter(([k]) => !k.startsWith(`${viewer}:`))
+  return sha256(JSON.stringify({ parties: partiesOf(c), values: covered })).slice(0, 24)
 }
 
 // --- Elenco ----------------------------------------------------------------------------------------------
@@ -777,6 +835,11 @@ const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 /** Dopo la firma del destinatario il nome (e l'email, se c'era) non cambiano. */
 const recipientChanged = (c: Contract, name: string, email: string) =>
   Boolean(c.signatures.destinatario) && (!sameText(name, c.recipient.name) || Boolean(email && c.recipient.email && !sameText(email, c.recipient.email)))
+/** Stessa persona di prima (nuovo link e nuovo PIN per lei): stesso nome, e nessuna email o contatto diverso. */
+const samePerson = (c: Contract, name: string, email: string, platform: SendPlatform | null, contactId: string) =>
+  sameText(name, c.recipient.name) &&
+  !(email && c.recipient.email && !sameText(email, c.recipient.email)) &&
+  !(platform && contactId && c.recipient.platform === platform && c.recipient.contactId && c.recipient.contactId !== contactId)
 
 /**
  * Condivide il contratto: nuovo link (il vecchio non vale piu') e nuovo PIN (solo l'hash scrypt).
@@ -824,9 +887,14 @@ export async function shareContract(db: WorkspaceDb, userId: string, id: string,
   const saved = await mutate(ws, id, (c) => {
     if (c.status === 'firmato' || c.status === 'annullato') return { result: null as string | null }
     if (recipientChanged(c, recipientName, email)) return { result: RECIPIENT_SIGNED_CODE as string | null }
+    // Un'altra persona: i dati scritti da chi lo riceveva prima (nome vero, codice fiscale…) non li vede e non li firma.
+    const other = !c.signatures.destinatario && !samePerson(c, recipientName, email, platform, contactId)
+    const hadData = other && fieldInfos(c).some((f) => f.party !== 'creatore' && !isShared(f) && ownValue(c, 'destinatario', f))
+    const event = channel === 'link' ? 'Link da copiare' : `Canale: ${channel === 'email' ? 'email' : CHANNEL_LABELS[channel as SendPlatform]}`
     return {
       save: {
         ...c,
+        ...(other ? { values: withoutRecipientValues(c) } : {}),
         recipient: {
           // Firmato dal destinatario: nome ed email restano quelli di prima (si aggiunge solo un'email che mancava).
           name: c.signatures.destinatario ? c.recipient.name : recipientName,
@@ -835,7 +903,7 @@ export async function shareContract(db: WorkspaceDb, userId: string, id: string,
         },
         share,
         status: c.status === 'bozza' ? 'inviato' : c.status,
-        events: withEvent(c, c.share ? 'link_rinnovato' : 'link_creato', 'creatore', channel === 'link' ? 'Link da copiare' : `Canale: ${channel === 'email' ? 'email' : CHANNEL_LABELS[channel as SendPlatform]}`, now),
+        events: withEvent(c, c.share ? 'link_rinnovato' : 'link_creato', 'creatore', hadData ? `${event} · nuovo destinatario: dati di prima tolti` : event, now),
       },
       result: c.share?.tokenHash ?? '',
     }
@@ -1026,8 +1094,9 @@ export type ViewParties = { heading: string; creator: { label: string; value?: s
 export type ViewSignature = { label: TextPart[]; name?: TextPart[] }
 export type ViewDoc = { title: string; subtitle?: TextPart[]; meta: TextPart[][]; parties?: ViewParties; sections: ViewSection[]; signatures?: ViewSignature[] }
 /**
- * Campo per la pagina di chi guarda: value come si stampa; own il proprio valore (casella);
- * other il valore dell'altra parte nei campi di entrambi; editable se lo puo' scrivere adesso.
+ * Campo per la pagina di chi guarda: value come si stampa; own il proprio valore (casella; nei
+ * campi comuni il valore comune); other il valore dell'altra parte in luogo e data della firma;
+ * editable se lo puo' scrivere adesso.
  */
 export type ViewField = {
   id: string
@@ -1094,13 +1163,15 @@ const AUTOCOMPLETE_OF: Record<string, string> = { nome: 'name', indirizzo: 'stre
 export function viewFields(c: Contract, viewer?: Party): ViewField[] {
   const state = viewer ? fillState(c, viewer) : null
   const other: Party = viewer === 'creatore' ? 'destinatario' : 'creatore'
+  const sharedLocked = anySignature(c)
   return fieldInfos(c).map((f) => {
     const kind = (f.line && f.line.kind !== 'denominazione' ? f.line.kind : identityKind(f)) || undefined
     const value = displayValue(c, f)
     const mine = Boolean(viewer && owns(viewer, f))
     const own = mine && viewer ? ownValue(c, viewer, f) : ''
-    const theirs = viewer && f.party === 'entrambi' ? ownValue(c, other, f) : ''
-    const editable = Boolean(state && mine && (state === 'all' || !own))
+    // Luogo e data della firma: accanto alla casella il valore dell'altra parte.
+    const theirs = viewer && isSplit(f) ? ownValue(c, other, f) : ''
+    const editable = Boolean(state === 'all' && mine && !f.stray && !(isShared(f) && sharedLocked))
     const input = f.line?.input || (kind ? INPUT_OF[kind] : undefined)
     const autoComplete = f.line?.autoComplete || (kind && f.party === 'destinatario' ? AUTOCOMPLETE_OF[kind] : undefined)
     return {
@@ -1149,6 +1220,8 @@ export function publicView(c: Contract) {
     canFill: fillState(c, 'destinatario') === 'all',
     /** Dati obbligatori ancora vuoti (servono per firmare). */
     missing: missingFor(c),
+    /** Impronta dei dati del titolare mostrati qui: va mandata con la firma. */
+    othersRev: othersRev(c, 'destinatario'),
     headings: c.version.content.sections.map((s) => s.heading || '').filter(Boolean),
     statements: statementsFor(c.version.content),
     signatures: {
@@ -1178,10 +1251,12 @@ export function creatorView(c: Contract) {
     doc: viewDoc(c),
     content: { sections: c.version.content.sections.map((s) => ({ heading: s.heading || '', paragraphs: s.paragraphs, bullets: s.bullets || [] })) },
     fields: viewFields(c, 'creatore'),
-    /** Dati tuoi: 'all' si salvano mentre scrivi; 'empty' solo i vuoti, con la tua firma (il destinatario ha gia' firmato). */
+    /** Dati tuoi: 'all' si salvano mentre scrivi (fino alla tua firma e prima di quella del destinatario); null chiusi. */
     fill: fillState(c, 'creatore'),
-    /** Dati obbligatori che chi riceve non ha ancora scritto ("In attesa dei dati di …"). */
-    recipientMissing: c.signatures.destinatario ? [] : missingFor(c),
+    /** Impronta dei dati dell'altra parte mostrati qui: va mandata con la firma. */
+    othersRev: othersRev(c, 'creatore'),
+    /** Dati obbligatori che chi riceve non ha ancora scritto ("In attesa dei dati di …"): solo con un link attivo. */
+    recipientMissing: c.share && !c.share.revokedAt && ['inviato', 'modifica_richiesta', 'in_firma'].includes(c.status) && !c.signatures.destinatario ? missingFor(c) : [],
     headings: c.version.content.sections.map((s) => s.heading || '').filter(Boolean),
     statements: statementsFor(c.version.content),
     signatures: Object.fromEntries(
@@ -1391,10 +1466,10 @@ export async function rejectChange(ws: string, id: string, changeId: unknown, no
 const asValues = (values: unknown): Record<string, unknown> => (values && typeof values === 'object' && !Array.isArray(values) ? (values as Record<string, unknown>) : {})
 
 /**
- * Dati del titolare (i suoi campi, la sua parte di quelli di entrambi e quelli di «Le parti» che
- * mancano nello spazio) scritti nella pagina del contratto, fuori dal testo: si salvano mentre
- * scrive, finche' nessuno ha firmato. Dopo la firma del destinatario i suoi dati ancora vuoti si
- * scrivono solo firmando (sotto la firma dell'altro mai un dato cambiato).
+ * Dati del titolare (i suoi campi, la sua parte di luogo e data della firma, i campi comuni prima
+ * della prima firma e quelli di «Le parti» che mancano nello spazio) scritti nella pagina del
+ * contratto, fuori dal testo: si salvano mentre scrive, fino alla sua firma. Dopo la firma del
+ * destinatario non cambia piu' niente (i vuoti restano righe da compilare a mano).
  */
 export async function setCreatorFields(ws: string, id: string, values: unknown): Promise<Contract> {
   const input = asValues(values)
@@ -1402,14 +1477,14 @@ export async function setCreatorFields(ws: string, id: string, values: unknown):
     if (c.status === 'firmato' || c.status === 'annullato') return { result: 'closed' as const }
     if (c.signatures.creatore) return { result: 'mine' as const }
     if (c.signatures.destinatario) return { result: 'signed' as const }
-    const applied = applyValues(c, 'creatore', input, false)
+    const applied = applyValues(c, 'creatore', input)
     if (!applied.changed) return { result: 'same' as const }
     return { save: { ...c, parties: partiesOf(c), values: applied.values }, result: 'ok' as const }
   })
   if (!done) throw new ContractError('Contratto non trovato.', 404, 'not_found')
   if (done.result === 'closed') throw new ContractError('Il contratto è chiuso.', 409, 'closed')
   if (done.result === 'mine') throw new ContractError('Hai già firmato: i tuoi dati non cambiano più.', 409, 'signed')
-  if (done.result === 'signed') throw new ContractError('C’è già una firma: il testo firmato non cambia più. I tuoi dati ancora vuoti li scrivi quando firmi.', 409, 'signed')
+  if (done.result === 'signed') throw new ContractError('L’altra parte ha già firmato: i dati non cambiano più. Quelli vuoti restano righe da compilare a mano.', 409, 'signed')
   return done.contract
 }
 
@@ -1425,7 +1500,7 @@ export async function saveRecipientFields(found: { contract: Contract; hash: str
     if (!c.share || c.share.tokenHash !== found.hash || c.share.revokedAt) return { result: 'link' as const }
     if (c.signatures.destinatario) return { result: 'signed' as const }
     if (fillState(c, 'destinatario') !== 'all') return { result: 'closed' as const }
-    const applied = applyValues(c, 'destinatario', input, false)
+    const applied = applyValues(c, 'destinatario', input)
     if (!applied.changed) return { result: 'same' as const }
     const first = !Object.values(c.values?.destinatario || {}).some(Boolean)
     return { save: { ...c, parties: partiesOf(c), values: applied.values, ...(first ? { events: withEvent(c, 'dati_destinatario', 'destinatario') } : {}) }, result: 'ok' as const }
@@ -1506,7 +1581,8 @@ export function strokesOk(strokes: SignatureStrokes): boolean {
   return Math.max(...xs) - Math.min(...xs) >= 40 || Math.max(...ys) - Math.min(...ys) >= 120
 }
 
-export type SignInput = { versionId?: unknown; name?: unknown; accept?: unknown; strokes?: unknown; ratio?: unknown; fields?: unknown }
+/** othersRev: impronta dei dati dell'altra parte mostrati nella pagina (publicView / creatorView). */
+export type SignInput = { versionId?: unknown; name?: unknown; accept?: unknown; strokes?: unknown; ratio?: unknown; fields?: unknown; othersRev?: unknown }
 export type SignMeta = { ip: string; device: string; userId?: string }
 
 export const clientIp = (headers: Headers): string => {
@@ -1552,7 +1628,7 @@ export async function signContract(ws: string, id: string, party: Party, input: 
   if (!strokesOk(strokes)) throw new ContractError('Firma col dito nel riquadro.', 400, 'strokes')
   const ratio = Math.min(8, Math.max(1, Number(input.ratio) || 3))
   const values = asValues(input.fields)
-  type Outcome = 'link' | 'closed' | 'already' | 'version' | 'completed' | 'signed' | { missing: string[] }
+  type Outcome = 'link' | 'closed' | 'already' | 'version' | 'data' | 'completed' | 'signed' | { missing: string[] }
   const done = await mutate<Outcome>(ws, id, (current) => {
     // Contratti di prima senza «Le parti»: si fissano adesso (stanno fuori dal testo firmato).
     const c: Contract = current.parties ? current : { ...current, parties: partiesOf(current) }
@@ -1560,10 +1636,11 @@ export async function signContract(ws: string, id: string, party: Party, input: 
     if (!signable(c) || (party === 'destinatario' && c.status === 'bozza')) return { result: 'closed' }
     if (c.signatures[party]) return { result: 'already' }
     if (typeof input.versionId !== 'string' || input.versionId !== c.version.id) return { result: 'version' }
-    // Con la firma si salvano i propri dati (anche cambiati, fino alla propria firma); il titolare
-    // dopo la firma del destinatario scrive solo quelli ancora vuoti (sotto una firma, mai un dato cambiato).
-    const applied = applyValues(c, party, values, party === 'creatore' && Boolean(c.signatures.destinatario))
-    const filled: Contract = { ...c, values: applied.values }
+    // Si firma solo quello che si e' visto: i dati dell'altra parte (e quelli comuni) come nella pagina.
+    if (typeof input.othersRev !== 'string' || input.othersRev !== othersRev(c, party)) return { result: 'data' }
+    // Con la firma si salvano i propri dati (anche cambiati, fino alla propria firma). Dopo la firma
+    // del destinatario il titolare non scrive piu' niente: i suoi dati vuoti restano righe vuote.
+    const filled: Contract = fillState(c, party) === 'all' ? { ...c, values: applyValues(c, party, values).values } : c
     // Chi riceve firma solo con i suoi dati obbligatori (nome e cognome, codice fiscale, residenza).
     if (party === 'destinatario') {
       const missing = missingFor(filled)
@@ -1610,6 +1687,7 @@ export async function signContract(ws: string, id: string, party: Party, input: 
   if (r === 'closed') throw new ContractError('Il contratto non si può firmare adesso.', 409, 'closed')
   if (r === 'already') throw new ContractError('Questa firma c’è già.', 409, 'already')
   if (r === 'version') throw new ContractError('Il contratto è stato aggiornato mentre lo leggevi: ricarica la pagina e controlla la nuova versione prima di firmare.', 409, 'version_changed')
+  if (r === 'data') throw new ContractError('I dati del contratto sono cambiati mentre lo leggevi: ricarica la pagina e controllali prima di firmare.', 409, 'version_changed')
   const contract = done.contract
   await updateIndex(ws, contract)
   const completed = r === 'completed'
@@ -1684,15 +1762,15 @@ function signatureBoxes(c: Contract, content: DocContent): PdfSignature[] {
   return [box('creatore', 0, `Per ${c.creatorName}`), box('destinatario', 1, c.recipient.name || 'Destinatario')]
 }
 
-/** Dati scritti da questa parte e coperti dalla sua firma, con le etichette ("Codice fiscale: …"). */
-function signedDataLine(c: Contract, s: Signature): string {
+/** Dati coperti da questa firma, con le etichette ("Codice fiscale: …"): scritti da questa parte, oppure (bucket "entrambi") quelli comuni. */
+function signedDataLine(c: Contract, s: Signature, bucket: Party | 'entrambi' = s.party): string {
   // Nell'ordine: «Le parti», poi i campi del testo.
   const labels = new Map<string, string>()
   for (const l of partyLines(partiesOf(c))) if (l.id) labels.set(l.id, l.label)
   for (const f of fieldInfos(c)) if (!labels.has(f.id)) labels.set(f.id, f.label)
   const values = s.values || {}
   return [...labels]
-    .flatMap(([id, label]) => (values[`${s.party}:${id}`] ? [`${label}: ${values[`${s.party}:${id}`]}`] : []))
+    .flatMap(([id, label]) => (values[`${bucket}:${id}`] ? [`${label}: ${values[`${bucket}:${id}`]}`] : []))
     .join('; ')
 }
 
@@ -1714,6 +1792,7 @@ function auditSection(c: Contract): PdfSection[] {
   ]
   for (const s of sigs) {
     const data = signedDataLine(c, s)
+    const common = signedDataLine(c, s, 'entrambi')
     sections.push({
       heading: `${s.party === 'creatore' ? `Firma per ${c.creatorName}` : `Firma di ${c.recipient.name}`}: ${s.name}`,
       paragraphs: [
@@ -1722,6 +1801,7 @@ function auditSection(c: Contract): PdfSection[] {
         `Dispositivo: ${s.device}`,
         // I dati scritti da questa parte al momento della firma (coperti dall'impronta qui sotto).
         ...(data ? [`Dati scritti da chi firma: ${data}`] : []),
+        ...(common ? [`Dati comuni: ${common}`] : []),
         ...(s.contentHash ? [`Testo firmato (SHA-256): ${s.contentHash}`] : []),
         'Dichiarazioni accettate:',
       ],
