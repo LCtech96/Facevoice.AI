@@ -12,12 +12,14 @@ import {
   ATTRIBUTION_FORMULA,
   ATTRIBUTION_LABEL,
   formatMoney,
+  googleAccessLabel,
   usageWeight,
   userPlacesShare,
   usersMonthTotals,
   type ConsumiResponse,
   type ConsumiUser,
   type Counts,
+  type GoogleAccessMode,
   type MonitoringData,
   type Source,
   type TrafficPoint,
@@ -611,12 +613,6 @@ function TipsCard({ tips }: { tips: string[] }) {
 
 const STEPS: { title: string; text: string; env: string; link?: string }[] = [
   {
-    title: 'Service account',
-    text: 'In Google Cloud crea un service account e scarica la sua chiave JSON. Incolla tutto il file nella variabile su Vercel. Attiva Cloud Monitoring API, BigQuery API e API Keys API nel progetto del service account.',
-    env: 'GOOGLE_USAGE_SA_JSON',
-    link: 'https://cloud.google.com/iam/docs/keys-create-delete',
-  },
-  {
     title: 'Richieste al minuto',
     text: 'Scrivi i progetti da leggere, separati da virgola (la chiave della beta e quella del sito). Su ognuno dai al service account il ruolo “Monitoring Viewer”; per i nomi delle chiavi anche “API Keys Viewer”.',
     env: 'GOOGLE_USAGE_PROJECTS',
@@ -640,15 +636,68 @@ const STEPS: { title: string; text: string; env: string; link?: string }[] = [
   },
 ]
 
+/** Valore da copiare cosi' com'e' (va a capo sui telefoni). */
+const Code = ({ children }: { children: string }) => <code className="break-all rounded bg-[var(--card-background)] px-1 text-[11px] text-[var(--text-primary)]">{children}</code>
+
+const VERCEL_TEAM = 'lucas-projects-c3e59ee6'
+const USAGE_SA = 'consumi-lettura@facevoiceai-platform.iam.gserviceaccount.com'
+
+/** Accesso a Google senza chiave: token OIDC di Vercel + Workload Identity Federation. */
+function KeylessSteps() {
+  return (
+    <ol className="mt-1 list-[lower-alpha] space-y-1 pl-4 text-xs text-[var(--text-secondary)]">
+      <li>
+        In Google Cloud, progetto <Code>facevoiceai-platform</Code>: attiva “Security Token Service API” e “IAM Service Account Credentials API” (oltre a
+        Cloud Monitoring API, BigQuery API e API Keys API).
+      </li>
+      <li>
+        IAM → Workload Identity Federation: crea il pool <Code>vercel</Code> con un provider OIDC <Code>vercel</Code>. Emittente:{' '}
+        <Code>{`https://oidc.vercel.com/${VERCEL_TEAM}`}</Code>. Segmento di pubblico consentito: <Code>{`https://vercel.com/${VERCEL_TEAM}`}</Code>.
+      </li>
+      <li>
+        Mappatura: <Code>google.subject=assertion.sub</Code>, <Code>attribute.project=assertion.project</Code>,{' '}
+        <Code>attribute.environment=assertion.environment</Code>. Condizione:{' '}
+        <Code>{"assertion.project=='facevoice' && assertion.environment=='production'"}</Code>.
+      </li>
+      <li>
+        Nel pool: “Concedi accesso” con la rappresentazione del service account (impersonation) a <Code>{USAGE_SA}</Code>, solo per chi ha{' '}
+        <Code>attribute.project=facevoice</Code>.
+      </li>
+      <li>
+        Su Vercel (Production): copia il nome della risorsa del provider (
+        <Code>projects/NUMERO/locations/global/workloadIdentityPools/vercel/providers/vercel</Code>) in <Code>GOOGLE_WIF_PROVIDER</Code> e l’email del
+        service account in <Code>GOOGLE_USAGE_SA_EMAIL</Code>.
+      </li>
+      <li>Vercel → progetto → Settings → Security: OIDC Federation attiva, modalità Team. Poi rifai il deploy.</li>
+    </ol>
+  )
+}
+
 function ConnectCard() {
   return (
     <Card id="collega" icon={<Plug className="h-5 w-5" />} title="Come collegare">
       <p className="mt-1 text-xs text-[var(--text-secondary)]">Ogni fonte è facoltativa: quelle non collegate restano “da collegare”.</p>
       <ol className="mt-2 space-y-2 text-sm">
+        <li className="rounded-xl bg-[var(--background)] px-3 py-2">
+          <p className="font-medium text-[var(--text-primary)]">
+            1. Accesso a Google senza chiave · <code className="text-xs">GOOGLE_WIF_PROVIDER</code> · <code className="text-xs">GOOGLE_USAGE_SA_EMAIL</code>
+          </p>
+          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+            Nessuna chiave da scaricare: Google si fida del token che Vercel dà al sito.{' '}
+            <a href="https://vercel.com/docs/oidc/gcp" target="_blank" rel="noopener noreferrer" className="text-[var(--accent-blue)]">
+              Guida
+            </a>
+          </p>
+          <KeylessSteps />
+          <p className="mt-1.5 text-xs text-[var(--text-secondary)]">
+            In alternativa, se la tua organizzazione lo permette: chiave JSON del service account in <code className="text-xs">GOOGLE_USAGE_SA_JSON</code>{' '}
+            (se c’è, si usa lei).
+          </p>
+        </li>
         {STEPS.map((s, i) => (
           <li key={s.env} className="rounded-xl bg-[var(--background)] px-3 py-2">
             <p className="font-medium text-[var(--text-primary)]">
-              {i + 1}. {s.title} · <code className="text-xs">{s.env}</code>
+              {i + 2}. {s.title} · <code className="text-xs">{s.env}</code>
             </p>
             <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
               {s.text}{' '}
@@ -662,6 +711,21 @@ function ConnectCard() {
         ))}
       </ol>
     </Card>
+  )
+}
+
+/** Modo di accesso a Google attivo (niente di segreto). */
+function AccessNote({ mode }: { mode: GoogleAccessMode | null | undefined }) {
+  return (
+    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+      {mode ? (
+        googleAccessLabel(mode)
+      ) : (
+        <a href="#collega" className="text-[var(--accent-blue)]">
+          {googleAccessLabel(mode)}
+        </a>
+      )}
+    </p>
   )
 }
 
@@ -751,6 +815,7 @@ export default function ConsumiClient() {
             Solo numeri reali: richieste contate da Google, costi fatturati da Google e Anthropic, richieste e token dei tuoi utenti. Nessuna stima.
           </p>
           {data && <p className="mt-1 text-xs text-[var(--text-secondary)]">Pagina aggiornata alle {romeTime(data.updatedAt)}</p>}
+          {data && <AccessNote mode={data.googleAccess} />}
         </div>
         <button
           type="button"

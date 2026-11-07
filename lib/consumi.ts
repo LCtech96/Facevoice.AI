@@ -161,6 +161,16 @@ export type PlacesAttribution = {
 
 export type PlacesAttributionResult = { ok: true; value: PlacesAttribution } | { ok: false; reason: string }
 
+/**
+ * Come il sito entra in Google: "wif" senza chiave (token OIDC di Vercel scambiato con
+ * Workload Identity Federation), "json" con la chiave JSON del service account. null: da collegare.
+ */
+export type GoogleAccessMode = 'wif' | 'json'
+
+/** Testo per la pagina (niente di segreto). */
+export const googleAccessLabel = (mode: GoogleAccessMode | null | undefined) =>
+  mode === 'wif' ? 'Accesso: senza chiave (Vercel)' : mode === 'json' ? 'Accesso: chiave JSON' : 'Accesso a Google: da collegare'
+
 export type ConsumiResponse = {
   updatedAt: string
   monitoring: Source<MonitoringData>
@@ -172,6 +182,8 @@ export type ConsumiResponse = {
   places: PlacesAttributionResult
   tips: string[]
   betaProject: string | null
+  /** Modo di accesso a Google attivo (solo il nome del modo). */
+  googleAccess: GoogleAccessMode | null
 }
 
 export const PLACES_SERVICE = 'places.googleapis.com'

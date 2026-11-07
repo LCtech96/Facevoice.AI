@@ -8,6 +8,7 @@ import {
   type BillingGroup,
   type BillingLine,
   type Counts,
+  type GoogleAccessMode,
   type Money,
   type MoneyUsage,
   type MonitoringData,
@@ -26,12 +27,21 @@ import {
 //   giorno, non al minuto.
 // - Costi di Claude: Usage & Cost Admin API di Anthropic (cost_report).
 //
-// Accesso a Google con un service account (GOOGLE_USAGE_SA_JSON): JWT firmato
-// RS256 con la sua chiave privata, scambiato con un token di accesso che resta in
-// memoria fino a poco prima della scadenza. La chiave, i token e le chiavi API non
-// finiscono mai in risposte, errori o log.
+// Accesso a Google con un service account, in uno di due modi:
+// - senza chiave (GOOGLE_WIF_PROVIDER + GOOGLE_USAGE_SA_EMAIL): il token OIDC che Vercel
+//   da' a ogni richiesta (header x-vercel-oidc-token, oppure VERCEL_OIDC_TOKEN) si scambia
+//   con Google (Security Token Service, Workload Identity Federation) e poi con un token
+//   del service account (IAM Service Account Credentials, generateAccessToken);
+// - con la chiave JSON (GOOGLE_USAGE_SA_JSON, vince se c'e'): JWT firmato RS256 con la sua
+//   chiave privata, scambiato con un token di accesso.
+// Il token del service account resta in memoria fino a poco prima della scadenza. Chiave,
+// token (di Vercel e di Google) e chiavi API non finiscono mai in risposte, errori o log.
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
+const STS_URL = 'https://sts.googleapis.com/v1/token'
+const IAM_CREDENTIALS_URL = 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts'
+const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
+export const MISSING_VERCEL_TOKEN = 'Token di Vercel mancante: attiva OIDC Federation nelle impostazioni del progetto Vercel.'
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/monitoring.read',
   'https://www.googleapis.com/auth/bigquery.readonly',
@@ -109,6 +119,74 @@ export function readServiceAccount(raw = process.env.GOOGLE_USAGE_SA_JSON): Serv
   return { clientEmail, privateKey, keyId }
 }
 
+const WIF_PROVIDER = /^projects\/(\d{1,20})\/locations\/global\/workloadIdentityPools\/([a-z0-9-]{4,32})\/providers\/([a-z0-9-]{4,32})$/
+const WIF_PREFIX = /^(?:https:)?\/\/iam\.googleapis\.com\//i
+
+/**
+ * Provider di Workload Identity Federation (GOOGLE_WIF_PROVIDER): nome della risorsa
+ * "projects/NUMERO/locations/global/workloadIdentityPools/POOL/providers/PROVIDER",
+ * anche con "//iam.googleapis.com/" o "https://iam.googleapis.com/" davanti. null se manca.
+ */
+export function wifProvider(raw = process.env.GOOGLE_WIF_PROVIDER): string | null {
+  const value = raw?.trim().replace(WIF_PREFIX, '').replace(/\/+$/, '')
+  if (!value) return null
+  if (WIF_PROVIDER.test(value)) return value
+  if (/^projects\/[^/]+\/locations\/global\/workloadIdentityPools\/[a-z0-9-]+\/providers\/[a-z0-9-]+$/.test(value)) {
+    throw new UsageError('GOOGLE_WIF_PROVIDER non è valida: dopo "projects/" serve il numero del progetto (solo cifre), non il suo nome.', 500)
+  }
+  throw new UsageError(
+    'GOOGLE_WIF_PROVIDER non è valida: copia il nome del provider, es. projects/123456789/locations/global/workloadIdentityPools/vercel/providers/vercel.',
+    500
+  )
+}
+
+const SA_EMAIL = /^[a-z0-9][a-z0-9._-]{0,99}@[a-z0-9][a-z0-9.-]{0,200}\.gserviceaccount\.com$/i
+
+/** Email del service account da usare senza chiave (GOOGLE_USAGE_SA_EMAIL). null se manca. */
+export function serviceAccountEmail(raw = process.env.GOOGLE_USAGE_SA_EMAIL): string | null {
+  const value = raw?.trim()
+  if (!value) return null
+  if (!SA_EMAIL.test(value)) {
+    throw new UsageError('GOOGLE_USAGE_SA_EMAIL non è valida: scrivi l’email del service account (…@progetto.iam.gserviceaccount.com).', 500)
+  }
+  return value.toLowerCase()
+}
+
+const has = (name: string) => Boolean(process.env[name]?.trim())
+
+/** Modo di accesso a Google: la chiave JSON vince; senza chiave servono entrambe le variabili. */
+export function googleAccessMode(): GoogleAccessMode | null {
+  if (has('GOOGLE_USAGE_SA_JSON')) return 'json'
+  if (has('GOOGLE_WIF_PROVIDER') && has('GOOGLE_USAGE_SA_EMAIL')) return 'wif'
+  return null
+}
+
+/** Variabili che mancano per entrare in Google (si indica il modo senza chiave). [] se c'e' un modo. */
+function missingAccess(): string[] {
+  if (googleAccessMode()) return []
+  return ['GOOGLE_WIF_PROVIDER', 'GOOGLE_USAGE_SA_EMAIL'].filter((name) => !has(name))
+}
+
+export type GoogleCredentials =
+  | { mode: 'json'; sa: ServiceAccount }
+  | { mode: 'wif'; provider: string; serviceAccount: string }
+
+/** Credenziali del modo attivo (errore in italiano se una variabile e' scritta male). null se mancano. */
+export function readGoogleCredentials(): GoogleCredentials | null {
+  const mode = googleAccessMode()
+  if (mode === 'json') return { mode, sa: readServiceAccount()! }
+  if (mode === 'wif') return { mode, provider: wifProvider()!, serviceAccount: serviceAccountEmail()! }
+  return null
+}
+
+/** Dati della richiesta in corso che servono per entrare in Google (passati dalla rotta). */
+export type GoogleRequest = { vercelToken?: string | null }
+
+/** Token OIDC di Vercel: quello della richiesta (header x-vercel-oidc-token), se no VERCEL_OIDC_TOKEN. */
+export function vercelOidcToken(fromRequest?: string | null): string | null {
+  return fromRequest?.trim() || process.env.VERCEL_OIDC_TOKEN?.trim() || null
+}
+
 const PROJECT_ID = /^(?:[a-z0-9.-]+:)?[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 
 /** Progetti Google da cui leggere le richieste (GOOGLE_USAGE_PROJECTS, separati da virgola). */
@@ -119,24 +197,36 @@ export function usageProjects(raw = process.env.GOOGLE_USAGE_PROJECTS): { projec
 
 export type BillingTable = { project: string; dataset: string; table: string; full: string }
 
-/** Tabella dell'export standard (GOOGLE_BILLING_EXPORT_TABLE = progetto.dataset.tabella). null se manca. */
-export function billingTable(raw = process.env.GOOGLE_BILLING_EXPORT_TABLE): BillingTable | null {
-  const value = raw?.trim().replace(/^`|`$/g, '')
-  if (!value) return null
-  const m = value.match(/^(.+)\.([A-Za-z0-9_]{1,1024})\.([A-Za-z0-9_]{1,1024})$/)
-  if (!m || !PROJECT_ID.test(m[1])) {
-    throw new UsageError('GOOGLE_BILLING_EXPORT_TABLE non è valida: scrivi progetto.dataset.tabella (es. mio-progetto.fatturazione.gcp_billing_export_v1_…).', 500)
-  }
-  return { project: m[1], dataset: m[2], table: m[3], full: `${m[1]}.${m[2]}.${m[3]}` }
-}
-
 /** Progetto Google della chiave della beta (per ripartire il costo Places sugli utenti). */
 export function betaProjectId(raw = process.env.GOOGLE_BETA_PROJECT): string | null {
   const value = raw?.trim() || ''
   return PROJECT_ID.test(value) ? value : null
 }
 
-const has = (name: string) => Boolean(process.env[name]?.trim())
+/**
+ * Tabella dell'export standard (GOOGLE_BILLING_EXPORT_TABLE = progetto.dataset.tabella). null se manca.
+ * Scritta solo dataset.tabella: il progetto e' GOOGLE_BETA_PROJECT.
+ */
+export function billingTable(raw = process.env.GOOGLE_BILLING_EXPORT_TABLE, fallbackProject = betaProjectId()): BillingTable | null {
+  const value = raw?.trim().replace(/^`|`$/g, '')
+  if (!value) return null
+  const m = value.match(/^(.+)\.([A-Za-z0-9_]{1,1024})\.([A-Za-z0-9_]{1,1024})$/)
+  if (m && PROJECT_ID.test(m[1])) return { project: m[1], dataset: m[2], table: m[3], full: `${m[1]}.${m[2]}.${m[3]}` }
+  const short = value.match(/^([A-Za-z0-9_]{1,1024})\.([A-Za-z0-9_]{1,1024})$/)
+  if (short && fallbackProject && PROJECT_ID.test(fallbackProject)) {
+    return { project: fallbackProject, dataset: short[1], table: short[2], full: `${fallbackProject}.${short[1]}.${short[2]}` }
+  }
+  throw new UsageError('GOOGLE_BILLING_EXPORT_TABLE non è valida: scrivi progetto.dataset.tabella (es. mio-progetto.fatturazione.gcp_billing_export_v1_…).', 500)
+}
+
+/**
+ * Progetto in cui BigQuery esegue la query (jobs.query, serve "BigQuery Job User"): il progetto
+ * della tabella dell'export, se no GOOGLE_BETA_PROJECT. Mai il project_id della chiave JSON,
+ * che senza chiave non c'e'.
+ */
+export function bigQueryJobProject(table: Pick<BillingTable, 'project'> | null, fallbackProject = betaProjectId()): string | null {
+  return table?.project || fallbackProject || null
+}
 
 // ---------------------------------------------------------------------
 // Accesso a Google: JWT RS256 -> token di accesso (in memoria)
@@ -161,12 +251,31 @@ export function signServiceAccountJwt(sa: ServiceAccount, scopes = GOOGLE_SCOPES
 let tokenCache: { id: string; token: string; expiresAt: number } | null = null
 let tokenPending: { id: string; promise: Promise<string> } | null = null
 
-/** Token di accesso di Google, riusato finche' non sta per scadere. */
-export async function googleAccessToken(sa: ServiceAccount): Promise<string> {
-  const id = `${sa.clientEmail}|${sa.keyId}`
+/**
+ * Token del service account in memoria (uno solo, per chiave JSON o accesso senza chiave):
+ * riusato finche' non sta per scadere, e richieste insieme fanno un solo scambio.
+ */
+async function cachedToken(id: string, load: () => Promise<{ token: string; ttlMs: number }>): Promise<string> {
   if (tokenCache && tokenCache.id === id && Date.now() < tokenCache.expiresAt) return tokenCache.token
   if (tokenPending && tokenPending.id === id) return tokenPending.promise
   const promise = (async () => {
+    const { token, ttlMs } = await load()
+    const ttl = Math.max(60_000, Math.min(3_600_000, Number.isFinite(ttlMs) ? ttlMs : 3_600_000))
+    // Si rinnova prima della scadenza (5 minuti prima, o a meta' se dura poco).
+    tokenCache = { id, token, expiresAt: Date.now() + ttl - Math.min(300_000, ttl / 2) }
+    return token
+  })()
+  tokenPending = { id, promise }
+  try {
+    return await promise
+  } finally {
+    if (tokenPending?.promise === promise) tokenPending = null
+  }
+}
+
+/** Token di accesso di Google con la chiave JSON, riusato finche' non sta per scadere. */
+export async function googleAccessToken(sa: ServiceAccount): Promise<string> {
+  return cachedToken(`${sa.clientEmail}|${sa.keyId}`, async () => {
     const assertion = signServiceAccountJwt(sa)
     const res = await safeFetch(
       TOKEN_URL,
@@ -182,17 +291,107 @@ export async function googleAccessToken(sa: ServiceAccount): Promise<string> {
       const code = typeof data?.error === 'string' && /^[a-z_]{1,40}$/.test(data.error) ? data.error : String(res.status)
       throw new UsageError(`Google ha rifiutato il service account (${code}): controlla GOOGLE_USAGE_SA_JSON.`, 502)
     }
-    const ttl = Math.max(60, Math.min(3600, Number(data.expires_in) || 3600)) * 1000
-    // Si rinnova prima della scadenza (5 minuti prima, o a meta' se dura poco).
-    tokenCache = { id, token: data.access_token, expiresAt: Date.now() + ttl - Math.min(300_000, ttl / 2) }
-    return data.access_token
-  })()
-  tokenPending = { id, promise }
-  try {
-    return await promise
-  } finally {
-    if (tokenPending?.promise === promise) tokenPending = null
+    return { token: data.access_token, ttlMs: (Number(data.expires_in) || 3600) * 1000 }
+  })
+}
+
+type GoogleErrorBody = {
+  error?: string | { code?: unknown; message?: unknown; status?: unknown; details?: { reason?: unknown; metadata?: { service?: unknown } }[] }
+  error_description?: unknown
+}
+
+/** Codice di errore OAuth di Google (es. invalid_grant), mai la descrizione. */
+const oauthCode = (data: GoogleErrorBody | null) => (typeof data?.error === 'string' && /^[a-z_]{1,40}$/.test(data.error) ? data.error : '')
+
+/** Google risponde che un'API non e' attiva nel progetto (SERVICE_DISABLED). */
+function apiDisabled(data: GoogleErrorBody | null): boolean {
+  const e = data?.error
+  if (e && typeof e === 'object') {
+    if (Array.isArray(e.details) && e.details.some((d) => d?.reason === 'SERVICE_DISABLED')) return true
+    if (typeof e.message === 'string' && /has not been used in project|it is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(e.message)) return true
   }
+  return typeof data?.error_description === 'string' && /has not been used in project|it is disabled|SERVICE_DISABLED/i.test(data.error_description)
+}
+
+/** Scambia il token OIDC di Vercel con un token federato di Google (Security Token Service). */
+async function exchangeVercelToken(provider: string, subjectToken: string): Promise<string> {
+  const res = await safeFetch(
+    STS_URL,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        audience: `//iam.googleapis.com/${provider}`,
+        scope: CLOUD_PLATFORM_SCOPE,
+        requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+        subject_token: subjectToken,
+      }).toString(),
+    },
+    'Google (scambio del token di Vercel)'
+  )
+  const data = (await res.json().catch(() => null)) as (GoogleErrorBody & { access_token?: unknown }) | null
+  if (res.ok && typeof data?.access_token === 'string' && data.access_token) return data.access_token
+  if (apiDisabled(data)) throw new UsageError('Attiva “Security Token Service API” su Google Cloud (progetto del pool), poi riprova.', 502)
+  const code = oauthCode(data)
+  if (code === 'invalid_target' || res.status === 404) {
+    throw new UsageError('Google non trova il pool o il provider: controlla GOOGLE_WIF_PROVIDER.', 502)
+  }
+  if (code === 'unauthorized_client') {
+    throw new UsageError(
+      'Google ha rifiutato il token di Vercel per la condizione del provider: vale solo per il progetto Vercel e l’ambiente scritti nella condizione (es. Production).',
+      502
+    )
+  }
+  if (res.status === 400 || res.status === 401 || res.status === 403) {
+    throw new UsageError(`Google ha rifiutato il token di Vercel${code ? ` (${code})` : ''}: controlla pool, provider, segmento di pubblico e condizione.`, 502)
+  }
+  if (res.status === 429) throw new UsageError('Google (scambio del token di Vercel): troppe richieste, riprova tra un minuto.', 502)
+  throw new UsageError(`Google (scambio del token di Vercel): ${res.ok ? 'risposta senza token' : `errore ${res.status}`}, riprova tra poco.`, 502)
+}
+
+/** Token del service account (generateAccessToken) con il token federato. */
+async function impersonate(serviceAccount: string, federatedToken: string): Promise<{ token: string; ttlMs: number }> {
+  const res = await safeFetch(
+    `${IAM_CREDENTIALS_URL}/${serviceAccount}:generateAccessToken`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${federatedToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ scope: GOOGLE_SCOPES, lifetime: '3600s' }),
+    },
+    'Google (token del service account)'
+  )
+  const data = (await res.json().catch(() => null)) as (GoogleErrorBody & { accessToken?: unknown; expireTime?: unknown }) | null
+  if (res.ok && typeof data?.accessToken === 'string' && data.accessToken) {
+    const expires = typeof data.expireTime === 'string' ? Date.parse(data.expireTime) : NaN
+    return { token: data.accessToken, ttlMs: Number.isFinite(expires) ? expires - Date.now() : 3_600_000 }
+  }
+  if (apiDisabled(data)) throw new UsageError('Attiva “IAM Service Account Credentials API” su Google Cloud (progetto del service account), poi riprova.', 502)
+  if (res.status === 403) throw new UsageError('Il service account non ha “Workload Identity User” per questo pool: concedi l’accesso dal pool al service account.', 502)
+  if (res.status === 404) throw new UsageError('Google non trova il service account: controlla GOOGLE_USAGE_SA_EMAIL.', 502)
+  if (res.status === 400) throw new UsageError('Google ha rifiutato la richiesta del token del service account: controlla GOOGLE_USAGE_SA_EMAIL.', 502)
+  if (res.status === 401) throw new UsageError('Google ha rifiutato il token federato: riprova tra poco.', 502)
+  if (res.status === 429) throw new UsageError('Google (token del service account): troppe richieste, riprova tra un minuto.', 502)
+  throw new UsageError(`Google (token del service account): ${res.ok ? 'risposta senza token' : `errore ${res.status}`}, riprova tra poco.`, 502)
+}
+
+/**
+ * Token del service account senza chiave: token OIDC di Vercel -> token federato (STS) ->
+ * token del service account (generateAccessToken). Riusato finche' non sta per scadere:
+ * il token di Vercel serve solo quando bisogna rifare lo scambio.
+ */
+export async function federatedAccessToken(provider: string, serviceAccount: string, vercelToken?: string | null): Promise<string> {
+  return cachedToken(`wif|${provider}|${serviceAccount}`, async () => {
+    const subject = vercelOidcToken(vercelToken)
+    if (!subject) throw new UsageError(MISSING_VERCEL_TOKEN, 500)
+    return impersonate(serviceAccount, await exchangeVercelToken(provider, subject))
+  })
+}
+
+/** Token di accesso per il modo attivo (chiave JSON o senza chiave). */
+export function accessTokenFor(creds: GoogleCredentials, google: GoogleRequest = {}): Promise<string> {
+  return creds.mode === 'json' ? googleAccessToken(creds.sa) : federatedAccessToken(creds.provider, creds.serviceAccount, google.vercelToken)
 }
 
 async function safeFetch(url: string, init: RequestInit, source: string, timeoutMs = TIMEOUT_MS): Promise<Response> {
@@ -208,7 +407,9 @@ async function safeFetch(url: string, init: RequestInit, source: string, timeout
 function googleErrorText(source: string, status: number, data: unknown): string {
   const raw = (data as { error?: { message?: unknown } } | null)?.error?.message
   const detail = typeof raw === 'string' && raw.trim() ? ` (${scrub(raw.trim()).slice(0, 220)})` : ''
-  if (status === 401) return `${source}: accesso rifiutato, controlla GOOGLE_USAGE_SA_JSON.`
+  if (status === 401) {
+    return `${source}: accesso rifiutato, controlla ${googleAccessMode() === 'wif' ? 'GOOGLE_WIF_PROVIDER e GOOGLE_USAGE_SA_EMAIL' : 'GOOGLE_USAGE_SA_JSON'}.`
+  }
   if (status === 403) return `${source}: manca un permesso al service account${detail}.`
   if (status === 404) return `${source}: non trovato${detail}.`
   if (status === 429) return `${source}: troppe richieste a Google, riprova tra un minuto.`
@@ -581,17 +782,19 @@ export async function readMonitoring(token: string, projects: string[], now: num
   return { projects, series, keyNames: namesOk, warnings, windowEnd: iso(w.minuteEnd), monthStart: iso(w.monthStart) }
 }
 
-/** Richieste reali per API e chiave (cache 60 secondi). */
-export async function getMonitoring(now = Date.now()): Promise<Source<MonitoringData>> {
-  const missing = ['GOOGLE_USAGE_SA_JSON', 'GOOGLE_USAGE_PROJECTS'].filter((name) => !has(name))
+/**
+ * Richieste reali per API e chiave (cache 60 secondi). google: dati della richiesta in corso
+ * (token OIDC di Vercel per l'accesso senza chiave), passati dalla rotta.
+ */
+export async function getMonitoring(now = Date.now(), google: GoogleRequest = {}): Promise<Source<MonitoringData>> {
+  const missing = [...missingAccess(), ...['GOOGLE_USAGE_PROJECTS'].filter((name) => !has(name))]
   if (missing.length) return { status: 'da_collegare', missing, delay: DELAY.monitoring }
   const { projects, invalid } = usageProjects()
   if (!projects.length) {
     return { status: 'errore', message: 'GOOGLE_USAGE_PROJECTS non contiene id di progetto validi.', fetchedAt: iso(now), delay: DELAY.monitoring }
   }
   return sourceOf(`monitoring:${projects.join(',')}`, MONITORING_TTL, DELAY.monitoring, async () => {
-    const sa = readServiceAccount()!
-    const data = await readMonitoring(await googleAccessToken(sa), projects, now)
+    const data = await readMonitoring(await accessTokenFor(readGoogleCredentials()!, google), projects, now)
     if (invalid.length) data.warnings.push(`Progetti ignorati (id non validi): ${invalid.map((p) => p.slice(0, 40)).join(', ')}.`)
     return data
   })
@@ -746,19 +949,21 @@ export function parseBillingRows(rows: Row[], table: string, month: string, rome
   }
 }
 
-/** Costi reali del mese di fatturazione e di oggi (cache 5 minuti). */
-export async function getBilling(now = Date.now()): Promise<Source<BillingData>> {
-  const missing = ['GOOGLE_USAGE_SA_JSON', 'GOOGLE_BILLING_EXPORT_TABLE'].filter((name) => !has(name))
+/** Costi reali del mese di fatturazione e di oggi (cache 5 minuti). google: come getMonitoring. */
+export async function getBilling(now = Date.now(), google: GoogleRequest = {}): Promise<Source<BillingData>> {
+  const missing = [...missingAccess(), ...['GOOGLE_BILLING_EXPORT_TABLE'].filter((name) => !has(name))]
   if (missing.length) return { status: 'da_collegare', missing, delay: DELAY.billing }
   let table: BillingTable
+  let jobProject: string
   try {
     table = billingTable()!
+    jobProject = bigQueryJobProject(table)!
   } catch (error) {
     return { status: 'errore', message: errorMessage(error, 'GOOGLE_BILLING_EXPORT_TABLE non è valida.'), fetchedAt: iso(now), delay: DELAY.billing }
   }
   return sourceOf(`billing:${table.full}`, BILLING_TTL, DELAY.billing, async () => {
     const deadline = Date.now() + BILLING_BUDGET_MS
-    const token = await googleAccessToken(readServiceAccount()!)
+    const token = await accessTokenFor(readGoogleCredentials()!, google)
     const month = invoiceMonth(now)
     const romeMonthStart = zonedStart(now, ROME, 'month')
     // Primo giorno del mese di fatturazione (Pacifico) o del mese italiano, il piu' vecchio,
@@ -772,12 +977,12 @@ export async function getBilling(now = Date.now()): Promise<Source<BillingData>>
     ]
     let rows: Row[]
     try {
-      rows = await runQuery(token, table.project, billingQuery(table, !unpartitioned), params, deadline)
+      rows = await runQuery(token, jobProject, billingQuery(table, !unpartitioned), params, deadline)
     } catch (error) {
       // Export vecchio senza partizioni: si filtra per data di utilizzo.
       if (!unpartitioned && error instanceof UsageError && /_PARTITIONTIME/i.test(error.message)) {
         unpartitioned = true
-        rows = await runQuery(token, table.project, billingQuery(table, false), params, deadline)
+        rows = await runQuery(token, jobProject, billingQuery(table, false), params, deadline)
       } else if (error instanceof UsageError && /bytes billed/i.test(error.message)) {
         throw new UsageError(
           `BigQuery: la lettura dei costi supererebbe ${MAX_BYTES_BILLED / 1e9} GB ed è stata fermata (nessun costo). Controlla che GOOGLE_BILLING_EXPORT_TABLE sia l’export standard.`,
