@@ -41,6 +41,9 @@ import {
 // chiama la rotta app/api/app/assistant/actions, che ricontrolla tutto in quel momento
 // (permessi, 24 ore di Meta, limiti, accessi) ed esegue esattamente quel contenuto UNA volta
 // (doppio clic o due schede: parte una volta sola). Un "sì" scritto in chat non basta.
+// La condivisione di un contratto (share_contract) ha in piu' il campo PIN nella scheda: il PIN
+// arriva solo con il clic (mai nella chat, nell'azione salvata, nell'esito o nei log) e il server
+// ne salva solo l'hash (lib/saas/contracts.ts, caricato solo quando serve).
 //
 // In app_settings: ws_pending:<spazio> = ultime 60 azioni (scadono dopo 24 ore; le chiuse restano 7 giorni).
 
@@ -63,6 +66,7 @@ export type PendingKind =
   | 'approve_all_client_drafts'
   | 'discard_client_draft'
   | 'set_find_clients'
+  | 'share_contract'
 
 export type PendingStatus = 'pending' | 'running' | 'done' | 'failed' | 'discarded'
 
@@ -78,6 +82,8 @@ export type PendingSummary = {
   doneLabel: string
   contact?: { platform: string; contactId: string; name: string }
   document?: { id: string; version: number; title: string; pages: number }
+  /** La scheda chiede un PIN (condivisione del contratto): si scrive li', non parte con la chat. */
+  pin?: { min: number; max: number; for: string }
 }
 
 export type PendingAction = {
@@ -246,12 +252,12 @@ type Claim =
   | { code: 'claimed'; action: PendingAction }
   | { code: 'not_found' }
   | { code: 'forbidden' }
-  | { code: 'invalid' }
+  | { code: 'invalid'; message?: string }
   | { code: 'handled'; action: PendingAction }
   | { code: 'expired'; action: PendingAction }
 
 /** Prende l'azione per eseguirla (una volta sola: chi arriva dopo trova "in corso" o "fatta"). */
-async function claim(workspaceId: string, id: string, userId: string, next: (a: PendingAction) => PendingAction | { invalid: true }, now: number): Promise<Claim> {
+async function claim(workspaceId: string, id: string, userId: string, next: (a: PendingAction) => PendingAction | { invalid: true; message?: string }, now: number): Promise<Claim> {
   const out: { claim: Claim } = { claim: { code: 'not_found' } }
   await updateSetting<PendingAction[]>(storeKey(workspaceId), parseList, (list) => {
     out.claim = { code: 'not_found' }
@@ -272,7 +278,7 @@ async function claim(workspaceId: string, id: string, userId: string, next: (a: 
     }
     const changed = next(a)
     if ('invalid' in changed) {
-      out.claim = { code: 'invalid' }
+      out.claim = { code: 'invalid', ...(changed.message ? { message: changed.message } : {}) }
       return false
     }
     out.claim = { code: 'claimed', action: changed }
@@ -311,14 +317,26 @@ const dot = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`)
  * "Accetta e invia" / "Conferma": esegue l'azione (esattamente il contenuto salvato, con il
  * testo corretto nella scheda se il tipo lo permette) dopo aver ricontrollato tutto adesso.
  */
-export async function executePending(db: WorkspaceDb, userId: string, id: string, options: { text?: unknown; now?: number } = {}): Promise<ExecuteOutcome> {
+export async function executePending(
+  db: WorkspaceDb,
+  userId: string,
+  id: string,
+  /** pin: scritto nella scheda (solo share_contract), mai salvato; origin: indirizzo del sito per il link. */
+  options: { text?: unknown; now?: number; pin?: unknown; origin?: string } = {}
+): Promise<ExecuteOutcome> {
   const now = options.now ?? Date.now()
   const edited = typeof options.text === 'string' ? options.text.replace(/\r\n?/g, '\n').trim() : null
+  const pin = typeof options.pin === 'string' ? options.pin.trim() : ''
   const claimed = await claim(
     db.workspaceId,
     id,
     userId,
     (a) => {
+      // Contratto: senza un PIN valido non parte niente (la scheda resta da confermare).
+      if (a.kind === 'share_contract') {
+        if (!PIN_FORMAT.test(pin)) return { invalid: true, message: 'Scegli un PIN da 4 a 12 caratteri (numeri o lettere) nella scheda.' }
+        if (edited && edited.toLowerCase().includes(pin.toLowerCase())) return { invalid: true, message: 'Il messaggio contiene il PIN: toglilo, il PIN va mandato a parte.' }
+      }
       const handled = { ...a, status: 'running' as const, handledAt: new Date(now).toISOString(), handledBy: userId }
       if (edited === null || edited === (a.view.text || '')) return handled
       if (!a.view.editable || !edited) return { invalid: true }
@@ -330,7 +348,7 @@ export async function executePending(db: WorkspaceDb, userId: string, id: string
   )
   if (claimed.code === 'not_found') return { ok: false, code: 'not_found', message: 'Azione non trovata.', action: null, cards: [] }
   if (claimed.code === 'forbidden') return { ok: false, code: 'forbidden', message: 'Questa azione non è tua.', action: null, cards: [] }
-  if (claimed.code === 'invalid') return { ok: false, code: 'invalid', message: 'Testo non valido: scrivilo di nuovo (non vuoto e non troppo lungo).', action: null, cards: [] }
+  if (claimed.code === 'invalid') return { ok: false, code: 'invalid', message: claimed.message || 'Testo non valido: scrivilo di nuovo (non vuoto e non troppo lungo).', action: null, cards: [] }
   if (claimed.code === 'expired') return { ok: false, code: 'expired', message: 'Questa richiesta è scaduta (più di 24 ore): chiedimela di nuovo.', action: claimed.action, cards: [] }
   if (claimed.code === 'handled') return { ok: false, code: 'handled', message: HANDLED_MESSAGE[claimed.action.status] || 'Già gestita.', action: claimed.action, cards: [] }
 
@@ -340,13 +358,13 @@ export async function executePending(db: WorkspaceDb, userId: string, id: string
     if (NEEDS_AUTOMATIONS.has(action.kind) && !(await workspaceAutomationsAccess(userId, db.workspaceId).then((a) => a.enabled).catch(() => false))) {
       result = { ok: false, message: 'Le automazioni non sono più attive per questo account: non è stato fatto niente.', cards: [] }
     } else {
-      result = await run(db, userId, action, now)
+      result = await run(db, userId, action, now, { pin, origin: options.origin })
     }
   } catch (error) {
     // AI del piano finita (gli invii dell'Assistente si fermano) o errore imprevisto: niente rifatto da solo.
     const message = isAIBlockedError(error)
       ? (error as Error).message
-      : error instanceof AutomationError || error instanceof ProspectError
+      : error instanceof AutomationError || error instanceof ProspectError || (error instanceof Error && error.name === 'ContractError')
       ? error.message
       : `Non riuscito: ${error instanceof Error ? error.message : 'errore'}`
     result = { ok: false, message: dot(message), cards: [] }
@@ -375,17 +393,39 @@ export function discardReply(a: PendingAction): string {
   const name = a.view.contact?.name
   if (a.kind === 'send_message') return `Ok, ho scartato il messaggio${name ? ` per ${name}` : ''}: non è partito niente. Cosa ti serve invece? Dimmi cosa cambiare (testo, tono o destinatario) e lo preparo di nuovo.`
   if (a.kind === 'send_document') return `Ok, non invio il documento${name ? ` a ${name}` : ''}: non è partito niente. Cosa ti serve invece? Posso cambiare il documento o il messaggio di accompagnamento.`
+  if (a.kind === 'share_contract') return `Ok, non condivido il contratto${name ? ` con ${name}` : ''}: non è stato creato nessun link. Cosa ti serve invece? Posso cambiare il contratto, il canale o il messaggio.`
   return `Ok, ho scartato «${a.view.title}»: non è stato fatto niente. Cosa ti serve invece? Dimmi cosa cambiare e lo preparo di nuovo.`
 }
 
 const channelName = (platform: unknown) => CHANNEL_LABELS[(asSendPlatform(platform) || 'email') as SendPlatform]
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
+/** PIN del contratto: 4-12 numeri o lettere (stessa regola di lib/saas/contracts.ts). */
+const PIN_FORMAT = /^[A-Za-z0-9]{4,12}$/
 
 /** Esecuzione vera di ogni tipo di azione (i controlli si rifanno dentro le funzioni di sempre). */
-async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: number): Promise<{ ok: boolean; message: string; cards: ChatAction[] }> {
+async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: number, extra: { pin?: string; origin?: string } = {}): Promise<{ ok: boolean; message: string; cards: ChatAction[] }> {
   const p = action.payload
   const at = new Date().toISOString()
   switch (action.kind) {
+    case 'share_contract': {
+      // Caricato solo qui (link, PIN, invio): il PIN va solo a shareContract, che salva l'hash.
+      const contracts = await import('./contracts')
+      const outcome = await contracts.shareContract(db, userId, str(p.contractId), {
+        recipientName: p.recipientName,
+        email: p.email,
+        channel: p.channel,
+        contactId: p.contactId,
+        text: p.text,
+        pin: extra.pin,
+        origin: extra.origin,
+      })
+      const c = outcome.contract
+      return {
+        ok: true,
+        message: contracts.shareSummary(outcome),
+        cards: [{ kind: 'contract', at, contract: { id: c.id, title: c.title, recipient: c.recipient.name, status: c.status, channel: outcome.channel } }],
+      }
+    }
     case 'send_message': {
       const outcome = await sendAssistantMessage(db, { platform: p.platform, to: p.contactId, text: p.text, subject: p.subject, again: true })
       if (!outcome.ok) return { ok: false, message: `Non è partito niente: ${dot(userError(outcome.error))}${outcome.copyText ? ' Puoi copiare il testo e mandarlo dall’app.' : ''}`, cards: [] }

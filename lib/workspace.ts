@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
+import { TERMS_VERSION } from '@/lib/terms'
+import { hasCurrentAcceptance } from '@/lib/terms-acceptance'
 
 // Chi fa la richiesta e in quale spazio di lavoro sta lavorando. L'identita'
 // viene sempre dal token di sessione; lo spazio scelto arriva nell'header
@@ -66,7 +68,26 @@ export async function getWorkspaceAccess(req: NextRequest): Promise<WorkspaceAcc
   return { userId: user.id, email: user.email.toLowerCase(), workspace, db: workspaceDb(workspace.id) }
 }
 
-/** Da usare all'inizio delle route dell'area clienti. */
+/** Chi ha accettato i termini in vigore (solo i si', per 60 s in questa istanza: per persona e versione). */
+const termsAccepted = new Map<string, number>()
+const TERMS_CACHE_MS = 60_000
+
+async function acceptedCurrentTerms(userId: string): Promise<boolean> {
+  const key = `${userId}:${TERMS_VERSION}`
+  if ((termsAccepted.get(key) ?? 0) > Date.now()) return true
+  const ok = await hasCurrentAcceptance(userId)
+  if (ok) {
+    if (termsAccepted.size > 5000) termsAccepted.clear()
+    termsAccepted.set(key, Date.now() + TERMS_CACHE_MS)
+  }
+  return ok
+}
+
+/**
+ * Da usare all'inizio delle route dell'area clienti. Senza i termini e condizioni in vigore
+ * accettati niente funziona, anche chiamando le API direttamente (403 terms_required; se non si
+ * riesce a controllare: 500). /api/app/terms non passa da qui e resta raggiungibile.
+ */
 export async function requireWorkspace(
   req: NextRequest,
   minRole: WorkspaceRole = 'member'
@@ -77,6 +98,14 @@ export async function requireWorkspace(
   if (rank[access.workspace.role] < rank[minRole]) {
     return NextResponse.json({ error: 'Serve il ruolo di amministratore dello spazio' }, { status: 403 })
   }
+  let accepted: boolean
+  try {
+    accepted = await acceptedCurrentTerms(access.userId)
+  } catch (error) {
+    console.error('termini (controllo):', error instanceof Error ? error.message : 'errore')
+    return NextResponse.json({ error: 'Non riesco a controllare i termini, riprova.' }, { status: 500 })
+  }
+  if (!accepted) return NextResponse.json({ error: 'Prima accetta i termini e condizioni.', code: 'terms_required' }, { status: 403 })
   return access
 }
 

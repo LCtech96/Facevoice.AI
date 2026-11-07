@@ -3,7 +3,7 @@ import { requireAssistant } from '@/lib/assistant-access'
 import { workspaceAutomationsAccess } from '@/lib/automations-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
-import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
+import { chatForPost, hidePin, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
 import { refreshAssistantCards } from '@/lib/saas/assistant-actions'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
@@ -64,7 +64,8 @@ export async function POST(req: NextRequest) {
   const access = await requireAssistant(req, 'admin')
   if (access instanceof NextResponse) return access
   const body = await req.json().catch(() => ({}))
-  const message = String(body.message || '').trim().slice(0, 3000)
+  // Un PIN scritto in chat si nasconde subito: mai salvato, mai all'AI (si sceglie nella scheda del contratto).
+  const message = hidePin(String(body.message || '').trim().slice(0, 3000))
   // Modello scelto dal cliente nella chat: vale per tutta la richiesta.
   const model = asModelChoice(body.model)
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)

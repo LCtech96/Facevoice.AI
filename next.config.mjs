@@ -9,6 +9,21 @@ const nextConfig = {
     '/api/app/posts': ['./lib/fonts/**'],
     '/api/app/brand': ['./lib/fonts/**'],
   },
+  // Pagine dei contratti condivisi (/c/<token>): mai indicizzate, mai dentro un'altra pagina,
+  // il token non esce come referrer.
+  async headers() {
+    return [
+      {
+        source: '/c/:path*',
+        headers: [
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Cache-Control', value: 'no-store, max-age=0' },
+        ],
+      },
+    ]
+  },
   async redirects() {
     return [
       {

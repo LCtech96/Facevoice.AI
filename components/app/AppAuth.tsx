@@ -1,13 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import GoogleSignIn from './GoogleSignIn'
 import LanguageSwitch from './LanguageSwitch'
+import TermsChecks, { NO_TICKS, allTicked, clearPendingTerms, savePendingTerms, type TermsTicks } from './TermsChecks'
+import { TERMS_VERSION } from '@/lib/terms'
 
 // Accesso e registrazione all'area clienti con email e password (Supabase Auth).
 // Alla registrazione Supabase manda un'email di conferma che riporta qui.
+// Per registrarsi (con email o con Google) servono le tre caselle dei termini, vuote all'inizio:
+// con l'email l'accettazione si registra sul server subito dopo la creazione dell'account
+// (/api/app/terms/signup); con Google la registra il blocco dei termini appena entrati.
 
 type Mode = 'signin' | 'signup' | 'reset'
 
@@ -19,10 +24,18 @@ export default function AppAuth() {
   const [mode, setMode] = useState<Mode>('signup')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [accepted, setAccepted] = useState(false)
+  const [ticks, setTicks] = useState<TermsTicks>(NO_TICKS)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const ticked = allTicked(ticks)
+
+  // Caselle spuntate alla registrazione: le ricorda per pochi minuti su questo dispositivo
+  // (per l'accesso con Google). Fuori dalla registrazione, o tolta una spunta, si dimenticano.
+  useEffect(() => {
+    if (mode === 'signup' && ticked) savePendingTerms()
+    else clearPendingTerms()
+  }, [mode, ticked])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -31,7 +44,7 @@ export default function AppAuth() {
     const cleanEmail = email.trim().toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError('Scrivi un indirizzo email valido.')
     if (mode !== 'reset' && password.length < 8) return setError('La password deve avere almeno 8 caratteri.')
-    if (mode === 'signup' && !accepted) return setError('Per registrarti devi accettare termini e privacy.')
+    if (mode === 'signup' && !ticked) return setError('Per registrarti spunta tutte e tre le caselle.')
 
     setBusy(true)
     try {
@@ -49,6 +62,15 @@ export default function AppAuth() {
         if (data.user && !data.user.identities?.length) {
           setMode('signin')
           throw new Error('Esiste già un account con questa email: accedi.')
+        }
+        // Accettazione dei termini sul server (data, IP e browser li prende il server).
+        // Se non riesce, il blocco dei termini la chiede di nuovo al primo accesso.
+        if (data.user) {
+          await fetch('/api/app/terms/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: data.user.id, email: cleanEmail, version: TERMS_VERSION, accept: { a: true, b: true, c: true } }),
+          }).catch(() => null)
         }
         if (!data.session) setNotice(`Ti abbiamo mandato un'email a ${cleanEmail}: apri il link per confermare l'account e tornerai qui.`)
       } else {
@@ -80,17 +102,17 @@ export default function AppAuth() {
             : 'Ti mandiamo un link per sceglierne una nuova.'}
       </p>
 
+      {mode === 'signup' && (
+        <div className="mt-8">
+          <TermsChecks value={ticks} onChange={setTicks} disabled={busy} />
+        </div>
+      )}
+
       {mode !== 'reset' && (
         <>
-          <GoogleSignIn disabled={busy} onBusy={setBusy} onError={(message) => { setNotice(null); setError(message) }} />
-          {mode === 'signup' && (
-            <p className="mt-2 text-center text-xs text-[var(--text-secondary)]">
-              Continuando con Google accetti i termini del servizio e l’
-              <a href="/privacy" target="_blank" className="underline">
-                informativa sulla privacy
-              </a>
-              .
-            </p>
+          <GoogleSignIn disabled={busy || (mode === 'signup' && !ticked)} onBusy={setBusy} onError={(message) => { setNotice(null); setError(message) }} />
+          {mode === 'signup' && !ticked && (
+            <p className="mt-2 text-center text-xs text-[var(--text-secondary)]">Spunta le tre caselle per registrarti con Google o con l’email.</p>
           )}
           <div className="my-6 flex items-center gap-3 text-xs text-[var(--text-secondary)]">
             <span className="h-px flex-1 bg-[var(--border-color)]" /> oppure con email <span className="h-px flex-1 bg-[var(--border-color)]" />
@@ -110,23 +132,11 @@ export default function AppAuth() {
             onChange={(e) => setPassword(e.target.value)}
           />
         )}
-        {mode === 'signup' && (
-          <label className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
-            <input type="checkbox" className="mt-1" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-            <span>
-              Accetto i termini del servizio e l’
-              <a href="/privacy" target="_blank" className="text-[var(--accent-blue)] underline">
-                informativa sulla privacy
-              </a>
-              .
-            </span>
-          </label>
-        )}
         {error && <p className="text-sm text-[#ff6b6b]">{error}</p>}
         {notice && <p className="text-sm text-[var(--text-primary)]">{notice}</p>}
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || (mode === 'signup' && !ticked)}
           className="flex w-full items-center justify-center gap-2 rounded-full bg-[var(--accent-blue)] px-6 py-3 font-bold text-white disabled:opacity-50"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}

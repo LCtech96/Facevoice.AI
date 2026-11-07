@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Schede di conferma dell'Assistente (doppia autorizzazione, lib/saas/assistant-actions.ts):
-// POST { id, op: "confirm" | "discard", text? } dal clic su «Accetta e invia» / «Conferma»
+// POST { id, op: "confirm" | "discard", text?, pin? } dal clic su «Accetta e invia» / «Conferma»
 // oppure «Scarta». Solo chi ha preparato l'azione, con l'assistente attivo e il ruolo di
 // amministratore (come la chat). L'azione si esegue UNA volta, con i controlli rifatti adesso
 // (24 ore di Meta, limiti, accessi); scaduta o gia' gestita: messaggio chiaro, niente rifatto.
@@ -34,7 +34,11 @@ export async function POST(req: NextRequest) {
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < BUSY_MS) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta la risposta, poi conferma.' }, { status: 409 })
   }
-  const outcome = op === 'confirm' ? await executePending(access.db, access.userId, id, { text: body.text }) : await discardPending(access.db, access.userId, id)
+  // pin: solo per la condivisione di un contratto (mai salvato ne' scritto nei log: al server ne resta l'hash).
+  const outcome =
+    op === 'confirm'
+      ? await executePending(access.db, access.userId, id, { text: body.text, pin: typeof body.pin === 'string' ? body.pin : undefined, origin: req.nextUrl.origin })
+      : await discardPending(access.db, access.userId, id)
   if (outcome.code !== 'done' && outcome.code !== 'failed' && outcome.code !== 'discarded') {
     const status = outcome.code === 'expired' ? 410 : outcome.code === 'invalid' ? 400 : outcome.code === 'not_found' ? 404 : outcome.code === 'forbidden' ? 403 : 409
     const turns = await refreshAssistantCards(ws, history)

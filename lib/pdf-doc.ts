@@ -5,12 +5,26 @@ import { createHash } from 'crypto'
 // testo a capo con le larghezze vere dei caratteri (tabella AFM per i codici WinAnsi),
 // salti di pagina automatici (un titolo non resta mai da solo in fondo alla pagina),
 // "Pagina N di M" e un avviso breve in fondo a ogni pagina. Usato dai documenti
-// dell'Assistente (contratti, preventivi, lettere: lib/saas/documents.ts).
+// dell'Assistente (contratti, preventivi, lettere: lib/saas/documents.ts) e dai contratti
+// firmati (lib/saas/contracts.ts): firme disegnate col dito come tracciati vettoriali nei
+// riquadri delle firme, scritta leggera "BOZZA" sulle versioni non firmate, sezioni che
+// iniziano su una pagina nuova (registro delle firme).
 // Il file e' tutto ASCII: i caratteri accentati vanno nei testi come \ooo (codici WinAnsi),
 // cosi' le posizioni nella tabella xref sono sempre giuste.
 
-export type PdfSection = { heading?: string; paragraphs: string[]; bullets?: string[] }
-export type PdfSignature = { label: string; name?: string }
+export type PdfSection = { heading?: string; paragraphs: string[]; bullets?: string[]; /** La sezione inizia su una pagina nuova. */ pageBreakBefore?: boolean }
+/** Tratti di una firma: punti [x, y] da 0 a 1000 (in larghezza e in altezza del riquadro in cui e' stata disegnata). */
+export type SignatureStrokes = number[][][]
+export type PdfSignature = {
+  label: string
+  name?: string
+  /** Firma disegnata col dito (tracciati vettoriali). */
+  strokes?: SignatureStrokes
+  /** Larghezza / altezza del riquadro in cui e' stata disegnata. */
+  ratio?: number
+  /** Riga sotto il nome (es. "Firmato il 7 novembre 2026, 14:32"). */
+  note?: string
+}
 export type PdfDocument = {
   title: string
   subtitle?: string
@@ -20,8 +34,12 @@ export type PdfDocument = {
   signatures?: PdfSignature[]
   /** Nota finale dopo le sezioni (es. da dove viene il documento). */
   closing?: string
+  /** Sezioni dopo le firme (es. il registro delle firme, su una pagina nuova). */
+  after?: PdfSection[]
   /** Avviso breve in fondo a ogni pagina. */
   footer: string
+  /** Scritta leggera in diagonale dietro il testo di ogni pagina (es. "BOZZA – non firmato"). */
+  watermark?: string
   /** Metadati del file. */
   info?: { title?: string; subject?: string; createdAt?: Date }
 }
@@ -188,8 +206,10 @@ const BODY_LEADING = 15
 const BULLET_INDENT = 14
 
 type Item = { text: string; font: FontKey; size: number; x: number; grey?: boolean }
-type Row = { items: Item[]; rule?: boolean }
-type Block = { rows: Row[]; leading: number; before: number; keepWithNext?: boolean; keepTogether?: boolean }
+/** Firma disegnata sopra la riga della firma (x e larghezza dal margine sinistro). */
+type Drawing = { x: number; width: number; height: number; strokes: SignatureStrokes; ratio: number }
+type Row = { items: Item[]; rule?: boolean; drawings?: Drawing[] }
+type Block = { rows: Row[]; leading: number; before: number; keepWithNext?: boolean; keepTogether?: boolean; pageBreak?: boolean }
 type PlacedRow = Row & { baseline: number; leading: number }
 
 function textBlock(text: string, opts: { font?: FontKey; size?: number; leading?: number; before?: number; indent?: number; grey?: boolean; keepWithNext?: boolean; bullet?: boolean }): Block {
@@ -221,14 +241,24 @@ function signatureBlock(signatures: PdfSignature[]): Block {
   }
   for (let k = 0; k < signatures.length; k += 2) {
     const pair = signatures.slice(k, k + 2)
-    rows.push({ items: [] }, { items: [] })
-    rows.push({ items: pair.map((_, i) => ({ text: '_'.repeat(Math.floor(columnWidth / textWidth('_', 'F1', 10))), font: 'F1' as FontKey, size: 10, x: col(i) })) })
+    const drawn = pair.some((s) => hasStrokes(s.strokes))
+    // Con una firma disegnata c'e' piu' spazio sopra la riga (il riquadro della firma).
+    rows.push(...Array.from({ length: drawn ? 3 : 2 }, () => ({ items: [] })))
+    rows.push({
+      items: pair.map((_, i) => ({ text: '_'.repeat(Math.floor(columnWidth / textWidth('_', 'F1', 10))), font: 'F1' as FontKey, size: 10, x: col(i) })),
+      ...(drawn
+        ? { drawings: pair.flatMap((s, i) => (hasStrokes(s.strokes) ? [{ x: col(i), width: columnWidth, height: 40, strokes: s.strokes as SignatureStrokes, ratio: s.ratio || 3 }] : [])) }
+        : {}),
+    })
     columnRows(pair.map((s) => lines(s.label, 'F2')), 'F2')
     columnRows(pair.map((s) => lines(s.name || '', 'F1')), 'F1')
+    if (pair.some((s) => s.note)) columnRows(pair.map((s) => lines(s.note || '', 'F1')), 'F1')
   }
   // keepTogether con l'altezza vera (tutte le righe, anche quelle andate a capo).
   return { rows, leading: 15, before: 18, keepTogether: true }
 }
+
+const hasStrokes = (strokes: SignatureStrokes | undefined) => Array.isArray(strokes) && strokes.some((s) => Array.isArray(s) && s.length > 0)
 
 /** Blocchi del documento, nell'ordine. */
 function blocksOf(doc: PdfDocument): Block[] {
@@ -237,8 +267,18 @@ function blocksOf(doc: PdfDocument): Block[] {
   if (doc.subtitle) blocks.push(textBlock(doc.subtitle, { size: 11.5, leading: 16, before: 4, grey: true }))
   for (const [k, line] of (doc.meta || []).entries()) blocks.push(textBlock(line, { size: 10, leading: 14, before: k === 0 ? 10 : 1 }))
   blocks.push({ rows: [{ items: [], rule: true }], leading: 10, before: 8 })
-  for (const section of doc.sections) {
+  sectionBlocks(doc.sections, blocks)
+  if (doc.signatures?.length) blocks.push(signatureBlock(doc.signatures))
+  if (doc.closing?.trim()) blocks.push(textBlock(doc.closing.trim(), { size: 8.5, leading: 12, before: 22, grey: true }))
+  if (doc.after?.length) sectionBlocks(doc.after, blocks)
+  return blocks
+}
+
+/** Blocchi delle sezioni (titolo, paragrafi, punti), aggiunti in fondo a blocks. */
+function sectionBlocks(sections: PdfSection[], blocks: Block[]): void {
+  for (const section of sections) {
     const heading = (section.heading || '').trim()
+    const startAt = blocks.length
     if (heading) blocks.push(textBlock(heading, { font: 'F2', size: 12, leading: 16, before: 12, keepWithNext: true }))
     for (const [k, paragraph] of section.paragraphs.entries()) {
       if (paragraph.trim()) blocks.push(textBlock(paragraph.trim(), { before: k === 0 && heading ? 3 : 7, leading: BODY_LEADING }))
@@ -246,10 +286,8 @@ function blocksOf(doc: PdfDocument): Block[] {
     for (const [k, bullet] of (section.bullets || []).entries()) {
       if (bullet.trim()) blocks.push(textBlock(bullet.trim(), { bullet: true, indent: 6, before: k === 0 ? 6 : 2, leading: BODY_LEADING }))
     }
+    if (section.pageBreakBefore && blocks[startAt]) blocks[startAt].pageBreak = true
   }
-  if (doc.signatures?.length) blocks.push(signatureBlock(doc.signatures))
-  if (doc.closing?.trim()) blocks.push(textBlock(doc.closing.trim(), { size: 8.5, leading: 12, before: 22, grey: true }))
-  return blocks
 }
 
 /** Pagine con le righe gia' al loro posto (baseline in punti dal basso). */
@@ -265,6 +303,7 @@ function layout(doc: PdfDocument): PlacedRow[][] {
   const room = () => y - CONTENT_BOTTOM
   const full = top - CONTENT_BOTTOM
   blocks.forEach((block, index) => {
+    if (block.pageBreak && y !== top) newPage()
     const height = block.rows.length * block.leading
     const before = y === top ? 0 : block.before
     if (block.keepTogether && before + height > room() && height <= full) newPage()
@@ -319,10 +358,51 @@ function pdfDate(date: Date): string {
   return `D:${date.getUTCFullYear()}${p(date.getUTCMonth() + 1)}${p(date.getUTCDate())}${p(date.getUTCHours())}${p(date.getUTCMinutes())}${p(date.getUTCSeconds())}Z`
 }
 
+/** Tratti della firma nel riquadro sopra la riga (proporzioni del riquadro in cui e' stata disegnata). */
+function drawingOps(d: Drawing, baseline: number): string {
+  const ratio = Math.min(8, Math.max(1, Number(d.ratio) || 3))
+  const room = d.width - 8
+  const width = Math.min(room, d.height * ratio)
+  const height = width / ratio
+  const x0 = MARGIN_X + d.x + 4
+  const y0 = baseline + 3
+  const point = (p: number[]) => {
+    const x = Math.min(1000, Math.max(0, Number(p[0]) || 0))
+    const y = Math.min(1000, Math.max(0, Number(p[1]) || 0))
+    return `${num(x0 + (x / 1000) * width)} ${num(y0 + (1 - y / 1000) * height)}`
+  }
+  const paths: string[] = []
+  for (const stroke of d.strokes) {
+    if (!Array.isArray(stroke) || !stroke.length) continue
+    const pts = stroke.filter((p) => Array.isArray(p) && p.length >= 2)
+    if (!pts.length) continue
+    // Un tocco solo: un puntino.
+    const tail = pts.length === 1 ? [[Math.min(1000, Number(pts[0][0]) + 1), pts[0][1]]] : pts.slice(1)
+    paths.push(`${point(pts[0])} m ${tail.map((p) => `${point(p)} l`).join(' ')} S`)
+  }
+  return paths.length ? `q 0.08 0.12 0.4 RG 1.1 w 1 J 1 j\n${paths.join('\n')}\nQ` : ''
+}
+
+/** Scritta leggera in diagonale al centro della pagina, dietro il testo. */
+function watermarkOps(text: string): string {
+  const label = toWinAnsi(text)
+  const size = 46
+  const w = textWidth(label, 'F2', size)
+  const c = Math.SQRT1_2
+  const x = PAGE_WIDTH / 2 - (w / 2) * c
+  const y = PAGE_HEIGHT / 2 - (w / 2) * c
+  return `q 0.88 g BT /F2 ${size} Tf ${num(c)} ${num(c)} ${num(-c)} ${num(c)} ${num(x)} ${num(y)} Tm ${pdfString(label)} Tj ET Q`
+}
+
 /** Comandi di disegno di una pagina. */
-function pageContent(rows: PlacedRow[], pageNumber: number, pageCount: number, footer: string): string {
+function pageContent(rows: PlacedRow[], pageNumber: number, pageCount: number, footer: string, watermark?: string): string {
   const ops: string[] = []
+  if (watermark?.trim()) ops.push(watermarkOps(watermark.trim()))
   for (const row of rows) {
+    for (const d of row.drawings || []) {
+      const drawn = drawingOps(d, row.baseline)
+      if (drawn) ops.push(drawn)
+    }
     if (row.rule) {
       const y = row.baseline + 6
       ops.push(`0.75 G 0.6 w ${num(MARGIN_X)} ${num(y)} m ${num(PAGE_WIDTH - MARGIN_X)} ${num(y)} l S`)
@@ -358,7 +438,7 @@ export function renderPdf(doc: PdfDocument): { pdf: Buffer; pages: number } {
     doc.info?.subject ? ` /Subject ${pdfTextString(doc.info.subject.slice(0, 300))}` : ''
   } /Producer (Facevoice AI) /Creator (Facevoice AI) /CreationDate (${pdfDate(created)}) >>`
   pages.forEach((rows, k) => {
-    const content = pageContent(rows, k + 1, count, doc.footer)
+    const content = pageContent(rows, k + 1, count, doc.footer, doc.watermark)
     objects[pageIds[k]] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(PAGE_WIDTH)} ${num(PAGE_HEIGHT)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${pageIds[k] + 1} 0 R >>`
     objects[pageIds[k] + 1] = `<< /Length ${content.length} >>\nstream\n${content}endstream`
   })

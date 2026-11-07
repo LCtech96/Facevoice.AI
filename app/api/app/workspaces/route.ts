@@ -43,6 +43,15 @@ export async function POST(req: NextRequest) {
   if (!user.email_confirmed_at && !user.confirmed_at) {
     return NextResponse.json({ error: 'Conferma prima la tua email.' }, { status: 403 })
   }
+  // Nessuno spazio senza i termini e condizioni in vigore accettati (lib/terms-acceptance.ts).
+  const termsOk = await import('@/lib/terms-acceptance')
+    .then((terms) => terms.hasCurrentAcceptance(user.id))
+    .catch((error) => {
+      console.error('app workspace termini:', error instanceof Error ? error.message : error)
+      return null
+    })
+  if (termsOk === null) return NextResponse.json({ error: 'Non riesco a controllare i termini, riprova.' }, { status: 500 })
+  if (!termsOk) return NextResponse.json({ error: 'Prima accetta i termini e condizioni.', code: 'terms_required' }, { status: 403 })
   const body = await req.json().catch(() => ({}))
   try {
     const workspace = await createWorkspace(user.id, typeof body.name === 'string' ? body.name : '')

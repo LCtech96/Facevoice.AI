@@ -18,7 +18,8 @@ const MODEL_KEY = 'fv_app_assistant_model'
 // Scrive documenti (contratti, preventivi, lettere) dalla conversazione con una persona:
 // scheda con «Apri PDF» e «Scarica». Doppia autorizzazione: tutto quello che esce dalla
 // chat (messaggi, pubblicazioni, email programmate…) compare in una scheda e parte solo
-// con «Accetta e invia» (o «Conferma»); «Scarta» non manda niente.
+// con «Accetta e invia» (o «Conferma»); «Scarta» non manda niente. La condivisione di un
+// contratto chiede nella scheda il PIN (mascherato): va solo al server con il clic, mai in chat.
 // Solo per chi ce l'ha attivo (lo accende Facevoice dal suo pannello): agli altri
 // la pagina dice come chiederlo, su WhatsApp.
 
@@ -98,13 +99,17 @@ type PendingAction = {
     doneLabel: string
     contact?: { platform: string; contactId: string; name: string }
     document?: { id: string; version: number; title: string; pages: number }
+    /** Condivisione del contratto: il PIN si sceglie qui (mai in chat). */
+    pin?: { min: number; max: number; for: string }
     status: 'pending' | 'running' | 'done' | 'failed' | 'discarded' | 'expired' | 'unconfirmed'
     createdAt: string
     expiresAt: string
     outcome?: string
   }
 }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction | DocumentAction | PendingAction
+/** Contratto condiviso con link e PIN: il link si copia dalla rotta protetta (non sta nella chat). */
+type ContractAction = { kind: 'contract'; at: string; contract: { id: string; title: string; recipient: string; status: string; channel: string } }
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction | DocumentAction | PendingAction | ContractAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -414,6 +419,8 @@ function AssistantChat() {
                       <ConfirmCard key={`c${action.pending.id}`} action={action} canManage={canManage} chatBusy={busy} onTurns={setTurns} onReload={load} />
                     ) : action.kind === 'document' ? (
                       <DocumentCard key={`d${k}`} action={action} />
+                    ) : action.kind === 'contract' ? (
+                      <ContractShareCard key={`k${k}`} action={action} />
                     ) : action.kind === 'message' ? (
                       <SentMessageCard key={`m${k}`} action={action} />
                     ) : action.kind === 'automation' ? (
@@ -1349,6 +1356,46 @@ function AutomationActionCard({ action }: { action: AutomationAction }) {
 
 const DOC_KIND_NAMES: Record<DocumentAction['document']['kind'], string> = { contratto: 'Contratto', preventivo: 'Preventivo', accordo: 'Accordo', lettera: 'Lettera', altro: 'Documento' }
 const DOC_DISCLAIMER = 'Non sono un avvocato e non posso garantire che il documento sia corretto o valido: fallo controllare da un professionista prima di firmarlo o inviarlo.'
+const SIGNATURE_NOTE = 'La firma è una firma elettronica semplice: valida per molti accordi privati, non per gli atti che richiedono la firma qualificata o l’atto notarile.'
+
+/** Contratto condiviso: apri la pagina del contratto o copia il link (dalla rotta protetta: mai nella chat). */
+function ContractShareCard({ action }: { action: ContractAction }) {
+  const { appFetch } = useWorkspace()
+  const k = action.contract
+  const [note, setNote] = useState<string | null>(null)
+  const copy = async () => {
+    setNote(null)
+    const res = await appFetch(`/api/app/contracts?id=${encodeURIComponent(k.id)}&link=1`).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    if (!data?.link) return setNote('Nessun link attivo: condividilo di nuovo dalla pagina del contratto.')
+    try {
+      await navigator.clipboard.writeText(data.link)
+      setNote('Link copiato. Il PIN mandalo a parte.')
+    } catch {
+      window.prompt('Copia il link:', data.link)
+    }
+  }
+  return (
+    <div className="mt-3 w-full max-w-md rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+      <p className="flex items-start gap-2 text-sm font-semibold">
+        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-blue)]" />
+        <span translate="no" className="min-w-0 break-words">{k.title}</span>
+      </p>
+      <p className="mt-0.5 pl-6 text-xs text-[var(--text-secondary)]">
+        Per <span translate="no">{k.recipient}</span> · link protetto da PIN · {k.channel === 'link' || k.channel === 'whatsapp' ? 'da copiare' : CHANNEL_NAMES[k.channel] || k.channel}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link href={`/app/contratti/${k.id}`} className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white">
+          <ExternalLink className="h-4 w-4" /> Apri contratto
+        </Link>
+        <button onClick={copy} className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--background)] px-4 py-2 text-sm">
+          <FileText className="h-4 w-4" /> Copia link
+        </button>
+      </div>
+      {note && <p className="mt-2 text-xs text-[var(--text-secondary)]">{note}</p>}
+    </div>
+  )
+}
 
 /** Nome del file dal server (Content-Disposition), altrimenti dal titolo. */
 function fileNameFrom(res: Response, title: string): string {
@@ -1490,7 +1537,7 @@ function DocumentCard({ action }: { action: DocumentAction }) {
           {d.version < latest ? <p className="mt-1 text-xs text-[#FF9500]">C’è una versione più nuova più sotto.</p> : null}
           {d.placeholders.length > 0 && (
             <div className="mt-2 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-xs">
-              <p className="font-semibold text-[var(--text-primary)]">Da completare prima di firmare:</p>
+              <p className="font-semibold text-[var(--text-primary)]">Spazi vuoti da compilare (a mano o nella pagina del contratto):</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--text-secondary)]">
                 {d.placeholders.slice(0, 6).map((p) => (
                   <li key={p} className="break-words">
@@ -1540,8 +1587,14 @@ function DocumentCard({ action }: { action: DocumentAction }) {
               <FileText className="h-4 w-4" /> PDF pronto: tocca per aprirlo
             </button>
           ) : null}
+          <Link href={`/app/contratti/${d.id}`} className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
+            <Lock className="h-4 w-4" /> Apri nei Contratti (condividi, modifiche, firme)
+          </Link>
           <p className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]">
             <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-[#FF9500]" /> {DOC_DISCLAIMER}
+          </p>
+          <p className="mt-1 flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]">
+            <ShieldCheck className="mt-px h-3.5 w-3.5 shrink-0" /> {SIGNATURE_NOTE}
           </p>
           {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
         </>
@@ -1582,10 +1635,14 @@ function ConfirmCard({
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState<'confirm' | 'discard' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** PIN del contratto: resta solo in questa scheda finche' non si tocca il pulsante (poi si svuota). */
+  const [pin, setPin] = useState('')
+  const [pinLetters, setPinLetters] = useState(false)
   useEffect(() => {
     setText(p.text || '')
   }, [p.text])
   const open = p.status === 'pending'
+  const pinOk = !p.pin || /^[A-Za-z0-9]{4,12}$/.test(pin)
 
   const act = async (op: 'confirm' | 'discard') => {
     if (busy || chatBusy) return
@@ -1593,11 +1650,17 @@ function ConfirmCard({
       setError('Il testo è vuoto.')
       return
     }
+    if (op === 'confirm' && !pinOk) {
+      setError('Scegli un PIN da 4 a 12 caratteri (numeri o lettere).')
+      return
+    }
     setBusy(op)
     setError(null)
+    const typedPin = op === 'confirm' && p.pin ? pin : ''
+    setPin('')
     const res = await appFetch('/api/app/assistant/actions', {
       method: 'POST',
-      body: JSON.stringify({ id: p.id, op, ...(op === 'confirm' && p.editable && text !== (p.text || '') ? { text } : {}) }),
+      body: JSON.stringify({ id: p.id, op, ...(op === 'confirm' && p.editable && text !== (p.text || '') ? { text } : {}), ...(typedPin ? { pin: typedPin } : {}) }),
     }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(null)
@@ -1661,12 +1724,38 @@ function ConfirmCard({
           <FileText className="h-3.5 w-3.5" /> PDF allegato: <span translate="no">{p.document.title}</span> (v{p.document.version})
         </p>
       ) : null}
+      {open && canManage && p.pin ? (
+        <label className="mt-3 block rounded-xl border border-[var(--accent-blue)]/50 bg-[var(--background)] p-3 text-sm">
+          <span className="flex items-center gap-1.5 font-semibold">
+            <Lock className="h-4 w-4 text-[var(--accent-blue)]" /> PIN per aprire il link
+          </span>
+          <input
+            type="password"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            inputMode={pinLetters ? 'text' : 'numeric'}
+            maxLength={p.pin.max}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, p.pin?.max || 12))}
+            placeholder={`da ${p.pin.min} a ${p.pin.max} numeri o lettere`}
+            className="mt-2 w-full rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-3 py-2 text-[16px] tracking-widest"
+          />
+          <button type="button" onClick={() => setPinLetters((l) => !l)} className="mt-1 text-xs text-[var(--accent-blue)]">
+            {pinLetters ? 'Solo numeri' : 'Anche lettere'}
+          </button>
+          <span className="mt-1 block text-[11px] text-[var(--text-secondary)]">
+            Non va nel messaggio e non lo salviamo: mandalo a <span translate="no">{p.pin.for}</span> in un altro modo (a voce, SMS, telefonata).
+          </span>
+        </label>
+      ) : null}
       {open && canManage ? (
         <>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => act('confirm')}
-              disabled={busy !== null || chatBusy}
+              disabled={busy !== null || chatBusy || !pinOk}
               className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               {busy === 'confirm' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {p.confirmLabel}
