@@ -1,9 +1,8 @@
 import type { Metadata } from 'next'
 import { Montserrat, Inter, Inter_Tight, Instrument_Serif } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/react'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 import AIChatWidget from '@/components/AIChatWidget'
+import PrivacyAnalytics from '@/components/PrivacyAnalytics'
 import AutoTranslate from '@/components/AutoTranslate'
 import ChunkReload from '@/components/ChunkReload'
 import ContactsFooter from '@/components/ContactsFooter'
@@ -123,8 +122,7 @@ export default function RootLayout({
           <ContactsFooter />
           <AIChatWidget />
           <AutoTranslate />
-          <Analytics />
-          <SpeedInsights />
+          <PrivacyAnalytics />
         </LanguageProvider>
       </body>
     </html>

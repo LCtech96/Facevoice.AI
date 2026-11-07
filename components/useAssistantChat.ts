@@ -44,6 +44,9 @@ export type ConfirmAction = {
   outcome?: string
   error?: string
   retryable?: boolean
+  /** Contratti: la scheda chiede il PIN (resta nel browser fino al clic, mai nella chat). */
+  pin?: boolean
+  contractId?: string
 }
 
 /** Documento scritto dall'assistente: si apre in PDF con un tocco. */

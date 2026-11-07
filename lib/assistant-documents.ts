@@ -2,7 +2,7 @@ import { readSetting, updateSetting } from '@/lib/settings-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callAIPaced } from '@/lib/ai'
 import { parseJsonObject } from '@/lib/tool-step'
-import { renderPdf, type DocSection, type DocSignature, type StructuredDoc } from '@/lib/pdf-doc'
+import { FIELD_ID_RE, docTexts, emptyFieldLabels, fieldIdsIn, renderPdf, type DocField, type DocSection, type DocSignature, type FieldParty, type StructuredDoc } from '@/lib/pdf-doc'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 
 // Documenti della super chat (contratti, preventivi, accordi, lettere) scritti
@@ -26,7 +26,10 @@ export const DOC_KIND_LABEL: Record<DocKind, string> = {
   altro: 'Documento',
 }
 
-/** Frase da dire una volta nella risposta e mostrata sulla scheda. */
+/**
+ * Frase da dire una volta nella risposta e mostrata sulla scheda e nella pagina del
+ * contratto di chi lo crea. Mai nel PDF e mai nella pagina di chi lo riceve.
+ */
 export const DOC_DISCLAIMER = 'Non sono un avvocato: fai controllare il documento da un professionista prima di firmarlo o inviarlo.'
 /** Avviso breve in fondo a ogni pagina del PDF. */
 // L'avviso legale resta solo in chat (richiesta del titolare): nel PDF niente piè di pagina oltre ai numeri di pagina.
@@ -61,6 +64,7 @@ const MAX_RECORD_CHARS = 400_000
 export const DOC_ID_RE = /^[a-z0-9]{8,40}$/
 
 export type DocSource = { platform: string; contactId: string; name: string; messages: number; from: string | null; to: string | null }
+/** placeholders: etichette degli spazi lasciati vuoti (da compilare a mano o alla firma). */
 export type DocVersion = { v: number; at: string; by: string | null; note: string; doc: StructuredDoc; pages: number; placeholders: string[]; fromChat?: string[] }
 export type StoredDocument = {
   id: string
@@ -142,6 +146,17 @@ function capVersions(versions: DocVersion[]): DocVersion[] {
   return list
 }
 
+/**
+ * Cancella un documento e la sua voce nell'elenco (con tutte le versioni). Serve quando
+ * il contratto nato da questo documento e' firmato da tutti: resta solo la versione firmata.
+ */
+export async function deleteDocument(id: string): Promise<void> {
+  if (!DOC_ID_RE.test(id)) return
+  await updateSetting(INDEX_KEY, parseIndex, (index) => (index.items.some((i) => i.id === id) ? { items: index.items.filter((i) => i.id !== id) } : false))
+  const { error } = await supabaseAdmin.from('app_settings').delete().eq('key', `${DOC_PREFIX}${id}`)
+  if (error) throw new Error(error.message)
+}
+
 export async function saveNewDocument(input: {
   kind: DocKind
   doc: StructuredDoc
@@ -195,14 +210,14 @@ export function renderDocumentPdf(version: DocVersion) {
 
 const pageCount = (doc: StructuredDoc) => renderPdf({ ...doc, footer: PDF_FOOTER }).pages
 
-/** Segnaposto "[DA COMPLETARE: …]" ancora da riempire, senza doppioni. */
+/**
+ * Spazi ancora vuoti (da compilare a mano o al momento della firma), senza doppioni.
+ * I documenti di prima con "[DA COMPLETARE: …]" nel testo contano allo stesso modo.
+ */
 export function extractPlaceholders(doc: StructuredDoc): string[] {
-  const text = [doc.title, doc.subtitle, ...(doc.meta || []), ...doc.sections.flatMap((s) => [s.heading, ...s.paragraphs, ...(s.bullets || [])]), ...(doc.signatures || []).flatMap((s) => [s.label, s.name])]
-    .filter(Boolean)
-    .join('\n')
-  const found = text.match(/\[DA COMPLETARE[^\]]*\]/gi) || []
-  const out: string[] = []
-  for (const f of found) {
+  const out: string[] = [...emptyFieldLabels(doc)]
+  const legacy = docTexts(doc).join('\n').match(/\[DA COMPLETARE[^\]]*\]/gi) || []
+  for (const f of legacy) {
     const label = f.replace(/^\[DA COMPLETARE\s*:?\s*/i, '').replace(/\]$/, '').trim() || 'dato mancante'
     if (!out.some((o) => o.toLowerCase() === label.toLowerCase())) out.push(label.slice(0, 120))
   }
@@ -231,8 +246,96 @@ const strings = (value: unknown, maxItems: number, maxChars: number): string[] =
   return list.map((v) => cleanText(v, maxChars)).filter(Boolean).slice(0, maxItems)
 }
 
+export const MAX_FIELDS = 40
+const FIELD_PARTIES: FieldParty[] = ['creatore', 'destinatario', 'entrambi']
+/** Frasi di avviso legale che non vanno mai nel documento (restano solo in chat). */
+const DISCLAIMER_TEXT = /non sono un avvocato|fai(?:lo|la)? controllare (?:il documento |la bozza )?da un professionista|non (?:costituisce|è) (?:una )?consulenza legale|bozza preparata con l['’]assistente/i
+
+/** Toglie solo le frasi di avviso legale (il resto del paragrafo resta). */
+function stripDisclaimer(text: string): string {
+  if (!DISCLAIMER_TEXT.test(text)) return text
+  const sentences = text.match(/[^.!?…]+[.!?…]*\s*/g) || [text]
+  return sentences
+    .filter((x) => !DISCLAIMER_TEXT.test(x))
+    .join('')
+    .trim()
+}
+
+/** Id leggibile per un campo, dall'etichetta ("Codice fiscale di Giusy" -> codice_fiscale_di_giusy). */
+export function fieldIdFrom(label: string, taken: Set<string>): string {
+  const base =
+    label
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 34) || 'dato'
+  let id = base
+  for (let n = 2; taken.has(id); n++) id = `${base}_${n}`.slice(0, 40)
+  taken.add(id)
+  return id
+}
+
+const asParty = (value: unknown): FieldParty => (FIELD_PARTIES.includes(value as FieldParty) ? (value as FieldParty) : 'entrambi')
+
+/** Chi compila un dato, dalla sua etichetta (vecchi segnaposto): "di Facevoice" -> creatore. */
+function guessParty(label: string): FieldParty {
+  if (/facevoice|fornitore|luca|nostr/i.test(label)) return 'creatore'
+  if (/client|destinatari|committente|\bdi\s+[A-Z]/.test(label)) return 'destinatario'
+  return 'entrambi'
+}
+
+/**
+ * Campi puliti: id validi e unici, etichette brevi, al massimo 40. Ogni {{id}} nel testo ha
+ * il suo campo (se manca si crea dall'id) e i vecchi "[DA COMPLETARE: …]" diventano campi.
+ */
+export function normalizeFields(doc: StructuredDoc, rawFields: unknown): StructuredDoc {
+  const fields: DocField[] = []
+  const taken = new Set<string>()
+  for (const raw of (Array.isArray(rawFields) ? rawFields : []).slice(0, MAX_FIELDS)) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const label = cleanText(r.label ?? r.name, 80)
+    let id = typeof r.id === 'string' ? r.id.trim().toLowerCase() : ''
+    if (!label) continue
+    if (!FIELD_ID_RE.test(id) || taken.has(id)) id = fieldIdFrom(label, taken)
+    else taken.add(id)
+    const value = cleanText(r.value, 300)
+    fields.push({ id, label, party: asParty(r.party), ...(value ? { value } : {}) })
+  }
+  // Vecchi segnaposto -> campi (stessa etichetta = stesso campo).
+  const legacy = (text: string) =>
+    text.replace(/\[DA COMPLETARE\s*:?\s*([^\]]*)\]/gi, (_m, label: string) => {
+      const clean = cleanText(label, 80) || 'Dato da completare'
+      const found = fields.find((f) => f.label.toLowerCase() === clean.toLowerCase())
+      if (found) return `{{${found.id}}}`
+      if (fields.length >= MAX_FIELDS) return '____'
+      const field: DocField = { id: fieldIdFrom(clean, taken), label: clean[0].toUpperCase() + clean.slice(1), party: guessParty(clean) }
+      fields.push(field)
+      return `{{${field.id}}}`
+    })
+  const fix = (text: string) => legacy(text)
+  const next: StructuredDoc = {
+    ...doc,
+    title: fix(doc.title),
+    ...(doc.subtitle ? { subtitle: fix(doc.subtitle) } : {}),
+    meta: (doc.meta || []).map(fix),
+    sections: doc.sections.map((sec) => ({ ...sec, ...(sec.heading ? { heading: fix(sec.heading) } : {}), paragraphs: sec.paragraphs.map(fix), ...(sec.bullets ? { bullets: sec.bullets.map(fix) } : {}) })),
+    ...(doc.signatures ? { signatures: doc.signatures.map((sig) => ({ ...sig, label: fix(sig.label), ...(sig.name ? { name: fix(sig.name) } : {}) })) } : {}),
+  }
+  // {{id}} senza campo: si crea dall'id, cosi' nel PDF esce come spazio da compilare.
+  for (const id of docTexts(next).flatMap(fieldIdsIn)) {
+    if (taken.has(id) || fields.length >= MAX_FIELDS) continue
+    taken.add(id)
+    const label = id.replace(/_/g, ' ')
+    fields.push({ id, label: label[0].toUpperCase() + label.slice(1), party: guessParty(label) })
+  }
+  return fields.length ? { ...next, fields } : { ...next, fields: [] }
+}
+
 /** Documento valido e nei limiti, dal JSON dell'AI. null se manca l'essenziale. */
-export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDoc; fromChat: string[] } | null {
+export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDoc; fromChat: string[]; truncated?: boolean } | null {
   const title = cleanText(value.title, 140)
   const rawSections = Array.isArray(value.sections) ? value.sections : []
   let budget = MAX_DOC_CHARS
@@ -251,29 +354,38 @@ export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDo
     if (!raw || typeof raw !== 'object' || budget <= 0) continue
     const s = raw as Record<string, unknown>
     const heading = cleanText(s.heading ?? s.title, 160)
-    const paragraphs = take(strings(s.paragraphs ?? s.text ?? s.content, 25, 4000))
-    const bullets = take(strings(s.bullets ?? s.items, 30, 800))
+    // Le frasi di avviso legale non entrano mai nel documento: restano solo in chat.
+    const paragraphs = take(strings(s.paragraphs ?? s.text ?? s.content, 25, 4000).map(stripDisclaimer).filter(Boolean))
+    const bullets = take(strings(s.bullets ?? s.items, 30, 800).map(stripDisclaimer).filter(Boolean))
     if (!heading && !paragraphs.length && !bullets.length) continue
-    sections.push({ ...(heading ? { heading } : {}), paragraphs, ...(bullets.length ? { bullets } : {}) })
+    const approval = s.specific_approval === true || s.specificApproval === true
+    sections.push({ ...(heading ? { heading } : {}), paragraphs, ...(bullets.length ? { bullets } : {}), ...(approval ? { specificApproval: true } : {}) })
   }
   if (!title || !sections.length) return null
-  if (budget <= 0) sections.push({ paragraphs: ['[DA COMPLETARE: il documento era troppo lungo ed è stato accorciato: chiedi di dividerlo]'] })
+  // Troppo lungo: si accorcia senza scrivere avvisi nel documento (lo dice l'assistente in chat).
+  const truncated = budget <= 0
   const signatures: DocSignature[] = []
   for (const raw of (Array.isArray(value.signatures) ? value.signatures : []).slice(0, 4)) {
     if (!raw || typeof raw !== 'object') continue
-    const label = cleanText((raw as Record<string, unknown>).label, 80)
-    const name = cleanText((raw as Record<string, unknown>).name, 120)
-    if (label) signatures.push(name ? { label, name } : { label })
+    const r = raw as Record<string, unknown>
+    const label = cleanText(r.label, 80)
+    const name = cleanText(r.name, 120)
+    if (!label) continue
+    const party = r.party === 'creatore' || r.party === 'destinatario' ? r.party : /facevoice|fornitore/i.test(`${label} ${name}`) ? 'creatore' : 'destinatario'
+    signatures.push({ label, ...(name ? { name } : {}), party })
   }
   const subtitle = cleanText(value.subtitle, 200)
-  const doc: StructuredDoc = {
-    title,
-    ...(subtitle ? { subtitle } : {}),
-    meta: strings(value.meta, 8, 300),
-    sections,
-    ...(signatures.length ? { signatures } : {}),
-  }
-  return { doc, fromChat: strings(value.from_chat ?? value.fromChat, 15, 300) }
+  const doc: StructuredDoc = normalizeFields(
+    {
+      title,
+      ...(subtitle ? { subtitle } : {}),
+      meta: strings(value.meta, 8, 300).map(stripDisclaimer).filter(Boolean),
+      sections,
+      ...(signatures.length ? { signatures } : {}),
+    },
+    value.fields
+  )
+  return { doc, fromChat: strings(value.from_chat ?? value.fromChat, 15, 300), ...(truncated ? { truncated: true } : {}) }
 }
 
 // ---------------------------------------------------------------------
@@ -429,9 +541,9 @@ export const describeSource = (s: DocSource) =>
 
 const KIND_HINTS: Record<DocKind, string> = {
   contratto:
-    'Contratto di prestazione di servizi: parti (con i dati noti e segnaposto per quelli mancanti), premesse (cosa è stato concordato in chat), oggetto, durata e rinnovo, corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e uso dei materiali, riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, firme.',
+    'Contratto di prestazione di servizi: parti (con i dati noti e spazi da compilare per quelli mancanti), premesse (cosa è stato concordato in chat), oggetto, durata e rinnovo, corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e uso dei materiali, riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, firme.',
   preventivo:
-    'Preventivo: intestazione con i dati delle parti, oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti segnaposto), tempi di realizzazione, condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
+    'Preventivo: intestazione con i dati delle parti, oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti uno spazio da compilare), tempi di realizzazione, condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
   accordo:
     'Accordo tra le parti (collaborazione o riservatezza, secondo la richiesta): parti, premesse, oggetto, impegni di ciascuna parte, durata, riservatezza, dati personali, recesso, legge applicabile e foro competente, firme.',
   lettera:
@@ -443,17 +555,20 @@ function systemPrompt(kind: DocKind, today: string) {
   return `Prepari documenti scritti per Facevoice AI (agenzia di Luca Corrao): contratti, preventivi, accordi, lettere. Scrivi in italiano, con lo stile di un documento legale italiano ma con parole semplici e frasi chiare.
 
 Rispondi SOLO con un JSON valido, senza testo prima o dopo, in questo formato:
-{"title": "titolo del documento", "subtitle": "riga sotto il titolo, opzionale", "meta": ["Data: ...", "Tra: ...", "E: ..."], "sections": [{"heading": "1. Oggetto", "paragraphs": ["..."], "bullets": ["..."]}], "signatures": [{"label": "Per Facevoice AI", "name": "Luca Corrao"}, {"label": "Il Cliente", "name": "..."}], "from_chat": ["punto concordato nella conversazione", "..."]}
+{"title": "titolo del documento", "subtitle": "riga sotto il titolo, opzionale", "meta": ["Data: ...", "Tra: ...", "E: Giusy, codice fiscale {{cf_cliente}}"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["..."], "bullets": ["..."], "specific_approval": false}], "fields": [{"id": "cf_cliente", "label": "Codice fiscale", "party": "destinatario"}, {"id": "data_inizio", "label": "Data di inizio", "party": "entrambi"}], "signatures": [{"label": "Per Facevoice AI", "name": "Luca Corrao", "party": "creatore"}, {"label": "Il Cliente", "name": "...", "party": "destinatario"}], "from_chat": ["punto concordato nella conversazione", "..."]}
 
 Regole obbligatorie:
 - Usa SOLO i fatti presenti nella conversazione e nei dati dell'azienda che ti passo. Non aggiungere servizi, prezzi, date o condizioni che nessuno ha detto.
-- Non inventare MAI dati personali o economici: codici fiscali, partite IVA del cliente, indirizzi, numeri di documento, IBAN, date, scadenze, importi o prezzi non concordati. Al loro posto scrivi un segnaposto ben visibile, per esempio "[DA COMPLETARE: codice fiscale di Giusy]", "[DA COMPLETARE: importo mensile]", "[DA COMPLETARE: data di inizio]".
+- Non inventare MAI dati personali o economici: codici fiscali, partite IVA del cliente, indirizzi, numeri di documento, IBAN, date, scadenze, importi o prezzi non concordati. Per ognuno lascia uno SPAZIO DA COMPILARE: aggiungi un elemento in "fields" (id breve con lettere minuscole, numeri e _; label breve e chiara, es. "Codice fiscale"; party = chi lo compila: "creatore" per Facevoice AI, "destinatario" per l'altra parte, "entrambi" se lo decidono insieme) e nel testo scrivi {{id}} al posto del dato, per esempio "codice fiscale {{cf_cliente}}", "a partire dal {{data_inizio}}". Nel PDF lo spazio esce come una linea vuota da compilare a mano o al momento della firma.
+- MAI scrivere segnaposto come "[DA COMPLETARE …]", "XXX", "____" o "da definire" nel testo: usa sempre {{id}} con il suo campo. Metti "value" in un campo solo se il dato è scritto chiaramente nella conversazione.
+- Niente avvisi legali nel documento (niente "non sono un avvocato", niente "fai controllare da un professionista"): l'avviso resta solo in chat.
+- Metti "specific_approval": true sulle clausole che secondo gli artt. 1341 e 1342 c.c. vanno approvate per iscritto in modo specifico (es. limitazioni di responsabilità, recesso, tacito rinnovo, penali, foro competente); false sulle altre.
 - Inserisci le clausole abituali per questo tipo di documento. ${KIND_HINTS[kind]}
 - Nelle premesse (o in una sezione iniziale) di' chiaramente quali punti sono stati concordati nella conversazione, citando canale e data (es. "come concordato nella conversazione su Instagram del 5 novembre 2026"). Metti gli stessi punti, in breve, in "from_chat".
 - I messaggi "Noi" sono nostri (Facevoice AI), sia quelli automatici sia quelli scritti a mano: valgono allo stesso modo.
 - Numera le sezioni (1., 2., 3. …). Paragrafi brevi. Niente markdown, niente asterischi, niente emoji.
 - La data del documento è oggi: ${today}. Scrivi le date per esteso in italiano (es. 7 novembre 2026).
-- Il nome del cliente è quello della conversazione; se manca il cognome usa un segnaposto per il nome completo.`
+- Il nome del cliente è quello della conversazione; se manca il cognome aggiungi uno spazio da compilare per il nome completo.`
 }
 
 function businessBlock(knowledge: string) {
@@ -467,7 +582,9 @@ function businessBlock(knowledge: string) {
 
 const FIX_FORMAT = 'Il messaggio precedente non era un JSON valido del documento. Rispondi di nuovo SOLO con il JSON del documento intero, nel formato indicato, senza nient’altro.'
 
-async function askDocument(system: string, user: string): Promise<{ doc: StructuredDoc; fromChat: string[] }> {
+type Written = { doc: StructuredDoc; fromChat: string[]; truncated?: boolean }
+
+async function askDocument(system: string, user: string): Promise<Written> {
   const accept = (v: Record<string, unknown>) => typeof v.title === 'string' && Array.isArray(v.sections)
   const messages: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: user }]
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -490,7 +607,7 @@ export async function writeDocument(input: {
   instructions: string
   transcript: Transcript | null
   knowledge: string
-}): Promise<{ doc: StructuredDoc; fromChat: string[] }> {
+}): Promise<Written> {
   const t = input.transcript
   const user = [
     `Tipo di documento: ${input.kind}`,
@@ -499,7 +616,7 @@ export async function writeDocument(input: {
     businessBlock(input.knowledge),
     t
       ? `Conversazione con ${t.source.name} su ${PLATFORM_LABEL[t.source.platform] || t.source.platform} (${t.source.messages} messaggi, in ordine, ora italiana):\n${t.text}`
-      : 'Nessuna conversazione collegata: usa solo la richiesta di Luca e i dati dell’azienda, con segnaposto per tutto il resto.',
+      : 'Nessuna conversazione collegata: usa solo la richiesta di Luca e i dati dell’azienda, con spazi da compilare ({{id}} e "fields") per tutto il resto.',
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -513,17 +630,25 @@ export async function reviseDocument(input: {
   instructions: string
   transcript: Transcript | null
   knowledge: string
-}): Promise<{ doc: StructuredDoc; fromChat: string[] }> {
+}): Promise<Written> {
   const { footer: _footer, ...current } = input.current
   const t = input.transcript
   const user = [
     `Documento attuale (JSON):\n${JSON.stringify(current).slice(0, 70_000)}`,
     `Modifica chiesta da Luca: ${input.instructions}`,
-    'Restituisci il documento INTERO con la modifica, nello stesso formato JSON. Lascia identico tutto quello che Luca non ha chiesto di cambiare (stessa numerazione, salvo che aggiungere o togliere una clausola la sposti). Le regole sui dati da non inventare valgono anche qui: per un dato nuovo che non è nella conversazione usa un segnaposto [DA COMPLETARE: …].',
+    'Restituisci il documento INTERO con la modifica, nello stesso formato JSON. Lascia identico tutto quello che Luca non ha chiesto di cambiare (stessa numerazione, salvo che aggiungere o togliere una clausola la sposti). Tieni gli stessi "fields" e gli stessi {{id}} nel testo (con i loro valori). Le regole sui dati da non inventare valgono anche qui: per un dato nuovo che non è nella conversazione aggiungi un campo in "fields" e scrivi {{id}} nel testo, mai segnaposto come [DA COMPLETARE].',
     businessBlock(input.knowledge),
     t ? `Conversazione di riferimento con ${t.source.name} su ${PLATFORM_LABEL[t.source.platform] || t.source.platform}:\n${t.text}` : '',
   ]
     .filter(Boolean)
     .join('\n\n')
-  return askDocument(systemPrompt(input.kind, todayText()), user)
+  const written = await askDocument(systemPrompt(input.kind, todayText()), user)
+  return { ...written, doc: carryFieldValues(written.doc, input.current) }
+}
+
+/** Valori gia' compilati che l'AI ha perso riscrivendo: tornano sullo stesso campo (stesso id). */
+export function carryFieldValues(next: StructuredDoc, previous: StructuredDoc): StructuredDoc {
+  const old = new Map((previous.fields || []).filter((f) => f.value?.trim()).map((f) => [f.id, f.value!]))
+  if (!old.size || !next.fields?.length) return next
+  return { ...next, fields: next.fields.map((f) => (!f.value?.trim() && old.has(f.id) ? { ...f, value: old.get(f.id) } : f)) }
 }

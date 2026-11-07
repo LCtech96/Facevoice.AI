@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Clock, RefreshCw, Search, Sparkles, Users, X } from 'lucide-react'
+import { Clock, FileText, Printer, RefreshCw, Search, ShieldAlert, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
@@ -20,14 +20,21 @@ import {
   hasUsage,
   planLabelFor,
   planPriceEur,
+  romeDateTime,
+  shortUserAgent,
   shownFor,
   subscriptionBadge,
   subscriptionPlanLabel,
   subscriptionStatusLabel,
   subscriptionSummary,
+  termsPrintHtml,
+  termsStatus,
+  termsTextFrom,
   usageFromOthersSpaces,
   type BetaAutomations,
   type BetaSubscription,
+  type BetaTerms,
+  type BetaTermsText,
   type BetaUser,
   type BetaUsersResponse,
   type LightMode,
@@ -43,6 +50,8 @@ import { ATTRIBUTION_LABEL, ATTRIBUTION_RULE, formatMoney, userPlacesShare, type
 // quale gettone vede (verde, arancione, rosso).
 // Dalla scheda l'admin accende o spegne anche la chat Assistente della beta
 // e mostra o nasconde la pagina Automazioni.
+// Termini e condizioni: nella lista un piccolo "Termini ✓ / ✗"; nella scheda quando, con quale
+// versione, da quale IP e dispositivo li ha accettati, e il testo esatto accettato (da stampare).
 // ?u=<id> apre subito la scheda di quell'utente (link delle notifiche).
 
 const LIGHTS = [
@@ -264,6 +273,23 @@ function AutomationsChip({ automations, spaces }: { automations: BetaAutomations
   )
 }
 
+/** Nella lista: termini e condizioni accettati (versione in vigore), di una versione precedente o mai. */
+function TermsChip({ terms, currentVersion }: { terms: BetaTerms | null | undefined; currentVersion?: string }) {
+  const status = termsStatus(terms, currentVersion)
+  if (status === 'unknown') return null
+  const look =
+    status === 'ok'
+      ? { text: 'Termini ✓', cls: 'bg-[#34C759]/15 text-[#34C759]', title: 'Ha accettato i termini in vigore' }
+      : status === 'old'
+        ? { text: 'Termini: versione vecchia', cls: 'bg-[#FF9500]/15 text-[#FF9500]', title: 'Ha accettato una versione precedente dei termini' }
+        : { text: 'Termini ✗', cls: 'bg-[#FF3B30]/15 text-[#FF3B30]', title: 'Non ha accettato i termini' }
+  return (
+    <span title={look.title} className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${look.cls}`}>
+      {look.text}
+    </span>
+  )
+}
+
 /** Riga con interruttore della scheda (Assistente AI, Automazioni): salva subito. */
 function SwitchRow({
   id,
@@ -472,6 +498,9 @@ export default function UtentiClient() {
   const withAssistant = users.filter((u) => u.assistant?.enabled).length
   const automationsKnown = users.some((u) => u.automations)
   const withAutomations = users.filter((u) => u.automations?.enabled).length
+  // Solo se la beta manda gia' le accettazioni dei termini.
+  const termsKnown = users.some((u) => u.terms !== undefined)
+  const withoutTerms = users.filter((u) => termsStatus(u.terms, data?.termsVersion) !== 'ok' && u.terms !== undefined).length
 
   const updateUser = (id: string, patch: Partial<BetaUser>) =>
     setData((d) => (d ? { ...d, users: d.users.map((u) => (u.id === id ? { ...u, ...patch } : u)) } : d))
@@ -499,7 +528,8 @@ export default function UtentiClient() {
               {users.length} {users.length === 1 ? 'utente' : 'utenti'} · {using} con consumi · {blocked}{' '}
               {blocked === 1 ? 'bloccato' : 'bloccati'}
               {assistantKnown && ` · ${withAssistant} con l’assistente`}
-              {automationsKnown && ` · ${withAutomations} con le automazioni`} · aggiornato {dateTime(data.updatedAt)}
+              {automationsKnown && ` · ${withAutomations} con le automazioni`}
+              {termsKnown && ` · ${withoutTerms} senza i termini in vigore`} · aggiornato {dateTime(data.updatedAt)}
             </p>
           )}
           {subs && (
@@ -575,9 +605,10 @@ export default function UtentiClient() {
                   <Badges user={user} />
                 </div>
                 <p className="truncate text-xs text-[var(--text-secondary)]">{user.email}</p>
-                {(user.subscription !== undefined || user.assistant?.enabled || user.automations?.enabled) && (
+                {(user.subscription !== undefined || user.assistant?.enabled || user.automations?.enabled || user.terms !== undefined) && (
                   <div className="mt-1 flex min-w-0 flex-wrap gap-1">
                     <SubscriptionBadge user={user} />
+                    <TermsChip terms={user.terms} currentVersion={data?.termsVersion} />
                     {user.assistant?.enabled && <AssistantChip />}
                     {user.automations?.enabled && <AutomationsChip automations={user.automations} spaces={automationsSpaces(user.workspaces)} />}
                   </div>
@@ -611,7 +642,14 @@ export default function UtentiClient() {
       )}
 
       {selected && data && (
-        <UserSheet user={selected} places={places} usersOk={usersOk} onClose={close} onSaved={(patch) => updateUser(selected.id, patch)} />
+        <UserSheet
+          user={selected}
+          places={places}
+          usersOk={usersOk}
+          termsVersion={data.termsVersion}
+          onClose={close}
+          onSaved={(patch) => updateUser(selected.id, patch)}
+        />
       )}
     </div>
   )
@@ -621,6 +659,7 @@ function UserSheet({
   user,
   places,
   usersOk = 0,
+  termsVersion,
   onClose,
   onSaved,
 }: {
@@ -628,6 +667,8 @@ function UserSheet({
   places: PlacesAttribution | null
   /** Richieste Places riuscite del mese di tutti i titolari. */
   usersOk?: number
+  /** Versione dei termini in vigore sulla beta (se la manda). */
+  termsVersion?: string
   onClose: () => void
   onSaved: (patch: Partial<BetaUser>) => void
 }) {
@@ -637,6 +678,7 @@ function UserSheet({
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const [automationsSaving, setAutomationsSaving] = useState(false)
   const [automationsError, setAutomationsError] = useState<string | null>(null)
+  const [termsOpen, setTermsOpen] = useState(false)
   const mode: LightMode = user.override ?? 'auto'
 
   useEffect(() => {
@@ -654,6 +696,7 @@ function UserSheet({
     setSaveError(null)
     setAssistantError(null)
     setAutomationsError(null)
+    setTermsOpen(false)
   }, [user.id])
 
   const choose = async (next: LightMode) => {
@@ -788,6 +831,9 @@ function UserSheet({
           </div>
           {user.subscription !== undefined && <SubscriptionRow sub={user.subscription} />}
         </div>
+
+        {user.terms !== undefined && <TermsRow terms={user.terms} currentVersion={termsVersion} onOpen={() => setTermsOpen(true)} />}
+        {termsOpen && user.terms && <TermsSheet user={user} terms={user.terms} onClose={() => setTermsOpen(false)} />}
 
         {user.assistant && (
           <SwitchRow
@@ -938,6 +984,234 @@ function UserSheet({
         <p className="mt-5 text-[11px] text-[var(--text-secondary)]">
           Iscritto il {date(user.createdAt)} · ultimo accesso {user.lastSignInAt ? date(user.lastSignInAt) : 'mai'}
         </p>
+      </div>
+    </div>
+  )
+}
+
+/** Riga "Termini e condizioni" della scheda: quando, versione, IP e dispositivo; avviso se mancano. */
+function TermsRow({ terms, currentVersion, onOpen }: { terms: BetaTerms | null; currentVersion?: string; onOpen: () => void }) {
+  if (!terms) {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 p-3">
+        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#FF3B30]" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-[var(--text-primary)]">Termini e condizioni non accettati</p>
+          <p className="text-xs text-[var(--text-secondary)]">
+            Non risulta nessuna accettazione. Al prossimo accesso la beta gli chiede di accettarli e non può usare l’area clienti finché non lo fa.
+          </p>
+        </div>
+      </div>
+    )
+  }
+  const old = termsStatus(terms, currentVersion) === 'old'
+  return (
+    <div className="mt-3 rounded-xl bg-[var(--background)] p-3">
+      <div className="flex items-start gap-2">
+        <ShieldCheck className={`mt-0.5 h-4 w-4 shrink-0 ${old ? 'text-[#FF9500]' : 'text-[#34C759]'}`} aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-xs text-[var(--text-secondary)]">Termini e condizioni</p>
+          <p className="break-words text-sm text-[var(--text-primary)]">
+            Termini accettati il {romeDateTime(terms.acceptedAt)} (ora di Roma), versione {terms.version}, IP {terms.ip || 'non registrato'}, dispositivo{' '}
+            {shortUserAgent(terms.userAgent)}
+          </p>
+          {old && (
+            <p className="mt-1 text-xs text-[#FF9500]">
+              Non ha ancora accettato la versione in vigore{currentVersion ? ` (${currentVersion})` : ''}: gliela chiediamo al prossimo accesso.
+            </p>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="mt-2 inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[var(--border-color)] px-3 py-2 text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--background-secondary)]"
+      >
+        <FileText className="h-4 w-4" aria-hidden="true" /> Vedi i termini accettati
+      </button>
+    </div>
+  )
+}
+
+/** Il testo dei termini in blocchi leggibili: titolo, intestazioni "N. ...", elenchi "- ", paragrafi. */
+function TermsText({ text }: { text: string }) {
+  const lines = text.split('\n')
+  const out: ReactNode[] = []
+  let list: string[] = []
+  const flush = () => {
+    if (!list.length) return
+    const items = list
+    list = []
+    out.push(
+      <ul key={`l${out.length}`} className="mt-2 list-disc space-y-1 pl-5">
+        {items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
+    )
+  }
+  lines.forEach((raw, i) => {
+    const line = raw.trim()
+    if (line.startsWith('- ')) return void list.push(line.slice(2))
+    flush()
+    if (!line) return
+    if (i === 0) out.push(<p key={i} className="text-base font-semibold text-[var(--text-primary)]">{line}</p>)
+    else if (/^\d{1,2}\.\s/.test(line)) out.push(<p key={i} className="mt-4 font-semibold text-[var(--text-primary)]">{line}</p>)
+    else out.push(<p key={i} className="mt-2">{line}</p>)
+  })
+  flush()
+  return <>{out}</>
+}
+
+/** Foglio con il testo esatto accettato (letto dalla beta), le caselle spuntate e "Stampa". */
+function TermsSheet({ user, terms, onClose }: { user: BetaUser; terms: BetaTerms; onClose: () => void }) {
+  const [doc, setDoc] = useState<BetaTermsText | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [printError, setPrintError] = useState<string | null>(null)
+
+  // Esc chiude solo questo foglio (non la scheda sotto).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  useEffect(() => {
+    let alive = true
+    setDoc(null)
+    setError(null)
+    ;(async () => {
+      try {
+        const token = await getAccessToken()
+        if (!token) throw new Error('Sessione scaduta: accedi di nuovo.')
+        const res = await fetch(`/api/admin/utenti/termini?version=${encodeURIComponent(terms.version)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const json = await res.json().catch(() => null)
+        if (!res.ok) throw new Error(json?.error || 'Testo dei termini non disponibile.')
+        const parsed = termsTextFrom(json)
+        if (!parsed) throw new Error('Testo dei termini non valido.')
+        if (alive) setDoc(parsed)
+      } catch (e) {
+        if (alive) setError(e instanceof TypeError ? 'Connessione non riuscita: riprova.' : e instanceof Error ? e.message : 'Testo dei termini non disponibile.')
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [terms.version])
+
+  const verified = doc && terms.textHash ? terms.textHash === doc.hash : null
+  const items = terms.items.length ? terms.items : doc?.items ?? []
+
+  const print = () => {
+    if (!doc) return
+    setPrintError(null)
+    const win = window.open('', '_blank')
+    if (!win) return setPrintError('Il browser ha bloccato la nuova finestra: consenti i popup per questo sito e riprova.')
+    win.opener = null
+    win.document.open()
+    win.document.write(termsPrintHtml({ name: user.name, email: user.email, terms, doc }))
+    win.document.close()
+    win.focus()
+    win.print()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="termini-titolo"
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-t-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] shadow-2xl sm:rounded-2xl"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border-color)] p-4">
+          <div className="min-w-0">
+            <h2 id="termini-titolo" className="text-base font-semibold text-[var(--text-primary)]">
+              Termini accettati da {user.name}
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Versione {terms.version} · {romeDateTime(terms.acceptedAt)} · IP {terms.ip || 'non registrato'}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Chiudi" className="shrink-0 rounded-lg p-1 text-[var(--text-secondary)] hover:bg-[var(--background)]">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm leading-relaxed text-[var(--text-secondary)]">
+          <div className="rounded-xl bg-[var(--background)] p-3 text-xs">
+            <p>
+              <span className="text-[var(--text-primary)]">Email:</span> {terms.email || user.email}
+            </p>
+            <p className="break-words">
+              <span className="text-[var(--text-primary)]">Dispositivo:</span> {shortUserAgent(terms.userAgent)}
+              {terms.userAgent ? ` — ${terms.userAgent}` : ''}
+            </p>
+            <p>
+              <span className="text-[var(--text-primary)]">Dove:</span>{' '}
+              {terms.source === 'signup' ? 'alla registrazione' : terms.source === 'gate' ? 'all’ingresso nell’area clienti' : '—'}
+            </p>
+          </div>
+
+          {items.length > 0 && (
+            <>
+              <p className="mt-4 text-sm font-semibold text-[var(--text-primary)]">Caselle spuntate</p>
+              <ul className="mt-1 space-y-1">
+                {items.map((item, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-[#34C759]" aria-hidden="true">
+                      ✓
+                    </span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <p className="mt-4 text-sm font-semibold text-[var(--text-primary)]">Testo esatto</p>
+          {error ? (
+            <p className="mt-1 text-[#FF3B30]">{error}</p>
+          ) : !doc ? (
+            <p className="mt-1">Caricamento…</p>
+          ) : (
+            <>
+              <p className={`mt-1 break-all text-[11px] ${verified === false ? 'text-[#FF3B30]' : ''}`}>
+                Impronta SHA-256: {doc.hash}{' '}
+                {verified === true
+                  ? '· verificata: il testo è identico a quello accettato'
+                  : verified === false
+                    ? '· DIVERSA da quella registrata all’accettazione'
+                    : ''}
+              </p>
+              <div translate="no" className="mt-3 rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-4">
+                <TermsText text={doc.text} />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border-color)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
+          {printError && <p className="mr-auto text-xs text-[#FF3B30]">{printError}</p>}
+          <button
+            type="button"
+            onClick={print}
+            disabled={!doc}
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent-blue)] px-4 py-2 text-sm text-white disabled:opacity-50"
+          >
+            <Printer className="h-4 w-4" aria-hidden="true" /> Stampa
+          </button>
+          <button type="button" onClick={onClose} className="rounded-lg border border-[var(--border-color)] px-4 py-2 text-sm text-[var(--text-primary)]">
+            Chiudi
+          </button>
+        </div>
       </div>
     </div>
   )

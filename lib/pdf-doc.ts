@@ -3,11 +3,25 @@
 // (Type1, WinAnsiEncoding: lettere accentate italiane, €, virgolette curve,
 // trattini, «»). A capo con le larghezze vere dei caratteri (tabelle AFM di
 // Helvetica), salto pagina automatico (un titolo non resta mai da solo in
-// fondo alla pagina), "Pagina N di M" e la frase di avviso in fondo a ogni pagina.
-// I segnaposto "[DA COMPLETARE: …]" escono in grassetto e colorati.
+// fondo alla pagina), "Pagina N di M" e un piede opzionale.
+// Dati mancanti: niente segnaposto nel testo. Sono "spazi da compilare" (fields):
+// nel testo c'e' {{id}}; compilato esce il valore, vuoto esce "Etichetta: ________"
+// (una linea lunga per scrivere a mano). Firme disegnate col dito come tracciati
+// vettoriali, scritta leggera "BOZZA – non firmato" e pagine finali (registro firme).
 
-export type DocSection = { heading?: string; paragraphs: string[]; bullets?: string[] }
-export type DocSignature = { label: string; name?: string }
+/** Chi compila lo spazio: chi crea il documento, chi lo riceve, o tutti e due. */
+export type FieldParty = 'creatore' | 'destinatario' | 'entrambi'
+export type DocField = { id: string; label: string; party: FieldParty; value?: string }
+export type DocSection = {
+  heading?: string
+  paragraphs: string[]
+  bullets?: string[]
+  /** Clausola da approvare in modo specifico (artt. 1341 e 1342 c.c.). */
+  specificApproval?: boolean
+}
+/** Firma disegnata: tratti con punti x,y,x,y… da 0 a 1000 nel riquadro (largo 3 volte l'altezza). */
+export type DrawnSignature = { name: string; at: string; strokes: number[][] }
+export type DocSignature = { label: string; name?: string; party?: 'creatore' | 'destinatario'; signed?: DrawnSignature }
 export type StructuredDoc = {
   title: string
   subtitle?: string
@@ -15,8 +29,100 @@ export type StructuredDoc = {
   meta?: string[]
   sections: DocSection[]
   signatures?: DocSignature[]
+  /** Spazi da compilare (dati che nessuno ha detto): mai inventati. */
+  fields?: DocField[]
+  /** Pagine dopo le firme (es. registro delle firme), su una pagina nuova. */
+  appendix?: DocSection[]
   /** Avviso breve stampato in fondo a ogni pagina. */
   footer?: string
+}
+
+// ---------------------------------------------------------------------
+// Spazi da compilare
+// ---------------------------------------------------------------------
+
+export const FIELD_ID_RE = /^[a-z0-9_]{1,40}$/
+const FIELD_TOKEN = /\{\{\s*([a-z0-9_]{1,40})\s*\}\}/g
+/** Vecchi segnaposto dei documenti di prima: escono come spazio vuoto, mai come testo. */
+const LEGACY_PLACEHOLDER = /\[DA COMPLETARE\s*:?\s*([^\]]*)\]/gi
+/** Linea vuota: abbastanza lunga per scrivere a mano (circa 5 cm). */
+export const BLANK_LINE = '_'.repeat(26)
+
+export type TextPart = { text: string; field?: { id: string; label: string; filled: boolean } }
+
+const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+const squashLabel = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+
+/** Id dei campi citati nel testo (anche quelli che non esistono). */
+export function fieldIdsIn(text: string): string[] {
+  return [...String(text ?? '').matchAll(FIELD_TOKEN)].map((m) => m[1])
+}
+
+/**
+ * Testo diviso in pezzi: testo normale e spazi da compilare. Compilato: il valore.
+ * Vuoto: "Etichetta: ________"; se l'etichetta e' scritta appena prima ("codice
+ * fiscale {{cf}}") solo la linea, per non ripeterla.
+ */
+export function fieldParts(text: string, fields: DocField[] | undefined): TextPart[] {
+  const byId = new Map((fields || []).map((f) => [f.id, f]))
+  const parts: TextPart[] = []
+  let plain = ''
+  const blank = (id: string, label: string) => {
+    // Etichetta gia' scritta appena prima ("codice fiscale {{cf}}", "su IBAN {{iban}}", "foro di {{foro}}"): solo la linea.
+    const wanted = squashLabel(label)
+    const before = squashLabel(plain.slice(-label.length - 12))
+    const lastWords = squashLabel(plain.slice(-60)).split(' ').slice(-3)
+    const firstWord = wanted.split(' ')[0] || ''
+    const repeated = Boolean(wanted) && (before.endsWith(wanted) || (firstWord.length >= 4 && lastWords.includes(firstWord)))
+    const out = repeated ? BLANK_LINE : `${capitalize(label)}: ${BLANK_LINE}`
+    if (plain) parts.push({ text: plain })
+    plain = ''
+    parts.push({ text: out, field: { id, label, filled: false } })
+  }
+  const source = String(text ?? '')
+  const re = new RegExp(`${FIELD_TOKEN.source}|${LEGACY_PLACEHOLDER.source}`, 'gi')
+  let last = 0
+  for (let m = re.exec(source); m; m = re.exec(source)) {
+    plain += source.slice(last, m.index)
+    last = m.index + m[0].length
+    if (m[1] !== undefined) {
+      const field = byId.get(m[1])
+      const value = field?.value?.trim()
+      if (field && value) {
+        if (plain) parts.push({ text: plain })
+        plain = ''
+        parts.push({ text: value, field: { id: field.id, label: field.label, filled: true } })
+      } else blank(m[1], field?.label || m[1].replace(/_/g, ' '))
+    } else blank('', (m[2] || '').trim() || 'dato')
+  }
+  plain += source.slice(last)
+  if (plain) parts.push({ text: plain })
+  return parts
+}
+
+/** Testo finale (uguale nel PDF e nella pagina web). */
+export function fillText(text: string, fields: DocField[] | undefined): string {
+  return fieldParts(text, fields)
+    .map((p) => p.text)
+    .join('')
+}
+
+/** Tutti i testi del documento (per cercare i campi usati). */
+export function docTexts(doc: Pick<StructuredDoc, 'title' | 'subtitle' | 'meta' | 'sections' | 'signatures'>): string[] {
+  return [doc.title, doc.subtitle || '', ...(doc.meta || []), ...doc.sections.flatMap((s) => [s.heading || '', ...(s.paragraphs || []), ...(s.bullets || [])]), ...(doc.signatures || []).flatMap((s) => [s.label, s.name || ''])]
+}
+
+/** Campi che il testo non cita: vanno in un riquadro "Dati delle parti" prima delle firme. */
+export function unplacedFields(doc: StructuredDoc): DocField[] {
+  const used = new Set(docTexts(doc).flatMap(fieldIdsIn))
+  return (doc.fields || []).filter((f) => !used.has(f.id))
+}
+
+/** Etichette degli spazi ancora vuoti (per la scheda e per l'assistente). */
+export function emptyFieldLabels(doc: StructuredDoc): string[] {
+  const out: string[] = []
+  for (const f of doc.fields || []) if (!f.value?.trim() && !out.includes(f.label)) out.push(f.label)
+  return out
 }
 
 // Larghezze AFM (millesimi di em) dei codici WinAnsi da 32 a 255.
@@ -297,26 +403,62 @@ function footerOps(footer: string, page: number, total: number): string {
   return ops.join('\n')
 }
 
-/** Firme: due per riga, con lo spazio per firmare e il nome sotto la linea. */
-function signatureOps(signatures: DocSignature[], startY: number): { ops: string[]; height: number }[] {
+/** Data e ora italiane per le firme. */
+const romeStamp = (iso: string) =>
+  new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+/** Riquadro della firma disegnata: largo 3 volte l'altezza (come sul telefono). */
+const SIG_BOX_H = 46
+
+/** Tratti della firma come linee vettoriali dentro il riquadro (y del PDF verso l'alto). */
+function strokeOps(strokes: number[][], x: number, bottomY: number, maxW: number): string[] {
+  const h = SIG_BOX_H
+  const w = Math.min(maxW, h * 3)
+  const ops: string[] = ['q', '0.1 0.16 0.45 RG 1.3 w 1 J 1 j']
+  for (const stroke of strokes.slice(0, 80)) {
+    const pts: [number, number][] = []
+    for (let i = 0; i + 1 < stroke.length; i += 2) {
+      const px = Math.min(1000, Math.max(0, Number(stroke[i]) || 0))
+      const py = Math.min(1000, Math.max(0, Number(stroke[i + 1]) || 0))
+      pts.push([x + (px / 1000) * w, bottomY + h - (py / 1000) * h])
+    }
+    if (!pts.length) continue
+    const path = [`${num(pts[0][0])} ${num(pts[0][1])} m`]
+    if (pts.length === 1) path.push(`${num(pts[0][0] + 0.6)} ${num(pts[0][1])} l`)
+    for (const [px, py] of pts.slice(1)) path.push(`${num(px)} ${num(py)} l`)
+    ops.push(`${path.join(' ')} S`)
+  }
+  ops.push('Q')
+  return ops
+}
+
+/** Firme: due per riga, con lo spazio per firmare (o la firma disegnata) e il nome sotto la linea. */
+function signatureOps(signatures: DocSignature[], startY: number, fields?: DocField[]): { ops: string[]; height: number }[] {
   const rows: { ops: string[]; height: number }[] = []
   const colW = (CONTENT_W - 30) / 2
   for (let i = 0; i < signatures.length; i += 2) {
     const ops: string[] = []
     let height = 92
-    signatures.slice(i, i + 2).forEach((sig, k) => {
+    const pair = signatures.slice(i, i + 2)
+    // Con una firma disegnata nella riga, piu' spazio sopra la linea per tutte e due.
+    const gap = pair.some((s) => s.signed?.strokes?.length) ? SIG_BOX_H + 10 : 34
+    pair.forEach((sig, k) => {
       const x = MARGIN_X + k * (colW + 30)
-      // Tutte le righe (anche i segnaposto lunghi): la riga di firme si allunga.
-      const label = wrapText(sig.label, colW, true, 10)
+      // Tutte le righe (anche le etichette lunghe): la riga di firme si allunga.
+      const label = wrapText(fillText(sig.label, fields), colW, true, 10)
       label.forEach((line, n) => ops.push(drawLine(line, x, startY - 12 - n * 13, { bold: true, size: 10, color: TEXT_COLOR }, 0)))
-      const lineY = startY - 12 - (Math.max(1, label.length) - 1) * 13 - 34
+      const lineY = startY - 12 - (Math.max(1, label.length) - 1) * 13 - gap
+      if (sig.signed?.strokes?.length) ops.push(...strokeOps(sig.signed.strokes, x + 4, lineY + 3, colW - 8))
       ops.push(`0.25 0.25 0.28 RG 0.6 w ${num(x)} ${num(lineY)} m ${num(x + colW)} ${num(lineY)} l S`)
       let bottom = startY - lineY
-      if (sig.name) {
-        const name = wrapText(sig.name, colW, false, 9.5)
-        name.forEach((line, n) => ops.push(drawLine(line, x, lineY - 13 - n * 12, { bold: false, size: 9.5, color: GRAY }, 0)))
-        if (name.length) bottom += 13 + (name.length - 1) * 12
+      const under = [sig.signed ? sig.signed.name : sig.name ? fillText(sig.name, fields) : '', sig.signed ? `Firmato il ${romeStamp(sig.signed.at)}` : ''].filter(Boolean)
+      let offset = 13
+      for (const text of under) {
+        const lines = wrapText(text, colW, false, 9.5)
+        lines.forEach((line, n) => ops.push(drawLine(line, x, lineY - offset - n * 12, { bold: false, size: 9.5, color: GRAY }, 0)))
+        offset += lines.length * 12
       }
+      if (under.length) bottom += offset - 12
       height = Math.max(height, bottom + 8)
     })
     rows.push({ ops, height })
@@ -324,26 +466,39 @@ function signatureOps(signatures: DocSignature[], startY: number): { ops: string
   return rows
 }
 
-/** Pagine con i comandi di disegno (senza piede). */
-function layout(doc: StructuredDoc): Page[] {
+/** Blocchi di testo delle sezioni (campi gia' sostituiti). */
+function sectionBlocks(sections: DocSection[], fields?: DocField[]): Block[] {
   const blocks: Block[] = []
-  blocks.push(block(doc.title || 'Documento', { bold: true, size: 17, leading: 22, before: 0, indent: 0, align: 'center', color: TEXT_COLOR }))
-  if (doc.subtitle?.trim()) blocks.push(block(doc.subtitle, { bold: false, size: 11, leading: 15, before: 4, indent: 0, align: 'center', color: GRAY }))
-  const meta = (doc.meta || []).filter((m) => m?.trim())
-  meta.forEach((m, i) => blocks.push(block(m, { bold: false, size: 10, leading: 14, before: i === 0 ? 14 : 0, indent: 0, align: 'left', color: TEXT_COLOR })))
-  blocks.push({ lines: [], bold: false, size: 10, leading: 0, before: 10, indent: 0, align: 'left', color: TEXT_COLOR, rule: true })
-
-  for (const section of doc.sections || []) {
+  for (const section of sections || []) {
     if (section.heading?.trim()) {
-      blocks.push(block(section.heading, { bold: true, size: 12, leading: 16, before: 16, indent: 0, align: 'left', color: TEXT_COLOR, keepWithNext: true }))
+      blocks.push(block(fillText(section.heading, fields), { bold: true, size: 12, leading: 16, before: 16, indent: 0, align: 'left', color: TEXT_COLOR, keepWithNext: true }))
     }
     for (const p of section.paragraphs || []) {
-      if (p?.trim()) blocks.push(block(p, { bold: false, size: 10.5, leading: 15, before: 6, indent: 0, align: 'justify', color: TEXT_COLOR }))
+      if (p?.trim()) blocks.push(block(fillText(p, fields), { bold: false, size: 10.5, leading: 15, before: 6, indent: 0, align: 'justify', color: TEXT_COLOR }))
     }
     for (const b of section.bullets || []) {
-      if (b?.trim()) blocks.push(block(b, { bold: false, size: 10.5, leading: 15, before: 3, indent: 16, align: 'justify', color: TEXT_COLOR, bullet: true }))
+      if (b?.trim()) blocks.push(block(fillText(b, fields), { bold: false, size: 10.5, leading: 15, before: 3, indent: 16, align: 'justify', color: TEXT_COLOR, bullet: true }))
     }
   }
+  return blocks
+}
+
+/** Titolo del riquadro con gli spazi che il testo non cita. */
+export const UNPLACED_HEADING = 'Dati delle parti'
+
+/** Pagine con i comandi di disegno (senza piede). */
+function layout(doc: StructuredDoc): Page[] {
+  const fields = doc.fields
+  const blocks: Block[] = []
+  blocks.push(block(fillText(doc.title || 'Documento', fields), { bold: true, size: 17, leading: 22, before: 0, indent: 0, align: 'center', color: TEXT_COLOR }))
+  if (doc.subtitle?.trim()) blocks.push(block(fillText(doc.subtitle, fields), { bold: false, size: 11, leading: 15, before: 4, indent: 0, align: 'center', color: GRAY }))
+  const meta = (doc.meta || []).filter((m) => m?.trim())
+  meta.forEach((m, i) => blocks.push(block(fillText(m, fields), { bold: false, size: 10, leading: 14, before: i === 0 ? 14 : 0, indent: 0, align: 'left', color: TEXT_COLOR })))
+  blocks.push({ lines: [], bold: false, size: 10, leading: 0, before: 10, indent: 0, align: 'left', color: TEXT_COLOR, rule: true })
+  blocks.push(...sectionBlocks(doc.sections, fields))
+  // Spazi che il testo non cita: una riga ciascuno, prima delle firme.
+  const loose = unplacedFields(doc)
+  if (loose.length) blocks.push(...sectionBlocks([{ heading: UNPLACED_HEADING, paragraphs: loose.map((f) => fillText(`{{${f.id}}}`, fields)) }], fields))
 
   const pages: Page[] = [[]]
   let y = TOP
@@ -354,47 +509,50 @@ function layout(doc: StructuredDoc): Page[] {
   }
   const page = () => pages[pages.length - 1]
 
-  blocks.forEach((b, index) => {
-    if (b.rule) {
-      if (!atTop()) {
-        y -= b.before
-        page().push(`0.82 0.82 0.85 RG 0.6 w ${MARGIN_X} ${num(y)} m ${num(PAGE_W - MARGIN_X)} ${num(y)} l S`)
-        y -= 4
+  const place = (list: Block[]) =>
+    list.forEach((b, index) => {
+      if (b.rule) {
+        if (!atTop()) {
+          y -= b.before
+          page().push(`0.82 0.82 0.85 RG 0.6 w ${MARGIN_X} ${num(y)} m ${num(PAGE_W - MARGIN_X)} ${num(y)} l S`)
+          y -= 4
+        }
+        return
       }
-      return
-    }
-    if (!b.lines.length) return
-    // Spazio che serve ora: il titolo con l'inizio del blocco dopo, gli altri almeno due righe.
-    let need = b.before + (b.keepWithNext ? b.lines.length * b.leading + (blocks[index + 1]?.before ?? 0) + minLines(blocks[index + 1]) * (blocks[index + 1]?.leading ?? 0) : minLines(b) * b.leading)
-    if (b.keepWithNext && need > TOP - BOTTOM) need = b.before + b.lines.length * b.leading
-    if (y - need < BOTTOM && !atTop()) newPage()
-    if (!atTop()) y -= b.before
-    b.lines.forEach((line, i) => {
-      if (y - b.leading < BOTTOM) newPage()
-      y -= b.leading
-      const baseline = y + (b.leading - b.size) / 2 + 1
-      const width = CONTENT_W - b.indent
-      let x = MARGIN_X + b.indent
-      if (b.align === 'center') x = MARGIN_X + Math.max(0, (CONTENT_W - line.width) / 2)
-      const spaces = line.words.length - 1
-      let spacing = 0
-      if (b.align === 'justify' && !line.last && spaces > 0) {
-        spacing = (width - line.width) / spaces
-        // Righe con pochissime parole: meglio a sinistra che con buchi enormi.
-        if (spacing > b.size * 0.9) spacing = 0
-      }
-      if (b.bullet && i === 0) {
-        page().push(`BT /F1 ${num(b.size)} Tf ${b.color} 0 Tw ${num(MARGIN_X + 3)} ${num(baseline)} Td ${pdfString([0x95])} Tj ET`)
-      }
-      page().push(drawLine(line, x, baseline, b, spacing))
+      if (!b.lines.length) return
+      // Spazio che serve ora: il titolo con l'inizio del blocco dopo, gli altri almeno due righe.
+      let need = b.before + (b.keepWithNext ? b.lines.length * b.leading + (list[index + 1]?.before ?? 0) + minLines(list[index + 1]) * (list[index + 1]?.leading ?? 0) : minLines(b) * b.leading)
+      if (b.keepWithNext && need > TOP - BOTTOM) need = b.before + b.lines.length * b.leading
+      if (y - need < BOTTOM && !atTop()) newPage()
+      if (!atTop()) y -= b.before
+      b.lines.forEach((line, i) => {
+        if (y - b.leading < BOTTOM) newPage()
+        y -= b.leading
+        const baseline = y + (b.leading - b.size) / 2 + 1
+        const width = CONTENT_W - b.indent
+        let x = MARGIN_X + b.indent
+        if (b.align === 'center') x = MARGIN_X + Math.max(0, (CONTENT_W - line.width) / 2)
+        const spaces = line.words.length - 1
+        let spacing = 0
+        if (b.align === 'justify' && !line.last && spaces > 0) {
+          spacing = (width - line.width) / spaces
+          // Righe con pochissime parole: meglio a sinistra che con buchi enormi.
+          if (spacing > b.size * 0.9) spacing = 0
+        }
+        if (b.bullet && i === 0) {
+          page().push(`BT /F1 ${num(b.size)} Tf ${b.color} 0 Tw ${num(MARGIN_X + 3)} ${num(baseline)} Td ${pdfString([0x95])} Tj ET`)
+        }
+        page().push(drawLine(line, x, baseline, b, spacing))
+      })
     })
-  })
+
+  place(blocks)
 
   // Firme in fondo, ogni riga di firme intera sulla stessa pagina.
   const signatures = (doc.signatures || []).filter((s) => s?.label?.trim())
   if (signatures.length) {
     let first = true
-    for (const row of signatureOps(signatures, 0)) {
+    for (const row of signatureOps(signatures, 0, fields)) {
       const before = first ? 26 : 8
       if (y - before - row.height < BOTTOM && !atTop()) newPage()
       if (!atTop()) y -= before
@@ -404,6 +562,15 @@ function layout(doc: StructuredDoc): Page[] {
       y -= row.height
       first = false
     }
+  }
+
+  // Pagine finali (registro delle firme): sempre da una pagina nuova.
+  const appendix = sectionBlocks(doc.appendix || [], fields)
+  if (appendix.length) {
+    if (!atTop()) newPage()
+    // Il primo titolo in cima alla pagina, senza spazio prima.
+    appendix[0] = { ...appendix[0], before: 0 }
+    place(appendix)
   }
   return pages
 }
@@ -420,11 +587,25 @@ const pdfDate = (d: Date) => `D:${d.toISOString().replace(/[-:T]/g, '').slice(0,
 export const MAX_PAGES = 80
 
 /** PDF 1.4 del documento. pages: numero di pagine. */
-export function renderPdf(doc: StructuredDoc, options: { createdAt?: Date } = {}): { bytes: Buffer; pages: number } {
+/** Scritta grande e chiara in diagonale, sotto il testo (es. "BOZZA – non firmato"). */
+function watermarkOps(text: string): string {
+  const codes = toWinAnsi(text)
+  const size = 46
+  const w = codesWidth(codes, true, size)
+  // 35 gradi: cos 0,8192 sin 0,5736; centrata sulla pagina.
+  const cos = 0.8192
+  const sin = 0.5736
+  const x = PAGE_W / 2 - (w / 2) * cos
+  const y = PAGE_H / 2 - (w / 2) * sin
+  return `q 0.88 0.88 0.9 rg BT /F2 ${size} Tf 0 Tw ${cos} ${sin} ${-sin} ${cos} ${num(x)} ${num(y)} Tm ${pdfString(codes)} Tj ET Q`
+}
+
+export function renderPdf(doc: StructuredDoc, options: { createdAt?: Date; watermark?: string } = {}): { bytes: Buffer; pages: number } {
   const footer = (doc.footer || '').trim()
   const laid = layout(doc).slice(0, MAX_PAGES)
   const total = laid.length
-  const pageStreams = laid.map((ops, i) => [ops.join('\n'), footerOps(footer, i + 1, total)].filter(Boolean).join('\n'))
+  const mark = options.watermark?.trim() ? watermarkOps(options.watermark.trim()) : ''
+  const pageStreams = laid.map((ops, i) => [mark, ops.join('\n'), footerOps(footer, i + 1, total)].filter(Boolean).join('\n'))
 
   // Oggetti: 1 catalogo, 2 pagine, 3-4 font, 5 info, poi pagina + contenuto per ogni pagina.
   const objects: string[] = []
@@ -434,7 +615,7 @@ export function renderPdf(doc: StructuredDoc, options: { createdAt?: Date } = {}
   objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>')
   objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>')
   const created = pdfDate(options.createdAt ?? new Date())
-  objects.push(`<< /Title ${infoString((doc.title || 'Documento').slice(0, 200))} /Producer (Facevoice AI) /Creator (Facevoice AI) /CreationDate (${created}) /ModDate (${created}) >>`)
+  objects.push(`<< /Title ${infoString(fillText(doc.title || 'Documento', doc.fields).slice(0, 200))} /Producer (Facevoice AI) /Creator (Facevoice AI) /CreationDate (${created}) /ModDate (${created}) >>`)
   pageStreams.forEach((content, i) => {
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /ProcSet [/PDF /Text] >> /Contents ${pageIds[i] + 1} 0 R >>`

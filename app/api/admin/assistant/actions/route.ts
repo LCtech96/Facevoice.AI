@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Schede di conferma della super chat (e della chat della pagina Clienti).
-// POST { id, decision: 'accept' | 'discard', text? }: solo l'amministratore. Esegue
+// POST { id, decision: 'accept' | 'discard', text?, pin? }: solo l'amministratore. Esegue
 // l'azione salvata una volta sola (lib/assistant-confirm), poi aggiorna la scheda
 // nella conversazione, cosi' l'esito resta visibile anche all'assistente.
 // GET ?ids=a,b: stato attuale delle schede (per rimettere in pari la pagina).
@@ -54,7 +54,12 @@ export async function POST(req: NextRequest) {
   }
   const result =
     decision === 'accept'
-      ? await acceptAction(id, access.email, { text: typeof body?.text === 'string' ? body.text : undefined })
+      ? await acceptAction(id, access.email, {
+          text: typeof body?.text === 'string' ? body.text : undefined,
+          // Contratti: il PIN scelto sulla scheda va solo all'hash, mai nella chat o nei log.
+          pin: typeof body?.pin === 'string' ? body.pin : undefined,
+          origin: req.nextUrl.origin,
+        })
       : await discardAction(id, access.email)
   if (!result.action || !result.card) return NextResponse.json({ error: result.message || 'Azione non trovata' }, { status: 404 })
   await syncCard(result.action.scope, result.card, result.sentLeadIds)

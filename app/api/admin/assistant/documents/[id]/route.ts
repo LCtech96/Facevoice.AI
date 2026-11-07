@@ -3,6 +3,7 @@ import { getStaffAccess } from '@/lib/staff-access'
 import { DOC_COOKIE, verifyDocAccess } from '@/lib/doc-access'
 import { DOC_ID_RE, DOC_KIND_LABEL, findVersion, loadDocument, renderDocumentPdf } from '@/lib/assistant-documents'
 import { pdfFilename } from '@/lib/pdf-doc'
+import { contractForDocument } from '@/lib/contracts'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +31,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!(await isAdmin(req))) return failure(req, 'Solo l’amministratore può aprire i documenti: torna nella super chat e riprova da lì.', 401)
   const { id } = await params
   const record = DOC_ID_RE.test(id) ? await loadDocument(id) : null
-  if (!record) return failure(req, 'Documento non trovato.', 404)
+  if (!record) {
+    // Contratto firmato da tutti: il documento di partenza e le sue bozze sono stati cancellati.
+    const signed = DOC_ID_RE.test(id) ? await contractForDocument(id).catch(() => null) : null
+    if (signed?.status === 'firmato') return failure(req, 'Questo documento è diventato un contratto firmato: restano solo la versione firmata e il suo PDF, nella pagina Contratti.', 404)
+    return failure(req, 'Documento non trovato.', 404)
+  }
 
   if (req.nextUrl.searchParams.get('meta') === '1') {
     return NextResponse.json(

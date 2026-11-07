@@ -97,9 +97,48 @@ export type BetaUser = {
   automations?: BetaAutomations
   /** Consumi reali (richieste e token). Assente: la beta (versione vecchia) non lo manda. */
   usage?: BetaUsage
+  /**
+   * Ultima accettazione dei termini e condizioni della beta; null: mai accettati.
+   * Assente: la beta non lo manda (versione vecchia o accettazioni non lette) e la pagina non mostra niente.
+   */
+  terms?: BetaTerms | null
 }
 
-export type BetaUsersResponse = { updatedAt: string; users: BetaUser[] }
+export type BetaUsersResponse = {
+  updatedAt: string
+  users: BetaUser[]
+  /** Versione dei termini in vigore sulla beta (assente: non mandata). */
+  termsVersion?: string
+}
+
+/** Accettazione dei termini e condizioni come la registra la beta (data, IP e browser presi dal suo server). */
+export type BetaTerms = {
+  version: string
+  acceptedAt: string
+  ip: string
+  userAgent: string
+  /** Testi esatti delle tre caselle spuntate. */
+  items: string[]
+  /** SHA-256 del testo accettato ('' se la beta non la manda). */
+  textHash: string
+  /** Email dell'account al momento dell'accettazione. */
+  email: string
+  /** signup: alla registrazione; gate: al blocco dell'area clienti; '': non indicato. */
+  source: 'signup' | 'gate' | ''
+  /** true: e' la versione in vigore; null: la beta non lo dice. */
+  current: boolean | null
+}
+
+/** Testo esatto di una versione dei termini, letto dalla beta. */
+export type BetaTermsText = {
+  version: string
+  title: string
+  text: string
+  /** SHA-256 del testo, come la calcola la beta. */
+  hash: string
+  items: string[]
+  current: boolean
+}
 
 export const LIGHT_MODES: LightMode[] = ['auto', 'green', 'orange', 'red']
 const LEVELS: UsageLevel[] = ['none', 'green', 'orange', 'red', 'blocked']
@@ -366,6 +405,7 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
       const assistant = assistantFrom(u.assistant)
       const automations = automationsFrom(u.automations, u.automationsSentToday)
       const usage = usageFrom(u.usage)
+      const terms = u.terms !== undefined ? termsFrom(u.terms) : undefined
       return {
         id: u.id,
         email: str(u.email),
@@ -405,9 +445,151 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
         ...(automations ? { automations } : {}),
         // Idem per i consumi reali.
         ...(usage ? { usage } : {}),
+        // Termini: null = mai accettati; senza il campo la pagina non mostra niente.
+        ...(terms !== undefined ? { terms } : {}),
       }
     })
-  return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users }
+  const termsVersion = str(raw.termsVersion).trim().slice(0, 40)
+  return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users, ...(termsVersion ? { termsVersion } : {}) }
+}
+
+// ---------------------------------------------------------------------------
+// Termini e condizioni della beta
+// ---------------------------------------------------------------------------
+
+const HASH_RE = /^[0-9a-f]{64}$/
+
+/** Nome di una versione dei termini (la beta usa la data, AAAA-MM-GG). */
+export const isTermsVersion = (v: unknown): v is string => typeof v === 'string' && /^[0-9A-Za-z._-]{1,40}$/.test(v)
+
+const strList = (v: unknown, max: number, len: number) =>
+  (Array.isArray(v) ? v : []).filter((s): s is string => typeof s === 'string' && s.trim() !== '').map((s) => s.slice(0, len)).slice(0, max)
+
+/** Accettazione dei termini come la manda la beta; null se manca o non e' valida. */
+export function termsFrom(v: unknown): BetaTerms | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const t = v as Record<string, unknown>
+  const version = str(t.version).trim()
+  const acceptedAt = isoOrNull(t.acceptedAt)
+  if (!isTermsVersion(version) || !acceptedAt) return null
+  const hash = str(t.textHash).trim().toLowerCase()
+  return {
+    version,
+    acceptedAt,
+    ip: str(t.ip).trim().slice(0, 64),
+    userAgent: str(t.userAgent).trim().slice(0, 400),
+    items: strList(t.items, 3, 2000),
+    textHash: HASH_RE.test(hash) ? hash : '',
+    email: str(t.email).trim().slice(0, 200),
+    source: t.source === 'signup' || t.source === 'gate' ? t.source : '',
+    current: typeof t.current === 'boolean' ? t.current : null,
+  }
+}
+
+/** Testo di una versione dei termini come lo manda la beta; null se non e' valido. */
+export function termsTextFrom(v: unknown): BetaTermsText | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const t = v as Record<string, unknown>
+  const version = str(t.version).trim()
+  const text = str(t.text)
+  const hash = str(t.hash).trim().toLowerCase()
+  if (!isTermsVersion(version) || !text.trim() || text.length > 200_000 || !HASH_RE.test(hash)) return null
+  return {
+    version,
+    title: str(t.title).trim().slice(0, 200) || 'Termini e condizioni',
+    text,
+    hash,
+    items: strList(t.items, 3, 2000),
+    current: t.current === true,
+  }
+}
+
+export type TermsStatus = 'ok' | 'old' | 'missing' | 'unknown'
+
+/** ok: ha accettato la versione in vigore; old: una precedente; missing: mai; unknown: la beta non lo manda. */
+export function termsStatus(terms: BetaTerms | null | undefined, currentVersion?: string): TermsStatus {
+  if (terms === undefined) return 'unknown'
+  if (terms === null) return 'missing'
+  if (terms.current === false) return 'old'
+  if (terms.current === null && currentVersion && terms.version !== currentVersion) return 'old'
+  return 'ok'
+}
+
+const ROME = 'Europe/Rome'
+
+/** "7 novembre 2026 alle 14:32" (ora di Roma). */
+export function romeDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const day = d.toLocaleDateString('it-IT', { timeZone: ROME, day: 'numeric', month: 'long', year: 'numeric' })
+  const time = d.toLocaleTimeString('it-IT', { timeZone: ROME, hour: '2-digit', minute: '2-digit' })
+  return `${day} alle ${time}`
+}
+
+/** Dispositivo e browser in breve dal testo del browser: "iPhone · Safari", "Windows · Chrome"... */
+export function shortUserAgent(ua: string): string {
+  const s = ua || ''
+  if (!s.trim()) return 'sconosciuto'
+  const device = /iPhone/.test(s)
+    ? 'iPhone'
+    : /iPad/.test(s)
+      ? 'iPad'
+      : /Android/.test(s)
+        ? 'Android'
+        : /Windows/.test(s)
+          ? 'Windows'
+          : /CrOS/.test(s)
+            ? 'Chromebook'
+            : /Macintosh|Mac OS X/.test(s)
+              ? 'Mac'
+              : /Linux/.test(s)
+                ? 'Linux'
+                : ''
+  const browser = /Edg(A|iOS)?\//.test(s)
+    ? 'Edge'
+    : /OPR\/|Opera/.test(s)
+      ? 'Opera'
+      : /SamsungBrowser/.test(s)
+        ? 'Samsung Internet'
+        : /Firefox\/|FxiOS/.test(s)
+          ? 'Firefox'
+          : /Chrome\/|CriOS/.test(s)
+            ? 'Chrome'
+            : /Safari\//.test(s)
+              ? 'Safari'
+              : ''
+  const parts = [device, browser].filter(Boolean)
+  return parts.length ? parts.join(' · ') : s.trim().slice(0, 40)
+}
+
+const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
+/**
+ * Pagina da stampare (o salvare in PDF dal browser) con chi ha accettato, quando, da dove,
+ * le caselle spuntate e il testo esatto dei termini. Tutto il testo e' sottoposto a escape.
+ */
+export function termsPrintHtml(input: { name: string; email: string; terms: BetaTerms; doc: BetaTermsText }): string {
+  const { name, email, terms, doc } = input
+  const verified = terms.textHash ? (terms.textHash === doc.hash ? 'verificata: il testo è identico a quello accettato' : 'DIVERSA da quella registrata all’accettazione') : 'non registrata'
+  const rows: [string, string][] = [
+    ['Utente', `${name} (${email})`],
+    ['Email al momento dell’accettazione', terms.email || '—'],
+    ['Accettati il', `${romeDateTime(terms.acceptedAt)} (ora di Roma)`],
+    ['Versione', terms.version],
+    ['Indirizzo IP', terms.ip || '—'],
+    ['Dispositivo', `${shortUserAgent(terms.userAgent)}${terms.userAgent ? ` — ${terms.userAgent}` : ''}`],
+    ['Dove', terms.source === 'signup' ? 'Alla registrazione' : terms.source === 'gate' ? 'All’ingresso nell’area clienti' : '—'],
+    ['Impronta SHA-256 del testo', `${doc.hash} (${verified})`],
+  ]
+  const items = (terms.items.length ? terms.items : doc.items).map((i) => `<li>☑ ${esc(i)}</li>`).join('')
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>${esc(doc.title)} · ${esc(terms.version)}</title>
+<style>body{font:13px/1.5 Georgia,serif;color:#111;margin:32px;max-width:760px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:22px 0 6px}
+table{border-collapse:collapse;width:100%;font:12px/1.4 -apple-system,Segoe UI,Arial,sans-serif}td{border:1px solid #ccc;padding:4px 6px;vertical-align:top;word-break:break-word}
+td:first-child{width:34%;color:#444}ul{padding-left:18px}pre{white-space:pre-wrap;font:12px/1.55 Georgia,serif;margin:0}@media print{body{margin:12mm}}</style></head>
+<body><h1>Accettazione dei termini e condizioni</h1><p>Documento generato dal pannello di Facevoice AI.</p>
+<table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+<h2>Caselle spuntate</h2><ul>${items}</ul>
+<h2>Testo esatto accettato</h2><pre>${esc(doc.text)}</pre></body></html>`
 }
 
 const EUR = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 })

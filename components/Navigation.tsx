@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen, LayoutGrid } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen, LayoutGrid, FilePenLine } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -12,6 +12,7 @@ import { isAdminEmail } from '@/lib/admin-auth'
 import { useStaffAccess } from './useStaffAccess'
 import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage } from '@/lib/staff-pages'
 import { clearDocAccess } from '@/lib/doc-access-client'
+import ContractBell from './ContractBell'
 
 const STAFF_ICONS: Record<StaffPage, typeof Home> = {
   inbox: Inbox,
@@ -149,6 +150,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     ? [
         { id: 'admin-overview', label: 'Overview', icon: LayoutGrid, href: '/admin/overview' },
         { id: 'admin-memory', label: 'Memoria AI', icon: BookOpen, href: '/admin/memoria' },
+        { id: 'admin-contracts', label: 'Contratti', icon: FilePenLine, href: '/admin/contratti' },
         { id: 'home', label: 'Home del sito (blog)', icon: Home, href: '/home' },
       ]
     : [
@@ -278,6 +280,13 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                 </div>
               )}
               
+              {/* Campanella dei contratti (solo admin) */}
+              {isAdmin && (
+                <div className="ml-2">
+                  <ContractBell />
+                </div>
+              )}
+
               {/* Language Selector */}
               <div className="ml-2">
                 <LanguageSelector />
@@ -357,6 +366,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
           </motion.div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {isAdmin && <ContractBell compact />}
             <LanguageSelector />
 
             {dropdownMenuItems.length > 0 && (

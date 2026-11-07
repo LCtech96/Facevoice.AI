@@ -63,6 +63,8 @@ import {
   type Transcript,
 } from '@/lib/assistant-documents'
 import { pdfFilename } from '@/lib/pdf-doc'
+import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, applyNewVersion, contractForDocument, contractFromDocument, listContracts, loadContract, type ShareChannel } from '@/lib/contracts'
+import { MAX_SHARE_TEXT, defaultShareText } from '@/lib/contract-share'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -686,7 +688,7 @@ La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la case
 Strumenti per domande sull'attività (rispondi con numeri precisi, senza fare altro):
 - "activity_report": {"hours": 1} oppure {"from": "ISO", "to": "ISO"}, "platform": "email|instagram|facebook|whatsapp|web|all" → quanti messaggi sono stati inviati e ricevuti nel periodo, per canale e per tipo (email della Ricerca clienti, risposte automatiche, approvate, scritte a mano), invii falliti, bozze in attesa, e gli ultimi 30 con ora, contatto e inizio del testo. Usalo per domande tipo "quante email sono partite nell'ultima ora", "chi ci ha scritto oggi" (calcola le ore da mezzanotte con la data e ora qui sotto), "quanti messaggi Instagram ieri".
 - Per numeri sulla lista clienti usa "stats" o "list_leads".
-Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, read_thread, inspect_website, instagram_profile, list_push_devices, list_documents).
+Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, read_thread, inspect_website, instagram_profile, list_push_devices, list_documents, list_contracts).
 
 Strumenti di ricerca e social:
 - "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
@@ -728,10 +730,12 @@ Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in
 
 Documenti (contratti, preventivi, accordi, lettere: Luca li apre in PDF con un tocco, li legge, li stampa o li scarica):
 - "create_document": {"kind": "contratto|preventivo|accordo|lettera|altro", "title": "opzionale", "about": {"platform": "instagram|facebook|whatsapp|email|web, opzionale", "contact": "nome, @username, email o contactId, come l'ha detto Luca"}, "instructions": "cosa vuole Luca, con le sue parole"} → scrive il documento usando TUTTA la conversazione con quella persona su quel canale (messaggi ricevuti, nostre risposte automatiche e scritte a mano, con le date) e i dati di Facevoice AI, e mostra a Luca la scheda del PDF con «Apri PDF» e «Scarica». Se più persone (o più canali) corrispondono restituisce l'elenco: chiedi a Luca quale e richiamalo con about.platform e about.contact = contactId. Se non trova nessuno, dillo e chiedi il nome esatto o il canale. Senza "about" scrive il documento solo dalla richiesta. Usalo SEMPRE quando Luca chiede di sviluppare, scrivere o preparare un contratto, un preventivo, un accordo, una lettera o un altro documento (anche "a proposito della conversazione con <nome>"): non dire mai che non puoi. Ci vuole circa un minuto.
-- "update_document": {"document_id": "opzionale, senza = l'ultimo documento", "instructions": "cosa cambiare, con le parole di Luca (es. cambia la clausola 3, aggiungi la penale)"} → nuova versione dello stesso documento con la modifica; le versioni di prima restano scaricabili. Usalo per ogni modifica a un documento già fatto.
+- "update_document": {"document_id": "opzionale, senza = l'ultimo documento", "instructions": "cosa cambiare, con le parole di Luca (es. cambia la clausola 3, aggiungi la penale)"} → nuova versione dello stesso documento con la modifica; le versioni di prima restano scaricabili. Usalo per ogni modifica a un documento già fatto. Se il documento è già un contratto condiviso, si aggiorna anche il contratto (le firme già date si cancellano).
 - "list_documents": {} → ultimi documenti (document_id, titolo, tipo, versione, data).
+- "share_contract": {"document_id": "opzionale, senza = l'ultimo documento", "contract_id": "opzionale", "recipient": {"name": "nome di chi lo riceve", "contact": "nome, @username o contactId della conversazione, opzionale", "email": "opzionale"}, "channel": "email|instagram|facebook|whatsapp|link", "text": "messaggio breve che accompagna il link, opzionale"} → PREPARA l'invio del contratto con una pagina «Contratto tra Facevoice AI e <nome>» su un link unico protetto da PIN: chi lo riceve lo legge, chiede modifiche o firma col dito dal telefono. Compare la scheda di conferma: Luca sceglie lì il PIN e parte solo con «Accetta e invia» (con "link" crea solo il link da copiare). Usalo quando Luca dice "invialo a Giusy", "mandalo a …", "condividi il contratto", "fallo firmare". Canale: quello che dice Luca; altrimenti email se c'è un'email, altrimenti il canale della conversazione da cui nasce il documento, altrimenti "link". Il PIN lo sceglie Luca SOLO sulla scheda: non chiederlo, non scriverlo mai in chat né nel testo; se Luca scrive un PIN in chat non ripeterlo e digli di scriverlo nella scheda. Ricordagli di mandare il PIN a parte (a voce, SMS). Richieste di modifica e firme arrivano nella campanella in alto e nella pagina Contratti.
+- "list_contracts": {} → ultimi contratti (contract_id, titolo, destinatario, stato: bozza, inviato, modifica richiesta, in firma, firmato, annullato).
 - "send_document": {"document_id": "opzionale", "version": "numero, opzionale", "to": "email, opzionale", "text": "testo dell'email che accompagna il PDF"} → PREPARA l'invio del PDF per email (nella conversazione email da cui nasce il documento, o all'indirizzo "to" dato da Luca): compare la scheda di conferma, parte solo con «Accetta e invia». Su Instagram, Facebook, WhatsApp e chat del sito non si possono allegare file da qui: spiega a Luca che può aprire il PDF, scaricarlo e mandarlo dall'app (o darti un'email della persona).
-Dopo create_document o update_document la risposta dice in 2-3 frasi cosa contiene e su quale conversazione si basa, elenca i punti DA COMPLETARE e scrive UNA volta: "${DOC_DISCLAIMER}" Non incollare il testo del documento in chat: è nel PDF.
+Dopo create_document o update_document la risposta dice in 2-3 frasi cosa contiene e su quale conversazione si basa, elenca gli spazi lasciati vuoti (dati che nessuno ha detto: nel PDF sono linee da compilare a mano o al momento della firma, mai segnaposto nel testo) e scrive UNA volta: "${DOC_DISCLAIMER}" (l'avviso sta solo qui in chat, mai nel documento). Non incollare il testo del documento in chat: è nel PDF.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
@@ -1651,8 +1655,9 @@ export async function runAssistant(
             ...(transcript?.omitted ? { nota_conversazione: `conversazione molto lunga: ${transcript.omitted} messaggi intermedi non letti` } : {}),
             sezioni: saved.version.doc.sections.map((x) => x.heading).filter(Boolean).slice(0, 20),
             punti_dalla_chat: written.fromChat,
-            da_completare: saved.version.placeholders,
-            nota: `la scheda con «Apri PDF» e «Scarica» compare a Luca sotto la tua risposta. Rispondi in breve: cosa contiene, su quale conversazione si basa, i punti DA COMPLETARE, e una volta: "${DOC_DISCLAIMER}"`,
+            spazi_vuoti: saved.version.placeholders,
+            ...(written.truncated ? { nota_lunghezza: 'il documento era troppo lungo ed è stato accorciato: dillo a Luca e proponi di dividerlo' } : {}),
+            nota: `la scheda con «Apri PDF» e «Scarica» compare a Luca sotto la tua risposta. Rispondi in breve: cosa contiene, su quale conversazione si basa, gli spazi lasciati vuoti da compilare (a mano o alla firma), e una volta: "${DOC_DISCLAIMER}"`,
           }
           break
         }
@@ -1668,10 +1673,15 @@ export async function runAssistant(
           }
           const instructions = asText(args.instructions)?.trim() || message
           const current = latestVersion(record)
-          reportStatus(`Aggiorno «${current.doc.title.slice(0, 50)}»…`)
+          // Documento gia' diventato contratto (non firmato): si parte dal testo del contratto,
+          // che puo' avere modifiche fatte dalla sua pagina (richieste accettate, testo a mano).
+          const linked = await contractForDocument(record.id).catch(() => null)
+          const linkedContract = linked && linked.status !== 'firmato' ? await loadContract(linked.id).catch(() => null) : null
+          const base = linkedContract && !linkedContract.final && linkedContract.status !== 'annullato' ? linkedContract.version : null
+          reportStatus(`Aggiorno «${(base?.doc ?? current.doc).title.slice(0, 50)}»…`)
           const transcript = record.basedOn ? await loadTranscript(record.basedOn.platform, record.basedOn.contactId, 15_000) : null
           const knowledge = await loadKnowledge().catch(() => '')
-          const revised = await reviseDocument({ kind: record.kind, current: current.doc, instructions: withLuca(instructions), transcript, knowledge })
+          const revised = await reviseDocument({ kind: record.kind, current: base?.doc ?? current.doc, instructions: withLuca(instructions), transcript, knowledge })
           const saved = await addDocumentVersion(record.id, revised.doc, who.email ?? null, instructions, revised.fromChat)
           if (!saved) {
             result = { errore: 'documento non trovato mentre lo salvavo: riprova' }
@@ -1679,15 +1689,137 @@ export async function runAssistant(
           }
           actions.push(documentCard(saved.record, saved.version))
           docsTouched.push(saved.version)
+          // Documento gia' condiviso come contratto: anche il contratto passa alla versione nuova.
+          let contratto: Record<string, unknown> | null = null
+          if (linked && linked.status !== 'firmato') {
+            // Se il contratto e' cambiato mentre l'AI scriveva, non si sovrascrive.
+            const updated = await applyNewVersion(linked.id, { doc: saved.version.doc, mode: 'modificata', note: 'modifica dalla super chat', by: who.email ?? null, ...(base ? { baseVersionId: base.id } : {}) }).catch(() => null)
+            contratto = updated
+              ? { contract_id: updated.id, versione_contratto: updated.version.n, nota_contratto: 'anche il contratto condiviso è aggiornato: chi ha il link vede «contratto aggiornato» e le firme già date sono state cancellate' }
+              : { nota_contratto: 'il contratto condiviso NON è stato aggiornato: aprilo dalla pagina Contratti' }
+          } else if (linked) contratto = { nota_contratto: 'il contratto è già firmato da tutti: questa modifica vale solo per il documento' }
           result = {
             aggiornato: true,
+            ...(contratto || {}),
             document_id: saved.record.id,
             versione: saved.version.v,
             versioni_precedenti: saved.record.versions.filter((v) => v.v !== saved.version.v).map((v) => v.v),
             titolo: saved.version.doc.title,
             pagine: saved.version.pages,
-            da_completare: saved.version.placeholders,
-            nota: `nuova versione mostrata a Luca (le precedenti restano scaricabili dalla scheda). Di' in breve cosa è cambiato, i punti DA COMPLETARE e una volta: "${DOC_DISCLAIMER}"`,
+            spazi_vuoti: saved.version.placeholders,
+            nota: `nuova versione mostrata a Luca (le precedenti restano scaricabili dalla scheda). Di' in breve cosa è cambiato, gli spazi lasciati vuoti da compilare e una volta: "${DOC_DISCLAIMER}"`,
+          }
+          break
+        }
+        case 'list_contracts': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN_DOCS }
+            break
+          }
+          const list = await listContracts()
+          result = { contratti: list.slice(0, 10).map((c) => ({ contract_id: c.id, titolo: c.title, destinatario: c.recipient, stato: STATUS_LABEL[c.status] || c.status, aggiornato: c.at })) }
+          break
+        }
+        case 'share_contract': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN_DOCS }
+            break
+          }
+          const contractId = asText(args.contract_id)?.trim()
+          let contract = contractId ? await loadContract(contractId) : null
+          if (contractId && !contract) {
+            result = { errore: 'contratto non trovato: usa list_contracts' }
+            break
+          }
+          if (!contract) {
+            const record = await pickDocument(asText(args.document_id))
+            if (!record) {
+              result = { errore: 'documento non trovato: usa list_documents (o creane uno con create_document)' }
+              break
+            }
+            // Il documento diventa un contratto (una volta sola).
+            contract = await contractFromDocument(record.id, who.email ?? null)
+          }
+          if (contract.status === 'annullato') {
+            result = { errore: 'questo contratto è stato annullato: creane uno nuovo' }
+            break
+          }
+          const rec = args.recipient && typeof args.recipient === 'object' ? (args.recipient as Record<string, unknown>) : {}
+          const name = (asText(rec.name) || asText(args.name) || contract.recipient.name).replace(/\s+/g, ' ').trim().slice(0, 120)
+          const email = (asText(rec.email) || asText(args.email) || '').trim().toLowerCase()
+          if (email && !EMAIL_RE.test(email)) {
+            result = { errore: 'indirizzo email non valido' }
+            break
+          }
+          const contact = asText(rec.contact) || asText(args.contact)
+          const known = contract.recipient.platform
+          const asked = asText(args.channel)?.toLowerCase()
+          const dmChannels: ShareChannel[] = ['instagram', 'facebook', 'whatsapp']
+          const channel: ShareChannel = (SHARE_CHANNELS as readonly string[]).includes(asked || '')
+            ? (asked as ShareChannel)
+            : email
+              ? 'email'
+              : known && dmChannels.includes(known as ShareChannel)
+                ? (known as ShareChannel)
+                : contract.recipient.email
+                  ? 'email'
+                  : 'link'
+          let to = ''
+          let lastIncomingAt: string | null = null
+          if (channel === 'email') {
+            to = email || contract.recipient.email || ''
+            if (!to) {
+              result = { errore: `serve l'email di ${name}: chiedila a Luca, oppure usa channel "link" (crea solo il link da copiare)` }
+              break
+            }
+          } else if (channel !== 'link') {
+            if (contact?.trim()) {
+              const found = await resolveConversation(channel, contact)
+              if (found.error) {
+                result = { errore: found.error }
+                break
+              }
+              if (found.options) {
+                result = {
+                  piu_conversazioni: found.options.map((o) => ({ platform: o.platform, contactId: o.contactId, nome: o.name || o.contactId })),
+                  nota: 'più persone corrispondono: chiedi a Luca quale, poi richiama share_contract con recipient.contact = contactId',
+                }
+                break
+              }
+              to = found.match?.contactId || ''
+            } else if (known === channel && contract.recipient.contactId) to = contract.recipient.contactId
+            if (!to) {
+              result = { errore: `non so a chi scrivere su ${CHANNEL_LABEL[channel]}: chiedi a Luca il nome o lo username, oppure usa channel "link"` }
+              break
+            }
+            const { data: last } = await supabaseAdmin
+              .from('social_messages')
+              .select('created_at')
+              .eq('platform', channel)
+              .eq('contact_id', to)
+              .eq('direction', 'in')
+              .eq('kind', 'message')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            lastIncomingAt = last?.created_at ?? null
+          }
+          const title = contract.version.doc.title
+          const text = asText(args.text)?.trim().slice(0, MAX_SHARE_TEXT) || defaultShareText(title, name, contract.creator.name)
+          const queued = await queue(`Contratto per ${name} · ${CHANNEL_LABEL[channel]}`.slice(0, 150), {
+            kind: 'share_contract',
+            contractId: contract.id,
+            title,
+            name,
+            channel,
+            to,
+            lastIncomingAt,
+            text,
+          })
+          result = {
+            ...queued,
+            contract_id: contract.id,
+            nota_pin: 'Luca sceglie il PIN solo sulla scheda: non chiederlo e non scriverlo in chat. Ricordagli di mandarlo a parte (a voce o con un SMS).',
           }
           break
         }
@@ -1801,7 +1933,7 @@ export async function runAssistant(
 
   /**
    * Risposta onesta: con azioni appena messe in attesa non si dice mai "inviato/pubblicato"
-   * (partono solo con il clic), e dopo un documento c'e' sempre l'avviso e l'elenco dei dati da completare.
+   * (partono solo con il clic), e dopo un documento c'e' sempre l'avviso (solo in chat) e l'elenco degli spazi vuoti.
    */
   function honest(reply: string): string {
     let text = reply
@@ -1857,7 +1989,7 @@ export async function runAssistant(
     if (docsTouched.length) {
       if (!/avvocato/i.test(text)) text = `${text}\n\n${DOC_DISCLAIMER}`.trim()
       const missing = docsTouched[docsTouched.length - 1].placeholders
-      if (missing.length && !/da completare/i.test(text)) text = `${text}\n\nDa completare: ${missing.slice(0, 12).join('; ')}.`
+      if (missing.length && !/spazi? (?:lasciat|vuot)|da compilare/i.test(text)) text = `${text}\n\nSpazi lasciati vuoti, da compilare a mano o alla firma: ${missing.slice(0, 12).join('; ')}.`
     }
     return text
   }
