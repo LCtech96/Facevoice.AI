@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, CalendarClock, CreditCard, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal, Zap } from 'lucide-react'
+import { Bot, CalendarClock, CreditCard, FilePen, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal, Zap } from 'lucide-react'
 import AppAuth from './AppAuth'
+import ContractsBell from './ContractsBell'
 import LanguageSwitch from './LanguageSwitch'
+import TermsGate from './TermsGate'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { WorkspaceProvider, useWorkspace } from './WorkspaceContext'
 import { UsageBlockedBanner, UsageProvider, UserUsageBadge, useUsage } from './UsageLights'
@@ -14,6 +16,7 @@ import { UsageBlockedBanner, UsageProvider, UserUsageBadge, useUsage } from './U
 // menu delle pagine e scelta dello spazio. Accanto all'icona dell'utente i tre
 // gettoni del consumo AI; se l'AI del piano e' finita, l'avviso in cima a ogni pagina.
 // "Assistente AI" e "Automazioni" compaiono solo a chi ce li ha attivi (li accende Facevoice).
+// "Contratti" (nel menu) e la campanella dei contratti: solo per titolare e amministratori.
 
 const NAV = [
   { href: '/app', label: 'Panoramica', icon: LayoutGrid },
@@ -120,6 +123,7 @@ function Frame({ children }: { children: ReactNode }) {
   if (!workspace) return <CreateWorkspace />
 
   const active = (href: string) => (href === '/app' ? pathname === '/app' : pathname?.startsWith(href))
+  const showContracts = workspace.role !== 'member'
   const nav = NAV.filter((item) => (item.href !== '/app/assistente' || assistant === true) && (item.href !== '/app/automazioni' || automations === true))
 
   return (
@@ -127,7 +131,10 @@ function Frame({ children }: { children: ReactNode }) {
       <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-[var(--border-color)] bg-[var(--background-secondary)] p-4 md:flex">
         <div className="flex items-center justify-between gap-2 px-2">
           <p translate="no" className="text-xs font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
-          <UserUsageBadge />
+          <div className="flex items-center gap-1">
+            <ContractsBell align="left" />
+            <UserUsageBadge />
+          </div>
         </div>
         {workspaces.length > 1 ? (
           <select
@@ -167,6 +174,16 @@ function Frame({ children }: { children: ReactNode }) {
         >
           <CalendarClock className="h-4 w-4" /> Contenuti programmati
         </Link>
+        {showContracts && (
+          <Link
+            href="/app/contratti"
+            className={`mt-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
+              active('/app/contratti') ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <FilePen className="h-4 w-4" /> Contratti
+          </Link>
+        )}
         {showPlan && (
           <Link
             href="/app/piano"
@@ -204,7 +221,8 @@ function Frame({ children }: { children: ReactNode }) {
         <div className="flex shrink-0 items-center gap-3">
           <UserUsageBadge />
           <LanguageSwitch />
-          <HeaderMenu onSignOut={signOut} showPlan={showPlan} />
+          <ContractsBell />
+          <HeaderMenu onSignOut={signOut} showPlan={showPlan} showContracts={showContracts} />
         </div>
       </header>
 
@@ -227,8 +245,8 @@ function Frame({ children }: { children: ReactNode }) {
   )
 }
 
-/** Menu ☰ della barra in alto (telefono): contenuti programmati, piano (con i pagamenti online attivi) ed esci. */
-function HeaderMenu({ onSignOut, showPlan }: { onSignOut: () => void; showPlan: boolean }) {
+/** Menu ☰ della barra in alto (telefono): contenuti programmati, contratti, piano (con i pagamenti online attivi) ed esci. */
+function HeaderMenu({ onSignOut, showPlan, showContracts }: { onSignOut: () => void; showPlan: boolean; showContracts: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
@@ -257,6 +275,11 @@ function HeaderMenu({ onSignOut, showPlan }: { onSignOut: () => void; showPlan: 
           <Link href="/app/programmati" className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
             <CalendarClock className="h-4 w-4 text-[var(--accent-blue)]" /> Contenuti programmati
           </Link>
+          {showContracts && (
+            <Link href="/app/contratti" className="flex items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
+              <FilePen className="h-4 w-4 text-[var(--accent-blue)]" /> Contratti
+            </Link>
+          )}
           {showPlan && (
             <Link href="/app/piano" className="flex items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
               <CreditCard className="h-4 w-4 text-[var(--accent-blue)]" /> Piano
@@ -275,7 +298,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <WorkspaceProvider>
       <UsageProvider>
-        <Frame>{children}</Frame>
+        <TermsGate>
+          <Frame>{children}</Frame>
+        </TermsGate>
       </UsageProvider>
     </WorkspaceProvider>
   )

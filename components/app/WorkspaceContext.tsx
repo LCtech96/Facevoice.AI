@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Session } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase-client'
 import { USAGE_REFRESH_EVENT } from '@/lib/usage-shared'
+import { TERMS_REQUIRED_EVENT } from '@/lib/terms'
 
 // Stato dell'area clienti: sessione, spazi di lavoro dell'utente e spazio scelto.
 // Tutte le chiamate alle API dell'area clienti passano da appFetch, che aggiunge
@@ -151,6 +152,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             .then((data) => {
               if (data?.code === 'assistant_disabled') setAssistant(false)
               if (data?.code === 'automations_disabled') setAutomations(false)
+              // Termini in vigore non accettati (per esempio aggiornati mentre l'app era aperta): torna il blocco.
+              if (data?.code === 'terms_required') window.dispatchEvent(new Event(TERMS_REQUIRED_EVENT))
             })
             .catch(() => undefined)
         }

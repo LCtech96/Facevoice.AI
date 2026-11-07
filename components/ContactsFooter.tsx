@@ -10,7 +10,8 @@ export default function ContactsFooter() {
   // La chat occupa lo schermo intero: un footer sotto costringerebbe a
   // scorrere la pagina per tornare ai messaggi. Nell'area admin i contatti
   // dell'azienda non servono: non si mostrano in nessuna pagina.
-  if (pathname?.startsWith('/ai-chat') || pathname?.startsWith('/admin') || pathname === '/app' || pathname?.startsWith('/app/')) {
+  // Pagina del contratto per chi lo riceve (/c/…): solo il contratto, nessun altro marchio.
+  if (pathname?.startsWith('/ai-chat') || pathname?.startsWith('/admin') || pathname === '/app' || pathname?.startsWith('/app/') || pathname?.startsWith('/c/')) {
     return null
   }
 
