@@ -4,7 +4,7 @@ import { callAIPaced } from '@/lib/ai'
 import { parseJsonObject } from '@/lib/tool-step'
 import { FIELD_ID_RE, docTexts, emptyFieldLabels, fieldIdsIn, renderPdf, type DocField, type DocSection, type DocSignature, type FieldParty, type StructuredDoc } from '@/lib/pdf-doc'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
-import { ensureParties, hideRecipientValues, tidyFields, withPartiesSection } from '@/lib/contract-parties'
+import { dropPartyLines, ensureParties, hideRecipientValues, stripPartiesSection, tidyFields, withPartiesSection } from '@/lib/contract-parties'
 
 // Documenti della super chat (contratti, preventivi, accordi, lettere) scritti
 // dall'AI a partire da una conversazione della casella Messaggi (Instagram,
@@ -613,14 +613,16 @@ const todayText = () => new Date().toLocaleDateString('it-IT', { timeZone: 'Euro
 /**
  * Contratti, accordi e preventivi: spazi messi bene (mai dopo un dato, foro di Palermo) e
  * sezione «Le parti» in cima con i dati standard delle parti (lib/contract-parties), mai
- * lasciati all'AI. fresh: documento nuovo, i valori dei dati personali scritti dall'AI
- * vengono dalla chat (non verificati) e si tolgono.
+ * lasciati all'AI. I valori dei dati personali scritti dall'AI vengono dalla chat (non
+ * verificati) e si tolgono sempre; in una nuova versione (previous) tornano solo quelli gia'
+ * salvati, sullo stesso campo.
  */
-function withStandardParties(written: Written, kind: DocKind, fresh: boolean): Written {
+function withStandardParties(written: Written, kind: DocKind, previous: StructuredDoc | null): Written {
   if (kind !== 'contratto' && kind !== 'accordo' && kind !== 'preventivo') return written
   const creator = { name: BUSINESS.name, address: BUSINESS.address, vat: BUSINESS.vat, person: BUSINESS.person }
-  const cleared = fresh ? ensureParties(written.doc, creator, { claim: true, clear: true }) : written.doc
-  const doc = ensureParties(tidyFields(cleared, { court: BUSINESS.court }), creator, { claim: true })
+  const cleared = ensureParties(dropPartyLines(written.doc), creator, { claim: true, clear: true })
+  const kept = previous ? carryFieldValues(cleared, previous) : cleared
+  const doc = ensureParties(tidyFields(kept, { court: BUSINESS.court }), creator, { claim: true })
   return { ...written, doc: withPartiesSection(doc, creator) }
 }
 
@@ -644,7 +646,7 @@ export async function writeDocument(input: {
   ]
     .filter(Boolean)
     .join('\n\n')
-  return withStandardParties(await askDocument(systemPrompt(input.kind, todayText()), user), input.kind, true)
+  return withStandardParties(await askDocument(systemPrompt(input.kind, todayText()), user), input.kind, null)
 }
 
 /** Nuova versione: il documento attuale con la modifica chiesta da Luca, il resto identico. */
@@ -658,7 +660,7 @@ export async function reviseDocument(input: {
   const { footer: _footer, ...current } = input.current
   const t = input.transcript
   const user = [
-    `Documento attuale (JSON):\n${JSON.stringify(hideRecipientValues(current)).slice(0, 70_000)}`,
+    `Documento attuale (JSON):\n${JSON.stringify(stripPartiesSection(hideRecipientValues(current), { loose: true })).slice(0, 70_000)}`,
     `Modifica chiesta da Luca: ${input.instructions}`,
     'Restituisci il documento INTERO con la modifica, nello stesso formato JSON. Lascia identico tutto quello che Luca non ha chiesto di cambiare (stessa numerazione, salvo che aggiungere o togliere una clausola la sposti). Tieni gli stessi "fields" e gli stessi {{id}} nel testo (con i loro valori). Le regole sui dati da non inventare valgono anche qui: per un dato nuovo che non è nella conversazione aggiungi un campo in "fields" e scrivi {{id}} nel testo, mai segnaposto come [DA COMPLETARE].',
     businessBlock(input.knowledge),
@@ -667,7 +669,7 @@ export async function reviseDocument(input: {
     .filter(Boolean)
     .join('\n\n')
   const written = await askDocument(systemPrompt(input.kind, todayText()), user)
-  return withStandardParties({ ...written, doc: carryFieldValues(written.doc, input.current) }, input.kind, false)
+  return withStandardParties({ ...written, doc: carryFieldValues(written.doc, input.current) }, input.kind, input.current)
 }
 
 /** Valori gia' compilati che l'AI ha perso riscrivendo: tornano sullo stesso campo (stesso id). */

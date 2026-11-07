@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SITE_URL } from '@/lib/seo/site'
 import { BUSINESS, DOC_KIND_LABEL, carryFieldValues, latestVersion, loadDocument, normalizeFields, sanitizeDoc, type DocKind } from '@/lib/assistant-documents'
 import { BLANK_LINE, emptyFieldLabels, fillText, renderPdf, type DocField, type DocSection, type DocSignature, type StructuredDoc } from '@/lib/pdf-doc'
-import { cleanValue, ensureParties, inputSpec, missingData, partiesSection, partyRoles, recipientNameToken, stripPartiesSection, tidyFields, CREATOR_SPECS, RECIPIENT_ROLES, type CreatorInfo, type DataEntry, type PartyRole } from '@/lib/contract-parties'
+import { cleanValue, dropPartyLines, ensureParties, inputSpec, isSignerField, missingData, partiesSection, partyRoles, recipientNameToken, stripPartiesSection, termsToCreator, tidyFields, CREATOR_SPECS, RECIPIENT_ROLES, type CreatorInfo, type DataEntry, type PartyRole } from '@/lib/contract-parties'
 import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, type ContractStatus, type ShareChannel } from '@/lib/contract-text'
 
 // Contratti del sito (area admin): un documento della super chat diventa un contratto
@@ -219,17 +219,27 @@ async function mutate(id: string, fn: (c: Contract) => Contract, opts: { index?:
 const creatorInfo = (c: Pick<Contract, 'creator'>): CreatorInfo => ({ name: c.creator.name, address: c.creator.address, vat: c.creator.vat, person: c.creator.person })
 const anySigned = (c: Pick<Contract, 'signatures'>) => Boolean(c.signatures.creatore || c.signatures.destinatario)
 
+/** Firmato dalla controparte con le regole di prima (la sua firma non ha i suoi dati): i suoi dati non si raccolgono piu'. */
+const signedBeforeParties = (c: Pick<Contract, 'signatures'>) => {
+  const s = c.signatures.destinatario
+  return Boolean(s && !s.bodyHash && !s.data)
+}
+
 /**
  * Contratto con i dati delle parti: se mancano (contratti di prima) si aggiungono come
  * spazi della controparte, senza cambiare il testo, la versione o le firme. Finche'
  * nessuno ha firmato si toglie anche lo spazio messo subito dopo un dato (es. dopo un
- * numero di telefono non verificato). I contratti firmati da tutti o annullati restano come sono.
+ * numero di telefono non verificato), le righe "Tra:" / "E:" (ci pensa «Le parti») e un
+ * dato "entrambi" che e' un termine del contratto passa a chi crea. I contratti firmati da
+ * tutti o annullati restano come sono, e anche quelli gia' firmati dalla controparte con le
+ * regole di prima (non potrebbe piu' scrivere i suoi dati: per averli serve una nuova versione).
  */
 export function withParties(c: Contract): Contract {
-  if (c.final || c.status === 'annullato') return c
+  if (c.final || c.status === 'annullato' || signedBeforeParties(c)) return c
   const unsigned = !anySigned(c)
-  const tidy = unsigned ? tidyFields(c.version.doc, { courts: false }) : c.version.doc
-  const doc = ensureParties(tidy, creatorInfo(c), { claim: unsigned, creatorFields: unsigned })
+  const tidy = unsigned ? dropPartyLines(tidyFields(c.version.doc, { courts: false })) : c.version.doc
+  const ensured = ensureParties(tidy, creatorInfo(c), { claim: unsigned, creatorFields: unsigned })
+  const doc = unsigned ? termsToCreator(ensured) : ensured
   if (doc === c.version.doc && c.partiesAt) return c
   return { ...c, version: doc === c.version.doc ? c.version : { ...c.version, doc }, partiesAt: c.partiesAt || now() }
 }
@@ -249,12 +259,34 @@ export async function openContract(id: string): Promise<Contract | null> {
   })
 }
 
-/** Testo del contratto pronto per essere salvato: senza la sezione "Le parti" scritta nel documento, spazi messi bene, dati delle parti garantiti. */
+/**
+ * Testo del contratto pronto per essere salvato (nessuno ha firmato): senza la sezione "Le
+ * parti" e le righe "Tra:" / "E:" scritte nel documento, spazi messi bene, dati delle parti
+ * garantiti, termini "entrambi" (data di inizio, durata...) scritti da chi crea.
+ */
 function prepareBody(doc: StructuredDoc, creator: CreatorInfo, clear: boolean): StructuredDoc {
-  const base = stripPartiesSection(doc)
+  const base = dropPartyLines(doc)
   // Prima si tolgono i valori della chat (cosi' uno spazio dopo un dato si riconosce come vuoto), poi la pulizia.
   const cleared = clear ? ensureParties(base, creator, { claim: true, clear: true }) : base
-  return ensureParties(tidyFields(cleared, { court: BUSINESS.court }), creator, { claim: true, creatorFields: true })
+  return termsToCreator(ensureParties(tidyFields(cleared, { court: BUSINESS.court }), creator, { claim: true, creatorFields: true }))
+}
+
+/**
+ * I dati della controparte li scrive solo lei (pagina del link o firma): in una nuova
+ * versione i valori dei suoi campi vengono dal contratto salvato (stesso id), mai dal testo
+ * mandato (proposta dell'AI o pagina aperta prima che lei li cambiasse).
+ */
+function keepRecipientValues(doc: StructuredDoc, current: StructuredDoc): StructuredDoc {
+  const saved = new Map((current.fields || []).filter((f) => f.party === 'destinatario' && f.value?.trim()).map((f) => [f.id, f.value as string]))
+  return {
+    ...doc,
+    fields: (doc.fields || []).map((f) => {
+      if (f.party !== 'destinatario') return f
+      const { value: _sent, ...rest } = f
+      const value = saved.get(f.id)
+      return value ? { ...rest, value } : rest
+    }),
+  }
 }
 
 /** Valore di un dato della controparte (nome, codice fiscale...) gia' scritto, o ''. */
@@ -294,8 +326,9 @@ function dataEntries(c: Contract, party: Party): FillEntry[] {
       out.push({ id: f.id, label: f.label, party: f.party, kind: 'body', value: f.value || '', required: CREATOR_SPECS.some((x) => x.id === f.id), ...inputSpec(undefined) })
     }
   }
+  // "Entrambi" di un firmatario (luogo e data della firma...): ognuno il suo. Gli altri sono termini del contratto (di chi crea).
   for (const f of fields) {
-    if (f.party === 'entrambi' && !f.value?.trim()) out.push({ id: f.id, label: f.label, party: f.party, kind: 'own', value: own[f.id] || '', required: false, ...inputSpec(undefined) })
+    if (f.party === 'entrambi' && !f.value?.trim() && isSignerField(f)) out.push({ id: f.id, label: f.label, party: f.party, kind: 'own', value: own[f.id] || '', required: false, ...inputSpec(undefined) })
   }
   return out
 }
@@ -365,7 +398,7 @@ function shownFields(c: Contract): DocField[] {
   const data = c.signerData || {}
   const other = recipientLabel(c, 'la controparte')
   return (c.version.doc.fields || []).map((f) => {
-    if (f.party !== 'entrambi' || f.value?.trim()) return f
+    if (f.party !== 'entrambi' || f.value?.trim() || !isSignerField(f)) return f
     const mine = data.creatore?.[f.id]?.trim() || ''
     const theirs = data.destinatario?.[f.id]?.trim() || ''
     if (!mine && !theirs) return f
@@ -587,7 +620,7 @@ export function contentHash(doc: StructuredDoc): string {
 /**
  * Impronta del testo firmato: testo, dati di chi crea (anche quelli dell'azienda in "Le
  * parti") e nomi dei campi "entrambi". Non i dati della controparte (sono suoi e fanno parte
- * della sua firma) e non i valori "entrambi" (ognuno il suo). Resta uguale quando la
+ * della sua firma) e non i valori "entrambi" dei firmatari (ognuno il suo). Resta uguale quando la
  * controparte scrive i suoi dati dopo la firma di chi crea, e nel contratto finale.
  */
 export function bodyHash(c: Pick<Contract, 'version' | 'creator'>): string {
@@ -598,7 +631,8 @@ export function bodyHash(c: Pick<Contract, 'version' | 'creator'>): string {
     meta: d.meta || [],
     sections: d.sections.map((s) => ({ heading: s.heading || '', paragraphs: s.paragraphs || [], bullets: s.bullets || [], approval: Boolean(s.specificApproval) })),
     creator: { name: c.creator.name, address: c.creator.address || '', vat: c.creator.vat || '', person: c.creator.person || '' },
-    fields: (d.fields || []).filter((f) => f.party !== 'destinatario').map((f) => ({ id: f.id, label: f.label, party: f.party, value: f.party === 'creatore' ? f.value || '' : '' })),
+    // Valori "entrambi" di un firmatario: ognuno il suo (fuori). Un termine "entrambi" di prima: nel testo.
+    fields: (d.fields || []).filter((f) => f.party !== 'destinatario').map((f) => ({ id: f.id, label: f.label, party: f.party, value: f.party === 'entrambi' && isSignerField(f) ? '' : f.value || '' })),
   }
   return sha256(JSON.stringify(canonical))
 }
@@ -900,8 +934,8 @@ export async function applyNewVersion(id: string, input: { doc: unknown; request
     const request = input.requestId ? c.requests.find((r) => r.id === input.requestId) : null
     if (input.requestId && !request) throw new ContractError('Richiesta non trovata.', 404)
     if (request && request.status !== 'aperta') throw new ContractError('Questa richiesta ha già una risposta.', 409)
-    // Dati delle parti garantiti (anche se l'AI li ha tolti); i valori gia' scritti restano.
-    const doc = carryFieldValues(prepareBody(cleanIncomingDoc(input.doc, c.version.doc), creatorInfo(c), false), c.version.doc)
+    // Dati delle parti garantiti (anche se l'AI li ha tolti); i valori gia' scritti restano. Quelli della controparte: sempre quelli salvati.
+    const doc = keepRecipientValues(carryFieldValues(prepareBody(cleanIncomingDoc(input.doc, c.version.doc), creatorInfo(c), false), c.version.doc), c.version.doc)
     const at = now()
     const hadSignatures = Boolean(c.signatures.creatore || c.signatures.destinatario)
     return {
