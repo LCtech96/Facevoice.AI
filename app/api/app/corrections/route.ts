@@ -10,6 +10,8 @@ import {
   readChatCorrections,
   sameExceptSpaces,
   saveGeneralCorrection,
+  isStrongRule,
+  type SavedHow,
   type ReplyRule,
 } from '@/lib/saas/corrections'
 
@@ -22,9 +24,9 @@ export const maxDuration = 60
 // in questa chat, come messaggio del team (origin 'manual'): una bozza parte al posto
 // del testo dell'AI, dopo una risposta gia' inviata parte un messaggio nuovo. Senza
 // sendNow una bozza prende il testo corretto (resta da controllare e inviare).
-// Possono correggere tutti quelli che possono rispondere nell'Omnichat; le regole
-// "Sempre" di titolare e amministratori valgono piu' delle Istruzioni, quelle dei
-// membri del team no. Correzione "solo in questa chat" di una risposta scritta con la
+// Possono correggere tutti quelli che possono rispondere nell'Omnichat. Le regole
+// "Sempre" restano sotto le Istruzioni finche' correzioni simili non arrivano al peso
+// STRONG_WEIGHT (corrections.ts: titolare/amministratori pesano 1, membri del team 0,5). Correzione "solo in questa chat" di una risposta scritta con la
 // Campagna: si segna (campaign) e vale solo mentre vale quella campagna.
 
 export async function POST(req: NextRequest) {
@@ -88,6 +90,7 @@ export async function POST(req: NextRequest) {
   const wrong = earlier?.wrong.trim() ? earlier.wrong : String(reply.body)
   let rule: ReplyRule | null = null
   let learned = false
+  let how: SavedHow | null = null
   try {
     if (scope === 'chat') {
       // Segni non letti = errore (meglio riprovare che salvare una correzione della campagna come se fosse per sempre).
@@ -112,6 +115,7 @@ export async function POST(req: NextRequest) {
       })
       rule = saved.rule
       learned = saved.learned
+      how = saved.how
     }
   } catch (error) {
     console.error('saas correzione non salvata:', error instanceof Error ? error.message : error)
@@ -146,5 +150,15 @@ export async function POST(req: NextRequest) {
       sendError = result.error
     }
   }
-  return NextResponse.json({ ok: true, scope, rule, learned, sent, draftUpdated, ...(sendError ? { sendError } : {}) })
+  return NextResponse.json({
+    ok: true,
+    scope,
+    rule,
+    learned,
+    how,
+    strong: rule ? isStrongRule(rule) : false,
+    sent,
+    draftUpdated,
+    ...(sendError ? { sendError } : {}),
+  })
 }

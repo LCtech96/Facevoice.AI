@@ -30,7 +30,7 @@ export async function PATCH(req: NextRequest) {
     if (!rule) return NextResponse.json({ error: 'Scrivi la regola.' }, { status: 400 })
     if (rule.length > MAX_RULE_CHARS) return NextResponse.json({ error: `Regola troppo lunga (massimo ${MAX_RULE_CHARS} caratteri).` }, { status: 400 })
     patch.rule = rule
-    // Riscritta da titolare o amministratore: ora e' una regola loro (vale piu' delle Istruzioni).
+    // Riscritta da titolare o amministratore: ora e' una regola loro (nel pool pesa almeno 1).
     patch.byAdmin = true
   }
   if (body.platform !== undefined) {

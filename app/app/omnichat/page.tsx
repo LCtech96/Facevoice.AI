@@ -48,7 +48,27 @@ type Campaign = { active: boolean; name: string; text: string; scopes: CampaignS
 type CampaignForm = { name: string; text: string; scopes: CampaignScopes }
 /** Se ora si puo' scrivere in questa chat (24 ore di Meta, email sempre). */
 type SendWindow = { ok: boolean; until?: string; reason?: string }
-type CorrectionResult = { scope: 'chat' | 'always'; rule: { rule: string } | null; learned: boolean; sent: boolean; draftUpdated?: boolean; sendError?: string }
+type CorrectionResult = {
+  scope: 'chat' | 'always'
+  rule: { rule: string; count?: number } | null
+  learned: boolean
+  /** new = regola nuova, merged = sommata a una simile, replaced = al posto di una contraria, updated = stessa risposta corretta di nuovo. */
+  how?: 'new' | 'merged' | 'replaced' | 'updated' | null
+  /** Confermata da piu' correzioni simili: vale piu' delle Istruzioni. */
+  strong?: boolean
+  sent: boolean
+  draftUpdated?: boolean
+  sendError?: string
+}
+
+function alwaysMessage(result: CorrectionResult): string {
+  const text = `«${result.rule?.rule || ''}»`
+  const n = result.rule?.count || 1
+  if (result.how === 'merged' && result.strong) return `Regola rafforzata: ${text}. Corretta ${n} volte, ora vale più delle Istruzioni. Se è giusto così, aggiorna anche le Istruzioni.`
+  if (result.how === 'merged') return `Regola rafforzata: ${text}. Corretta ${n} volte: con correzioni simili arriva a valere più delle Istruzioni.`
+  if (result.how === 'replaced') return `Regola cambiata: ${text}. Prende il posto di quella che diceva il contrario.`
+  return `Regola salvata: ${text}. La trovi in Istruzioni.${result.learned ? '' : ' L’AI non era disponibile: la regola usa il tuo esempio, puoi riscriverla lì.'}`
+}
 
 /** Risposte scritte dall'AI che si possono correggere: inviate da sola, approvate, o bozze. */
 const correctable = (m: Message) =>
@@ -467,7 +487,7 @@ function Thread({
     const pending = m.status === 'pending' || m.status === 'failed'
     const parts = [
       result.scope === 'always'
-        ? `Regola salvata: «${result.rule?.rule || ''}». La trovi in Istruzioni.${result.learned ? '' : ' L’AI non era disponibile: la regola usa il tuo esempio, puoi riscriverla lì.'}`
+        ? alwaysMessage(result)
         : 'Correzione salvata: l’AI la segue da ora in questa chat.',
     ]
     if (result.sent) parts.push('Messaggio inviato.')

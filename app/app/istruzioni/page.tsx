@@ -174,9 +174,16 @@ type Rule = {
   createdAt: string
   updatedAt: string
   source: 'manual' | 'edited_draft'
-  /** false = scritta da un membro del team: vale meno delle Istruzioni finche' non la riscrive un amministratore. */
+  /** false = scritta da un membro del team: pesa meno nel pool finche' non la riscrive un amministratore. */
   byAdmin?: boolean
+  /** Correzioni simili sommate in questa regola. */
+  count?: number
+  /** Peso del pool: da STRONG_WEIGHT vale piu' delle Istruzioni. */
+  weight?: number
 }
+
+/** Come STRONG_WEIGHT in lib/saas/corrections.ts. */
+const STRONG_WEIGHT = 3
 
 const RULE_CHANNELS: { id: string; label: string }[] = [
   { id: '', label: 'Tutti i canali' },
@@ -248,7 +255,8 @@ function LearnedRules({ canEdit }: { canEdit: boolean }) {
       </h2>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">
         Nate quando correggi una risposta nell’Omnichat (con «Sempre, per messaggi così») o modifichi una bozza dell’AI prima di inviarla. L’AI le segue nei
-        messaggi simili, prima delle regole generali.
+        messaggi simili. Una correzione da sola pesa molto ma non supera le Istruzioni; le correzioni simili si sommano e, da 3 (tue), la regola vale più
+        delle Istruzioni su quel punto.
       </p>
       {error && <p className="mt-3 text-sm text-[#ff6b6b]">{error}</p>}
       {!rules ? (
@@ -273,7 +281,18 @@ function LearnedRules({ canEdit }: { canEdit: boolean }) {
                   {r.source === 'manual' && !r.byAdmin && (
                     <span className="rounded-full border border-[var(--border-color)] px-2 py-0.5">corretta dal team</span>
                   )}
+                  {(r.count || 1) > 1 && (
+                    <span className="rounded-full border border-[var(--border-color)] px-2 py-0.5">corretta {r.count} volte</span>
+                  )}
+                  {(r.weight || 0) >= STRONG_WEIGHT && (
+                    <span className="rounded-full border border-[var(--accent-blue)] px-2 py-0.5 font-semibold text-[var(--accent-blue)]">vale più delle Istruzioni</span>
+                  )}
                 </div>
+                {(r.weight || 0) >= STRONG_WEIGHT && (
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                    Confermata da più correzioni simili: ora l’AI la segue anche se le Istruzioni dicono altro. Se è giusto così, aggiorna anche le Istruzioni.
+                  </p>
+                )}
                 <textarea
                   value={v.rule}
                   onChange={(e) => setEdits((all) => ({ ...all, [r.id]: { ...v, rule: e.target.value } }))}
