@@ -120,3 +120,76 @@ export function missingRequired(fields: RequiredField[], valueOf: (id: string) =
   const empty = (id: string) => !(valueOf(id) || '').trim()
   return fields.filter((f) => empty(f.id) && (f.required || (f.requiredUnless ? empty(f.requiredUnless) : false))).map((f) => f.label)
 }
+
+// --- Termini della collaborazione ------------------------------------------------------------------
+// Subito dopo «Le parti», in ogni contratto: data e ora della collaborazione e termine di consegna
+// dei contenuti (7, 14 o 30 giorni dalla data della collaborazione). Li sceglie chi prepara il
+// contratto (campi suoi: si bloccano con la sua firma e li copre la sua impronta); chi lo riceve li
+// vede e basta. "Nessuna data stabilita" / "Nessun termine" sono una scelta, stampata cosi'.
+// Valori salvati: "AAAA-MM-GGTHH:MM" (ora italiana, come <input type="datetime-local">) o "nessuna";
+// "7", "14", "30" o "nessuno".
+
+export type TermKind = 'collab_at' | 'delivery_days'
+export const TERMS_HEADING = 'Termini della collaborazione'
+export const NO_DATE = 'nessuna'
+export const NO_DAYS = 'nessuno'
+export const DELIVERY_DAYS = ['7', '14', '30'] as const
+export type TermSpec = { kind: TermKind; id: string; label: string }
+export const TERM_SPECS: TermSpec[] = [
+  { kind: 'collab_at', id: 'termini_data', label: 'Data e ora della collaborazione' },
+  { kind: 'delivery_days', id: 'termini_consegna', label: 'Termine di consegna dei contenuti' },
+]
+export const isTermKind = (kind: unknown): kind is TermKind => kind === 'collab_at' || kind === 'delivery_days'
+
+const LOCAL_DT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+const WEEKDAYS = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato']
+export const MONTHS = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre']
+
+/** "AAAA-MM-GGTHH:MM" che esiste davvero (niente 31 aprile, niente 25:00). */
+export function validLocalDateTime(value: string): boolean {
+  const m = value.match(LOCAL_DT)
+  if (!m) return false
+  const [y, mo, d, h, mi] = m.slice(1).map(Number)
+  if (y < 2000 || y > 2100 || h > 23 || mi > 59) return false
+  const date = new Date(Date.UTC(y, mo - 1, d))
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d
+}
+
+/**
+ * Valore di un termine scritto nella pagina, pulito: "" (vuoto), il valore valido, oppure null
+ * (non valido: non si salva). Data: "AAAA-MM-GGTHH:MM" o "nessuna"; consegna: 7, 14, 30 o "nessuno".
+ */
+export function cleanTermValue(kind: TermKind, raw: unknown): string | null {
+  const v = typeof raw === 'string' ? raw.trim().toLowerCase() : typeof raw === 'number' ? String(raw) : ''
+  if (!v) return ''
+  if (kind === 'collab_at') {
+    if (v === NO_DATE) return NO_DATE
+    const value = v.toUpperCase().slice(0, 16)
+    return validLocalDateTime(value) ? value : null
+  }
+  if (v === NO_DAYS) return NO_DAYS
+  return (DELIVERY_DAYS as readonly string[]).includes(v) ? v : null
+}
+
+/** "sabato 15 novembre 2026, ore 20:30" da "2026-11-15T20:30" (ora italiana, senza conversioni). */
+export function collabAtText(value: string): string {
+  if (value === NO_DATE) return 'Nessuna data stabilita'
+  const m = value.match(LOCAL_DT)
+  if (!m || !validLocalDateTime(value)) return ''
+  const [y, mo, d] = m.slice(1, 4).map(Number)
+  const weekday = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()]
+  return `${weekday} ${d} ${MONTHS[mo - 1]} ${y}, ore ${m[4]}:${m[5]}`
+}
+
+/** "entro 7 giorni dalla data della collaborazione" (o "Nessun termine"). */
+export function deliveryText(value: string): string {
+  if (value === NO_DAYS) return 'Nessun termine'
+  return (DELIVERY_DAYS as readonly string[]).includes(value) ? `entro ${value} giorni dalla data della collaborazione` : ''
+}
+
+/** Un termine come si stampa ("" se non e' ancora scelto o non e' valido). */
+export function termText(kind: TermKind, value: string | undefined): string {
+  const v = cleanTermValue(kind, value || '')
+  if (!v) return ''
+  return kind === 'collab_at' ? collabAtText(v) : deliveryText(v)
+}

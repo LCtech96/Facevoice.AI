@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Check, Download, KeyRound, Loader2, MessageSquareText, PenLine, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Check, Download, KeyRound, Loader2, MessageSquareText, PenLine, RefreshCw } from 'lucide-react'
 import { identityWarning, missingRequired } from '@/lib/saas/parties-shared'
 import ContractBody, { type ViewDoc, type ViewField } from './ContractBody'
 import SignaturePad, { type SignatureValue } from './SignaturePad'
@@ -13,6 +13,8 @@ import SignaturePad, { type SignatureValue } from './SignaturePad'
 // si salvano mentre scrive e si possono cambiare fino alla sua firma, anche se l'altra parte ha
 // gia' firmato. Senza i dati obbligatori «Firma il contratto» resta spento (con l'elenco di cosa manca).
 // Il cookie del PIN giusto lo mette il server (httpOnly): la pagina non lo vede.
+// «Termini della collaborazione» (data e ora, termine di consegna) li sceglie chi ha preparato il
+// contratto: qui si leggono e basta (in alto e nel testo). Se non li ha ancora scelti non si firma.
 
 type Change = { id: string; at: string; text: string; section?: string; status: 'aperta' | 'accettata' | 'modificata' | 'rifiutata'; note?: string }
 type View = {
@@ -31,6 +33,8 @@ type View = {
   missing: string[]
   /** Impronta dei dati di chi ha preparato il contratto mostrati qui (va con la firma). */
   othersRev: string
+  /** Termini della collaborazione in parole (sola lettura); complete: scelti tutti e due (serve per firmare). */
+  terms: { at: string | null; days: string | null; complete: boolean; upgrade?: boolean }
   headings: string[]
   statements: [string, string, string]
   signatures: { creatore?: { name: string; at: string }; destinatario?: { name: string; at: string } }
@@ -268,7 +272,8 @@ function Contract({
 
   const status = view.status
   const chip = status === 'firmato' ? 'bg-[#e6f6ec] text-[#1e7b3c]' : status === 'modifica_richiesta' ? 'bg-[#fff4e0] text-[#a05a00]' : 'bg-[#eef1fb] text-[#1b2559]'
-  const canOpenSign = view.canSign && missing.length === 0
+  const termsReady = view.terms ? view.terms.complete : true
+  const canOpenSign = view.canSign && missing.length === 0 && termsReady
   const nameField = view.fields.find((f) => f.kind === 'nome' && f.party === 'destinatario')
   return (
     <>
@@ -284,6 +289,16 @@ function Contract({
           <span className="text-[#5b6170]">Versione {view.version.n} · {when(view.version.at)}</span>
         </div>
       </header>
+
+      {view.terms && (view.terms.at || view.terms.days || view.canSign) && (
+        <a href="#termini" className="mt-4 block rounded-xl bg-white px-4 py-3 text-sm shadow-sm">
+          <span className="flex items-center gap-1.5 font-semibold text-[#1b2559]">
+            <CalendarClock className="h-4 w-4" /> Termini della collaborazione
+          </span>
+          <span className="mt-1 block text-[#3d4352]">Data e ora: {view.terms.at || <span className="text-[#a05a00]">da scegliere</span>}</span>
+          <span className="block text-[#3d4352]">Consegna dei contenuti: {view.terms.days || <span className="text-[#a05a00]">da scegliere</span>}</span>
+        </a>
+      )}
 
       {view.updated && (
         <p className="mt-4 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-4 py-3 text-sm text-[#7a4500]">
@@ -321,6 +336,16 @@ function Contract({
           </button>
         )}
       </div>
+      {view.canSign && !termsReady && (
+        <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-3 py-2 text-sm text-[#7a4500]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {view.terms?.upgrade
+              ? `Il contratto va aggiornato: ${view.creatorName} deve aggiungere data e ora della collaborazione e termine di consegna con una nuova versione. Gli abbiamo mandato un avviso: riprova più tardi.`
+              : `Il contratto non è ancora completo: ${view.creatorName} deve scegliere data e ora della collaborazione e termine di consegna. Gli abbiamo mandato un avviso: riprova più tardi.`}
+          </span>
+        </p>
+      )}
       {view.canSign && missing.length > 0 && (
         <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-3 py-2 text-sm text-[#7a4500]">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -356,7 +381,7 @@ function Contract({
         <ContractBody doc={view.doc} fields={view.fields} editable={editable} values={values} onValue={onValue} warnings={warnings} otherName={view.creatorName} />
       </div>
 
-      {panel === 'sign' && view.canSign && (
+      {panel === 'sign' && view.canSign && termsReady && (
         <SignForm
           view={view}
           values={Object.fromEntries(mineFields.map((f) => [f.id, valueOf(f.id)]))}

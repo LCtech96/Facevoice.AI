@@ -23,7 +23,8 @@ type EmailInput = {
 export async function sendEmail({ to, subject, html, text, replyTo }: EmailInput): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
-    console.warn(`RESEND_API_KEY non configurata: email "${subject}" non inviata a ${to}`)
+    // Nei log mai l'indirizzo del destinatario.
+    console.warn('RESEND_API_KEY non configurata: email non inviata')
     return false
   }
 
@@ -46,12 +47,13 @@ export async function sendEmail({ to, subject, html, text, replyTo }: EmailInput
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
-      console.error('Resend error:', response.status, data)
+      // Senza indirizzi email (la risposta di Resend puo' ripetere il destinatario).
+      console.error('Resend error:', response.status, JSON.stringify(data).replace(/[^\s@"'<>]+@[^\s@"'<>]+/g, '[email]').slice(0, 300))
       return false
     }
     return true
   } catch (error) {
-    console.error('Errore invio email:', error)
+    console.error('Errore invio email:', error instanceof Error ? error.message.replace(/[^\s@"'<>]+@[^\s@"'<>]+/g, '[email]').slice(0, 200) : 'errore')
     return false
   }
 }

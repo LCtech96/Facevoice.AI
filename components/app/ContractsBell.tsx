@@ -6,11 +6,12 @@ import { Bell, Check } from 'lucide-react'
 import { useWorkspace } from './WorkspaceContext'
 
 // Campanella dei contratti nella barra in alto: pallino rosso con le notifiche non lette
-// (richieste di modifica, firme del destinatario, contratti completati). Si aggiorna ogni 60
+// (richieste di modifica, link aperto dal destinatario, chi non può firmare perché mancano data/ora e termine di consegna,
+// firme del destinatario, contratti completati). Si aggiorna ogni 60
 // secondi e quando si torna sulla pagina. Tocco su una notifica: la pagina del contratto su
 // quella richiesta, e la notifica e' letta. Solo per titolare e amministratori dello spazio.
 
-type Note = { id: string; at: string; kind: 'modifica' | 'firmato' | 'completato'; contractId: string; changeId?: string; text: string; unread: boolean }
+type Note = { id: string; at: string; kind: 'modifica' | 'aperto' | 'firmato' | 'completato' | 'bloccato'; contractId: string; changeId?: string; text: string; unread: boolean }
 
 const POLL_MS = 60_000
 const ago = (iso: string) => {

@@ -23,6 +23,7 @@ import {
   shareLink,
   shareSummary,
   signContract,
+  termsVersion,
   SIGNATURE_NOTE,
   CONTRACT_DISCLAIMER,
 } from '@/lib/saas/contracts'
@@ -40,6 +41,7 @@ export const maxDuration = 120
 //   GET ?id=&pdf=1[&download=1]  PDF (bozza con la scritta, oppure firmato con il registro)
 //   GET ?id=&link=1           link da copiare (mai il PIN: non esiste piu' in chiaro)
 //   POST { op, id, ... }      share | revoke | fields (i tuoi dati, mentre scrivi) | preview | apply | manual | reject | sign | cancel
+//                             | terms_version (nuova versione per aggiungere o cambiare data/ora e termine di consegna: le firme si rifanno)
 //   DELETE ?id=               elimina una bozza mai inviata (con il suo documento)
 
 const NO_STORE = { 'Cache-Control': 'private, no-store, max-age=0', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }
@@ -125,6 +127,10 @@ export async function POST(req: NextRequest) {
         return json({ ok: true, contract: creatorView(await rejectChange(ws, id, body.changeId, body.note)) })
       case 'cancel':
         return json({ ok: true, contract: creatorView(await cancelContract(ws, id)) })
+      case 'terms_version': {
+        await ensureParties(await openContract(ws, access.userId, id))
+        return json({ ok: true, contract: creatorView(await termsVersion(ws, id, access.userId)) })
+      }
       case 'sign': {
         await ensureParties(await openContract(ws, access.userId, id))
         const signed = await signContract(

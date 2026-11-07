@@ -16,7 +16,7 @@ import {
   type AutomationInput,
   type AutomationView,
 } from './automations'
-import { documentCard, documentPdf, loadDocument, type DocumentCard, type StoredDocument } from './documents'
+import { currentDocumentPdf, documentCard, loadDocument, type DocumentCard, type StoredDocument } from './documents'
 import { getPost, publishPost, romeLabel, schedulePost, type PostPlatform, type PostRow } from './posts'
 import {
   ProspectError,
@@ -439,7 +439,8 @@ async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: 
     case 'send_document': {
       const doc = await loadDocument(db.workspaceId, str(p.documentId))
       if (!doc) return { ok: false, message: 'Il documento non c’è più: non è partito niente.', cards: [] }
-      const file = documentPdf(doc, Number(p.version) || null)
+      // Termini della collaborazione come sono nel contratto (se gia' aperto): mai una data vecchia all'altra parte.
+      const file = await currentDocumentPdf(db.workspaceId, doc, Number(p.version) || null)
       const outcome = await sendAssistantEmailWithAttachment(db, { to: str(p.contactId), text: str(p.text), subject: str(p.subject) || null, attachment: { filename: file.filename, content: file.pdf, contentType: 'application/pdf' } }, now)
       if (!outcome.ok) return { ok: false, message: `Non è partito niente: ${dot(userError(outcome.error))}`, cards: [] }
       return { ok: true, message: `Fatto: «${doc.title}» inviato a ${outcome.sent.name} per email, con il PDF allegato.`, cards: [{ kind: 'message', at, ...outcome.sent, text: `${outcome.sent.text}\n\n[Allegato: ${file.filename}]` }] }
@@ -543,6 +544,24 @@ async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: 
 
 // --- Chat: schede aggiornate e note per l'AI ------------------------------------------------------
 
+/**
+ * Termini della collaborazione dei documenti gia' aperti come contratti (id -> termini; null se il
+ * contratto e' chiuso). Il modulo dei contratti si carica solo qui; se non c'e', restano quelli del documento.
+ */
+export async function contractTermsFor(workspaceId: string, ids: string[]): Promise<Map<string, { lines: string[]; missing: string[] } | null>> {
+  const out = new Map<string, { lines: string[]; missing: string[] } | null>()
+  if (!ids.length) return out
+  const contracts = await import('./contracts').catch(() => null)
+  if (!contracts) return out
+  await Promise.all(
+    ids.slice(0, 30).map(async (id) => {
+      const c = await contracts.loadContract(workspaceId, id).catch(() => null)
+      if (c) out.set(id, contracts.termsCard(c))
+    })
+  )
+  return out
+}
+
 /** Schede di conferma e documenti nella chat con lo stato e le versioni di adesso. */
 export async function refreshAssistantCards(workspaceId: string, turns: ChatTurn[], now = Date.now()): Promise<ChatTurn[]> {
   const hasPending = turns.some((t) => t.actions?.some((a) => a.kind === 'pending'))
@@ -555,6 +574,8 @@ export async function refreshAssistantCards(workspaceId: string, turns: ChatTurn
   ])
   const byId = new Map(pending.map((a) => [a.id, a]))
   const docById = new Map<string, StoredDocument | null>(docs)
+  // Documenti gia' aperti come contratti: i termini della collaborazione come sono nel contratto (scelti nella pagina).
+  const contractTerms = await contractTermsFor(workspaceId, [...docById].flatMap(([id, doc]) => (doc ? [id] : [])))
   // L'ultima scheda di ogni documento mostra l'ultima versione; le altre la loro.
   const lastCard = new Map<string, number>()
   turns.forEach((t, i) => t.actions?.forEach((a) => a.kind === 'document' && lastCard.set(a.document.id, i)))
@@ -571,6 +592,9 @@ export async function refreshAssistantCards(workspaceId: string, turns: ChatTurn
         const doc = docById.get(a.document.id)
         if (!doc) return docById.has(a.document.id) ? { ...a, document: { ...a.document, missing: true } } : a
         const card: DocumentCard = documentCard(doc, lastCard.get(a.document.id) === i ? null : a.document.version)
+        const terms = contractTerms.get(a.document.id)
+        if (terms === null) delete card.terms
+        else if (terms && card.terms) card.terms = terms
         return { ...a, document: card }
       }
       return a

@@ -81,6 +81,8 @@ type DocumentAction = {
     placeholders: string[]
     versions?: { n: number; at: string; pages: number }[]
     missing?: boolean
+    /** Contratti: termini della collaborazione scelti (in parole) e da scegliere nella pagina del contratto. */
+    terms?: { lines: string[]; missing: string[] }
   }
 }
 /** Azione preparata dall'assistente che parte solo con il clic (doppia autorizzazione). */
@@ -1551,6 +1553,25 @@ function DocumentCard({ action }: { action: DocumentAction }) {
                 ))}
                 {d.placeholders.length > 6 ? <li>e altre {d.placeholders.length - 6}</li> : null}
               </ul>
+            </div>
+          )}
+          {d.terms && (d.terms.lines.length > 0 || d.terms.missing.length > 0) && (
+            <div className={`mt-2 rounded-xl px-3 py-2 text-xs ${d.terms.missing.length ? 'bg-[#FF9500]/10' : 'bg-[var(--background)]'}`}>
+              <p className="font-semibold text-[var(--text-primary)]">Termini della collaborazione</p>
+              {d.terms.lines.map((l) => (
+                <p key={l} className="mt-0.5 break-words text-[var(--text-secondary)]">
+                  {l}
+                </p>
+              ))}
+              {d.terms.missing.length > 0 && (
+                <p className="mt-0.5 text-[var(--text-secondary)]">
+                  Da scegliere nella{' '}
+                  <Link href={`/app/contratti/${d.id}`} className="font-medium text-[var(--accent-blue)] underline">
+                    pagina del contratto
+                  </Link>{' '}
+                  prima di condividerlo: {d.terms.missing.map((m) => m.charAt(0).toLowerCase() + m.slice(1)).join(' e ')}.
+                </p>
+              )}
             </div>
           )}
           <div className="mt-3 flex flex-wrap gap-2">

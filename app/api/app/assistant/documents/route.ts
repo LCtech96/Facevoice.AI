@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
-import { documentPdf, loadDocument } from '@/lib/saas/documents'
+import { currentDocumentPdf, loadDocument } from '@/lib/saas/documents'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
   if (!doc) return NextResponse.json({ error: 'Documento non trovato.' }, { status: 404 })
   const version = Number(params.get('v'))
   if (params.get('v') && !doc.versions.some((v) => v.n === version)) return NextResponse.json({ error: 'Versione non trovata.' }, { status: 404 })
-  const file = documentPdf(doc, Number.isInteger(version) && version > 0 ? version : null)
+  // Gia' un contratto: data/ora e termine di consegna come sono nella pagina del contratto (mai quelli vecchi della chat).
+  const file = await currentDocumentPdf(access.workspace.id, doc, Number.isInteger(version) && version > 0 ? version : null)
   const download = params.get('download') === '1'
   return new NextResponse(new Uint8Array(file.pdf), {
     status: 200,

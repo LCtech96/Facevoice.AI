@@ -3,12 +3,12 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
-import { AlertTriangle, Ban, Check, ChevronLeft, Copy, Download, ExternalLink, History, Link2, Loader2, MessageSquareText, Pencil, PenLine, Share2, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, Ban, CalendarClock, Check, ChevronLeft, Copy, Download, ExternalLink, History, Link2, Loader2, MessageSquareText, Pencil, PenLine, Share2, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import ContractBody, { type ViewDoc, type ViewField } from '@/components/contracts/ContractBody'
 import SignaturePad, { type SignatureValue } from '@/components/contracts/SignaturePad'
 import { STATUS_CHIPS, type ContractStatus } from '@/components/contracts/labels'
-import { identityWarning } from '@/lib/saas/parties-shared'
+import { TERM_SPECS, identityWarning, isTermKind, termText } from '@/lib/saas/parties-shared'
 
 // Pagina di un contratto nell'app (titolare e amministratori dello spazio): anteprima con gli
 // spazi da compilare, PDF, condivisione con link e PIN (nuovo link e nuovo PIN a ogni
@@ -19,6 +19,9 @@ import { identityWarning } from '@/lib/saas/parties-shared'
 // «Le parti»: i tuoi dati che mancano si scrivono qui (salvati mentre scrivi, fino alla tua firma);
 // i dati di chi riceve si vedono appena li scrive (la pagina si aggiorna da sola), altrimenti
 // "In attesa dei dati di …".
+// «Termini della collaborazione»: data e ora e termine di consegna (7, 14, 30 giorni) li scegli qui;
+// senza tutti e due «Condividi» e «Firma» restano spenti (lo controlla anche il server). Contratti di
+// prima gia' firmati senza il blocco: avviso con «Crea la nuova versione» (le firme si rifanno).
 
 type Change = {
   id: string
@@ -49,6 +52,8 @@ type Contract = {
   othersRev: string
   /** Dati obbligatori che chi riceve non ha ancora scritto. */
   recipientMissing: string[]
+  /** Termini della collaborazione: in parole, quelli da scegliere, blocco da aggiungere (upgrade) o bloccati da una firma (locked). */
+  terms: { at: string | null; days: string | null; complete: boolean; missing: string[]; upgrade: boolean; locked: boolean }
   headings: string[]
   statements: [string, string, string]
   signatures: { creatore?: { name: string; at: string; device: string }; destinatario?: { name: string; at: string; device: string } }
@@ -228,6 +233,19 @@ function ContractPage() {
   const chip = STATUS_CHIPS[c.status] || STATUS_CHIPS.bozza
   const linkActive = Boolean(c.share && !c.share.revokedAt && c.status !== 'annullato')
   const open = c.changes.filter((r) => r.status === 'aperta')
+  // Termini ancora da scegliere, anche con quello che stai scrivendo adesso (si salva dopo un attimo).
+  const terms = c.terms || { at: null, days: null, complete: false, missing: [], upgrade: false, locked: false }
+  const termsMissing = terms.upgrade
+    ? TERM_SPECS.map((t) => t.label)
+    : c.fields.filter((f) => isTermKind(f.kind) && !termText(f.kind, values[f.id] ?? f.own ?? '')).map((f) => f.label)
+  const newTermsVersion = async (locked: boolean) => {
+    const ask = locked ? 'Creare una nuova versione per cambiare data o termine di consegna? Le firme date si tolgono e vanno rifatte.' : 'Creare una nuova versione con data/ora e termine di consegna da scegliere? Le firme date si tolgono e vanno rifatte.'
+    if (!window.confirm(ask)) return
+    if ((await op('terms_version', {}, 'Nuova versione creata: scegli data e termine di consegna, poi firma di nuovo.')).ok) {
+      setValues({})
+      document.getElementById('termini')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }
   return (
     <div className="mx-auto max-w-3xl">
       <Link href="/app/contratti" className="inline-flex items-center gap-1 text-sm text-[var(--text-secondary)]">
@@ -280,7 +298,30 @@ function ContractPage() {
       {message && <p className="mt-3 rounded-xl bg-[#34C759]/10 px-3 py-2 text-sm text-[#34C759]">{message}</p>}
       {error && <p className="mt-3 text-sm text-[#FF453A]">{error}</p>}
 
-      {sharing && c.canShare && <SharePanel contract={c} busy={busy} onShare={async (body) => (await op('share', body)).ok && setSharing(false)} onClose={() => setSharing(false)} />}
+      {terms.upgrade && c.canShare && (
+        <div className="mt-4 rounded-2xl border border-[#FF9500]/60 bg-[#FF9500]/10 p-4 text-sm">
+          <p className="flex items-start gap-1.5 font-semibold text-[#FF9F0A]">
+            <AlertTriangle className="mt-px h-4 w-4 shrink-0" /> Mancano data/ora e termine di consegna: crea una nuova versione (le firme si rifanno).
+          </p>
+          <button onClick={() => newTermsVersion(false)} disabled={busy !== null} className={`${primary} mt-3`}>
+            {busy === 'terms_version' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />} Crea la nuova versione
+          </button>
+        </div>
+      )}
+      {!terms.upgrade && termsMissing.length > 0 && c.canShare && (
+        <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-sm text-[#FF9F0A]">
+          <CalendarClock className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            Prima di condividere o firmare scegli in{' '}
+            <a href="#termini" className="font-semibold underline">
+              «Termini della collaborazione»
+            </a>
+            : {termsMissing.map((m) => m.charAt(0).toLowerCase() + m.slice(1)).join(' e ')}.
+          </span>
+        </p>
+      )}
+
+      {sharing && c.canShare && <SharePanel contract={c} busy={busy} termsMissing={termsMissing} onShare={async (body) => (await op('share', body)).ok && setSharing(false)} onClose={() => setSharing(false)} />}
 
       {c.changes.length > 0 && (
         <section className="mt-6">
@@ -316,8 +357,17 @@ function ContractPage() {
       </section>
 
       <Preview contract={c} values={values} setValues={setValues} onContract={setContract} />
+      {terms.locked && (
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">
+          Data e termine di consegna sono bloccati dalla firma. Per cambiarli{' '}
+          <button onClick={() => newTermsVersion(true)} disabled={busy !== null} className="font-semibold text-[var(--accent-blue)] underline disabled:opacity-50">
+            crea una nuova versione
+          </button>{' '}
+          (le firme si rifanno).
+        </p>
+      )}
 
-      {c.canSign && <SignPanel contract={c} busy={busy} op={op} values={Object.fromEntries(c.fields.filter((f) => f.editable).map((f) => [f.id, values[f.id] ?? f.own ?? '']))} onSigned={() => setValues({})} />}
+      {c.canSign && <SignPanel contract={c} busy={busy} op={op} termsMissing={termsMissing} values={Object.fromEntries(c.fields.filter((f) => f.editable).map((f) => [f.id, values[f.id] ?? f.own ?? '']))} onSigned={() => setValues({})} />}
 
       <section className="mt-6">
         <h2 className="flex items-center gap-1.5 text-lg font-bold">
@@ -344,7 +394,7 @@ function ContractPage() {
 type Op = (name: string, body?: Record<string, unknown>, done?: string) => Promise<{ ok: boolean; data: Record<string, unknown> | null }>
 
 /** Condivisione: destinatario, canale, PIN scelto qui (mascherato, mai salvato: solo il suo hash). */
-function SharePanel({ contract, busy, onShare, onClose }: { contract: Contract; busy: string | null; onShare: (body: Record<string, unknown>) => Promise<unknown>; onClose: () => void }) {
+function SharePanel({ contract, busy, termsMissing, onShare, onClose }: { contract: Contract; busy: string | null; termsMissing: string[]; onShare: (body: Record<string, unknown>) => Promise<unknown>; onClose: () => void }) {
   // Dopo la firma del destinatario nome ed email non cambiano (lo controlla anche il server).
   const signedBy = Boolean(contract.signatures.destinatario)
   const [name, setName] = useState(contract.recipient.name)
@@ -354,7 +404,7 @@ function SharePanel({ contract, busy, onShare, onClose }: { contract: Contract; 
   const [pin, setPin] = useState('')
   const [showPin, setShowPin] = useState(false)
   const channels = CHANNELS.filter((ch) => ch.key !== 'instagram' && ch.key !== 'facebook' ? true : ch.key === dmChannel)
-  const valid = name.trim() && /^[A-Za-z0-9]{4,12}$/.test(pin) && (channel !== 'email' || /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email.trim()))
+  const valid = !termsMissing.length && name.trim() && /^[A-Za-z0-9]{4,12}$/.test(pin) && (channel !== 'email' || /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email.trim()))
   const submit = async () => {
     if (!valid || busy) return
     const typed = pin
@@ -372,6 +422,18 @@ function SharePanel({ contract, busy, onShare, onClose }: { contract: Contract; 
         </button>
       </div>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">{contract.share ? 'Un nuovo link e un nuovo PIN: quelli di prima non funzionano più.' : 'Chi riceve il link lo apre solo con il PIN.'}</p>
+      {termsMissing.length > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-sm text-[#FF9F0A]">
+          <CalendarClock className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            Prima scegli in{' '}
+            <a href="#termini" className="font-semibold underline">
+              «Termini della collaborazione»
+            </a>
+            : {termsMissing.map((m) => m.charAt(0).toLowerCase() + m.slice(1)).join(' e ')}.
+          </span>
+        </p>
+      )}
       <label className="mt-3 block text-sm">
         Nome di chi lo riceve
         <input value={name} readOnly={signedBy} onChange={(e) => setName(e.target.value.slice(0, 80))} className="mt-1 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2.5 text-[16px] read-only:opacity-70" />
@@ -617,12 +679,12 @@ function Preview({
 }
 
 /** Firma del titolare: stesse tre accettazioni, nome e firma col dito del destinatario (con i suoi dati scritti nelle caselle, se il destinatario non ha ancora firmato). */
-function SignPanel({ contract, busy, op, values, onSigned }: { contract: Contract; busy: string | null; op: Op; values: Record<string, string>; onSigned: () => void }) {
+function SignPanel({ contract, busy, op, termsMissing, values, onSigned }: { contract: Contract; busy: string | null; op: Op; termsMissing: string[]; values: Record<string, string>; onSigned: () => void }) {
   const [accept, setAccept] = useState<[boolean, boolean, boolean]>([false, false, false])
   const [name, setName] = useState('')
   const [signature, setSignature] = useState<SignatureValue | null>(null)
   const [key, setKey] = useState(0)
-  const ready = accept.every(Boolean) && name.trim().length >= 3 && signature !== null
+  const ready = !termsMissing.length && accept.every(Boolean) && name.trim().length >= 3 && signature !== null
   const sign = async () => {
     if (!ready) return
     const fields = values
@@ -641,7 +703,12 @@ function SignPanel({ contract, busy, op, values, onSigned }: { contract: Contrac
       <h2 className="flex items-center gap-1.5 text-lg font-bold">
         <PenLine className="h-4 w-4" /> Firma anche tu
       </h2>
-      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Versione {contract.version.n}. Può firmare prima chiunque: con la seconda firma il contratto è completo.</p>
+      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Versione {contract.version.n}. Può firmare prima chiunque: con la seconda firma il contratto è completo. Con la firma si bloccano anche data e termine di consegna.</p>
+      {termsMissing.length > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-sm text-[#FF9F0A]">
+          <CalendarClock className="mt-px h-4 w-4 shrink-0" /> Per firmare scegli prima: {termsMissing.map((m) => m.charAt(0).toLowerCase() + m.slice(1)).join(' e ')}.
+        </p>
+      )}
       <div className="mt-3 space-y-2">
         {contract.statements.map((s, k) => (
           <label key={k} className="flex items-start gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-sm">

@@ -1,19 +1,26 @@
 'use client'
 
+import { DELIVERY_DAYS, NO_DATE, NO_DAYS, termText, type TermKind } from '@/lib/saas/parties-shared'
+
 // Testo del contratto in HTML dallo stesso documento del PDF (lib/saas/contracts.ts viewDoc):
 // pezzi di testo e campi. In cima «Le parti»: i dati di chi prepara il contratto e, per chi lo
 // riceve, nome e cognome, codice fiscale, residenza… Un campo che chi guarda puo' scrivere e' una
 // casella (con la tastiera giusta: email, telefono); uno compilato mostra il valore; gli altri
 // "Etichetta: ________" come nel PDF (senza etichetta se e' gia' scritta subito prima: bare).
 // La riga vuota non esce mai dal riquadro (anche a 375 px).
+// Subito dopo «Le parti», «Termini della collaborazione»: per chi prepara il contratto data e ora
+// (selettore di data e ora, oppure «Nessuna data stabilita») e termine di consegna (7, 14, 30 giorni
+// o «Nessun termine»); per chi lo riceve gli stessi in sola lettura, scritti in parole.
 
 export type Part = string | { f: string; bare?: boolean }
 export type ViewParties = { heading: string; creator: { label: string; value?: string; f?: string }[]; recipient: { label: string; f: string }[] }
+export type ViewTerms = { heading: string; rows: { label: string; f: string; kind: TermKind }[] }
 export type ViewDoc = {
   title: string
   subtitle?: Part[]
   meta: Part[][]
   parties?: ViewParties
+  terms?: ViewTerms
   sections: { heading?: string; paragraphs: Part[][]; bullets: Part[][] }[]
   /** Riquadri delle firme (etichetta e nome sotto la riga), come nel PDF. */
   signatures?: { label: Part[]; name?: Part[] }[]
@@ -161,7 +168,72 @@ export default function ContractBody({
     )
   }
 
+  /** Riga dei termini della collaborazione: selettori per chi prepara il contratto, testo in parole per gli altri. */
+  const termRow = (row: ViewTerms['rows'][number], key: string) => {
+    const f = byId.get(row.f)
+    const pill = (active: boolean) =>
+      `min-h-[40px] rounded-full border px-3.5 py-2 text-sm ${
+        active ? (dark ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)] font-semibold text-white' : 'border-[#1b2559] bg-[#1b2559] font-semibold text-white') : dark ? 'border-[var(--border-color)] bg-[var(--background-secondary)]' : 'border-[#d6d9e0] bg-white'
+      }`
+    if (f && canWrite(row.f)) {
+      const value = values[row.f] ?? f.own ?? ''
+      const shown = termText(row.kind, value)
+      return (
+        <div key={key} className="block">
+          <p className="text-sm font-medium">
+            {row.label}
+            <span aria-hidden="true"> *</span>
+          </p>
+          {row.kind === 'collab_at' ? (
+            <>
+              <input
+                type="datetime-local"
+                value={value === NO_DATE ? '' : value}
+                disabled={value === NO_DATE}
+                onChange={(e) => onValue?.(row.f, e.target.value)}
+                aria-label={row.label}
+                aria-required
+                className={`mt-1 w-full rounded-xl border px-3 py-2.5 text-[16px] outline-none disabled:opacity-50 ${dark ? 'border-[var(--border-color)] bg-[var(--background)] text-[var(--text-primary)] [color-scheme:dark] focus:border-[var(--accent-blue)]' : 'border-[#d6d9e0] bg-white text-[#111] focus:border-[#1b2559]'}`}
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" aria-pressed={value === NO_DATE} onClick={() => onValue?.(row.f, value === NO_DATE ? '' : NO_DATE)} className={pill(value === NO_DATE)}>
+                  Nessuna data stabilita
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label={row.label}>
+              {DELIVERY_DAYS.map((d) => (
+                <button key={d} type="button" aria-pressed={value === d} onClick={() => onValue?.(row.f, d)} className={pill(value === d)}>
+                  {d} giorni
+                </button>
+              ))}
+              <button type="button" aria-pressed={value === NO_DAYS} onClick={() => onValue?.(row.f, NO_DAYS)} className={pill(value === NO_DAYS)}>
+                Nessun termine
+              </button>
+            </div>
+          )}
+          <p className={`mt-1 text-xs ${shown ? muted : dark ? 'text-[#FF9F0A]' : 'text-[#a05a00]'}`}>
+            {shown || 'Da scegliere'}
+            {row.kind === 'collab_at' && value !== NO_DATE ? ' · ora italiana' : ''}
+          </p>
+        </div>
+      )
+    }
+    return (
+      <p key={key} className="text-[15px]">
+        <span className={muted}>{row.label}: </span>
+        {f?.value ? (
+          <strong className="font-semibold">{f.value}</strong>
+        ) : (
+          <span className={dark ? 'text-[#FF9F0A]' : 'text-[#a05a00]'}>da scegliere</span>
+        )}
+      </p>
+    )
+  }
+
   const parties = doc.parties
+  const terms = doc.terms
   const writingRequired = parties ? parties.recipient.some((l) => canWrite(l.f) && (byId.get(l.f)?.required || byId.get(l.f)?.requiredUnless)) : false
   return (
     <article className={`break-words leading-relaxed ${dark ? 'text-[var(--text-primary)]' : 'text-[#16181d]'}`}>
@@ -183,6 +255,12 @@ export default function ContractBody({
           {waitingFor && <p className={`mt-1 rounded-lg px-3 py-2 text-sm ${dark ? 'bg-[#FF9500]/10 text-[#FF9F0A]' : 'bg-[#fff4e0] text-[#7a4500]'}`}>In attesa dei dati di {waitingFor}</p>}
           <div className="mt-1 space-y-2.5">{parties.recipient.map((l, k) => partyRow(l.label, l.f, undefined, `r${k}`))}</div>
           {writingRequired && <p className={`mt-2 text-xs ${muted}`}>* obbligatorio. Il codice fiscale non serve se scrivi ragione sociale e P.IVA dell’azienda.</p>}
+        </section>
+      )}
+      {terms && terms.rows.length > 0 && (
+        <section id="termini" className={`mt-3 rounded-xl border p-3 ${dark ? 'border-[var(--border-color)] bg-[var(--background)]' : 'border-[#e3e5ea] bg-[#fafbfc]'}`}>
+          <h3 className="text-[16px] font-bold">{terms.heading}</h3>
+          <div className="mt-2 space-y-3">{terms.rows.map((row, k) => termRow(row, `t${k}`))}</div>
         </section>
       )}
       <hr className={`my-4 ${dark ? 'border-[var(--border-color)]' : 'border-[#e3e5ea]'}`} />

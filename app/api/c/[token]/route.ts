@@ -10,6 +10,7 @@ import {
   markSeen,
   openWithSession,
   publicView,
+  recipientViewed,
   requestChange,
   saveRecipientFields,
   sendSignedEmails,
@@ -30,7 +31,8 @@ export const dynamic = 'force-dynamic'
 //   GET ?pdf=1            PDF (bozza con la scritta "BOZZA – non firmato", oppure firmato)
 //   POST { op: "pin", pin } | { op: "fields", values } (i suoi dati, salvati mentre scrive)
 //        | { op: "change", text, section?, versionId } | { op: "sign", ... }
-// I dati scritti (codice fiscale, indirizzo…) non vanno mai nei log.
+// I dati scritti (codice fiscale, indirizzo…) non vanno mai nei log. PIN giusto (e versione nuova
+// aperta): avviso «Link aperto» al titolare (campanella ed email), al massimo uno per giro e ogni 6 ore.
 
 const SECURITY_HEADERS: Record<string, string> = {
   'Cache-Control': 'no-store, max-age=0',
@@ -94,6 +96,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     }
     const view = publicView(contract)
     await markSeen(contract)
+    // Versione nuova aperta senza riscrivere il PIN: avviso «Link aperto» al titolare (una volta per versione).
+    await recipientViewed({ contract, hash: opened.hash }).catch(() => undefined)
     return json({ contract: view })
   } catch (error) {
     if (error instanceof ContractError && error.code === 'no_secret') return json({ error: 'Pagina non disponibile in questo momento.' }, 503)

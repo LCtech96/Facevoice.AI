@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'crypto'
+import { after } from 'next/server'
 import { callAI } from '@/lib/ai'
 import { isEmail } from '@/lib/automations-shared'
 import { pdfFileName, renderPdf, type PdfDocument, type PdfSection, type PdfSignature, type SignatureStrokes } from '@/lib/pdf-doc'
@@ -10,6 +11,7 @@ import { assertAIAllowed } from '@/lib/usage-limits'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { CHANNEL_LABELS, MAX_TEXT, sendAssistantMessage, type SendPlatform } from './assistant-send'
 import { listConnections } from './connections'
+import { mailCreator } from './contract-mail'
 import {
   DOC_KIND_LABELS,
   MAX_FIELD_VALUE,
@@ -30,6 +32,7 @@ import {
   type DocField,
   type DocKind,
   type FieldParty,
+  type StoredDocument,
   type TextPart,
 } from './documents'
 import { sendNewEmail } from './email'
@@ -45,11 +48,13 @@ import {
   partiesPdfSections,
   partyLines,
   stdFields,
+  termLines,
+  withoutTerms,
   type CreatorIdentity,
   type Parties,
   type PartyLine,
 } from './parties'
-import { identityKind, missingRequired, perSigner, type IdentityInput } from './parties-shared'
+import { TERMS_HEADING, TERM_SPECS, cleanTermValue, identityKind, isTermKind, missingRequired, perSigner, termText, type IdentityInput, type TermKind } from './parties-shared'
 import { readInstructions, workspaceName } from './responder'
 
 // Contratti dell'area clienti (beta): un documento dell'Assistente diventa un contratto quando
@@ -72,6 +77,18 @@ import { readInstructions, workspaceName } from './responder'
 // gia' bloccati in quel momento (i propri, quelli comuni e quelli di chi ha gia' firmato), salvati
 // nella firma stessa: i dati che l'altra parte puo' ancora cambiare no. Si firma solo quello che si
 // e' visto: la firma porta l'impronta dei dati dell'altra parte mostrati nella pagina (othersRev).
+//
+// «Termini della collaborazione» (subito dopo «Le parti», sempre): data e ora della collaborazione e
+// termine di consegna dei contenuti (7, 14 o 30 giorni, oppure "nessuna data" / "nessun termine"
+// scelti apposta). Sono campi del titolare: li sceglie lui (anche dalla chat dell'Assistente, come
+// valore di partenza), si bloccano con la sua firma e li copre la sua impronta. Senza tutti e due non
+// si condivide e non si firma. Contratti di prima: senza firme il blocco si aggiunge vuoto; con una
+// firma no (non si cambia quello che e' stato firmato): il titolare crea una nuova versione.
+//
+// Avvisi al titolare (campanella e email al suo indirizzo, lib/saas/contract-mail.ts): «Link aperto»
+// (PIN giusto: una volta per giro di condivisione, poi al massimo ogni 6 ore, e di nuovo quando apre
+// una versione nuova), «firmato da …» e «firmato da entrambi». Un invio non riuscito non blocca mai
+// l'apertura o la firma; due aperture insieme danno un avviso solo (deciso nel salvataggio).
 //
 // Tutto in app_settings, sempre per spazio di lavoro (mai visibile da un altro spazio):
 //   contract:<spazio>:<id>       il contratto (id = id del documento), con limiti di dimensione
@@ -107,6 +124,8 @@ export const PIN_DAY_MS = 24 * 3600_000
 export const PIN_MAX_FAILS_DAY = 20
 /** Il link resta aperto 2 ore dopo il PIN giusto (cookie firmato). */
 export const SESSION_MS = 2 * 3600_000
+/** «Link aperto» al titolare: dopo il primo di ogni giro di condivisione, al massimo uno ogni 6 ore. */
+export const OPEN_NOTICE_MS = 6 * 3600_000
 
 export const CONTRACT_DISCLAIMER =
   'Non sono un avvocato e non posso garantire che il documento sia corretto o valido: fallo controllare da un professionista prima di firmarlo o inviarlo.'
@@ -186,6 +205,12 @@ export type ShareInfo = {
   fails: { at: string; ip: string; id?: string }[]
   /** Ultima apertura (per non riempire il registro). */
   openedAt?: string
+  /** Ultimo avviso «Link aperto» al titolare e la versione aperta allora (al massimo uno ogni 6 ore, o per versione nuova). */
+  openNotifiedAt?: string
+  openNotifiedVersion?: string
+  /** Ultimo avviso «vuole firmare ma mancano data/ora e termine di consegna» (stesse regole di «Link aperto»). */
+  blockNotifiedAt?: string
+  blockNotifiedVersion?: string
 }
 export type AuditEvent = { at: string; type: string; by: Party | 'sistema'; note?: string }
 export type Contract = {
@@ -372,6 +397,12 @@ export async function openContract(ws: string, userId: string, documentId: strin
   const content = withoutPartyLines(dropFieldsAfterValues(withFields(latest.content)))
   // «Le parti» decise qui (non dall'AI): dati dello spazio e campi di identita' di chi riceve.
   const { parties, prefill } = buildParties(content, await creatorIdentity(ws, creatorName))
+  // Termini della collaborazione detti in chat (o proposti dall'AI dalla conversazione): valori di partenza del titolare.
+  for (const line of termLines(parties)) {
+    const raw = line.kind === 'collab_at' ? doc.terms?.at : doc.terms?.days
+    const value = line.id && isTermKind(line.kind) ? cleanTermValue(line.kind, raw || '') : ''
+    if (line.id && value) prefill[line.id] = value
+  }
   const contract: Contract = {
     id: doc.id,
     workspaceId: ws,
@@ -452,8 +483,16 @@ async function creatorIdentity(ws: string, name: string): Promise<CreatorIdentit
 
 /** Contratti di prima gia' firmati da entrambi: restano come sono stati firmati (niente «Le parti»). */
 const NO_PARTIES: Parties = { v: 1, creator: [], recipient: [] }
-/** «Le parti» del contratto (quelli di prima che non le hanno ancora: calcolate, non salvate). */
-const partiesOf = (c: Contract): Parties => c.parties || (c.status === 'firmato' ? NO_PARTIES : buildParties(withFields(c.version.content), { name: c.creatorName }).parties)
+/**
+ * «Le parti» del contratto (quelli di prima che non le hanno ancora: calcolate, non salvate). Con una
+ * firma gia' data i termini della collaborazione non si aggiungono da soli (serve una nuova versione).
+ */
+function partiesOf(c: Contract): Parties {
+  if (c.parties) return c.parties
+  if (c.status === 'firmato') return NO_PARTIES
+  const built = buildParties(withFields(c.version.content), { name: c.creatorName }).parties
+  return c.signatures.creatore || c.signatures.destinatario ? withoutTerms(built) : built
+}
 
 /** «Le parti» per un nuovo testo: stessi dati dello spazio; un dato scritto passa al campo nuovo con lo stesso significato. */
 function rebuildParties(c: Contract, content: DocContent): { parties: Parties; values: PartyValues } {
@@ -477,14 +516,19 @@ function rebuildParties(c: Contract, content: DocContent): { parties: Parties; v
  */
 export async function ensureParties(c: Contract): Promise<Contract> {
   // Gia' firmato da entrambi prima di «Le parti»: il documento firmato non cambia.
-  if (c.parties || c.status === 'firmato') return c
+  if (c.status === 'firmato') return c
+  // Ha gia' «Le parti»: mancano solo i termini della collaborazione (contratti di prima).
+  if (c.parties) return termsAdded(c)
   const creator = await creatorIdentity(c.workspaceId, c.creatorName)
   const done = await mutate(c.workspaceId, c.id, (x) => {
     if (x.parties || x.status === 'firmato') return { result: false }
     const noSignatures = !x.signatures.creatore && !x.signatures.destinatario
     const base = withFields(x.version.content)
     const cleaned = noSignatures ? withoutPartyLines(dropFieldsAfterValues(base)) : base
-    const { parties, prefill } = buildParties(cleaned, creator)
+    const built = buildParties(cleaned, creator)
+    // Con una firma gia' data niente termini aggiunti da soli: si fanno con una nuova versione.
+    const parties = noSignatures ? built.parties : withoutTerms(built.parties)
+    const prefill = built.prefill
     // Prima i campi di entrambi li scriveva nel testo chi firmava per primo.
     const d = x.signatures.destinatario
     const recipientFirst = Boolean(d && (!x.signatures.creatore || x.signatures.creatore.at > d.at))
@@ -494,6 +538,21 @@ export async function ensureParties(c: Contract): Promise<Contract> {
     return { save: { ...x, version, parties: { ...parties, ...(recipientFirst ? { legacyBoth: 'destinatario' as const } : {}) }, values }, result: true }
   }).catch(() => null)
   return done?.contract || { ...c, parties: partiesOf(c) }
+}
+
+/**
+ * Contratti con «Le parti» ma senza i termini della collaborazione: si aggiungono vuoti solo se
+ * nessuno ha firmato (cambierebbe quello che e' stato firmato). Con una firma la pagina del titolare
+ * chiede una nuova versione (termsState().upgrade).
+ */
+async function termsAdded(c: Contract): Promise<Contract> {
+  if (!c.parties || termLines(c.parties).length || !signable(c) || anySignature(c)) return c
+  const done = await mutate(c.workspaceId, c.id, (x) => {
+    if (!x.parties || termLines(x.parties).length || !signable(x) || anySignature(x)) return { result: false }
+    const built = buildParties(withFields(x.version.content), creatorOf(x.parties, x.creatorName))
+    return { save: { ...x, parties: { ...x.parties, terms: termLines(built.parties) } }, result: true }
+  }).catch(() => null)
+  return done?.contract || c
 }
 
 /**
@@ -548,8 +607,13 @@ function identityName(c: Contract): string {
 const partyName = (c: Contract, party: Party) => (party === 'creatore' ? c.creatorName : identityName(c) || c.recipient.name || 'Controparte')
 const SHORT_BLANK = '_'.repeat(16)
 
-/** Valore come si mostra: quello della parte del campo; luogo e data della firma uno per parte. */
+/** Tipo del termine della collaborazione di un campo (null per gli altri campi). */
+const termKindOf = (f: FieldInfo): TermKind | null => (f.std && f.line && isTermKind(f.line.kind) ? f.line.kind : null)
+
+/** Valore come si mostra: quello della parte del campo; luogo e data della firma uno per parte; i termini in parole. */
 function displayValue(c: Contract, f: FieldInfo): string {
+  const term = termKindOf(f)
+  if (term) return termText(term, ownValue(c, 'creatore', f))
   if (f.party !== 'entrambi') return ownValue(c, f.party, f)
   if (isShared(f)) return sharedValue(c, f)
   const a = ownValue(c, 'creatore', f).trim()
@@ -608,8 +672,10 @@ function applyValues(c: Contract, party: Party, input: Record<string, unknown>):
     if (!owns(party, f) || !hasOwn(input, f.id) || f.stray) continue
     if (isShared(f) && sharedLocked) continue
     const current = ownValue(c, party, f)
-    const value = oneLine(input[f.id], MAX_FIELD_VALUE)
-    if (value === current) continue
+    // Termini della collaborazione: solo valori validi (data e ora vere, 7/14/30 giorni o "nessuno").
+    const term = termKindOf(f)
+    const value = term ? cleanTermValue(term, input[f.id]) : oneLine(input[f.id], MAX_FIELD_VALUE)
+    if (value === null || value === current) continue
     changed = true
     const target = isShared(f) ? both : mine
     const legacy = Boolean(f.contentField?.value && (isShared(f) || legacyOwner(c, f.contentField) === party))
@@ -617,6 +683,54 @@ function applyValues(c: Contract, party: Party, input: Record<string, unknown>):
     else delete target[f.id]
   }
   return { values: { ...(c.values || {}), [party]: mine, ...(Object.keys(both).length || c.values?.entrambi ? { entrambi: both } : {}) }, changed }
+}
+
+/**
+ * Termini della collaborazione: block = il contratto ha il blocco; missing = etichette di quelli non
+ * ancora scelti (con il valore che il titolare sta scrivendo, se c'e'); upgrade = contratto aperto di
+ * prima senza il blocco (con una firma gia' data: serve una nuova versione).
+ */
+export function termsState(c: Contract, input: Record<string, unknown> = {}): { block: boolean; missing: string[]; upgrade: boolean } {
+  const lines = termLines(partiesOf(c))
+  if (!lines.length) return { block: false, missing: [], upgrade: signable(c) }
+  const infos = new Map(fieldInfos(c).map((f) => [f.id, f]))
+  const missing = lines.flatMap((l) => {
+    const f = l.id ? infos.get(l.id) : undefined
+    if (!f || !isTermKind(l.kind)) return []
+    const typed = hasOwn(input, f.id) ? cleanTermValue(l.kind, input[f.id]) : null
+    const value = typed ?? ownValue(c, 'creatore', f)
+    return termText(l.kind, value) ? [] : [l.label]
+  })
+  return { block: true, missing, upgrade: false }
+}
+
+/** Un termine scritto non valido (data inesistente, giorni diversi da 7, 14, 30): messaggio, altrimenti null. */
+function termInputError(c: Contract, input: Record<string, unknown>): string | null {
+  for (const l of termLines(partiesOf(c))) {
+    if (!l.id || !isTermKind(l.kind) || !hasOwn(input, l.id)) continue
+    if (cleanTermValue(l.kind, input[l.id]) === null) return l.kind === 'collab_at' ? 'Data e ora della collaborazione non valide: scegli giorno e ora.' : 'Termine di consegna non valido: scegli 7, 14 o 30 giorni (oppure «Nessun termine»).'
+  }
+  return null
+}
+
+const termsMessage = (missing: string[]) => missing.map((m) => m.charAt(0).toLowerCase() + m.slice(1)).join(' e ')
+export const TERMS_UPGRADE_MESSAGE = 'Mancano data/ora e termine di consegna: crea una nuova versione (le firme si rifanno).'
+
+/**
+ * Per l'Assistente (share_contract), prima di preparare la scheda: cosa manca dei termini della
+ * collaborazione, in una frase, oppure null. Documento non ancora aperto come contratto: contano i
+ * termini detti in chat (diventano i valori di partenza del contratto).
+ */
+export function termsMissingFor(existing: Contract | null, doc: Pick<StoredDocument, 'terms'>): string | null {
+  const page = `Il cliente li sceglie nella pagina del contratto («${TERMS_HEADING}»), poi lo condivide. Non è partito niente.`
+  if (existing) {
+    const t = termsState(existing)
+    if (t.upgrade && anySignature(existing)) return `${TERMS_UPGRADE_MESSAGE} Si fa nella pagina del contratto. Non è partito niente.`
+    const missing = t.upgrade ? TERM_SPECS.map((spec) => spec.label) : t.missing
+    return missing.length ? `mancano nel contratto: ${termsMessage(missing)}. ${page}` : null
+  }
+  const missing = TERM_SPECS.filter((spec) => !termText(spec.kind, spec.kind === 'collab_at' ? doc.terms?.at : doc.terms?.days)).map((spec) => spec.label)
+  return missing.length ? `mancano nel contratto: ${termsMessage(missing)}. ${page}` : null
 }
 
 /** Nuovo destinatario: via i dati scritti da chi riceveva il contratto prima (anche quelli di prima nel testo). */
@@ -830,6 +944,19 @@ export function messageWithLink(text: string, link: string): string {
 }
 
 const RECIPIENT_SIGNED_CODE = 'recipient_signed'
+const TERMS_CODE = 'terms'
+
+/**
+ * Termini della collaborazione scelti (o blocco da aggiungere con una nuova versione), altrimenti
+ * errore con quello che manca: per condividere e per la firma del titolare.
+ */
+function assertTerms(c: Contract, why: 'share' | 'sign', input: Record<string, unknown> = {}): void {
+  const terms = termsState(c, input)
+  if (terms.upgrade) throw new ContractError(TERMS_UPGRADE_MESSAGE, 409, 'terms_upgrade')
+  if (terms.missing.length) {
+    throw new ContractError(`${why === 'share' ? 'Prima di condividere il contratto' : 'Prima di firmare'} scegli in «${TERMS_HEADING}»: ${termsMessage(terms.missing)}.`, 409, 'terms')
+  }
+}
 const RECIPIENT_SIGNED = (name: string) => `${name || 'Il destinatario'} ha già firmato: non puoi cambiare chi riceve il contratto (né la sua email). Puoi solo creare un nuovo link e un nuovo PIN.`
 const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 /** Dopo la firma del destinatario il nome (e l'email, se c'era) non cambiano. */
@@ -853,9 +980,12 @@ export async function shareContract(db: WorkspaceDb, userId: string, id: string,
   const pin = input.pin
   const channel = asShareChannel(input.channel) || 'link'
   const origin = safeOrigin(input.origin)
-  const base = await openContract(ws, userId, id)
+  // Contratti di prima: «Le parti» e i termini della collaborazione (se nessuno ha firmato) si aggiungono qui.
+  const base = await ensureParties(await openContract(ws, userId, id))
   if (base.status === 'firmato') throw new ContractError('Il contratto è già firmato da entrambi: puoi solo copiare il link.', 409, 'signed')
   if (base.status === 'annullato') throw new ContractError('Il contratto è annullato.', 409, 'cancelled')
+  // Senza data e ora della collaborazione e termine di consegna il contratto non si condivide.
+  assertTerms(base, 'share')
   const typedName = oneLine(input.recipientName, 80) || base.recipient.name
   if (!typedName) throw new ContractError('Scrivi il nome di chi riceve il contratto.', 400, 'recipient')
   const email = oneLine(input.email, 254).toLowerCase()
@@ -887,6 +1017,8 @@ export async function shareContract(db: WorkspaceDb, userId: string, id: string,
   const saved = await mutate(ws, id, (c) => {
     if (c.status === 'firmato' || c.status === 'annullato') return { result: null as string | null }
     if (recipientChanged(c, recipientName, email)) return { result: RECIPIENT_SIGNED_CODE as string | null }
+    const terms = termsState(c)
+    if (terms.upgrade || terms.missing.length) return { result: TERMS_CODE as string | null }
     // Un'altra persona: i dati scritti da chi lo riceveva prima (nome vero, codice fiscale…) non li vede e non li firma.
     const other = !c.signatures.destinatario && !samePerson(c, recipientName, email, platform, contactId)
     const hadData = other && fieldInfos(c).some((f) => f.party !== 'creatore' && !isShared(f) && ownValue(c, 'destinatario', f))
@@ -910,6 +1042,7 @@ export async function shareContract(db: WorkspaceDb, userId: string, id: string,
   })
   if (!saved || saved.result === null) throw new ContractError('Il contratto non si può più condividere.', 409, 'closed')
   if (saved.result === RECIPIENT_SIGNED_CODE) throw new ContractError(RECIPIENT_SIGNED(saved.contract.recipient.name), 409, 'recipient_signed')
+  if (saved.result === TERMS_CODE) assertTerms(saved.contract, 'share')
   const oldHash = saved.result
   await supabaseAdmin.from('app_settings').upsert({ key: linkKey(hash), value: JSON.stringify({ ws, id }), updated_at: now })
   if (oldHash) await supabaseAdmin.from('app_settings').delete().eq('key', linkKey(oldHash))
@@ -1069,13 +1202,71 @@ export async function checkPin(token: unknown, pin: unknown, ip: string, now = D
   }
   // PIN giusto: il conteggio del link riparte da zero (come prima), il tentativo dell'IP si toglie.
   await releaseIp(ipHash, attempt)
+  const at = new Date(now).toISOString()
   const done = await mutate(ws, found.contract.id, (c) => {
     if (!c.share || c.share.tokenHash !== found.hash) return { result: false }
     const quiet = c.share.openedAt && now - Date.parse(c.share.openedAt) < 30 * 60_000
-    return { save: { ...c, share: { ...c.share, fails: [], openedAt: new Date(now).toISOString() }, events: quiet ? c.events : withEvent(c, 'aperto', 'destinatario') }, result: true }
+    // «Link aperto» al titolare: deciso qui, nello stesso salvataggio (due aperture insieme: un avviso solo).
+    const notify = openDue(c, now, true)
+    const share: ShareInfo = { ...c.share, fails: [], openedAt: at, ...(notify ? openMarks(c, at) : {}) }
+    return { save: { ...c, share, events: quiet ? c.events : withEvent(c, 'aperto', 'destinatario') }, result: notify }
   }).catch(() => null)
   const contract = done?.contract || found.contract
+  if (done?.result) await notifyCreator(contract, 'aperto', at, undefined, termsBlock(contract))
+  else if (done) await recipientBlocked(done.contract, found.hash, now)
   return { ok: true, session: issueSession(found.hash, share.id, now), hash: found.hash, contract }
+}
+
+/**
+ * Si avvisa il titolare dell'apertura? Il primo PIN giusto di ogni giro di condivisione (un nuovo
+ * link riparte da zero), poi al massimo ogni 6 ore; e quando chi riceve apre una versione nuova
+ * ("contratto aggiornato"), anche senza riscrivere il PIN.
+ */
+export function openNotice(share: Pick<ShareInfo, 'openNotifiedAt' | 'openNotifiedVersion'>, versionId: string, now: number, viaPin: boolean): boolean {
+  if (!share.openNotifiedAt) return true
+  if (share.openNotifiedVersion !== versionId) return true
+  return viaPin && now - Date.parse(share.openNotifiedAt) >= OPEN_NOTICE_MS
+}
+
+/**
+ * Chi riceve non puo' firmare per i termini della collaborazione: 'upgrade' se il contratto e' di
+ * prima e ha gia' una firma (serve una nuova versione), 'terms' se il titolare li deve ancora
+ * scegliere (anche un contratto di prima senza firme: il blocco si aggiunge vuoto), altrimenti null.
+ */
+function termsBlock(c: Contract): Blocked | null {
+  const t = termsState(c)
+  if (t.upgrade) return anySignature(c) ? 'upgrade' : 'terms'
+  return t.missing.length ? 'terms' : null
+}
+
+/** «Link aperto» solo finche' chi riceve non ha firmato (dopo, riaprire per scaricare il PDF non avvisa piu'). */
+const openDue = (c: Contract, now: number, viaPin: boolean) =>
+  Boolean(c.share) && !c.signatures.destinatario && signable(c) && openNotice(c.share as ShareInfo, c.version.id, now, viaPin)
+
+/** «Non puo' firmare» (mancano i termini): stesse regole di «Link aperto», con i suoi segni. */
+const blockDue = (c: Contract, now: number) =>
+  Boolean(c.share && !c.share.revokedAt && !c.signatures.destinatario && signable(c) && termsBlock(c)) &&
+  openNotice({ openNotifiedAt: c.share?.blockNotifiedAt, openNotifiedVersion: c.share?.blockNotifiedVersion }, c.version.id, now, true)
+
+/** Segni dell'avviso «Link aperto» (e di «non puo' firmare», se l'avviso lo dice gia': niente doppioni). */
+const openMarks = (c: Contract, at: string): Partial<ShareInfo> => ({
+  openNotifiedAt: at,
+  openNotifiedVersion: c.version.id,
+  ...(termsBlock(c) ? { blockNotifiedAt: at, blockNotifiedVersion: c.version.id } : {}),
+})
+
+/**
+ * Pagina del link aperta con il cookie (senza riscrivere il PIN): avviso al titolare solo se chi
+ * riceve sta guardando una versione nuova (o se in questo giro non e' mai stato avvisato).
+ */
+export async function recipientViewed(found: { contract: Contract; hash: string }, now = Date.now()): Promise<void> {
+  if (!openDue(found.contract, now, false)) return recipientBlocked(found.contract, found.hash, now)
+  const at = new Date(now).toISOString()
+  const done = await mutate(found.contract.workspaceId, found.contract.id, (c) => {
+    if (!c.share || c.share.tokenHash !== found.hash || c.share.revokedAt || !openDue(c, now, false)) return { result: false }
+    return { save: { ...c, share: { ...c.share, ...openMarks(c, at) } }, result: true }
+  }).catch(() => null)
+  if (done?.result) await notifyCreator(done.contract, 'aperto', at, undefined, termsBlock(done.contract))
 }
 
 /** Contratto del link con il cookie del PIN giusto, altrimenti null (link non valido o PIN da scrivere). */
@@ -1092,7 +1283,9 @@ export type ViewSection = { heading?: string; paragraphs: TextPart[][]; bullets:
 export type ViewParties = { heading: string; creator: { label: string; value?: string; f?: string }[]; recipient: { label: string; f: string }[] }
 /** Riquadri delle firme come nel PDF: etichetta e nome sotto la riga (campi compresi). */
 export type ViewSignature = { label: TextPart[]; name?: TextPart[] }
-export type ViewDoc = { title: string; subtitle?: TextPart[]; meta: TextPart[][]; parties?: ViewParties; sections: ViewSection[]; signatures?: ViewSignature[] }
+/** «Termini della collaborazione» per la pagina: una riga per termine con il suo campo (f) e il tipo. */
+export type ViewTerms = { heading: string; rows: { label: string; f: string; kind: TermKind }[] }
+export type ViewDoc = { title: string; subtitle?: TextPart[]; meta: TextPart[][]; parties?: ViewParties; terms?: ViewTerms; sections: ViewSection[]; signatures?: ViewSignature[] }
 /**
  * Campo per la pagina di chi guarda: value come si stampa; own il proprio valore (casella; nei
  * campi comuni il valore comune); other il valore dell'altra parte in luogo e data della firma;
@@ -1136,6 +1329,9 @@ export function viewDoc(c: Contract, withParties = true): ViewDoc {
     ...(content.subtitle ? { subtitle: textParts(content.subtitle, fields) } : {}),
     meta: content.meta.map((t) => textParts(t, fields)),
     ...(withParties && parties.recipient.length ? { parties: partiesView(parties) } : {}),
+    ...(withParties && termLines(parties).length
+      ? { terms: { heading: TERMS_HEADING, rows: termLines(parties).flatMap((l) => (l.id && isTermKind(l.kind) ? [{ label: l.label, f: l.id, kind: l.kind }] : [])) } }
+      : {}),
     sections: [...content.sections, ...(extra ? [extra] : [])].map((s) => ({
       ...(s.heading ? { heading: fillText(s.heading, fields) } : {}),
       paragraphs: s.paragraphs.map((t) => textParts(t, fields)),
@@ -1203,6 +1399,61 @@ export function statementsFor(content: DocContent): [string, string, string] {
 
 const signable = (c: Contract) => ['bozza', 'inviato', 'modifica_richiesta', 'in_firma'].includes(c.status)
 
+/** Termini della collaborazione in parole (null se non scelti) e se ci sono tutti e due. */
+function termsSummary(c: Contract): { at: string | null; days: string | null; complete: boolean } {
+  const parties = partiesOf(c)
+  const show = valueOf(c)
+  const text = (kind: TermKind) => {
+    const id = termLines(parties).find((l) => l.kind === kind)?.id
+    return (id && show(id)) || null
+  }
+  const at = text('collab_at')
+  const days = text('delivery_days')
+  return { at, days, complete: termLines(parties).length > 0 && Boolean(at && days) }
+}
+
+/**
+ * Termini per la scheda del documento nella chat, come sono nel contratto (scelti nella pagina):
+ * in parole e quelli ancora da scegliere. null se il contratto e' chiuso (firmato o annullato).
+ */
+export function termsCard(c: Contract): { lines: string[]; missing: string[] } | null {
+  if (c.status === 'firmato' || c.status === 'annullato') return null
+  const lines = termLines(partiesOf(c))
+  if (!lines.length) return { lines: [], missing: TERM_SPECS.map((spec) => spec.label) }
+  const show = valueOf(c)
+  const out = { lines: [] as string[], missing: [] as string[] }
+  for (const l of lines) {
+    const text = l.id ? show(l.id) : ''
+    if (text) out.lines.push(`${l.label}: ${text}`)
+    else out.missing.push(l.label)
+  }
+  return out
+}
+
+/**
+ * Termini scelti nel contratto (valori salvati: "AAAA-MM-GGTHH:MM" o "nessuna", "7"/"14"/"30" o
+ * "nessuno"), per il PDF del documento dalla chat: gli stessi della pagina del contratto. null se il
+ * contratto e' chiuso (firmato: il documento ha gia' la versione firmata; annullato: restano quelli del documento).
+ */
+export function contractTermValues(c: Contract): { at?: string; days?: string } | null {
+  if (c.status === 'firmato' || c.status === 'annullato') return null
+  const infos = new Map(fieldInfos(c).map((f) => [f.id, f]))
+  const out: { at?: string; days?: string } = {}
+  for (const l of termLines(partiesOf(c))) {
+    const f = l.id ? infos.get(l.id) : undefined
+    if (!f || !isTermKind(l.kind)) continue
+    const value = cleanTermValue(l.kind, ownValue(c, 'creatore', f))
+    if (value) out[l.kind === 'collab_at' ? 'at' : 'days'] = value
+  }
+  return out
+}
+
+/** Termini per la pagina del titolare: in parole, da scegliere, blocco da aggiungere (upgrade), bloccati da una firma (locked). */
+function creatorTerms(c: Contract) {
+  const state = termsState(c)
+  return { ...termsSummary(c), missing: state.missing, upgrade: state.upgrade, locked: state.block && anySignature(c) && signable(c) }
+}
+
 /** Pagina del link (destinatario): niente PIN, niente token, niente dati del registro dell'altra parte. */
 export function publicView(c: Contract) {
   const updated = Boolean(c.recipientSeen && c.recipientSeen !== c.version.id)
@@ -1222,6 +1473,11 @@ export function publicView(c: Contract) {
     missing: missingFor(c),
     /** Impronta dei dati del titolare mostrati qui: va mandata con la firma. */
     othersRev: othersRev(c, 'destinatario'),
+    /**
+     * Termini della collaborazione in parole (sola lettura); complete: scelti tutti e due dal titolare
+     * (serve per firmare); upgrade: contratto di prima, il titolare deve crearne una nuova versione.
+     */
+    terms: { ...termsSummary(c), ...(termsBlock(c) === 'upgrade' ? { upgrade: true } : {}) },
     headings: c.version.content.sections.map((s) => s.heading || '').filter(Boolean),
     statements: statementsFor(c.version.content),
     signatures: {
@@ -1255,6 +1511,12 @@ export function creatorView(c: Contract) {
     fill: fillState(c, 'creatore'),
     /** Impronta dei dati dell'altra parte mostrati qui: va mandata con la firma. */
     othersRev: othersRev(c, 'creatore'),
+    /**
+     * Termini della collaborazione: missing = quelli da scegliere (senza, niente condivisione ne' firma);
+     * upgrade = contratto di prima senza il blocco e con una firma (serve una nuova versione);
+     * locked = scelti ma bloccati da una firma (per cambiarli serve una nuova versione).
+     */
+    terms: creatorTerms(c),
     /** Dati obbligatori che chi riceve non ha ancora scritto ("In attesa dei dati di …"): solo con un link attivo. */
     recipientMissing: c.share && !c.share.revokedAt && ['inviato', 'modifica_richiesta', 'in_firma'].includes(c.status) && !c.signatures.destinatario ? missingFor(c) : [],
     headings: c.version.content.sections.map((s) => s.heading || '').filter(Boolean),
@@ -1463,6 +1725,28 @@ export async function rejectChange(ws: string, id: string, changeId: unknown, no
   return done.contract
 }
 
+/**
+ * Nuova versione per i termini della collaborazione, con lo stesso testo: per un contratto di prima
+ * senza il blocco (con una firma gia' data) o per cambiare data o termine dopo una firma. Le firme si
+ * tolgono (si rifanno): quello che e' stato firmato non cambia mai da solo. Senza firme non serve
+ * (i termini si cambiano nella pagina).
+ */
+export async function termsVersion(ws: string, id: string, userId: string): Promise<Contract> {
+  const done = await mutate(ws, id, (c) => {
+    if (c.status === 'firmato' || c.status === 'annullato') return { result: 'closed' as const }
+    const has = termLines(partiesOf(c)).length > 0
+    if (has && !anySignature(c)) return { result: 'already' as const }
+    const note = has ? 'Data/ora o termine di consegna da cambiare' : 'Aggiunti data/ora e termine di consegna'
+    const next = newVersion({ ...c, parties: partiesOf(c) }, c.version.content, userId, note, 'nuova_versione')
+    const open = next.changes.some((x) => x.status === 'aperta')
+    return { save: { ...next, status: open ? 'modifica_richiesta' : next.status }, result: 'ok' as const }
+  })
+  if (!done) throw new ContractError('Contratto non trovato.', 404, 'not_found')
+  if (done.result === 'closed') throw new ContractError('Il contratto è chiuso.', 409, 'closed')
+  await updateIndex(ws, done.contract)
+  return done.contract
+}
+
 const asValues = (values: unknown): Record<string, unknown> => (values && typeof values === 'object' && !Array.isArray(values) ? (values as Record<string, unknown>) : {})
 
 /**
@@ -1477,11 +1761,13 @@ export async function setCreatorFields(ws: string, id: string, values: unknown):
     if (c.status === 'firmato' || c.status === 'annullato') return { result: 'closed' as const }
     if (c.signatures.creatore) return { result: 'mine' as const }
     if (c.signatures.destinatario) return { result: 'signed' as const }
+    if (termInputError(c, input)) return { result: 'term' as const }
     const applied = applyValues(c, 'creatore', input)
     if (!applied.changed) return { result: 'same' as const }
     return { save: { ...c, parties: partiesOf(c), values: applied.values }, result: 'ok' as const }
   })
   if (!done) throw new ContractError('Contratto non trovato.', 404, 'not_found')
+  if (done.result === 'term') throw new ContractError(termInputError(done.contract, input) || 'Valore non valido.', 400, 'terms')
   if (done.result === 'closed') throw new ContractError('Il contratto è chiuso.', 409, 'closed')
   if (done.result === 'mine') throw new ContractError('Hai già firmato: i tuoi dati non cambiano più.', 409, 'signed')
   if (done.result === 'signed') throw new ContractError('L’altra parte ha già firmato: i dati non cambiano più. Quelli vuoti restano righe da compilare a mano.', 409, 'signed')
@@ -1628,7 +1914,7 @@ export async function signContract(ws: string, id: string, party: Party, input: 
   if (!strokesOk(strokes)) throw new ContractError('Firma col dito nel riquadro.', 400, 'strokes')
   const ratio = Math.min(8, Math.max(1, Number(input.ratio) || 3))
   const values = asValues(input.fields)
-  type Outcome = 'link' | 'closed' | 'already' | 'version' | 'data' | 'completed' | 'signed' | { missing: string[] }
+  type Outcome = 'link' | 'closed' | 'already' | 'version' | 'data' | 'completed' | 'signed' | 'terms_upgrade' | { missing: string[] } | { terms: string[] } | { invalid: string }
   const done = await mutate<Outcome>(ws, id, (current) => {
     // Contratti di prima senza «Le parti»: si fissano adesso (stanno fuori dal testo firmato).
     const c: Contract = current.parties ? current : { ...current, parties: partiesOf(current) }
@@ -1640,7 +1926,13 @@ export async function signContract(ws: string, id: string, party: Party, input: 
     if (typeof input.othersRev !== 'string' || input.othersRev !== othersRev(c, party)) return { result: 'data' }
     // Con la firma si salvano i propri dati (anche cambiati, fino alla propria firma). Dopo la firma
     // del destinatario il titolare non scrive piu' niente: i suoi dati vuoti restano righe vuote.
+    const invalid = party === 'creatore' && fillState(c, party) === 'all' ? termInputError(c, values) : null
+    if (invalid) return { result: { invalid } }
     const filled: Contract = fillState(c, party) === 'all' ? { ...c, values: applyValues(c, party, values).values } : c
+    // Termini della collaborazione (data e ora, consegna): senza, non firma nessuno.
+    const terms = termsState(filled)
+    if (terms.upgrade) return { result: 'terms_upgrade' }
+    if (terms.missing.length) return { result: { terms: terms.missing } }
     // Chi riceve firma solo con i suoi dati obbligatori (nome e cognome, codice fiscale, residenza).
     if (party === 'destinatario') {
       const missing = missingFor(filled)
@@ -1682,6 +1974,21 @@ export async function signContract(ws: string, id: string, party: Party, input: 
   })
   if (!done) throw new ContractError(guard ? INVALID_LINK : 'Contratto non trovato.', 404, guard ? 'invalid_link' : 'not_found')
   const r = done.result
+  if (typeof r === 'object' && 'invalid' in r) throw new ContractError(r.invalid, 400, 'terms')
+  // Chi riceve vuole firmare ma mancano i termini (o serve una nuova versione): il titolare lo sa subito.
+  if (party === 'destinatario' && (r === 'terms_upgrade' || (typeof r === 'object' && 'terms' in r))) await recipientBlocked(done.contract, guard?.hash)
+  if (typeof r === 'object' && 'terms' in r) {
+    throw new ContractError(
+      party === 'creatore'
+        ? `Prima di firmare scegli in «${TERMS_HEADING}»: ${termsMessage(r.terms)}.`
+        : `Il contratto non è ancora completo: ${done.contract.creatorName} deve ancora scegliere ${termsMessage(r.terms)}. Riprova più tardi.`,
+      409,
+      'terms'
+    )
+  }
+  if (r === 'terms_upgrade') {
+    throw new ContractError(party === 'creatore' ? TERMS_UPGRADE_MESSAGE : RECIPIENT_UPGRADE(done.contract.creatorName), 409, 'terms')
+  }
   if (typeof r === 'object') throw new ContractError(`Per firmare scrivi prima: ${r.missing.join(', ')}.`, 400, 'missing')
   if (r === 'link') throw new ContractError(INVALID_LINK, 404, 'invalid_link')
   if (r === 'closed') throw new ContractError('Il contratto non si può firmare adesso.', 409, 'closed')
@@ -1691,19 +1998,46 @@ export async function signContract(ws: string, id: string, party: Party, input: 
   const contract = done.contract
   await updateIndex(ws, contract)
   const completed = r === 'completed'
+  const at = contract.signatures[party]?.at || new Date().toISOString()
   if (completed) {
     // Nel documento resta la versione firmata come si stampa: «Le parti» e i dati scritti al loro posto.
     await keepOnlyFinalDocument(ws, contract.documentId, finalDocumentContent(contract), contract.createdBy).catch(() => undefined)
-    await addNote(ws, { kind: 'completato', contractId: contract.id, title: contract.title, who: contract.recipient.name })
+    // Un avviso solo: «firmato da entrambi» (con il nome se l'ultima firma e' del destinatario).
+    await notifyCreator(contract, 'completato', at, party)
   } else if (party === 'destinatario') {
-    await addNote(ws, { kind: 'firmato', contractId: contract.id, title: contract.title, who: contract.recipient.name })
+    await notifyCreator(contract, 'firmato', at, party)
   }
   return { contract, completed }
 }
 
+/** Pagina del link, contratto di prima da aggiornare: lo deve fare il titolare con una nuova versione. */
+export const RECIPIENT_UPGRADE = (creator: string) =>
+  `Il contratto va aggiornato: ${creator || 'chi te l’ha mandato'} deve aggiungere data e ora della collaborazione e termine di consegna con una nuova versione. Gli abbiamo mandato un avviso: riprova più tardi.`
+
+/**
+ * Chi riceve apre il contratto (o prova a firmarlo) ma non puo' firmare: mancano data/ora e termine di
+ * consegna ('upgrade': contratto di prima, serve una nuova versione). Avviso «non puo' firmare» al
+ * titolare (campanella ed email), se l'avviso di apertura non l'ha gia' detto: uno per giro di
+ * condivisione e per versione, poi al massimo ogni 6 ore; deciso nello stesso salvataggio (due
+ * richieste insieme = un avviso). Non blocca e non lancia mai.
+ */
+async function recipientBlocked(c: Contract, hash: string | undefined, now = Date.now()): Promise<void> {
+  if (!blockDue(c, now)) return
+  const at = new Date(now).toISOString()
+  try {
+    const done = await mutate(c.workspaceId, c.id, (x) =>
+      x.share && (!hash || x.share.tokenHash === hash) && blockDue(x, now) ? { save: { ...x, share: { ...x.share, blockNotifiedAt: at, blockNotifiedVersion: x.version.id } }, result: termsBlock(x) } : { result: null }
+    )
+    if (done?.result) await notifyCreator(done.contract, 'bloccato', at, undefined, done.result)
+  } catch {
+    console.warn('contratti: avviso «non può firmare» non salvato')
+  }
+}
+
 /**
  * Firmato da tutti: una breve email "Contratto firmato" con il link (mai il PDF, mai il PIN) a chi
- * ha un indirizzo, dalla casella collegata dello spazio. Se la casella non c'e' non parte niente.
+ * riceve il contratto, se ha un indirizzo, dalla casella collegata dello spazio. Se la casella non
+ * c'e' non parte niente. Il titolare lo avvisa notifyCreator (campanella ed email al suo account).
  */
 export async function sendSignedEmails(db: WorkspaceDb, contract: Contract): Promise<number> {
   if (contract.status !== 'firmato') return 0
@@ -1725,11 +2059,6 @@ export async function sendSignedEmails(db: WorkspaceDb, contract: Contract): Pro
   }
   if (contract.recipient.email && link) {
     await send(contract.recipient.email, `Il contratto «${contract.title}» tra ${contract.creatorName} e ${contract.recipient.name} è firmato da entrambi.\nPuoi scaricare la versione firmata da qui (con il PIN che hai già):\n${link}\n\n${contract.creatorName}`)
-  }
-  const { data } = await supabaseAdmin.auth.admin.getUserById(contract.createdBy).catch(() => ({ data: { user: null } }))
-  const creatorEmail = (data?.user?.email || '').toLowerCase()
-  if (creatorEmail && contract.share?.origin) {
-    await send(creatorEmail, `Il contratto «${contract.title}» con ${contract.recipient.name} è firmato da entrambi.\nLo trovi nella pagina Contratti:\n${contract.share.origin}/app/contratti/${contract.id}`)
   }
   return sent.length
 }
@@ -1766,11 +2095,18 @@ function signatureBoxes(c: Contract, content: DocContent): PdfSignature[] {
 function signedDataLine(c: Contract, s: Signature, bucket: Party | 'entrambi' = s.party): string {
   // Nell'ordine: «Le parti», poi i campi del testo.
   const labels = new Map<string, string>()
-  for (const l of partyLines(partiesOf(c))) if (l.id) labels.set(l.id, l.label)
+  const terms = new Map<string, TermKind>()
+  for (const l of partyLines(partiesOf(c))) {
+    if (!l.id) continue
+    labels.set(l.id, l.label)
+    if (isTermKind(l.kind)) terms.set(l.id, l.kind)
+  }
   for (const f of fieldInfos(c)) if (!labels.has(f.id)) labels.set(f.id, f.label)
   const values = s.values || {}
+  // I termini della collaborazione in parole ("sabato 15 novembre 2026, ore 20:30").
+  const shown = (id: string, v: string) => (terms.has(id) ? termText(terms.get(id) as TermKind, v) || v : v)
   return [...labels]
-    .flatMap(([id, label]) => (values[`${bucket}:${id}`] ? [`${label}: ${values[`${bucket}:${id}`]}`] : []))
+    .flatMap(([id, label]) => (values[`${bucket}:${id}`] ? [`${label}: ${shown(id, values[`${bucket}:${id}`])}`] : []))
     .join('; ')
 }
 
@@ -1853,8 +2189,14 @@ export function contractPdf(c: Contract): { pdf: Buffer; pages: number; filename
 
 // --- Notifiche (campanella) -----------------------------------------------------------------------------------
 
-export type NoteKind = 'modifica' | 'firmato' | 'completato'
-export type ContractNote = { id: string; at: string; kind: NoteKind; contractId: string; title: string; who: string; changeId?: string; readBy: string[] }
+export type NoteKind = 'modifica' | 'aperto' | 'firmato' | 'completato' | 'bloccato'
+/** Perche' chi riceve non puo' firmare: serve una nuova versione (upgrade) o mancano i termini (terms). */
+type Blocked = 'upgrade' | 'terms'
+/**
+ * by: chi ha dato l'ultima firma (per «completato»); blocked: per «aperto» e «bloccato» (ha provato a
+ * firmare), chi riceve non puo' firmare perche' mancano data/ora e termine di consegna.
+ */
+export type ContractNote = { id: string; at: string; kind: NoteKind; contractId: string; title: string; who: string; changeId?: string; by?: Party; blocked?: Blocked; readBy: string[] }
 
 const parseNotes = (raw: string | null): ContractNote[] => {
   const v = parseJson(raw)
@@ -1870,8 +2212,75 @@ async function addNote(ws: string, note: Omit<ContractNote, 'id' | 'at' | 'readB
 
 export const NOTE_TEXT: Record<NoteKind, (n: ContractNote) => string> = {
   modifica: (n) => `${n.who || 'Il destinatario'} chiede una modifica a «${n.title}»`,
+  aperto: (n) => `${n.who || 'Il destinatario'} ha aperto il link di «${n.title}»${n.blocked ? `, ma non può firmare: mancano data/ora e termine di consegna (${blockedFix(n.blocked)})` : ''}`,
   firmato: (n) => `${n.who || 'Il destinatario'} ha firmato «${n.title}»: manca la tua firma`,
-  completato: (n) => `«${n.title}» è firmato da entrambi`,
+  completato: (n) => (n.by === 'destinatario' ? `${n.who || 'Il destinatario'} ha firmato: «${n.title}» è firmato da entrambi` : `«${n.title}» è firmato da entrambi`),
+  bloccato: (n) => `${n.who || 'Il destinatario'} non può firmare «${n.title}»: mancano data/ora e termine di consegna (${blockedFix(n.blocked || 'terms')})`,
+}
+/** Cosa fa il titolare quando chi riceve non puo' firmare. */
+const blockedFix = (b: Blocked) => (b === 'upgrade' ? 'crea una nuova versione' : 'sceglili nella pagina del contratto')
+
+type CreatorEvent = 'aperto' | 'firmato' | 'completato' | 'bloccato'
+
+/** "7 novembre 2026 alle 18:30" (ora italiana). */
+const romeWhen = (iso: string) => {
+  const d = new Date(iso)
+  const day = d.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', year: 'numeric' })
+  const time = d.toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' })
+  return `${day} alle ${time}`
+}
+
+/**
+ * Email al titolare per un avviso: titolo, nome di chi riceve (quello scelto dal titolare), ora
+ * italiana e il pulsante per la pagina del contratto nell'app. Mai PIN, link pubblico, dati scritti
+ * da chi riceve (codice fiscale, indirizzo) o testo del contratto.
+ */
+export function creatorMailContent(c: Contract, event: CreatorEvent, at: string, by?: Party, blocked?: Blocked | null): { subject: string; lines: string[]; button: { label: string; url: string } } {
+  const who = c.recipient.name || 'Chi ha ricevuto il contratto'
+  const when = romeWhen(at)
+  const base = (c.share?.origin || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.facevoice.ai').replace(/\/+$/, '')
+  const button = { label: 'Apri il contratto', url: `${base}/app/contratti/${c.id}` }
+  const fix = blocked === 'upgrade' ? 'Apri il contratto e crea la nuova versione con data/ora e termine di consegna (le firme si rifanno).' : 'Apri il contratto e scegli data/ora e termine di consegna.'
+  if (event === 'aperto') {
+    return {
+      subject: `Contratto aperto: ${c.title}`,
+      lines: [
+        `${who} ha aperto il link del contratto «${c.title}» il ${when} (ora italiana).`,
+        blocked ? `Non può ancora firmare: mancano data e ora della collaborazione e termine di consegna. ${fix}` : 'Quando firma ti avvisiamo di nuovo, qui e nella campanella dell’app.',
+      ],
+      button,
+    }
+  }
+  if (event === 'bloccato') {
+    return { subject: `Contratto da completare: ${c.title}`, lines: [`${who} ha aperto il contratto «${c.title}» (${when}, ora italiana) ma non può firmarlo: mancano data e ora della collaborazione e termine di consegna.`, fix], button }
+  }
+  if (event === 'firmato') {
+    return { subject: `Contratto firmato: ${c.title}`, lines: [`${who} ha firmato il contratto «${c.title}» il ${when} (ora italiana).`, 'Manca la tua firma: apri il contratto e firma anche tu.'], button }
+  }
+  return {
+    subject: `Contratto firmato: ${c.title}`,
+    lines: [
+      by === 'destinatario' ? `${who} ha firmato il contratto «${c.title}» il ${when} (ora italiana): adesso è firmato da entrambi.` : `Il contratto «${c.title}» con ${who} è firmato da entrambi (ultima firma il ${when}, ora italiana).`,
+      'Nella pagina del contratto trovi il PDF firmato.',
+    ],
+    button,
+  }
+}
+
+/**
+ * Avviso al titolare: nella campanella (subito) e per email al suo account (dopo la risposta, senza
+ * bloccare l'apertura o la firma: un invio non riuscito resta solo nei log, senza dati personali).
+ */
+async function notifyCreator(c: Contract, event: CreatorEvent, at: string, by?: Party, blocked?: Blocked | null): Promise<void> {
+  await addNote(c.workspaceId, { kind: event, contractId: c.id, title: c.title, who: c.recipient.name, ...(by ? { by } : {}), ...(blocked ? { blocked } : {}) })
+  const mail = creatorMailContent(c, event, at, by, blocked)
+  const task = () => mailCreator({ workspaceId: c.workspaceId, userId: c.createdBy, fromName: c.creatorName, ...mail }).then(() => undefined)
+  try {
+    after(task)
+  } catch {
+    // Fuori da una richiesta (prove, script): parte subito, senza aspettarla.
+    void task()
+  }
 }
 
 /** Notifiche dello spazio per questa persona (le piu' recenti prima) e quante non ha letto. */

@@ -4,7 +4,7 @@ import { listNotes, markNotesRead } from '@/lib/saas/contracts'
 
 export const dynamic = 'force-dynamic'
 
-// Campanella dei contratti (barra in alto dell'area clienti): richieste di modifica, firme del
+// Campanella dei contratti (barra in alto dell'area clienti): richieste di modifica, link aperto, firme del
 // destinatario e contratti completati dello spazio. Solo titolare e amministratori; lette per persona.
 //   GET                      { items, unread }
 //   POST { id | "all" }      segna come letta

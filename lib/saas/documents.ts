@@ -10,7 +10,8 @@ import { CHANNEL_LABELS, addKnownNames, asSendPlatform, displayName, fuzzyCandid
 import { campaignFor, readCampaign } from './campaign'
 import { ASSISTANT_ORIGIN, readInstructions, workspaceName } from './responder'
 // «Le parti» (dati delle parti fuori dall'AI) e il controllo "campo subito dopo un dato": lib/saas/parties.ts.
-import { CONTRACT_KINDS, cleanContractContent, creatorFromInstructions, documentParties, dropFieldsAfterValues, withoutParties, type CreatorIdentity } from './parties'
+import { CONTRACT_KINDS, PARTIES_HEADING, cleanContractContent, creatorFromInstructions, documentParties, dropFieldsAfterValues, withoutParties, type CreatorIdentity, type TermsPrefill } from './parties'
+import { MONTHS, NO_DATE, NO_DAYS, TERMS_HEADING, TERM_SPECS, cleanTermValue, termText } from './parties-shared'
 
 // Documenti dell'Assistente (contratti, preventivi, accordi, lettere): il cliente chiede
 // "sviluppami il contratto … della conversazione con Giusy" e l'AI lo scrive usando SOLO
@@ -92,6 +93,12 @@ export type StoredDocument = {
   business?: string
   /** Dati dell'attivita' trovati nelle Istruzioni (P.IVA, sede) per «Le parti» nel PDF. */
   creator?: CreatorIdentity
+  /**
+   * Termini della collaborazione detti in chat (o data proposta dall'AI dalla conversazione): valori di
+   * partenza del contratto, che il titolare puo' cambiare prima di firmare. skipped: ha detto che non
+   * ci sono date (sceglie lui «Nessuna data» / «Nessun termine» nella pagina del contratto).
+   */
+  terms?: TermsPrefill & { skipped?: true }
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -117,6 +124,8 @@ export type DocumentCard = {
   versions?: { n: number; at: string; pages: number }[]
   /** Il documento non c'e' piu' (tolto dall'elenco degli ultimi 50). */
   missing?: boolean
+  /** Contratti, accordi, preventivi: termini della collaborazione gia' scelti (in parole) e quelli da scegliere nella pagina del contratto. */
+  terms?: { lines: string[]; missing: string[] }
 }
 
 export class DocumentError extends Error {}
@@ -595,12 +604,298 @@ export async function businessInfo(workspaceId: string, platform: SendPlatform |
   return { name, text: parts.join('\n\n') || 'Nessuna informazione salvata nella pagina Istruzioni.', creator }
 }
 
+// --- Termini della collaborazione: date dette in chat ------------------------------------------------
+
+/** Contratti e accordi: prima di scriverli servono data e ora della collaborazione e termine di consegna (o "nessuna data"). */
+export const ASK_DATES_KINDS: readonly DocKind[] = ['contratto', 'accordo']
+export const ASK_DATES_ERROR =
+  'chiedi prima al cliente data/ora della collaborazione e termine di consegna (7, 14 o 30 giorni): in un solo messaggio breve, anche «nessuna data» va bene. Poi rifai create_document con "collaboration_at", "delivery_days" o "dates_skipped". Non è stato scritto niente.'
+
+const MONTH_WORDS = '(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre|genn?\\.?|febb?\\.?|mar\\.?|apr\\.?|magg?\\.?|giu\\.?|lugl?\\.?|ago\\.?|sett?\\.?|ott\\.?|nov\\.?|dic\\.?)'
+/** Nei testi liberi (chat, conversazione) «set» e «mar» sono anche parole ("3 set di foto"): mese solo con il punto o con l'anno. */
+const MONTH_WORDS_STRICT = '(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre|genn?\\.?|febb?\\.?|apr\\.?|magg?\\.?|giu\\.?|lugl?\\.?|ago\\.?|sett\\.?|ott\\.?|nov\\.?|dic\\.?|(?:mar|set)(?:\\.|(?=\\s+\\d{4})))'
+const namedDate = (months: string, flags: string) => new RegExp(`(?<![\\p{L}\\d])(\\d{1,2})\\s*(?:°|º)?\\s+(?:di\\s+)?${months}(?![\\p{L}])(?:\\s+(\\d{4}))?`, flags)
+const NAMED_DATE = namedDate(MONTH_WORDS, 'iu')
+const NAMED_DATE_STRICT = namedDate(MONTH_WORDS_STRICT, 'giu')
+const NUMERIC_DATE = /(?<![\d\/.,-])(?<!(?:alle|ore|dalle|verso le|h)\s{0,2})(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{4}|\d{2}))?(?![\d\/.,-]|\s*(?:€|euro|%))/
+/** Numeri come 15/11, 15.11.2026, 15-11-2026 (tutti, con il separatore): si filtrano con numericDates. */
+const NUMERIC_ANY = /(?<![\d\/.,-])(\d{1,2})([\/.-])(\d{1,2})(?:\2(\d{4}|\d{2}))?(?![\d\/.,-])/g
+/** Subito dopo il numero: quantità, voti, prezzi ("12.5k follower", "4/5 stelle", "4.8 su 5", "7.50 euro"), mai date. */
+const NOT_DATE_AFTER = /^\s*(?:k(?![\p{L}])|mila|mln|stell[ae]|punti|follower|iscritt|visualizzazion|views|like|%|€|euro|eur(?![\p{L}])|su\s+\d|x(?![\p{L}])|storie|reel|post|video|foto|contenuti|pezzi|persone)/iu
+/** Subito prima: prezzi, voti e orari ("costa 15.10", "rating 4.5", "alle 20.30"). */
+const NOT_DATE_BEFORE = /(?:€|euro|eur|cost[ao]|prezzo|voto|rating|valutazione|engagement|media|alle|ore|dalle|verso le|h)\s*$/iu
+/** Prima di "15.11": parole da data ("il 15.11", "sabato 15.11"). */
+const DATE_BEFORE = /(?:(?<![\p{L}])(?:il|del|dal|al|entro il|giorno)|domenica|luned[iì]|marted[iì]|mercoled[iì]|gioved[iì]|venerd[iì]|sabato)\s+$/iu
+/** Dopo "15.11": un orario ("15.11 alle 20"). */
+const TIME_AFTER = /^\s*,?\s*(?:alle|ore|dalle|h\s*\d)/iu
+const ISO_DATE = /(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)/
+const RELATIVE_DAY = /(?<![\p{L}])(oggi|stasera|domani|dopodomani)(?![\p{L}])/iu
+const WEEKDAY_WORDS = ['domenica', 'luned', 'marted', 'mercoled', 'gioved', 'venerd', 'sabato']
+const WEEKDAY = /(?<![\p{L}])(domenica|luned[iì]|marted[iì]|mercoled[iì]|gioved[iì]|venerd[iì]|sabato)(?![\p{L}])/iu
+const TIME_WORD = /(?<![\p{L}])(?:alle|ore|h|dalle|verso le)\s*(\d{1,2})(?:[:.](\d{2}))?(?!\d)/iu
+const TIME_BARE = /(?<![\d\/.,-])(\d{1,2})[:.](\d{2})(?![\d\/.,-]|\s*(?:€|euro|%))/
+const all = (re: RegExp) => new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)
+
+const pad = (n: number) => String(n).padStart(2, '0')
+const realDate = (y: number, m: number, d: number) => {
+  const date = new Date(Date.UTC(y, m - 1, d))
+  return m >= 1 && m <= 12 && date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+}
+/** Giorno e ora di adesso a Roma ("AAAA-MM-GG", "AAAA-MM-GGTHH:MM"). */
+function romeParts(now: Date): { day: string; local: string } {
+  const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .format(now)
+    .replace(' ', 'T')
+  return { day: local.slice(0, 10), local: local.slice(0, 16) }
+}
+const monthOf = (word: string) => MONTHS.findIndex((m) => m.startsWith(word.toLowerCase().replace(/\.$/, '').slice(0, 3))) + 1
+
+/** Senza anno: quest'anno, oppure il prossimo se il giorno e' gia' passato (rispetto a today, "AAAA-MM-GG"). */
+const yearFor = (today: string) => (m: number, d: number, y?: number): string | null => {
+  const ty = Number(today.slice(0, 4))
+  if (y) return realDate(y, m, d) ? `${y}-${pad(m)}-${pad(d)}` : null
+  for (const year of [ty, ty + 1]) if (realDate(year, m, d) && `${year}-${pad(m)}-${pad(d)}` >= today) return `${year}-${pad(m)}-${pad(d)}`
+  return null
+}
+const shiftDay = (today: string, days: number) => {
+  const [ty, tm, td] = today.split('-').map(Number)
+  const d = new Date(Date.UTC(ty, tm - 1, td + days))
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+}
+const relativeDay = (today: string, word: string) => shiftDay(today, word === 'domani' ? 1 : word === 'dopodomani' ? 2 : 0)
+const weekdayDay = (today: string, word: string) => {
+  const want = WEEKDAY_WORDS.findIndex((w) => word.toLowerCase().startsWith(w))
+  const [ty, tm, td] = today.split('-').map(Number)
+  return shiftDay(today, (want - new Date(Date.UTC(ty, tm - 1, td)).getUTCDay() + 7) % 7)
+}
+
+/** Data scritta in un testo ("15 novembre", "15/11/2026", "domani", "sabato") -> "AAAA-MM-GG", altrimenti null. */
+function findDate(text: string, now: Date): { day: string; rest: string } | null {
+  const today = romeParts(now).day
+  const withYear = yearFor(today)
+  const iso = text.match(ISO_DATE)
+  if (iso) {
+    const day = withYear(Number(iso[2]), Number(iso[3]), Number(iso[1]))
+    if (day) return { day, rest: text.replace(iso[0], ' ') }
+  }
+  const named = text.match(NAMED_DATE)
+  if (named) {
+    const day = withYear(monthOf(named[2]), Number(named[1]), named[3] ? Number(named[3]) : undefined)
+    if (day) return { day, rest: text.replace(named[0], ' ') }
+  }
+  const numeric = text.match(NUMERIC_DATE)
+  if (numeric) {
+    const y = numeric[3] ? (numeric[3].length === 2 ? 2000 + Number(numeric[3]) : Number(numeric[3])) : undefined
+    const day = withYear(Number(numeric[2]), Number(numeric[1]), y)
+    if (day) return { day, rest: text.replace(numeric[0], ' ') }
+  }
+  const relative = text.match(RELATIVE_DAY)
+  if (relative) return { day: relativeDay(today, relative[1].toLowerCase()), rest: text.replace(relative[0], ' ') }
+  const weekday = text.match(WEEKDAY)
+  if (weekday) return { day: weekdayDay(today, weekday[1]), rest: text.replace(weekday[0], ' ') }
+  return null
+}
+
+/**
+ * Date con i numeri in un testo libero: "15/11" e "15/11/2026" si'; "15.11" solo con l'anno, con un
+ * orario dopo ("15.11 alle 20") o una parola da data prima ("il 15.11"); "15-11" solo con l'anno.
+ * Mai quantita', voti o prezzi ("12.5k follower", "4/5 stelle", "4.8 su 5", "costa 15.10").
+ */
+function numericDates(text: string): { d: number; m: number; y?: number }[] {
+  const out: { d: number; m: number; y?: number }[] = []
+  for (const m of text.matchAll(NUMERIC_ANY)) {
+    const index = m.index ?? 0
+    const before = text.slice(Math.max(0, index - 24), index)
+    const after = text.slice(index + m[0].length, index + m[0].length + 24)
+    if (NOT_DATE_AFTER.test(after) || NOT_DATE_BEFORE.test(before)) continue
+    const sep = m[2]
+    if (!(sep === '/' || m[4] || (sep === '.' && (TIME_AFTER.test(after) || DATE_BEFORE.test(before))))) continue
+    out.push({ d: Number(m[1]), m: Number(m[3]), ...(m[4] ? { y: m[4].length === 2 ? 2000 + Number(m[4]) : Number(m[4]) } : {}) })
+  }
+  return out
+}
+
+/**
+ * Giorni ("AAAA-MM-GG") scritti in un testo libero (chat, conversazione), rispetto al giorno di ref:
+ * date con giorno e mese ("15 novembre", "15/11", "2026-11-15"); con relative anche "domani",
+ * "stasera", "sabato".
+ */
+function daysIn(text: string, ref: Date, relative: boolean): Set<string> {
+  const t = String(text || '').slice(0, 60_000)
+  const today = romeParts(ref).day
+  const withYear = yearFor(today)
+  const out = new Set<string>()
+  const add = (day: string | null) => day && out.add(day)
+  for (const m of t.matchAll(all(ISO_DATE))) add(withYear(Number(m[2]), Number(m[3]), Number(m[1])))
+  for (const m of t.matchAll(NAMED_DATE_STRICT)) add(withYear(monthOf(m[2]), Number(m[1]), m[3] ? Number(m[3]) : undefined))
+  for (const n of numericDates(t)) add(withYear(n.m, n.d, n.y))
+  if (relative) {
+    for (const m of t.matchAll(all(RELATIVE_DAY))) add(relativeDay(today, m[1].toLowerCase()))
+    for (const m of t.matchAll(all(WEEKDAY))) add(weekdayDay(today, m[1]))
+  }
+  return out
+}
+
+/** Orari scritti in un testo ("alle 21", "ore 20.30", "21:00") come "HH:MM"; "alle 9" anche "21:00" (sera). */
+function timesIn(text: string): Set<string> {
+  const out = new Set<string>()
+  const add = (h: number, mi: number) => {
+    if (h > 23 || mi > 59) return
+    out.add(`${pad(h)}:${pad(mi)}`)
+    if (h >= 1 && h <= 11) out.add(`${pad(h + 12)}:${pad(mi)}`)
+  }
+  const t = String(text || '').slice(0, 60_000)
+  for (const m of t.matchAll(all(TIME_WORD))) add(Number(m[1]), m[2] ? Number(m[2]) : 0)
+  for (const m of t.matchAll(all(TIME_BARE))) add(Number(m[1]), Number(m[2]))
+  return out
+}
+
+/**
+ * Data e ora della collaborazione proposte dall'AI ("AAAA-MM-GGTHH:MM"): valgono solo se quel giorno
+ * e quell'ora sono scritti nei testi che l'AI ha letto: nella richiesta del titolare (owner) o in un
+ * messaggio della conversazione (thread, con l'ora nello stesso messaggio o in quello subito prima o
+ * dopo; "sabato", "domani" contano dal giorno del messaggio). Mai una data inventata.
+ */
+export function groundedCollabAt(value: string, owner: string[], thread: { text: string; at?: string }[], now = new Date()): boolean {
+  const [day, time] = String(value || '').split('T')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '') || !/^\d{2}:\d{2}$/.test(time || '')) return false
+  const ownerTimes = new Set(owner.flatMap((t) => [...timesIn(t)]))
+  if (owner.some((t) => daysIn(t, now, true).has(day)) && ownerTimes.has(time)) return true
+  return thread.some((m, i) => {
+    // "Sabato", "domani", "15 novembre" senza anno: dal giorno del messaggio.
+    const ref = m.at && Number.isFinite(Date.parse(m.at)) ? new Date(m.at) : now
+    if (!daysIn(m.text, ref, true).has(day)) return false
+    return ownerTimes.has(time) || [thread[i - 1], m, thread[i + 1]].some((x) => x && timesIn(x.text).has(time))
+  })
+}
+
+/**
+ * Data e ora della collaborazione dette dal cliente ("sabato 15 novembre alle 20:30", "15/11 ore 21",
+ * "2026-11-15T20:30", "domani alle 21", "nessuna"): "AAAA-MM-GGTHH:MM" (ora italiana), solo il giorno
+ * (manca l'ora), "nessuna", oppure null (non si capisce).
+ */
+export function parseCollabAt(raw: unknown, now = new Date()): { value: string } | { day: string } | { none: true } | null {
+  const text = String(raw ?? '').trim().slice(0, 200)
+  if (!text) return null
+  if (/^(nessun[ao]?|no|niente|non c['’]è|senza)(?![\p{L}])/iu.test(text)) return { none: true }
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i)
+  if (iso) {
+    if (iso[4]) {
+      const at = new Date(text.replace(' ', 'T'))
+      return Number.isFinite(at.getTime()) ? { value: romeParts(at).local } : null
+    }
+    const value = cleanTermValue('collab_at', `${iso[1]}T${iso[2]}:${iso[3]}`)
+    return value ? { value } : null
+  }
+  const date = findDate(text, now)
+  if (!date) return null
+  const time = date.rest.match(TIME_WORD) || date.rest.match(TIME_BARE)
+  const h = time ? Number(time[1]) : NaN
+  const mi = time && time[2] ? Number(time[2]) : 0
+  if (!time || h > 23 || mi > 59) return { day: date.day }
+  return { value: `${date.day}T${pad(h)}:${pad(mi)}` }
+}
+
+/** Termine di consegna detto dal cliente: 7, 14 o 30 giorni ("una settimana", "due settimane", "un mese"), "nessuno", oppure null. */
+export function parseDeliveryDays(raw: unknown): string | null {
+  const text = String(raw ?? '').trim().toLowerCase().slice(0, 80)
+  if (!text) return null
+  if (/^(nessun[oa]?|no|niente|senza)(?![\p{L}])/iu.test(text)) return NO_DAYS
+  if (/(?<![\p{L}\d])(una|1) settimana/u.test(text)) return '7'
+  if (/(?<![\p{L}\d])(due|2) settimane/u.test(text)) return '14'
+  if (/(?<![\p{L}\d])(un|1) mese/u.test(text)) return '30'
+  const n = text.match(/\d+/)?.[0]
+  return n && ['7', '14', '30'].includes(n) ? n : null
+}
+
+/**
+ * Il testo nomina un giorno preciso ("15 novembre", "15/11", "2026-11-15", "sabato 15", "sabato sera")?
+ * "Oggi" o "domani" da soli no; numeri come "12.5k follower", "4.8 su 5", "3 set di foto" neanche.
+ */
+export function hasDateMention(text: string, now = new Date()): boolean {
+  const t = String(text || '').slice(0, 60_000)
+  if (daysIn(t, now, false).size) return true
+  return new RegExp(`${WEEKDAY.source}\\s+(\\d{1,2}|prossim|alle|ore|sera|mattina|pomeriggio)`, 'iu').test(t)
+}
+
+export type TermsInput = { at?: unknown; days?: unknown; skipped?: unknown }
+
+/** Termini della collaborazione detti in chat: valori puliti, cosa e' stato detto e cosa non si e' capito. */
+export function termsFromInput(input: TermsInput | undefined, now = new Date()): { given: boolean; prefill: TermsPrefill & { skipped?: true }; notes: string[] } {
+  const prefill: TermsPrefill & { skipped?: true } = {}
+  const notes: string[] = []
+  const said = (v: unknown) => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number'
+  const skipped = input?.skipped === true || input?.skipped === 'true'
+  if (said(input?.at)) {
+    const at = parseCollabAt(input?.at, now)
+    if (at && 'value' in at) prefill.at = at.value
+    else if (at && 'day' in at) notes.push('manca l’ora della collaborazione: il cliente la sceglie nella pagina del contratto')
+    else if (!at) notes.push('data della collaborazione non capita: il cliente la sceglie nella pagina del contratto')
+  }
+  if (said(input?.days)) {
+    const days = parseDeliveryDays(input?.days)
+    if (days && days !== NO_DAYS) prefill.days = days
+    else if (!days) notes.push('il termine di consegna può essere solo 7, 14 o 30 giorni (o nessuno): il cliente lo sceglie nella pagina del contratto')
+  }
+  if (skipped) prefill.skipped = true
+  return { given: said(input?.at) || said(input?.days) || skipped, prefill, notes }
+}
+
+/** Termini scelti (in parole) e da scegliere, per la scheda della chat e per l'Assistente. */
+export function termsView(terms: StoredDocument['terms']): { lines: string[]; missing: string[] } {
+  const lines: string[] = []
+  const missing: string[] = []
+  for (const spec of TERM_SPECS) {
+    const text = termText(spec.kind, spec.kind === 'collab_at' ? terms?.at : terms?.days)
+    if (text) lines.push(`${spec.label}: ${text}`)
+    else missing.push(spec.label)
+  }
+  return { lines, missing }
+}
+
+// --- Elementi essenziali del contratto (art. 1325 c.c.) --------------------------------------------
+
+/** Prima della parola: una negazione ("senza compenso", "non riceverà", "nessun corrispettivo"). */
+const NEGATED = /(?<![\p{L}])(?:senza|non|nessun\p{L}*|alcun\p{L}*)\s+(?:\p{L}+\s+)?$/iu
+const CAUSE_WORDS = /(corrispettiv|compens|in cambio|controprestazion|a fronte d|in scambio|ricever[àa]|riceve )/gi
+
+/**
+ * Elementi essenziali che mancano nel testo di un contratto o accordo: sezione «Oggetto», clausola su
+ * cosa da' e riceve ciascuna parte (causa: non basta "senza compenso"), clausola sulla forma e sulla
+ * firma ("forma scritta", "firma elettronica" o un titolo «Forma»: non basta "le parti sottoscrivono").
+ * Lista vuota se ci sono.
+ */
+export function missingEssentials(content: DocContent): string[] {
+  const headings = content.sections.map((s) => s.heading || '')
+  const all = content.sections.flatMap((s) => [s.heading || '', ...s.paragraphs, ...(s.bullets || [])]).join('\n')
+  const out: string[] = []
+  if (!headings.some((h) => /(?<![\p{L}])oggetto(?![\p{L}])/iu.test(h))) out.push('una sezione «Oggetto» con cosa si scambiano le parti (prestazioni, contenuti, quantità, canali)')
+  const cause = [...all.matchAll(CAUSE_WORDS)].some((m) => !NEGATED.test(all.slice(Math.max(0, (m.index ?? 0) - 40), m.index ?? 0)))
+  if (!cause) out.push('una clausola che dice cosa dà e cosa riceve ciascuna parte (compenso in denaro, beni o servizi)')
+  if (!headings.some((h) => /(?<![\p{L}])forma(?![\p{L}])/iu.test(h)) && !/(forma scritta|firma elettronica)/i.test(all)) out.push('una clausola sulla forma: forma scritta, firma elettronica semplice, luogo e data della firma')
+  return out
+}
+
+const essentialsReminder = (missing: string[], name: string) =>
+  `Nel contratto mancano elementi essenziali (art. 1325 c.c.): ${missing.join('; ')}. Riscrivi il documento COMPLETO con questi elementi, senza inventare fatti: un dato che manca diventa un campo [[id]] di ${name} ("party": "creatore"). Rispondi SOLO con il JSON richiesto.`
+
+/** Contratti e accordi (nuovi e modificati): se mancano oggetto, causa o forma, si chiede una volta di aggiungerli. */
+const essentialsCheck = (kind: DocKind, name: string) =>
+  ASK_DATES_KINDS.includes(kind)
+    ? (c: DocContent) => {
+        const missing = missingEssentials(c)
+        return missing.length ? essentialsReminder(missing, name) : null
+      }
+    : undefined
+
 // --- Scrittura con l'AI -----------------------------------------------------------------------------
 
 const KIND_HINTS: Record<DocKind, string> = {
-  contratto: 'Contratto: parti, premesse, oggetto, obblighi delle parti, compenso e modalità di pagamento, durata, recesso, riservatezza, trattamento dei dati personali (GDPR), responsabilità, legge applicabile e foro competente, firme.',
+  contratto:
+    'Contratto: parti, premesse, oggetto, obblighi delle parti, corrispettivo (cosa dà e cosa riceve ciascuna parte) e modalità di pagamento, durata, consegna dei contenuti, diritti d’uso dei contenuti (territorio, durata, canali), recesso, riservatezza, trattamento dei dati personali (GDPR), responsabilità, legge applicabile e foro competente, forma e firma, firme.',
   preventivo: 'Preventivo: chi lo emette e per chi, descrizione del lavoro o dei prodotti (voci), importi SOLO se scritti o concordati nella conversazione (altrimenti segnaposto), IVA, tempi, validità dell’offerta, condizioni di pagamento, cosa è escluso, firma per accettazione.',
-  accordo: 'Accordo (es. collaborazione): parti, obiettivo, impegni di ciascuno, cosa riceve ciascuno (compensi, prodotti, visibilità), durata, uso di nomi, immagini e contenuti, riservatezza, dati personali, recesso, firme.',
+  accordo:
+    'Accordo (es. collaborazione): parti, oggetto, impegni di ciascuno, cosa riceve ciascuno (compensi, prodotti, servizi, visibilità), durata, consegna dei contenuti, uso di nomi, immagini e contenuti (territorio, durata, canali), riservatezza, dati personali, recesso, legge applicabile e foro, forma e firma, firme.',
   lettera: 'Lettera: mittente, destinatario, luogo e data, oggetto, testo chiaro, saluti, firma.',
   altro: 'Documento: struttura adatta a quello che chiede il cliente, con titoli chiari.',
 }
@@ -609,7 +904,11 @@ const DOC_PROMPT = (name: string, kind: DocKind) => `Prepari bozze di documenti 
 
 Regole:
 - Usa SOLO i fatti della conversazione e delle informazioni sull'attività che ti do. Non inventare MAI dati personali o accordi: codici fiscali, partite IVA, indirizzi, IBAN, date, importi, prezzi, quantità, scadenze o nomi che non sono scritti o concordati.
-- Un dato che manca diventa uno spazio da compilare, MAI una scritta: niente segnaposto come «[DA COMPLETARE: codice fiscale di Giusy]», «da definire», «XXX» o righe di trattini. Metti nel testo [[id]] nel punto esatto in cui va il dato e aggiungi il campo in "fields": {"id": "data_consegna", "label": "Data di consegna", "party": "creatore"}. "party": "creatore" se il dato è di ${name}, "destinatario" se è dell'altra parte, "entrambi" se lo scrive chi firma (es. luogo e data della firma). Il PDF stampa il campo come «Data di consegna: ________» (si compila a mano o dal telefono): non ripetere l'etichetta prima di [[id]]. Esempio: «I contenuti si consegnano entro il [[data_consegna]]». Etichette brevi; id con minuscole, numeri e _, tutti diversi.
+- Un dato che manca diventa uno spazio da compilare, MAI una scritta: niente segnaposto come «[DA COMPLETARE: codice fiscale di Giusy]», «da definire», «XXX» o righe di trattini. Metti nel testo [[id]] nel punto esatto in cui va il dato e aggiungi il campo in "fields": ${
+  CONTRACT_KINDS.includes(kind) ? '{"id": "data_pagamento", "label": "Data del pagamento", "party": "creatore"}' : '{"id": "data_consegna", "label": "Data di consegna", "party": "creatore"}'
+}. "party": "creatore" se il dato è di ${name}, "destinatario" se è dell'altra parte, "entrambi" se lo scrive chi firma (es. luogo e data della firma). Il PDF stampa il campo come «${CONTRACT_KINDS.includes(kind) ? 'Data del pagamento' : 'Data di consegna'}: ________» (si compila a mano o dal telefono): non ripetere l'etichetta prima di [[id]]. Esempio: «${
+  CONTRACT_KINDS.includes(kind) ? 'Il compenso si paga entro il [[data_pagamento]]' : 'I contenuti si consegnano entro il [[data_consegna]]'
+}». Etichette brevi; id con minuscole, numeri e _, tutti diversi.
 - In "approve" metti i titoli esatti delle clausole che vanno approvate per iscritto una per una (artt. 1341 e 1342 c.c.: limitazioni di responsabilità, recesso, penali, tacito rinnovo, foro competente…). Lista vuota se non ce ne sono.
 - Quando un punto è stato concordato nella conversazione, scrivilo e di' che viene da lì (es. «come concordato nella conversazione su Instagram del 3 novembre 2026»). Metti anche una sezione «Punti concordati nella conversazione» con l'elenco dei punti presi dalla chat (con la data del messaggio).
 - Includi le clausole usuali per questo tipo di documento. ${KIND_HINTS[kind]}
@@ -620,13 +919,22 @@ ${
   CONTRACT_KINDS.includes(kind)
     ? `- «Le parti» le aggiunge il sistema in cima al documento: i dati di ${name} e, per l'altra parte, Nome e cognome, Luogo e data di nascita, Codice fiscale, Indirizzo di residenza, Email, Telefono, Ragione sociale e P.IVA, che scriverà lei. Non scrivere tu questi dati, non creare campi per loro e in "meta" niente righe «Tra: …» o «E: …» (in "meta" solo luogo e data). In "signatures" lascia vuoto "name" dell'altra parte.
 - Il nome del profilo Instagram, lo @username e i numeri di telefono, WhatsApp o le email scritti in chat NON sono dati verificati: non scriverli mai come dati delle parti né come fatti nelle clausole (niente «numero WhatsApp 3313738940»). Nelle clausole chiama l'altra parte in modo generico: «il/la Creator», «la Controparte», «il Cliente».
-- Foro competente: se le informazioni sull'attività indicano la città per il foro, scrivi quel foro (es. «è competente il Foro di Palermo»). Se non la indicano, metti un campo di ${name} per la città ("party": "creatore", es. «è competente il Foro di [[citta_foro]]»). Mai un campo dopo una frase che nomina già il foro.`
+- Foro competente: se le informazioni sull'attività indicano la città per il foro, scrivi quel foro (es. «è competente il Foro di Palermo»). Se non la indicano, metti un campo di ${name} per la città ("party": "creatore", es. «è competente il Foro di [[citta_foro]]»). Mai un campo dopo una frase che nomina già il foro.
+- «${TERMS_HEADING}» li aggiunge il sistema subito dopo «Le parti»: «Data e ora della collaborazione» e «Termine di consegna dei contenuti» (7, 14 o 30 giorni dalla data della collaborazione), scelti da ${name}. Nel testo non scrivere la data e l'ora della collaborazione né termini di consegna dei contenuti e non creare campi per loro (le altre date, come quella dei messaggi o del pagamento, vanno bene): nelle clausole sulla consegna scrivi «entro il termine di consegna indicato nei ${TERMS_HEADING}», per l'evento o la prestazione «nella data e ora indicate nei ${TERMS_HEADING}». Mai altri termini di consegna dei contenuti.
+- Se nella conversazione la data e l'ora della collaborazione sono scritte chiaramente, mettile in "collaboration_at" ("AAAA-MM-GGTHH:MM", ora italiana): ${name} potrà cambiarle. Se non sono chiare, "collaboration_at": null. Mai inventarle.${
+        ASK_DATES_KINDS.includes(kind)
+          ? `
+- Il contratto deve avere sempre, chiari, gli elementi essenziali (art. 1325 c.c.): l'accordo delle parti («Le parti» e le firme); l'OGGETTO, in una sezione «Oggetto»: cosa si scambiano le parti, determinato o determinabile (prestazioni, contenuti, quantità, canali); la CAUSA, cioè la funzione economica dello scambio: cosa dà e cosa riceve ciascuna parte (compenso in denaro, beni o servizi, es. una cena in cambio di contenuti UGC), in una clausola chiara (es. «Corrispettivo»); la FORMA: una clausola che dice che il contratto è in forma scritta e si firma con firma elettronica semplice, con luogo e data della firma. Poi le clausole usuali: durata, consegna (con i ${TERMS_HEADING}), compenso e modalità di pagamento, diritti d'uso dei contenuti (territorio, durata, canali), recesso, riservatezza, trattamento dei dati personali, legge applicabile e foro competente. Un fatto che manca (es. cosa riceve l'altra parte) non si inventa: diventa un campo [[id]] di ${name} ("party": "creatore").`
+          : ''
+      }`
     : `- Lo @username e i numeri di telefono, WhatsApp o le email scritti in chat NON sono dati verificati: non scriverli come dati della persona. Se servono (indirizzo, codice fiscale…), metti un campo da compilare.`
 }
 - Un campo [[id]] non va mai subito dopo un dato già scritto (niente «3313738940: [[id]]»).
 
 Rispondi SOLO con un JSON, senza testo prima o dopo:
-{"title": "titolo del documento", "subtitle": "riga sotto il titolo (facoltativa)", "meta": ["Luogo e data: [[data_firma]]"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["…"], "bullets": ["…"]}], "signatures": [{"label": "Per ${name}", "name": "…"}, {"label": "…"}], "fields": [{"id": "data_firma", "label": "Luogo e data della firma", "party": "entrambi"}], "approve": ["titolo esatto di una clausola"], "summary": "una o due frasi su cosa contiene"}`
+{"title": "titolo del documento", "subtitle": "riga sotto il titolo (facoltativa)", "meta": ["Luogo e data: [[data_firma]]"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["…"], "bullets": ["…"]}], "signatures": [{"label": "Per ${name}", "name": "…"}, {"label": "…"}], "fields": [{"id": "data_firma", "label": "Luogo e data della firma", "party": "entrambi"}], "approve": ["titolo esatto di una clausola"], ${
+  CONTRACT_KINDS.includes(kind) ? '"collaboration_at": null, ' : ''
+}"summary": "una o due frasi su cosa contiene"}`
 
 /**
  * Istruzioni per scrivere un documento: la parte fissa (nome dell'attivita', tipo di documento,
@@ -637,17 +945,36 @@ const docSystem = (name: string, kind: DocKind): AISystem => ({ stable: DOC_PROM
 
 const looksLikeDoc = (v: Record<string, unknown>) => Array.isArray(v.sections) || Array.isArray(v.sezioni)
 
-/** Una chiamata all'AI (al massimo un secondo tentativo se il JSON non si legge). */
-async function askDocument(workspaceId: string, system: AISystem, user: string, fallbackTitle: string): Promise<{ content: DocContent; summary: string }> {
+type Asked = { content: DocContent; summary: string; collaborationAt: string | null }
+
+/**
+ * Una chiamata all'AI (al massimo un secondo tentativo se il JSON non si legge). check: elementi che
+ * mancano nel testo (contratti: oggetto, causa, forma): si chiede una volta di aggiungerli; se la
+ * seconda risposta non si legge resta la prima.
+ */
+async function askDocument(workspaceId: string, system: AISystem, user: string, fallbackTitle: string, check?: (content: DocContent) => string | null): Promise<Asked> {
   const transcript: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: user }]
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let first: Asked | null = null
+  let formatRetried = false
+  for (let attempt = 0; attempt < 3; attempt++) {
     const response = await callAI(transcript, system, { feature: 'saas_documenti', temperature: 0.2, maxOutputTokens: 9000, workspaceId })
     const raw = response.message || ''
     const parsed = parseJsonObject(raw, looksLikeDoc)
     const content = parsed ? normalizeContent(parsed, fallbackTitle) : null
-    if (content) return { content, summary: oneLine(parsed?.summary ?? parsed?.riassunto, 400) }
+    if (content) {
+      const asked: Asked = { content, summary: oneLine(parsed?.summary ?? parsed?.riassunto, 400), collaborationAt: typeof parsed?.collaboration_at === 'string' ? parsed.collaboration_at : null }
+      const reminder = !first && check ? check(content) : null
+      if (!reminder) return asked
+      first = asked
+      transcript.push({ role: 'assistant', content: raw.slice(0, 12_000) }, { role: 'user', content: reminder })
+      continue
+    }
+    if (first) return first
+    if (formatRetried) break
+    formatRetried = true
     transcript.push({ role: 'assistant', content: raw.slice(0, 4000) }, { role: 'user', content: 'Il documento non era nel formato giusto. Rispondi SOLO con il JSON richiesto (title, meta, sections, signatures, fields, approve, summary), senza altro testo.' })
   }
+  if (first) return first
   throw new DocumentError('l’AI non è riuscita a scrivere il documento, riprova')
 }
 
@@ -658,11 +985,17 @@ export function asDocKind(value: unknown): DocKind {
   return (DOC_KINDS as readonly string[]).includes(v) ? (v as DocKind) : /contratt/.test(v) ? 'contratto' : /preventiv|offert/.test(v) ? 'preventivo' : /accord|collabor/.test(v) ? 'accordo' : /letter/.test(v) ? 'lettera' : 'altro'
 }
 
-export type DocumentInput = { kind?: unknown; title?: unknown; platform?: unknown; contact?: unknown; instructions?: unknown }
+/**
+ * terms: termini della collaborazione detti dal titolare in chat (data e ora, giorni per la consegna,
+ * "nessuna data"). askDates: contratti e accordi dalla chat dell'Assistente: senza termini e senza
+ * nessuna data nella richiesta, nella chat (ownerTexts) o nella conversazione, non si scrive niente
+ * (prima si chiede al titolare).
+ */
+export type DocumentInput = { kind?: unknown; title?: unknown; platform?: unknown; contact?: unknown; instructions?: unknown; terms?: TermsInput; askDates?: boolean; ownerTexts?: string[] }
 
 export type DocumentOutcome =
-  | { ok: true; doc: StoredDocument; version: DocVersion; summary: string; placeholders: string[]; messages: number }
-  | { ok: false; error: string; candidates?: CandidateView[] }
+  | { ok: true; doc: StoredDocument; version: DocVersion; summary: string; placeholders: string[]; messages: number; termsNotes?: string[] }
+  | { ok: false; error: string; candidates?: CandidateView[]; askDates?: true }
 
 const aboutLine = (about: DocAbout) =>
   `conversazione su ${CHANNEL_LABELS[about.platform]} con ${about.name}${about.messages ? ` (${about.messages} messaggi${about.from && about.to ? `, dal ${day(about.from)} al ${day(about.to)}` : ''})` : ''}`
@@ -675,6 +1008,7 @@ export async function createDocument(db: WorkspaceDb, userId: string, input: Doc
   await assertAIAllowed(db.workspaceId)
   let about: DocAbout | null = null
   let conversation = ''
+  let thread: { text: string; at: string }[] = []
   if (typeof input.contact === 'string' && input.contact.trim()) {
     const person = await resolveContact(db, input.platform, input.contact)
     if (!person.ok) return person
@@ -682,7 +1016,14 @@ export async function createDocument(db: WorkspaceDb, userId: string, input: Doc
     if (!messages.length) return { ok: false, error: `con ${person.name} su ${CHANNEL_LABELS[person.platform]} non c'è nessun messaggio salvato: dillo al cliente.` }
     about = { platform: person.platform, contactId: person.contactId, name: person.name, messages: messages.length, from: messages[0].at, to: messages[messages.length - 1].at }
     conversation = `Persona: ${person.name} (contact_id ${person.contactId}) · ${CHANNEL_LABELS[person.platform]}\nConversazione completa su ${CHANNEL_LABELS[person.platform]} con ${person.name}, dal messaggio più vecchio al più recente ("Noi" = ${'la nostra attività'}):\n\n${conversationText(messages, person.name, person.platform)}`
+    thread = messages.map((m) => ({ text: m.text, at: m.at }))
   }
+  // Termini della collaborazione (contratti, accordi, preventivi): detti dal titolare, oppure una data nella conversazione.
+  const contractLike = CONTRACT_KINDS.includes(kind)
+  const terms = contractLike ? termsFromInput(input.terms) : { given: false, prefill: {}, notes: [] as string[] }
+  const dated = contractLike && [instructions, ...(input.ownerTexts || []), ...thread.map((m) => m.text)].some((t) => hasDateMention(t))
+  // Prima di scrivere un contratto o un accordo dalla chat: se nessuno ha detto date, si chiede al titolare (niente AI spesa).
+  if (input.askDates && ASK_DATES_KINDS.includes(kind) && !terms.given && !dated) return { ok: false, error: ASK_DATES_ERROR, askDates: true }
   const business = await businessInfo(db.workspaceId, about?.platform ?? null)
   const fallbackTitle = oneLine(input.title, 160) || `${DOC_KIND_LABELS[kind]}${about ? ` con ${about.name}` : ''}`
   const user = [
@@ -694,16 +1035,34 @@ export async function createDocument(db: WorkspaceDb, userId: string, input: Doc
   ]
     .filter(Boolean)
     .join('\n\n')
-  const asked = await askDocument(db.workspaceId, docSystem(business.name, kind), user, fallbackTitle)
+  // Contratti e accordi: oggetto, causa e forma sempre (se mancano si chiede una volta di aggiungerli).
+  const asked = await askDocument(db.workspaceId, docSystem(business.name, kind), user, fallbackTitle, essentialsCheck(kind, business.name))
   // Contratti: niente righe «Tra:/E:» né il nome del profilo sotto la firma (ci sono «Le parti»).
   const content = cleanContractContent(kind, asked.content)
   const summary = asked.summary
+  // Data proposta dall'AI: solo se quel giorno e quell'ora sono scritti nella richiesta o nella conversazione
+  // che l'AI ha letto (mai inventata, mai presa da altri messaggi della chat); il titolare puo' cambiarla.
+  const proposed = !terms.prefill.at && !terms.prefill.skipped && asked.collaborationAt ? cleanTermValue('collab_at', asked.collaborationAt) : null
+  const grounded = proposed && proposed !== NO_DATE && groundedCollabAt(proposed, [instructions], thread) ? proposed : null
+  const prefill = { ...terms.prefill, ...(grounded ? { at: grounded } : {}) }
   const now = new Date().toISOString()
   const version: DocVersion = { n: 1, at: now, by: userId, content, pages: 0, note: instructions.slice(0, 500) }
-  const doc: StoredDocument = { id: randomUUID(), kind, title: content.title, about, business: business.name, creator: business.creator, createdBy: userId, createdAt: now, updatedAt: now, versions: [version] }
+  const doc: StoredDocument = {
+    id: randomUUID(),
+    kind,
+    title: content.title,
+    about,
+    business: business.name,
+    creator: business.creator,
+    ...(contractLike && Object.keys(prefill).length ? { terms: prefill } : {}),
+    createdBy: userId,
+    createdAt: now,
+    updatedAt: now,
+    versions: [version],
+  }
   version.pages = pdfPageCount(pdfDocumentOf(doc, version))
   await storeDocument(db.workspaceId, doc)
-  return { ok: true, doc, version, summary, placeholders: placeholdersOf(content), messages: about?.messages ?? 0 }
+  return { ok: true, doc, version, summary, placeholders: placeholdersOf(content), messages: about?.messages ?? 0, ...(terms.notes.length ? { termsNotes: terms.notes } : {}) }
 }
 
 /** Modifica ("cambia la clausola 3", "aggiungi la penale"): una nuova versione, le altre restano. */
@@ -731,7 +1090,7 @@ export async function updateDocument(db: WorkspaceDb, userId: string, input: { i
   ]
     .filter(Boolean)
     .join('\n\n')
-  const asked = await askDocument(db.workspaceId, docSystem(business.name, doc.kind), user, doc.title)
+  const asked = await askDocument(db.workspaceId, docSystem(business.name, doc.kind), user, doc.title, essentialsCheck(doc.kind, business.name))
   const content = keepFieldValues(cleanContractContent(doc.kind, asked.content), current.content)
   const summary = asked.summary
   const now = new Date().toISOString()
@@ -765,7 +1124,7 @@ export function printableContent(input: DocContent, names: { creatore?: string; 
 /** Documento -> pagine del PDF (solo il testo del documento e i numeri di pagina). */
 export function pdfDocumentOf(doc: StoredDocument, version: DocVersion): PdfDocument {
   // Contratti, accordi e preventivi: «Le parti» in cima (dati dell'attivita' e campi dell'altra parte).
-  const parties = documentParties(doc.kind, withFields(version.content), doc.creator || { name: doc.business || '' })
+  const parties = documentParties(doc.kind, withFields(version.content), doc.creator || { name: doc.business || '' }, doc.terms)
   const printable = printableContent(parties ? parties.content : version.content, { creatore: doc.business, destinatario: doc.about?.name })
   return {
     ...printable,
@@ -783,6 +1142,28 @@ export function documentPdf(doc: StoredDocument, n?: number | null): { pdf: Buff
   return { pdf, pages, filename: pdfFileName(version.content.title, doc.versions.length > 1 ? `v${version.n}` : ''), version: version.n }
 }
 
+/**
+ * Documento gia' aperto come contratto (non chiuso): i termini della collaborazione come sono nel
+ * contratto (scelti o cambiati nella pagina), non quelli detti in chat. Per il PDF del documento
+ * («Apri PDF», «Scarica», allegato di send_document): mai una data vecchia. Il modulo dei contratti si
+ * carica solo qui; se non c'e' (o il contratto non si legge) restano i termini del documento.
+ */
+export async function withContractTerms(workspaceId: string, doc: StoredDocument): Promise<StoredDocument> {
+  if (!CONTRACT_KINDS.includes(doc.kind)) return doc
+  const terms = await import('./contracts')
+    .then(async (m) => {
+      const c = await m.loadContract(workspaceId, doc.id)
+      return c ? m.contractTermValues(c) : null
+    })
+    .catch(() => null)
+  return terms ? { ...doc, terms } : doc
+}
+
+/** Il PDF di una versione con i termini di adesso (quelli del contratto, se e' gia' un contratto). */
+export async function currentDocumentPdf(workspaceId: string, doc: StoredDocument, n?: number | null): Promise<ReturnType<typeof documentPdf>> {
+  return documentPdf(await withContractTerms(workspaceId, doc), n)
+}
+
 export function documentCard(doc: StoredDocument, n?: number | null): DocumentCard {
   const version = versionOf(doc, n)
   return {
@@ -795,6 +1176,7 @@ export function documentCard(doc: StoredDocument, n?: number | null): DocumentCa
     placeholders: placeholdersOf(version.content),
     fields: fieldsOf(version.content).map((f) => ({ id: f.id, label: f.label, party: f.party, filled: Boolean(f.value) })),
     versions: doc.versions.map((v) => ({ n: v.n, at: v.at, pages: v.pages })),
+    ...(CONTRACT_KINDS.includes(doc.kind) && version.content.sections[0]?.heading !== PARTIES_HEADING ? { terms: termsView(doc.terms) } : {}),
   }
 }
 

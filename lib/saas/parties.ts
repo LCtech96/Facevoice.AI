@@ -1,6 +1,6 @@
 import type { PdfSection } from '@/lib/pdf-doc'
 import type { DocContent, DocField } from './documents'
-import { CREATOR_IDENTITY, RECIPIENT_IDENTITY, identityKind, type IdentityInput, type IdentityKind, type IdentitySpec } from './parties-shared'
+import { CREATOR_IDENTITY, RECIPIENT_IDENTITY, TERMS_HEADING, TERM_SPECS, identityKind, isTermKind, termText, type IdentityInput, type IdentityKind, type IdentitySpec, type TermKind } from './parties-shared'
 
 // «Le parti» dei contratti (beta), messe dal server e non lasciate all'AI: in cima a ogni
 // documento da firmare (contratto, accordo, preventivo e ogni documento condiviso come contratto)
@@ -11,6 +11,8 @@ import { CREATOR_IDENTITY, RECIPIENT_IDENTITY, identityKind, type IdentityInput,
 // (es. "cf_giusy" con etichetta "Codice fiscale") si usa al posto di quello standard: mai due volte.
 // Qui solo funzioni pure (nessun accesso al database): le usano lib/saas/contracts.ts e, per il
 // PDF del documento, lib/saas/documents.ts.
+// Subito dopo «Le parti», «Termini della collaborazione» (sempre, messi dal server): data e ora della
+// collaborazione e termine di consegna dei contenuti, due campi di chi prepara il contratto.
 
 export const PARTIES_HEADING = 'Le parti'
 /** Tipi di documento che hanno sempre «Le parti» (anche prima di diventare un contratto). */
@@ -21,7 +23,7 @@ const BLANK = '_'.repeat(28)
 export type CreatorIdentity = { name: string; vat?: string; address?: string; city?: string; court?: string }
 
 export type PartyLine = {
-  kind: IdentityKind | 'denominazione'
+  kind: IdentityKind | 'denominazione' | TermKind
   label: string
   party: 'creatore' | 'destinatario'
   /** Dato gia' noto (dello spazio di lavoro). */
@@ -35,8 +37,14 @@ export type PartyLine = {
   input?: IdentityInput
   autoComplete?: string
 }
-/** legacyBoth: contratti di prima firmati per primo dal destinatario (i campi di entrambi nel testo erano suoi). */
-export type Parties = { v: 1; creator: PartyLine[]; recipient: PartyLine[]; legacyBoth?: 'destinatario' }
+/**
+ * legacyBoth: contratti di prima firmati per primo dal destinatario (i campi di entrambi nel testo erano suoi).
+ * terms: «Termini della collaborazione» (data e ora, termine di consegna): campi standard di chi prepara
+ * il contratto. Mancano solo nei contratti di prima gia' firmati (si aggiungono con una nuova versione).
+ */
+export type Parties = { v: 1; creator: PartyLine[]; recipient: PartyLine[]; legacyBoth?: 'destinatario'; terms?: PartyLine[] }
+/** Prefill dei termini (dalla chat dell'Assistente o proposti dall'AI): valori gia' puliti. */
+export type TermsPrefill = { at?: string; days?: string }
 
 // --- Dati dello spazio dalle Istruzioni ------------------------------------------------------------
 
@@ -151,10 +159,23 @@ export function buildParties(content: DocContent, creator: CreatorIdentity): { p
     const spec = RECIPIENT_IDENTITY.find((s) => s.kind === l.kind)
     if (spec?.requiredUnless && company?.id) l.requiredUnless = company.id
   }
-  return { parties: { v: 1, creator: creatorLines, recipient }, prefill }
+  // Termini della collaborazione: sempre campi standard (mai quelli dell'AI), obbligatori.
+  const terms: PartyLine[] = TERM_SPECS.map((spec) => ({ kind: spec.kind, label: spec.label, party: 'creatore', id: unique(spec.id), std: true, required: true }))
+  return { parties: { v: 1, creator: creatorLines, recipient, terms }, prefill }
 }
 
-export const partyLines = (p: Parties): PartyLine[] => [...p.creator, ...p.recipient]
+/** Righe dei termini della collaborazione (nessuna nei contratti di prima gia' firmati). */
+export const termLines = (p: Parties): PartyLine[] => p.terms || []
+/** Id del campo di un termine. */
+export const termId = (p: Parties, kind: TermKind): string | undefined => termLines(p).find((l) => l.kind === kind)?.id
+/** Lo stesso blocco senza i termini (contratti di prima gia' firmati: non si cambia quello che e' stato firmato). */
+export const withoutTerms = (p: Parties): Parties => {
+  if (!p.terms) return p
+  const { terms: _terms, ...rest } = p
+  return rest
+}
+
+export const partyLines = (p: Parties): PartyLine[] => [...p.creator, ...p.recipient, ...termLines(p)]
 
 /** Campi standard (non scritti nel testo) da compilare. */
 export const stdFields = (p: Parties): DocField[] => partyLines(p).flatMap((l) => (l.std && l.id ? [{ id: l.id, label: l.label, party: l.party }] : []))
@@ -177,11 +198,16 @@ export function partyLineText(l: PartyLine, valueOf: (id: string) => string | un
   return `${l.label}: ${value || BLANK}`
 }
 
-/** «Le parti» nel PDF: "Tra:" con i dati di chi prepara il documento, "e:" con quelli dell'altra parte. */
+/**
+ * «Le parti» nel PDF: "Tra:" con i dati di chi prepara il documento, "e:" con quelli dell'altra parte;
+ * poi «Termini della collaborazione» (valueOf da' i termini gia' scritti in parole: "sabato 15 …").
+ */
 export function partiesPdfSections(p: Parties, valueOf: (id: string) => string | undefined): PdfSection[] {
+  const terms = termLines(p)
   return [
     { heading: PARTIES_HEADING, paragraphs: ['Tra:'], bullets: p.creator.map((l) => partyLineText(l, valueOf)).filter(Boolean) },
     { paragraphs: ['e:'], bullets: p.recipient.map((l) => partyLineText(l, valueOf)) },
+    ...(terms.length ? [{ heading: TERMS_HEADING, paragraphs: [], bullets: terms.map((l) => partyLineText(l, valueOf)) }] : []),
   ]
 }
 
@@ -206,13 +232,15 @@ export function hiddenInExtras(p: Parties, content: DocContent): Set<string> {
  * testo senza i campi gia' in «Le parti». null per gli altri tipi o se il testo le ha gia'
  * (versione firmata, scritta con «Le parti» compilate).
  */
-export function documentParties(kind: string, content: DocContent, creator: CreatorIdentity): { sections: PdfSection[]; content: DocContent } | null {
+export function documentParties(kind: string, content: DocContent, creator: CreatorIdentity, terms: TermsPrefill = {}): { sections: PdfSection[]; content: DocContent } | null {
   if (!CONTRACT_KINDS.includes(kind) || content.sections[0]?.heading === PARTIES_HEADING) return null
   const { parties, prefill } = buildParties(content, creator)
   const byId = new Map((content.fields || []).map((f) => [f.id, f]))
   const hidden = hiddenInExtras(parties, content)
+  // Termini gia' scelti in chat (data e ora, consegna): in parole, come nel contratto.
+  const termValue = new Map(termLines(parties).flatMap((l) => (l.id && isTermKind(l.kind) ? [[l.id, termText(l.kind, l.kind === 'collab_at' ? terms.at : terms.days)] as const] : [])))
   return {
-    sections: partiesPdfSections(parties, (id) => byId.get(id)?.value || prefill[id]),
+    sections: partiesPdfSections(parties, (id) => (termValue.has(id) ? termValue.get(id) : byId.get(id)?.value || prefill[id])),
     content: { ...content, fields: (content.fields || []).filter((f) => !hidden.has(f.id)) },
   }
 }
@@ -277,5 +305,7 @@ export function withoutParties(content: DocContent): DocContent {
   if (content.sections[0]?.heading !== PARTIES_HEADING) return content
   let k = 1
   while (k < content.sections.length && !content.sections[k].heading && content.sections[k].paragraphs[0] === 'e:') k++
+  // «Termini della collaborazione» subito dopo: anche loro scritti dal sistema, non dall'AI.
+  if (content.sections[k]?.heading === TERMS_HEADING) k++
   return { ...content, sections: content.sections.slice(k) }
 }
