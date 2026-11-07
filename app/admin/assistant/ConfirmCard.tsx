@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Bell, Check, ChevronDown, Facebook, FileText, Instagram, Loader2, Mail, Newspaper, Send, Settings2, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Bell, Check, ChevronDown, Copy, Facebook, FilePenLine, FileText, Instagram, KeyRound, Loader2, Mail, Newspaper, Send, Settings2, ShieldCheck, Trash2, X } from 'lucide-react'
 import { authFetch, type ConfirmAction } from '@/components/useAssistantChat'
+import { PIN_PATTERN } from '@/lib/contract-text'
 import { useSyncedText } from './useSyncedText'
 
 // Doppia conferma: l'assistente ha preparato un'azione che esce dalla chat (messaggio,
@@ -19,6 +20,7 @@ const DONE_LABEL: Record<string, string> = {
   social_message: 'Inviato',
   send_emails: 'Inviate',
   send_document: 'Inviato',
+  share_contract: 'Fatto',
   publish_carousel: 'Pubblicato',
   publish_blog_now: 'Avviato',
 }
@@ -27,6 +29,7 @@ function iconFor(action: ConfirmAction) {
   if (action.action === 'social_message') return /Facebook/.test(action.title) ? Facebook : Instagram
   if (action.action === 'send_emails') return Mail
   if (action.action === 'send_document') return FileText
+  if (action.action === 'share_contract') return FilePenLine
   if (action.action === 'publish_carousel') return Send
   if (action.action === 'publish_blog_now') return Newspaper
   if (action.action === 'remove_push_devices') return Bell
@@ -51,6 +54,12 @@ export default function ConfirmCard({
   const [busy, setBusy] = useState<'accept' | 'discard' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [open, setOpen] = useState<number | null>(null)
+  // Contratti: PIN scelto qui, nascosto. Resta solo in questa scheda fino al clic: non va
+  // nella chat, non va all'AI e non si salva (al server arriva solo per farne l'hash).
+  const [pin, setPin] = useState('')
+  const [pin2, setPin2] = useState('')
+  const [copied, setCopied] = useState<string | null>(null)
+  const pinOk = !action.pin || (PIN_PATTERN.test(pin) && pin.toUpperCase() === pin2.toUpperCase())
   const Icon = iconFor(action)
 
   const expired = action.state === 'pending' && Date.now() > new Date(action.expiresAt).getTime()
@@ -65,10 +74,14 @@ export default function ConfirmCard({
     if (decision === 'accept') await flush()
     const res = await authFetch(API, {
       method: 'POST',
-      body: JSON.stringify({ id: action.id, decision, ...(decision === 'accept' && action.editable ? { text } : {}) }),
+      body: JSON.stringify({ id: action.id, decision, ...(decision === 'accept' && action.editable ? { text } : {}), ...(decision === 'accept' && action.pin ? { pin } : {}) }),
     }).catch(() => null)
     const data = res ? await res.json().catch(() => ({})) : {}
     setBusy(null)
+    if (data?.card?.state === 'done' || decision === 'discard') {
+      setPin('')
+      setPin2('')
+    }
     if (data?.card) {
       const card = data.card as ConfirmAction
       onUpdate({ state: card.state, outcome: card.outcome, error: card.error, retryable: card.retryable, ...(action.editable && card.text !== undefined ? { text: card.text } : {}) })
@@ -78,6 +91,21 @@ export default function ConfirmCard({
       return
     }
     if (decision === 'discard') onDiscarded?.(action.title)
+  }
+
+  const copyLink = async () => {
+    if (!action.contractId) return
+    setCopied(null)
+    const res = await authFetch(`/api/admin/contracts/${encodeURIComponent(action.contractId)}?link=1`).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => null) : null
+    const link = data?.contract?.link
+    if (!link) return setCopied('Nessun link attivo: crealo di nuovo dalla pagina del contratto.')
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied('Link copiato. Ricorda: il PIN mandalo a parte.')
+    } catch {
+      setCopied(link)
+    }
   }
 
   const badge =
@@ -157,8 +185,57 @@ export default function ConfirmCard({
         </div>
       ) : null}
 
+      {action.pin && actionable && canConfirm && (
+        <div className="mt-3 rounded-lg border border-[var(--border-color)] bg-[var(--background)] p-3">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
+            <KeyRound className="h-3.5 w-3.5" /> PIN per aprire il link
+          </p>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              type="password"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12))}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={12}
+              placeholder="PIN (4-12 lettere o numeri)"
+              aria-label="PIN"
+              disabled={Boolean(busy)}
+              className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-3 py-2 text-base text-[var(--text-primary)] md:text-sm"
+            />
+            <input
+              type="password"
+              value={pin2}
+              onChange={(e) => setPin2(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12))}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={12}
+              placeholder="Ripeti il PIN"
+              aria-label="Ripeti il PIN"
+              disabled={Boolean(busy)}
+              className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-3 py-2 text-base text-[var(--text-primary)] md:text-sm"
+            />
+          </div>
+          {pin2 && !pinOk && <p className="mt-1 text-xs text-[#FF3B30]">{PIN_PATTERN.test(pin) ? 'I due PIN non sono uguali.' : 'Da 4 a 12 lettere o numeri.'}</p>}
+          <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">Il PIN non è nel messaggio e non resta in chat: mandalo a parte (a voce, SMS o telefonata).</p>
+        </div>
+      )}
+
       {action.warning && actionable && <p className="mt-2 text-xs text-[#FF9500]">{action.warning}</p>}
       {state === 'done' && action.outcome && <p className="mt-2 text-xs text-[#34C759]">Fatto: {action.outcome}</p>}
+      {state === 'done' && action.contractId && canConfirm && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={copyLink} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs text-[var(--text-primary)]">
+            <Copy className="h-3.5 w-3.5" /> Copia link
+          </button>
+          <a href={`/admin/contratti/${encodeURIComponent(action.contractId)}`} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs text-[var(--text-primary)]">
+            <FilePenLine className="h-3.5 w-3.5" /> Apri contratto
+          </a>
+          {copied && <span className="break-all text-xs text-[var(--text-secondary)]">{copied}</span>}
+        </div>
+      )}
       {state === 'failed' && action.error && <p className="mt-2 text-xs text-[#FF3B30]">{action.error}</p>}
       {state === 'expired' && <p className="mt-2 text-xs text-[var(--text-secondary)]">Non è partito niente. Se ti serve ancora, chiedilo di nuovo all’assistente.</p>}
       {state === 'unknown' && <p className="mt-2 text-xs text-[#FF9500]">L’invio si è interrotto a metà: controlla se è partito prima di rifarlo.</p>}
@@ -181,7 +258,7 @@ export default function ConfirmCard({
             <button
               type="button"
               onClick={() => decide('accept')}
-              disabled={Boolean(busy) || (editing && !text.trim())}
+              disabled={Boolean(busy) || (editing && !text.trim()) || !pinOk}
               className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               {busy === 'accept' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}

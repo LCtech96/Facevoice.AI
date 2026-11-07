@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState, type MouseEvent } from 'react'
-import { ChevronDown, Download, ExternalLink, FileText, History, Loader2, TriangleAlert } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, FilePenLine, FileText, History, Loader2, PenLine, TriangleAlert } from 'lucide-react'
 import { authFetch, type DocumentAction } from '@/components/useAssistantChat'
 import { pdfFilename } from '@/lib/pdf-doc'
 import { docAccessFresh, ensureDocAccess, DOC_ACCESS_API } from '@/lib/doc-access-client'
+import { SIGNATURE_NOTE } from '@/lib/contract-text'
 import { shortDate } from './format'
 
 // Documento scritto dalla super chat (contratto, preventivo, lettera…): "Apri PDF" lo
@@ -146,6 +147,33 @@ function PdfButtons({ docId, version, title, ready, viaToken, small }: { docId: 
   )
 }
 
+/** Il documento diventa un contratto (o si riapre quello che c'e' gia') e si apre la sua pagina. */
+function ContractButton({ docId }: { docId: string }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const open = async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    const res = await authFetch('/api/admin/contracts', { method: 'POST', body: JSON.stringify({ docId }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (res?.ok && data?.id) {
+      window.location.href = `/admin/contratti/${encodeURIComponent(data.id)}`
+      return
+    }
+    setBusy(false)
+    setError(data?.error || 'Non riesco ad aprire il contratto, riprova.')
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" onClick={open} disabled={busy} className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--border-color)] px-4 py-2 text-sm text-[var(--text-primary)] disabled:opacity-50">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePenLine className="h-4 w-4" />} Contratto: condividi e firma
+      </button>
+      {error && <span className="text-xs text-[#FF3B30]">{error}</span>}
+    </div>
+  )
+}
+
 export default function DocumentCard({ action, canOpen, latest }: { action: DocumentAction; canOpen: boolean; latest: boolean }) {
   const [ready, setReady] = useState(false)
   const [viaToken, setViaToken] = useState(false)
@@ -208,7 +236,7 @@ export default function DocumentCard({ action, canOpen, latest }: { action: Docu
       {action.placeholders.length > 0 && (
         <div className="mt-2">
           <button type="button" onClick={() => setShowMissing(!showMissing)} className="inline-flex min-h-[32px] items-center gap-1 text-xs font-medium text-[#FF9500]">
-            Da completare: {action.placeholders.length} <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMissing ? 'rotate-180' : ''}`} />
+            Spazi vuoti da compilare: {action.placeholders.length} <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMissing ? 'rotate-180' : ''}`} />
           </button>
           {showMissing && (
             <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-[var(--text-secondary)]">
@@ -222,8 +250,15 @@ export default function DocumentCard({ action, canOpen, latest }: { action: Docu
         </div>
       )}
 
+      {action.placeholders.length > 0 && showMissing && (
+        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Nel PDF sono linee vuote: si compilano a mano o al momento della firma.</p>
+      )}
+
       <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--text-secondary)]">
         <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#FF9500]" /> {DOC_DISCLAIMER}
+      </p>
+      <p className="mt-1 flex items-start gap-1.5 text-xs text-[var(--text-secondary)]">
+        <PenLine className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {SIGNATURE_NOTE}
       </p>
 
       <div className="mt-3">
@@ -233,6 +268,12 @@ export default function DocumentCard({ action, canOpen, latest }: { action: Docu
           <p className="text-xs text-[var(--text-secondary)]">Solo l’amministratore può aprire il documento.</p>
         )}
       </div>
+
+      {canOpen && latest && (
+        <div className="mt-2">
+          <ContractButton docId={action.docId} />
+        </div>
+      )}
 
       {canOpen && latest && action.version > 1 && (
         <div className="mt-3 border-t border-[var(--border-color)] pt-2">

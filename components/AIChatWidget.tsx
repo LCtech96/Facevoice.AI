@@ -65,7 +65,8 @@ export default function AIChatWidget() {
   const openRef = useRef(false)
 
   const isChatPage = pathname?.startsWith('/ai-chat')
-  const hidden = isChatPage || pathname?.startsWith('/admin')
+  // Pagina del contratto (/c/…): solo il contratto, niente chat del sito.
+  const hidden = isChatPage || pathname?.startsWith('/admin') || pathname?.startsWith('/c/')
 
   useEffect(() => {
     openRef.current = isOpen

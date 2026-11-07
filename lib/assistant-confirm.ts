@@ -9,6 +9,8 @@ import { requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/l
 import { listPushDevices, removePushDevice } from '@/lib/push'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { findVersion, loadDocument, renderDocumentPdf } from '@/lib/assistant-documents'
+import { CHANNEL_LABEL, PIN_RE, linkOrigin, type ShareChannel } from '@/lib/contracts'
+import { MAX_SHARE_TEXT, shareContractNow, textHasPin } from '@/lib/contract-share'
 
 // Doppia conferma della super chat. Gli strumenti dell'assistente che agiscono
 // fuori dalla chat o non si possono annullare (messaggi, email, pubblicazioni,
@@ -60,6 +62,12 @@ export type ConfirmPayload =
       recipient?: string
       text: string
     }
+  /**
+   * Link unico del contratto con il PIN scelto da Luca sulla scheda. Il PIN NON sta qui
+   * (ne' nella chat): arriva solo con il clic su "Accetta e invia" e si salva come hash.
+   * to: email (canale email) o contactId (Instagram, Facebook, WhatsApp); vuoto per "solo link".
+   */
+  | { kind: 'share_contract'; contractId: string; title: string; name: string; channel: ShareChannel; to: string; lastIncomingAt: string | null; text: string }
 
 export type ConfirmKind = ConfirmPayload['kind']
 export type ActionStatus = 'pending' | 'running' | 'done' | 'failed' | 'discarded'
@@ -109,9 +117,13 @@ export type ConfirmCard = {
   outcome?: string
   error?: string
   retryable?: boolean
+  /** La scheda chiede il PIN (contratti): resta nel browser fino al clic, mai nella chat. */
+  pin?: boolean
+  /** Contratto della scheda: "Apri contratto" e "Copia link" dopo l'invio. */
+  contractId?: string
 }
 
-const EDITABLE_MAX: Partial<Record<ConfirmKind, number>> = { social_message: 1900, send_document: 6000, replace_content_directions: 3000 }
+const EDITABLE_MAX: Partial<Record<ConfirmKind, number>> = { social_message: 1900, send_document: 6000, replace_content_directions: 3000, share_contract: MAX_SHARE_TEXT }
 
 export const newActionId = () => `a${Date.now().toString(36)}${randomUUID().replace(/-/g, '').slice(0, 10)}`
 
@@ -262,6 +274,29 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
         confirmLabel: 'Accetta e invia',
         ...extra,
       }
+    case 'share_contract': {
+      const dm = p.channel === 'instagram' || p.channel === 'facebook' || p.channel === 'whatsapp'
+      const old = dm && (!p.lastIncomingAt || Date.now() - Date.parse(p.lastIncomingAt) > META_WINDOW_MS)
+      const where =
+        p.channel === 'link' ? 'Solo il link: lo copi e lo mandi tu' : p.channel === 'email' ? `Per email a ${p.to}` : `In privato su ${CHANNEL_LABEL[p.channel]} a ${p.name}`
+      return {
+        ...base,
+        text: p.text,
+        editable: p.channel !== 'link',
+        maxLength: EDITABLE_MAX.share_contract,
+        pin: true,
+        contractId: p.contractId,
+        lines: [
+          `Contratto: ${p.title}`,
+          where,
+          ...(p.channel === 'link' ? [] : ['In fondo al messaggio aggiungo il link al contratto e la frase «il PIN te lo mando a parte».']),
+          'Scegli qui sotto il PIN per aprire il link (da 4 a 12 lettere o numeri). Non è nel messaggio: mandalo in un altro modo (a voce, SMS o telefonata).',
+        ],
+        ...(old ? { warning: 'Ti ha scritto più di 24 ore fa: da qui non si può scriverle. Crea solo il link e mandalo dall’app.' } : {}),
+        confirmLabel: p.channel === 'link' ? 'Crea il link' : 'Accetta e invia',
+        ...extra,
+      }
+    }
   }
 }
 
@@ -388,10 +423,17 @@ export async function discardAction(id: string, by: string): Promise<DecisionRes
  * condizioni adesso ed esegue esattamente il contenuto salvato (con il testo corretto
  * da Luca, se la scheda lo permette).
  */
-export async function acceptAction(id: string, by: string, options: { text?: string } = {}): Promise<DecisionResult> {
+export async function acceptAction(id: string, by: string, options: { text?: string; pin?: string; origin?: string } = {}): Promise<DecisionResult> {
   if (!ACTION_ID_RE.test(id)) return NOT_FOUND
   const current = await loadAction(id)
   if (!current) return NOT_FOUND
+  // Contratti: il PIN arriva solo qui, si controlla prima di prendere l'azione e non si salva mai.
+  if (current.payload.kind === 'share_contract') {
+    const pin = typeof options.pin === 'string' ? options.pin.trim() : ''
+    if (!PIN_RE.test(pin)) return { ok: false, action: current, card: cardFor(current), message: 'Scegli un PIN da 4 a 12 caratteri (lettere o numeri).' }
+    const text = typeof options.text === 'string' ? options.text : current.payload.text
+    if (textHasPin(text, pin)) return { ok: false, action: current, card: cardFor(current), message: 'Il messaggio contiene il PIN: toglilo, il PIN va mandato a parte.' }
+  }
   const max = EDITABLE_MAX[current.payload.kind]
   const edited = typeof options.text === 'string' && max ? options.text.trim() : undefined
   if (edited !== undefined && !edited) return { ok: false, action: current, card: cardFor(current), message: 'Il testo è vuoto: scrivi qualcosa o scarta.' }
@@ -421,7 +463,7 @@ export async function acceptAction(id: string, by: string, options: { text?: str
 
   let result: Outcome
   try {
-    result = await execute(claimed)
+    result = await execute(claimed, { pin: options.pin, origin: options.origin })
   } catch (error) {
     // Errore imprevisto prima di sapere se e' partito: per prudenza non si riprova da soli.
     console.error('azione confermata: errore', claimed.payload.kind, error instanceof Error ? error.message : error)
@@ -442,9 +484,18 @@ export async function acceptAction(id: string, by: string, options: { text?: str
 // Esecuzione di ogni tipo di azione (condizioni ricontrollate adesso)
 // ---------------------------------------------------------------------
 
-async function execute(action: PendingAction): Promise<Outcome> {
+async function execute(action: PendingAction, secret: { pin?: string; origin?: string } = {}): Promise<Outcome> {
   const p = action.payload
   switch (p.kind) {
+    case 'share_contract': {
+      // Il PIN passa solo di qui (mai salvato nell'azione, nell'esito o nella chat).
+      const shared = await shareContractNow(
+        p.contractId,
+        { channel: p.channel, to: p.to, name: p.name, text: p.text, pin: secret.pin || '', origin: linkOrigin(secret.origin) },
+        action.decidedBy || null
+      )
+      return shared.ok ? { ok: true, outcome: shared.outcome } : fail(shared.error, shared.retryable)
+    }
     case 'social_message':
       return sendSocialMessage(p)
     case 'send_emails':

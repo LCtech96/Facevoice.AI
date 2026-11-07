@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Gauge, Mail, Phone, MessageSquare, Users, type LucideIcon } from 'lucide-react'
+import { FilePenLine, Gauge, Mail, Phone, MessageSquare, Users, type LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { isAdminEmail } from '@/lib/admin-auth'
 
@@ -51,6 +51,7 @@ function AdminButtons({ pathname }: { pathname?: string | null }) {
     <div className="flex flex-wrap gap-2">
       <AdminButton href="/admin/utenti" label="Utenti" Icon={Users} active={Boolean(pathname?.startsWith('/admin/utenti'))} />
       <AdminButton href="/admin/consumi" label="Consumi" Icon={Gauge} active={Boolean(pathname?.startsWith('/admin/consumi'))} />
+      <AdminButton href="/admin/contratti" label="Contratti" Icon={FilePenLine} active={Boolean(pathname?.startsWith('/admin/contratti'))} />
     </div>
   )
 }
@@ -62,6 +63,8 @@ export default function ContactsFooter() {
   // La chat occupa lo schermo intero: un footer sotto costringerebbe a
   // scorrere la pagina per tornare ai messaggi.
   if (pathname?.startsWith('/ai-chat')) return null
+  // Pagina del contratto per chi riceve il link: solo il contratto, niente contatti del sito.
+  if (pathname?.startsWith('/c/')) return null
 
   // Nell'area admin i contatti dell'azienda non servono: per l'admin resta
   // solo una riga con i pulsanti Utenti e Consumi, per gli altri niente footer.
