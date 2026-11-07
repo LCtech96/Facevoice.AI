@@ -551,8 +551,8 @@ const KIND_HINTS: Record<DocKind, string> = {
   altro: 'Documento con le sezioni che servono per la richiesta di Luca, chiaro e ordinato.',
 }
 
-function systemPrompt(kind: DocKind, today: string) {
-  return `Prepari documenti scritti per Facevoice AI (agenzia di Luca Corrao): contratti, preventivi, accordi, lettere. Scrivi in italiano, con lo stile di un documento legale italiano ma con parole semplici e frasi chiare.
+/** Regole uguali per ogni documento (tipo e data sono in systemPrompt, in coda). */
+const DOC_RULES = `Prepari documenti scritti per Facevoice AI (agenzia di Luca Corrao): contratti, preventivi, accordi, lettere. Scrivi in italiano, con lo stile di un documento legale italiano ma con parole semplici e frasi chiare.
 
 Rispondi SOLO con un JSON valido, senza testo prima o dopo, in questo formato:
 {"title": "titolo del documento", "subtitle": "riga sotto il titolo, opzionale", "meta": ["Data: ...", "Tra: ...", "E: Giusy, codice fiscale {{cf_cliente}}"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["..."], "bullets": ["..."], "specific_approval": false}], "fields": [{"id": "cf_cliente", "label": "Codice fiscale", "party": "destinatario"}, {"id": "data_inizio", "label": "Data di inizio", "party": "entrambi"}], "signatures": [{"label": "Per Facevoice AI", "name": "Luca Corrao", "party": "creatore"}, {"label": "Il Cliente", "name": "...", "party": "destinatario"}], "from_chat": ["punto concordato nella conversazione", "..."]}
@@ -563,12 +563,25 @@ Regole obbligatorie:
 - MAI scrivere segnaposto come "[DA COMPLETARE …]", "XXX", "____" o "da definire" nel testo: usa sempre {{id}} con il suo campo. Metti "value" in un campo solo se il dato è scritto chiaramente nella conversazione.
 - Niente avvisi legali nel documento (niente "non sono un avvocato", niente "fai controllare da un professionista"): l'avviso resta solo in chat.
 - Metti "specific_approval": true sulle clausole che secondo gli artt. 1341 e 1342 c.c. vanno approvate per iscritto in modo specifico (es. limitazioni di responsabilità, recesso, tacito rinnovo, penali, foro competente); false sulle altre.
-- Inserisci le clausole abituali per questo tipo di documento. ${KIND_HINTS[kind]}
 - Nelle premesse (o in una sezione iniziale) di' chiaramente quali punti sono stati concordati nella conversazione, citando canale e data (es. "come concordato nella conversazione su Instagram del 5 novembre 2026"). Metti gli stessi punti, in breve, in "from_chat".
 - I messaggi "Noi" sono nostri (Facevoice AI), sia quelli automatici sia quelli scritti a mano: valgono allo stesso modo.
 - Numera le sezioni (1., 2., 3. …). Paragrafi brevi. Niente markdown, niente asterischi, niente emoji.
-- La data del documento è oggi: ${today}. Scrivi le date per esteso in italiano (es. 7 novembre 2026).
 - Il nome del cliente è quello della conversazione; se manca il cognome aggiungi uno spazio da compilare per il nome completo.`
+
+/**
+ * Istruzioni per scrivere un documento, divise in due. system: le regole uguali per ogni
+ * documento e ogni giorno (con Claude si rileggono dalla cache, anche tra un contratto e un
+ * preventivo). systemTail: le due regole che cambiano con la richiesta (le clausole del tipo di
+ * documento e la data di oggi), in coda all'elenco delle regole invece che in mezzo. Le regole
+ * sono le stesse di prima, con lo stesso testo: cambia solo l'ordine.
+ */
+function systemPrompt(kind: DocKind, today: string): { system: string; systemTail: string } {
+  return {
+    system: DOC_RULES,
+    systemTail: `
+- Inserisci le clausole abituali per questo tipo di documento. ${KIND_HINTS[kind]}
+- La data del documento è oggi: ${today}. Scrivi le date per esteso in italiano (es. 7 novembre 2026).`,
+  }
 }
 
 function businessBlock(knowledge: string) {
@@ -584,11 +597,17 @@ const FIX_FORMAT = 'Il messaggio precedente non era un JSON valido del documento
 
 type Written = { doc: StructuredDoc; fromChat: string[]; truncated?: boolean }
 
-async function askDocument(system: string, user: string): Promise<Written> {
+async function askDocument(prompt: { system: string; systemTail: string }, user: string): Promise<Written> {
   const accept = (v: Record<string, unknown>) => typeof v.title === 'string' && Array.isArray(v.sections)
   const messages: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: user }]
   for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await callAIPaced(messages, system, { feature: 'super_chat_documenti', temperature: 0.3, maxOutputTokens: 8000 })
+    const result = await callAIPaced(messages, prompt.system, {
+      feature: 'super_chat_documenti',
+      temperature: 0.3,
+      maxOutputTokens: 8000,
+      json: true,
+      systemTail: prompt.systemTail,
+    })
     const raw = result.message || ''
     const parsed = parseJsonObject(raw, accept)
     const clean = parsed ? sanitizeDoc(parsed) : null

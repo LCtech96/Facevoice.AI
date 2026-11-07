@@ -200,11 +200,18 @@ async function stats() {
   }
 }
 
-async function generate(system: string, user: string): Promise<{ subject: string; body: string } | null> {
+/**
+ * Email scritta dall'AI. system = istruzioni fisse (uguali per tutte le email dello stesso tipo:
+ * con Claude si rileggono dalla cache); systemTail = quello che cambia a ogni richiesta (le
+ * indicazioni di Luca), in un blocco dopo, senza breakpoint. Risposta in JSON.
+ */
+async function generate(system: string, user: string, systemTail?: string): Promise<{ subject: string; body: string } | null> {
   const result = await callAIPaced([{ role: 'user', content: user }], system, {
     feature: 'email_clienti',
     temperature: 0.7,
     maxOutputTokens: 1200,
+    json: true,
+    ...(systemTail ? { systemTail } : {}),
   })
   try {
     const json = (result.message || '').match(/\{[\s\S]*\}/)?.[0]
@@ -232,12 +239,13 @@ function leadFacts(lead: Lead) {
 
 async function firstEmail(lead: Lead, extra?: string): Promise<Draft | null> {
   const rules = await firstEmailRules()
+  // Le indicazioni di Luca cambiano a ogni richiesta: dopo le istruzioni fisse, non in mezzo.
   const generated = await generate(
     `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). Scrivi la PRIMA email di contatto a freddo, ${rules}
-${extra ? `\nIndicazioni aggiuntive di Luca (valgono sullo stile, mai sull'onestà dei fatti): ${extra}` : ''}
 
 Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
-    leadFacts(lead)
+    leadFacts(lead),
+    extra ? `\n\nIndicazioni aggiuntive di Luca (valgono sullo stile, mai sull'onestà dei fatti): ${extra}` : undefined
   )
   if (!generated) return null
   await supabaseAdmin.from('leads').update({ email_subject: generated.subject, email_body: generated.body }).eq('id', lead.id)
@@ -328,10 +336,10 @@ async function prepareFollowups(args: { ids?: string[]; filter?: string; instruc
       .maybeSingle()
     const generated = await generate(
       `Sei l'assistente commerciale di Luca Corrao (Facevoice AI). ${FOLLOWUP_RULES}
-${extra ? `\nIndicazioni aggiuntive di Luca: ${extra}` : ''}
 
 Rispondi SOLO con JSON: {"subject": "...", "body": "..."}`,
-      `${leadFacts(lead)}\n\nPrima email inviata:\nOggetto: ${lead.email_subject || ''}\n${lead.email_body || last?.body || ''}`
+      `${leadFacts(lead)}\n\nPrima email inviata:\nOggetto: ${lead.email_subject || ''}\n${lead.email_body || last?.body || ''}`,
+      extra ? `\n\nIndicazioni aggiuntive di Luca: ${extra}` : undefined
     )
     if (!generated) return null
     const subject = generated.subject || `Re: ${lead.email_subject || lead.name}`
@@ -981,7 +989,10 @@ export async function runAssistant(
       })
       // Riepilogo economico: la conversazione va all'AI accorciata.
       const short = transcript.map((m, i) => (i === 0 ? { ...m, content: m.content.slice(-2500) } : { ...m, content: m.content.slice(0, 600) }))
-      const last = await callAIPaced(short, AGENT_PROMPT, { feature: 'assistente_clienti', temperature: 0.2, maxOutputTokens: 600 })
+      // Ultima chiamata, su una conversazione accorciata (prefisso diverso da quello dei passi):
+      // le istruzioni fisse si rileggono dalla cache, la conversazione non si scrive in cache
+      // (non la rilegge nessuno: sarebbe solo il sovrapprezzo di scrittura).
+      const last = await callAIPaced(short, AGENT_PROMPT, { feature: 'assistente_clienti', temperature: 0.2, maxOutputTokens: 600, cache: false })
       const summary = parseStep(last.message || '')
       return finish(`${summary?.reply || 'Mi sono fermato al limite di spesa che mi hai dato.'}\n\n(Mi sono fermato al limite di spesa: ${describeBudget(budget)}.)`)
     }
@@ -990,10 +1001,14 @@ export async function runAssistant(
       return finish(changed.size ? `Ho preparato ${changed.size} bozze finora, continuo con il resto…` : 'Sto ancora lavorando: continuo con il resto…')
     }
     reportStatus(step === 0 ? 'Leggo la richiesta e decido da dove partire…' : 'Valuto il risultato e decido il passo successivo…')
+    // Istruzioni fisse (AGENT_PROMPT) con il loro breakpoint; data, ora e situazione stanno nel
+    // primo messaggio, uguale a ogni passo. cache: la conversazione si rimanda allungata a ogni
+    // passo, il passo dopo rilegge dalla cache tutto quello che c'era prima.
     const response = await callAIPaced(transcript, AGENT_PROMPT, {
       feature: 'assistente_clienti',
       temperature: 0.2,
       maxOutputTokens: 2000,
+      cache: true,
     })
     const raw = response.message || ''
     const call = parseStep(raw)

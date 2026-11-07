@@ -7,7 +7,8 @@ import { getAccessToken } from '@/lib/session-token'
 // Consumi AI in piccolo accanto al titolo della Super chat (come il pulsante del
 // consumo nella beta; prima era una riga in alto, e ancora prima la pagina Consumi):
 // il pulsante mostra la spesa del mese, toccandolo si apre il dettaglio per funzione.
-// Gemini (gratuito) fa il grosso, Claude subentra quando Gemini e' al limite.
+// Gemini fa il grosso, Claude subentra quando Gemini e' al limite. Si mostra solo la spesa
+// registrata (niente promesse sul costo delle risposte).
 // Senza il permesso dei consumi il pulsante non compare.
 
 type Totals = {
@@ -85,9 +86,9 @@ export default function UsageButton() {
   }, [load, open])
 
   if (hidden || !data || data.missingTable) return null
-  // Claude entra solo quando tutti i modelli Gemini gratuiti sono al limite.
+  // Claude entra solo quando tutti i modelli Gemini sono al limite.
   const claudeNow = Boolean(data.lastClaudeAt && Date.now() - new Date(data.lastClaudeAt).getTime() < 2 * 60_000)
-  const state = claudeNow ? 'Gemini è al limite: in questo momento risponde Claude.' : 'Gemini attivo: le risposte sono gratuite.'
+  const state = claudeNow ? 'Gemini è al limite: in questo momento risponde Claude.' : 'In questo momento risponde Gemini.'
 
   return (
     <div className="relative">
@@ -129,7 +130,7 @@ export default function UsageButton() {
           </div>
           <ul className="mt-2 space-y-1 text-xs">
             {[
-              ['Gemini nel mese', `${num(data.month.geminiCalls)} · gratuito`],
+              ['Gemini nel mese', `${num(data.month.geminiCalls)} richieste`],
               ['Claude nel mese', `${num(data.month.claudeCalls)} · ${usd(data.month.costUsd)}`],
               ['Limiti Gemini', `${num(data.month.geminiLimits)}${data.lastLimitAt ? ` · ultimo ${time(data.lastLimitAt)}` : ''}`],
             ].map(([label, value]) => (
