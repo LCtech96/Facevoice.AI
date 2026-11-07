@@ -9,6 +9,7 @@ import {
   contractPdf,
   creatorView,
   deleteDraft,
+  ensureParties,
   listContracts,
   loadContract,
   manualChange,
@@ -38,7 +39,7 @@ export const maxDuration = 120
 //   GET ?id=                  il contratto (lo apre dal documento la prima volta)
 //   GET ?id=&pdf=1[&download=1]  PDF (bozza con la scritta, oppure firmato con il registro)
 //   GET ?id=&link=1           link da copiare (mai il PIN: non esiste piu' in chiaro)
-//   POST { op, id, ... }      share | revoke | fields | preview | apply | manual | reject | sign | cancel
+//   POST { op, id, ... }      share | revoke | fields (i tuoi dati, mentre scrivi) | preview | apply | manual | reject | sign | cancel
 //   DELETE ?id=               elimina una bozza mai inviata (con il suo documento)
 
 const NO_STORE = { 'Cache-Control': 'private, no-store, max-age=0', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }
@@ -62,7 +63,8 @@ export async function GET(req: NextRequest) {
   const id = params.get('id') || ''
   try {
     if (!id) return json({ contracts: await listContracts(ws), signatureNote: SIGNATURE_NOTE, disclaimer: CONTRACT_DISCLAIMER })
-    const contract = (await loadContract(ws, id)) || (await openContract(ws, access.userId, id))
+    // Contratti di prima: «Le parti» si aggiungono qui, senza toccare testo e firme.
+    const contract = await ensureParties((await loadContract(ws, id)) || (await openContract(ws, access.userId, id)))
     if (params.get('link') === '1') return json({ link: shareLink(contract) })
     if (params.get('pdf') === '1') {
       const file = contractPdf(contract)
@@ -108,8 +110,11 @@ export async function POST(req: NextRequest) {
       }
       case 'revoke':
         return json({ ok: true, contract: creatorView(await revokeLink(ws, id)) })
-      case 'fields':
+      case 'fields': {
+        const current = await loadContract(ws, id)
+        if (current) await ensureParties(current)
         return json({ ok: true, contract: creatorView(await setCreatorFields(ws, id, body.values)) })
+      }
       case 'preview':
         return json({ ok: true, contract: creatorView(await previewChange(access.db, id, body.changeId, body.instructions)) })
       case 'apply':
@@ -121,7 +126,7 @@ export async function POST(req: NextRequest) {
       case 'cancel':
         return json({ ok: true, contract: creatorView(await cancelContract(ws, id)) })
       case 'sign': {
-        await openContract(ws, access.userId, id)
+        await ensureParties(await openContract(ws, access.userId, id))
         const signed = await signContract(
           ws,
           id,

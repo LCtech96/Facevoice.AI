@@ -6,10 +6,12 @@ import {
   clientDevice,
   clientIp,
   contractPdf,
+  ensureParties,
   markSeen,
   openWithSession,
   publicView,
   requestChange,
+  saveRecipientFields,
   sendSignedEmails,
   signContract,
   cookieName,
@@ -26,7 +28,9 @@ export const dynamic = 'force-dynamic'
 // limitati per link e per indirizzo IP. Il PIN non torna mai indietro e non si scrive nei log.
 //   GET                   { pin: true } (serve il PIN) | la pagina del contratto
 //   GET ?pdf=1            PDF (bozza con la scritta "BOZZA – non firmato", oppure firmato)
-//   POST { op: "pin", pin } | { op: "change", text, section?, versionId } | { op: "sign", ... }
+//   POST { op: "pin", pin } | { op: "fields", values } (i suoi dati, salvati mentre scrive)
+//        | { op: "change", text, section?, versionId } | { op: "sign", ... }
+// I dati scritti (codice fiscale, indirizzo…) non vanno mai nei log.
 
 const SECURITY_HEADERS: Record<string, string> = {
   'Cache-Control': 'no-store, max-age=0',
@@ -76,7 +80,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     if (!opened) return invalid()
     // PDF senza sessione (cookie scaduto): si torna al PIN.
     if (opened === 'pin') return req.nextUrl.searchParams.get('pdf') === '1' ? json({ error: 'Scrivi di nuovo il PIN nella pagina del contratto.', code: 'pin' }, 401) : json({ pin: true })
-    const contract = opened.contract
+    // Contratti di prima: «Le parti» si aggiungono qui, senza toccare testo e firme.
+    const contract = await ensureParties(opened.contract)
     if (req.nextUrl.searchParams.get('pdf') === '1') {
       const file = contractPdf(contract)
       const download = req.nextUrl.searchParams.get('download') === '1'
@@ -113,21 +118,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     if (body.op === 'pin') {
       const outcome = await checkPin(token, body.pin, ip)
       if (!outcome.ok) return json({ error: outcome.message, code: outcome.code, ...(outcome.retryAt ? { retryAt: outcome.retryAt } : {}) }, outcome.code === 'invalid_link' ? 404 : outcome.code === 'locked' ? 429 : outcome.code === 'busy' ? 503 : 401)
-      const res = json({ contract: publicView(outcome.contract) })
+      const contract = await ensureParties(outcome.contract)
+      const res = json({ contract: publicView(contract) })
       const s = outcome.session
       // Solo per questo link: il cookie va solo alle richieste di /api/c/<token>.
       res.headers.append('Set-Cookie', `${s.name}=${encodeURIComponent(s.value)}; Path=/api/c/${token}; Max-Age=${s.maxAge}; HttpOnly; Secure; SameSite=Lax`)
-      await markSeen(outcome.contract)
+      await markSeen(contract)
       return res
     }
     const opened = await openWithSession(token, readCookie(req, cookieName(tokenHash(token))))
     if (!opened) return invalid()
     if (opened === 'pin') return json({ error: 'Scrivi di nuovo il PIN: la sessione è scaduta.', code: 'pin' }, 401)
+    if (body.op === 'fields') {
+      await ensureParties(opened.contract)
+      const contract = await saveRecipientFields(opened, body.values)
+      return json({ ok: true, contract: publicView(contract) })
+    }
     if (body.op === 'change') {
       const contract = await requestChange(opened, { text: body.text, section: body.section, versionId: body.versionId })
       return json({ ok: true, contract: publicView(contract) })
     }
     if (body.op === 'sign') {
+      await ensureParties(opened.contract)
       const signed = await signContract(
         opened.contract.workspaceId,
         opened.contract.id,
