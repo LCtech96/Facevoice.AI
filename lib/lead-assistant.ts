@@ -14,26 +14,62 @@ import {
   searchPlaces,
   type Lead,
 } from '@/lib/leads'
-import { prepareInboxReply, prepareOutreachReply, type SocialPlatform } from '@/lib/meta/agent'
+import { loadKnowledge, prepareInboxReply, prepareOutreachReply, type SocialPlatform } from '@/lib/meta/agent'
 import { pollGmail } from '@/lib/gmail-poll'
+import { previewThreadReply } from '@/lib/gmail'
 import { withCalls } from '@/lib/lead-calls'
 import { SOURCE_CHAT, addContact } from '@/lib/contacts'
 import { noteLeadFields } from '@/lib/lead-origin'
 import { inspectWebsite, platformOf } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
-import { conversationKeyFor } from '@/lib/meta/identities'
-import { listPushDevices, removePushDevice, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
-import { loadBlogAutoSettings, loadBlogAutoState, requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
+import { listPushDevices, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
+import { loadBlogAutoSettings, loadBlogAutoState, type BlogAutoSettings } from '@/lib/blog-auto'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { SITE_URL } from '@/lib/seo/site'
-import { createPostDraft, DraftConflictError, loadPostDraft, publishPostDraft, recentPostDrafts, type PostDraft } from '@/lib/social-posts'
+import { createPostDraft, DraftConflictError, loadPostDraft, recentPostDrafts, type PostDraft } from '@/lib/social-posts'
 import { arrangeSlides, carouselOutline, editSlidesAI, isEditable } from '@/lib/carousel-edit'
 import { carouselDraftFromBlogPost } from '@/lib/blog-share'
+import {
+  cardFor,
+  createPendingAction,
+  describeForModel,
+  recentActions,
+  stateOf,
+  type ConfirmCard,
+  type ConfirmKind,
+  type ConfirmPayload,
+  type ConfirmScope,
+  type PendingAction,
+} from '@/lib/assistant-confirm'
+import {
+  DOC_DISCLAIMER,
+  DOC_KIND_LABEL,
+  PLATFORM_LABEL,
+  addDocumentVersion,
+  asDocKind,
+  describeSource,
+  documentCard,
+  findVersion,
+  latestVersion,
+  loadDocument,
+  loadTranscript,
+  recentDocuments,
+  resolveConversation,
+  reviseDocument,
+  saveNewDocument,
+  writeDocument,
+  type DocVersion,
+  type DocumentCard,
+  type Transcript,
+} from '@/lib/assistant-documents'
+import { pdfFilename } from '@/lib/pdf-doc'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
-// email, riscrivere una bozza, aggiornare schede), anche in piu' passaggi.
-// Le email vere partono solo dal browser, dopo conferma di Luca.
+// email, riscrivere una bozza, aggiornare schede, scrivere documenti in PDF),
+// anche in piu' passaggi. Doppia conferma: niente esce dalla chat (email,
+// messaggi, pubblicazioni, cancellazioni) senza il clic di Luca sulla scheda di
+// conferma (lib/assistant-confirm).
 
 export const BATCH_LIMIT = 25
 const MAX_STEPS = 10
@@ -59,12 +95,15 @@ export type AssistantResult = {
   focus?: { label: string; ids: string[] }
   /** Tempo finito prima di completare: il browser rilancia da solo per continuare. */
   more?: boolean
-  /** Messaggi social preparati: partono solo quando Luca preme Invia. */
+  /** Schede sotto la risposta: conferme da approvare, caroselli, documenti. */
   actions?: SocialAction[]
 }
 
 export type SocialAction =
+  | ConfirmCard
+  | DocumentCard
   | {
+      /** Scheda di prima (chat vecchie): messaggio con il pulsante Invia. Le nuove sono "confirm". */
       kind: 'social_message'
       platform: 'instagram' | 'facebook'
       key: string
@@ -647,7 +686,7 @@ La sezione "Risposte ricevute" qui sotto è aggiornata a questo istante (la case
 Strumenti per domande sull'attività (rispondi con numeri precisi, senza fare altro):
 - "activity_report": {"hours": 1} oppure {"from": "ISO", "to": "ISO"}, "platform": "email|instagram|facebook|whatsapp|web|all" → quanti messaggi sono stati inviati e ricevuti nel periodo, per canale e per tipo (email della Ricerca clienti, risposte automatiche, approvate, scritte a mano), invii falliti, bozze in attesa, e gli ultimi 30 con ora, contatto e inizio del testo. Usalo per domande tipo "quante email sono partite nell'ultima ora", "chi ci ha scritto oggi" (calcola le ore da mezzanotte con la data e ora qui sotto), "quanti messaggi Instagram ieri".
 - Per numeri sulla lista clienti usa "stats" o "list_leads".
-Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, read_thread, inspect_website, instagram_profile, list_push_devices).
+Se Luca dice "senza fare nulla" / "senza compiere azioni", usa solo strumenti di lettura (stats, list_leads, activity_report, read_conversation, list_conversations, read_thread, inspect_website, instagram_profile, list_push_devices, list_documents).
 
 Strumenti di ricerca e social:
 - "inspect_website": {"leadId": "..."} oppure {"url": "https://..."} → legge il sito (fino a 10 pagine): elenco pagine con titolo e contenuto, piattaforma (WordPress, Wix…), anno più recente citato e copyright (per capire se è aggiornato), funzioni presenti (prenotazioni, shop, blog, newsletter, WhatsApp, Analytics, Pixel), link social. Poi spiega tu a Luca, in parole semplici, che pagine ci sono, di cosa parlano, se il sito sembra usato attivamente e cosa manca.
@@ -657,7 +696,7 @@ Strumenti di ricerca e social:
 - "read_thread": {"platform": "...", "contactId": "..."} → legge gli ultimi messaggi di una conversazione qualsiasi di Messaggi (ricevuti, inviati, bozze).
 - "prepare_inbox_reply": {"platform": "...", "contactId": "...", "instructions": "cosa vuole Luca", "to": "email, solo se Luca indica un indirizzo diverso"} → prepara la risposta a una conversazione qualsiasi di Messaggi (email, Instagram, Messenger, WhatsApp, chat del sito) seguendo le indicazioni di Luca e la mette da approvare in Messaggi (non parte da sola). Per chi è nella lista Clienti e ha risposto alle nostre email usa invece prepare_reply.
 REGOLA: se Luca ti chiede di rispondere a qualcuno, non dirgli mai "non lo trovo" o "dammi l'email" prima di aver cercato con list_conversations (anche solo con una parte del nome o dell'azienda). Quando lo trovi, prepara SEMPRE la risposta con prepare_inbox_reply, anche se l'ultima email è una ricevuta o arriva da un indirizzo automatico (no-reply): lo strumento trova da solo l'indirizzo vero dell'azienda. Poi dici a Luca a chi va (destinatario) e riporti l'avviso se c'è.
-- "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). Non parte da solo: a Luca compare il pulsante Invia. Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
+- "send_social_message": {"platform": "instagram|facebook", "contactId": "...", "text": "..."} → PREPARA un messaggio Instagram/Facebook a una persona della casella (contactId da list_conversations). NON parte: a Luca compare la scheda di conferma con il testo esatto e i pulsanti «Accetta e invia» / «Scarta». Regola di Meta: si può scrivere solo a chi ci ha già scritto, e liberamente entro 24 ore dal suo ultimo messaggio; a nuovi profili mai contattati non si può scrivere in privato tramite API (suggerisci di commentare un loro post o scrivere dal telefono).
 
 Piattaforma dei siti:
 - "site_platforms": {"platform": "WordPress", "ids": [...] opzionale, "filter": "testo opzionale", "limit": 60} → controlla con cosa è fatto il sito di ogni scheda con un sito (WordPress, Wix, Shopify, Squarespace, Webflow, Jimdo, su misura) e restituisce quelle con la piattaforma chiesta (senza "platform": tutte, con la piattaforma di ciascuna). Le schede trovate vengono MOSTRATE a Luca nella lista. Usalo per richieste tipo "quali contatti hanno un sito WordPress" o prima di scrivere a chi usa una certa piattaforma (es. un avviso di sicurezza per WordPress/PHP): poi usa prepare_first_emails con quegli "ids" per chi non è ancora stato contattato e prepare_followups con quegli "ids" e "days": 0 per chi è già stato contattato, passando il testo o le indicazioni di Luca in "instructions".
@@ -670,16 +709,16 @@ Strumenti per le notifiche push (i dispositivi su cui arrivano gli avvisi di Mes
 - "list_push_devices": {} → tutti i dispositivi che ricevono le notifiche: id, nome, browser e sistema (es. "Chrome su Windows", "Safari su iPhone"), se è l'app installata, email dell'account, data di registrazione, ultima apertura di Messaggi, ultima notifica consegnata, ultimo errore. Se "knownDetails" è false il dispositivo è stato registrato prima che salvassimo il browser: il tipo è dedotto dal servizio push; si completa da solo quando Luca apre Messaggi da quel dispositivo. Usalo per domande tipo "quali dispositivi ricevono le notifiche".
 - "test_push": {"deviceIds": [...] opzionale, "text": "testo opzionale"} → invia una notifica di prova a quei dispositivi (o a tutti) e dice quanti l'hanno ricevuta. Utile per capire quale dispositivo è quale.
 - "rename_push_device": {"deviceId": "...", "name": "iPhone di Luca"} → dà un nome a un dispositivo.
-- "remove_push_device": {"deviceIds": [...]} → smette di inviare notifiche a quei dispositivi. Usalo SOLO se Luca chiede esplicitamente di togliere/disattivare un dispositivo.
+- "remove_push_device": {"deviceIds": [...]} → prepara la rimozione di quei dispositivi dalle notifiche: compare la scheda di conferma, si tolgono solo quando Luca preme «Conferma». Usalo SOLO se Luca chiede esplicitamente di togliere/disattivare un dispositivo.
 Nella risposta descrivi i dispositivi in modo semplice (nome, tipo, da quando, ultima notifica ricevuta), con date e ore in italiano; non mostrare gli id se non servono.
 
 Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Facebook):
 - "content_settings": {} → come funziona ora: blog automatico acceso o spento, giorni e ora di pubblicazione, condivisione su Facebook e Instagram, ultimo articolo e com'è andato, e le INDICAZIONI di Luca salvate per i contenuti.
-- "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" le sostituisce, "clear" le cancella. Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
-- "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → cambia il blog automatico (days: 0 = domenica … 6 = sabato; ora italiana). Metti solo i campi da cambiare.
-- "publish_blog_now": {} → scrive e pubblica SUBITO un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram. Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Ci vogliono alcuni minuti: arriva una notifica con l'esito.
+- "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" prepara la sostituzione (scheda di conferma con le vecchie e le nuove: si sostituiscono solo con «Conferma»; se non ce n'erano si salvano subito), "clear" prepara la cancellazione (scheda di conferma: si cancellano solo con «Conferma»). Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
+- "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → prepara la modifica del blog automatico (days: 0 = domenica … 6 = sabato; ora italiana): compare la scheda di conferma, cambia solo quando Luca preme «Conferma». Metti solo i campi da cambiare.
+- "publish_blog_now": {} → prepara la pubblicazione SUBITO di un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram: compare la scheda di conferma, parte solo con «Conferma». Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Dopo la conferma ci vogliono alcuni minuti: arriva una notifica con l'esito.
 - "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "slide_count": 3, "from_draft": "opzionale", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. "slide_count": numero TOTALE di immagini chiesto da Luca, copertina e slide finale comprese ("tre slide" → 3, da 2 a 10); ometti se Luca non dice un numero. "slides" sono solo le slide di contenuto, senza copertina e senza slide finale (con slide_count 3 c'è 1 sola slide di contenuto). Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi. Con "from_draft": "draftId" rifà un carosello già creato con gli stessi testi, gancio, foto e numero di slide (es. un carosello di prima che non si può correggere slide per slide): gli altri campi solo se Luca chiede cambiamenti.
-- "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → pubblica un carosello creato prima (anche quelli del blog), solo dove non è già uscito. Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
+- "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → prepara la pubblicazione di un carosello creato prima (anche quelli del blog), solo dove non è già uscito: compare la scheda di conferma con slide e didascalia, esce solo quando Luca preme «Pubblica». Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
 - "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
 - "show_post": {"draftId": "..."} → mostra a Luca l'anteprima di un carosello già creato con il pulsante Pubblica (per ripubblicarlo dove non è uscito).
 - "edit_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "slides": [2], "instruction": "cosa cambiare, con le parole di Luca"} → cambia SOLO le slide indicate (numeri da 1: la 1 è la copertina, l'ultima è la slide finale) di un carosello non ancora pubblicato: testi, oppure un'immagine nuova o nessuna immagine se Luca lo chiede. Le altre slide restano identiche. Poi mostra l'anteprima aggiornata. Usalo quando Luca chiede di correggere una slide (es. "nella seconda slide scrivi …").
@@ -687,9 +726,22 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "carousel_from_blog": {"slug": "opzionale, senza = ultimo articolo", "slide_count": 3} → rifà da zero il carosello di un articolo già pubblicato nel blog (nuove immagini, nuovo gancio, colori diversi) e lo mostra in anteprima con il pulsante Pubblica. "slide_count" come in create_carousel (immagini in tutto, copertina e slide finale comprese); ometti se Luca non dice un numero.
 Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
 
+Documenti (contratti, preventivi, accordi, lettere: Luca li apre in PDF con un tocco, li legge, li stampa o li scarica):
+- "create_document": {"kind": "contratto|preventivo|accordo|lettera|altro", "title": "opzionale", "about": {"platform": "instagram|facebook|whatsapp|email|web, opzionale", "contact": "nome, @username, email o contactId, come l'ha detto Luca"}, "instructions": "cosa vuole Luca, con le sue parole"} → scrive il documento usando TUTTA la conversazione con quella persona su quel canale (messaggi ricevuti, nostre risposte automatiche e scritte a mano, con le date) e i dati di Facevoice AI, e mostra a Luca la scheda del PDF con «Apri PDF» e «Scarica». Se più persone (o più canali) corrispondono restituisce l'elenco: chiedi a Luca quale e richiamalo con about.platform e about.contact = contactId. Se non trova nessuno, dillo e chiedi il nome esatto o il canale. Senza "about" scrive il documento solo dalla richiesta. Usalo SEMPRE quando Luca chiede di sviluppare, scrivere o preparare un contratto, un preventivo, un accordo, una lettera o un altro documento (anche "a proposito della conversazione con <nome>"): non dire mai che non puoi. Ci vuole circa un minuto.
+- "update_document": {"document_id": "opzionale, senza = l'ultimo documento", "instructions": "cosa cambiare, con le parole di Luca (es. cambia la clausola 3, aggiungi la penale)"} → nuova versione dello stesso documento con la modifica; le versioni di prima restano scaricabili. Usalo per ogni modifica a un documento già fatto.
+- "list_documents": {} → ultimi documenti (document_id, titolo, tipo, versione, data).
+- "send_document": {"document_id": "opzionale", "version": "numero, opzionale", "to": "email, opzionale", "text": "testo dell'email che accompagna il PDF"} → PREPARA l'invio del PDF per email (nella conversazione email da cui nasce il documento, o all'indirizzo "to" dato da Luca): compare la scheda di conferma, parte solo con «Accetta e invia». Su Instagram, Facebook, WhatsApp e chat del sito non si possono allegare file da qui: spiega a Luca che può aprire il PDF, scaricarlo e mandarlo dall'app (o darti un'email della persona).
+Dopo create_document o update_document la risposta dice in 2-3 frasi cosa contiene e su quale conversazione si basa, elenca i punti DA COMPLETARE e scrive UNA volta: "${DOC_DISCLAIMER}" Non incollare il testo del documento in chat: è nel PDF.
+
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
-Invio: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la conferma di invio.
+DOPPIA CONFERMA (regola obbligatoria): niente esce dalla chat e niente si cancella senza il clic di Luca. Gli strumenti che inviano, pubblicano, cambiano il blog automatico, tolgono dispositivi o cancellano indicazioni NON eseguono: creano una scheda "in attesa di conferma" con il contenuto esatto e i pulsanti «Accetta e invia» (o «Conferma» / «Pubblica») e «Scarta». Quindi:
+- Non dire mai che hai inviato, pubblicato, programmato o cancellato qualcosa finché la sezione "Azioni da confermare" non dice FATTO: di' che è pronto e che parte quando preme il pulsante sulla scheda.
+- Se Luca scrive in chat "sì", "ok invia", "manda", "conferma", "pubblica" per una scheda in attesa: non dire che è partito; ricordagli in una frase che deve premere il pulsante sulla scheda (è l'unico modo). Se non trovi la scheda, richiama lo stesso strumento con lo stesso contenuto: ricompare la stessa scheda, non un doppione.
+- Se una scheda è SCARTATA (o Luca scrive "Ho scartato…"), non riproporre la stessa cosa: chiedigli in breve cosa gli serve davvero o cosa cambiare.
+- Bozze, documenti, letture e analisi non hanno bisogno di conferma.
+
+Invio email: tu NON invii email. Se Luca chiede di inviare/mandare le bozze aperte, rispondi con {"reply": "...", "confirm_send": true}: comparirà a Luca la scheda di conferma con l'elenco esatto delle email e i pulsanti «Accetta e invia» / «Scarta». Non dire che sono partite.
 
 Scrivi le risposte finali in testo semplice: niente markdown, niente asterischi. Regole: non inventare id (usa list_leads), al massimo ${MAX_STEPS} passi, risposta finale breve con cosa hai fatto e cosa resta (es. contatti senza email: suggerisci di scrivergli sui social o chiamarli).`
 
@@ -726,6 +778,59 @@ const asCount = (value: unknown) => {
 
 /** Caroselli: cambiarli e pubblicarli spetta solo all'amministratore (come la scheda). */
 const ONLY_ADMIN = 'chi scrive non è l’amministratore: solo l’amministratore può cambiare o pubblicare i caroselli (dall’anteprima)'
+/** Documenti: contengono dati personali, li crea e li apre solo l'amministratore (come la route del PDF). */
+const ONLY_ADMIN_DOCS = 'chi scrive non è l’amministratore: solo l’amministratore può creare, modificare e aprire i documenti'
+
+/**
+ * "Inviato", "è stato pubblicato", "messaggio partito"…: frase falsa finché la scheda di
+ * conferma non è stata premuta (participio con o senza "ho / è stato" davanti).
+ */
+const DONE_WORD = /(?:inviat|mandat|spedit|pubblicat|programmat|partit|uscit|consegnat|recapitat)[oaie](?![\p{L}\d])/giu
+/** Per le cancellazioni e sostituzioni in attesa: "cancellate", "tolti", "sostituite"… */
+const REMOVED_WORD = /(?:cancellat|rimoss|tolt|sostituit|eliminat)[oaie](?![\p{L}\d])/giu
+/** Subito prima del participio: "non è (ancora) partito", "verrà inviato", "niente è stato inviato". */
+const NEGATED = /(?:^|[^\p{L}])(?:non|né|ne'|nessun[oa]?|niente|nulla|verr\p{L}*|sar[àa]|saranno|pront[oaie]|in attesa)(?![\p{L}])/iu
+/** Condizione sul clic: "parte quando premi", "sarà inviato solo dopo la conferma". */
+const CONDITIONAL = /(?:^|[^\p{L}])(?:(?:quando|appena|se|dopo che) (?:premi|confermi|accetti|clicchi|tocchi)|solo (?:con|quando|dopo|se)|dopo (?:il tuo |la tua |il |la )?(?:clic|conferma)|una volta (?:confermat|accettat|premut)|finch[ée] non|prima di)/iu
+const DELETE_KINDS: ConfirmKind[] = ['remove_push_devices', 'clear_content_directions', 'replace_content_directions']
+/** La frase dice che qualcosa è già stato fatto (non al negativo, non al futuro, non "quando premi"). */
+function claimsDone(sentence: string, deletions: boolean): boolean {
+  if (CONDITIONAL.test(sentence)) return false
+  for (const pattern of deletions ? [DONE_WORD, REMOVED_WORD] : [DONE_WORD]) {
+    pattern.lastIndex = 0
+    for (let m = pattern.exec(sentence); m; m = pattern.exec(sentence)) {
+      const at = m.index
+      if (at > 0 && /[\p{L}\d]/u.test(sentence[at - 1])) continue
+      if (!NEGATED.test(sentence.slice(Math.max(0, at - 28), at))) return true
+    }
+  }
+  return false
+}
+/** Frase su qualcosa fatto in passato (azioni FATTE dei giorni prima). */
+const PAST_TIME = /(?:^|[^\p{L}])(?:ieri|l['’]altro ieri|stamattina|stamani|in precedenza|giorni fa|settimane? fa|settimana scorsa|mese scorso)(?![\p{L}])/iu
+/** Parole troppo comuni per riconoscere di quale azione parla una frase. */
+const GENERIC_WORDS = new Set(['messaggio', 'messaggi', 'email', 'mail', 'documento', 'carosello', 'instagram', 'facebook', 'pubblicare', 'inviare', 'mandare', 'articolo', 'blog', 'indicazioni', 'contenuti', 'notifiche', 'subito', 'adesso', 'della', 'delle', 'degli', 'nella', 'sulla', 'questo', 'questa', 'automatico', 'cancellare', 'sostituire', 'togliere', 'dispositivi', 'programma'])
+/** Parole che riconoscono un'azione (persona, titolo del carosello…). */
+function actionWords(action: PendingAction): Set<string> {
+  const p = action.payload
+  const raw = [action.title, 'name' in p ? p.name : '', p.kind === 'send_emails' ? p.drafts.map((d) => d.name).join(' ') : '', p.kind === 'publish_carousel' ? p.title : '']
+  return new Set(raw.join(' ').toLowerCase().split(/[^\p{L}\d]+/u).filter((w) => w.length >= 4 && !GENERIC_WORDS.has(w)))
+}
+const mentions = (sentence: string, words: Set<string>) => sentence.toLowerCase().split(/[^\p{L}\d]+/u).some((w) => words.has(w))
+/** Parole che da sole fanno una conferma scritta ("sì", "ok invia", "manda pure"…). */
+const YES_WORD = /^(?:s[iì]+|ok+|okay|certo|esatto|perfetto|procedi|conferm[aoi]|vai|bene|d'accordo|invia(?:lo|la|li|le)?|manda(?:lo|la|li|le)?|spedisci(?:lo|la|li|le)?|pubblica(?:lo|la|li|le)?)$/
+const YES_FILLER = /^(?:va|pure|ora|adesso|subito|allora|il|lo|la|i|le|l'|messaggio|email|mail|carosello|post|documento|tutto|tutte|tutti)$/
+/**
+ * Conferma scritta in chat, che non fa mai partire niente: solo se il messaggio intero è
+ * una conferma ("sì", "ok invia", "sì manda pure il messaggio"), non "ok fammi un carosello".
+ */
+function isTypedYes(message: string): boolean {
+  const words = message.toLowerCase().replace(/’/g, "'").replace(/[^\p{L}\s']+/gu, ' ').split(/\s+/).filter(Boolean)
+  if (!words.length || words.length > 6) return false
+  return words.some((w) => YES_WORD.test(w)) && words.every((w) => YES_WORD.test(w) || YES_FILLER.test(w))
+}
+const MAX_EMAILS_PER_CARD = 30
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 /** Anteprima del carosello sotto la risposta (con il pulsante Pubblica). */
 function postPreview(draft: PostDraft): Extract<SocialAction, { kind: 'post_preview' }> {
@@ -764,8 +869,11 @@ export async function runAssistant(
   openDrafts: Draft[],
   budget?: Budget | null,
   progress?: Progress,
-  /** admin: la richiesta e' dell'amministratore (solo lui cambia e pubblica i caroselli). */
-  who: { admin?: boolean } = {}
+  /**
+   * admin: la richiesta e' dell'amministratore (solo lui cambia e pubblica i caroselli e crea documenti);
+   * email: chi ha scritto (salvato nelle azioni da confermare); scope: chat da cui arriva la richiesta.
+   */
+  who: { admin?: boolean; email?: string | null; scope?: ConfirmScope } = {}
 ): Promise<AssistantResult> {
   if (!hasAIProvider()) return { reply: 'Manca una chiave AI (Gemini o Claude): l’assistente non può lavorare.' }
 
@@ -779,11 +887,19 @@ export async function runAssistant(
   let more = false
   let focus: AssistantResult['focus']
   const actions: SocialAction[] = []
+  const scope: ConfirmScope = who.scope ?? 'super'
+  // Azioni create in questo giro (in attesa del clic) e documenti scritti o cambiati.
+  const queued: PendingAction[] = []
+  const docsTouched: DocVersion[] = []
 
   // Prima di tutto la casella: le risposte arrivate in questo momento devono essere gia' note.
   reportStatus('Controllo la casella per nuove risposte…')
   await pollGmail().catch((error) => console.error('lead assistant poll:', error))
   const replies = await repliesOverview().catch(() => [])
+  const waiting = await recentActions(scope, 8).catch(() => [] as PendingAction[])
+  // Conferma scritta in chat con una scheda ancora aperta: si indica il pulsante, non parte niente.
+  const openBefore = waiting.filter((a) => stateOf(a) === 'pending')
+  const typedYes = isTypedYes(message)
 
   const context = [
     `Data e ora attuali: ${new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} (ora italiana; ISO ${new Date().toISOString()})`,
@@ -795,6 +911,9 @@ export async function runAssistant(
           .join('\n')}`
       : 'Nessuna bozza aperta.',
     history.length ? `Conversazione recente:\n${history.slice(-6).map((t) => `${t.role === 'user' ? 'Luca' : 'Assistente'}: ${t.text}`).join('\n')}` : '',
+    waiting.length
+      ? `Azioni da confermare (stato attuale dal server, dalla più recente: vale questo, non quello che dice la conversazione):\n${waiting.map(describeForModel).join('\n')}`
+      : '',
     progress?.done?.length
       ? `PASSI GIÀ FATTI per questa richiesta nei giri precedenti (i risultati sono già salvati nel database: NON rifarli, riparti da quello che manca; per rivedere le schede trovate usa list_leads con recent_minutes):\n${progress.done.map((l) => `- ${l}`).join('\n')}`
       : '',
@@ -811,6 +930,41 @@ export async function runAssistant(
   // non devono perdersi nel riassunto dell'agente.
   const withLuca = (instructions?: string) =>
     [instructions?.trim(), `Richiesta di Luca, da rispettare per tono e contenuto: ${message}`].filter(Boolean).join('\n')
+
+  /**
+   * Doppia conferma: l'azione non parte, diventa una scheda con il contenuto esatto.
+   * La stessa azione gia' in attesa ricompare (stessa scheda, nessun doppione).
+   */
+  const queue = async (title: string, payload: ConfirmPayload) => {
+    const { action, duplicate } = await createPendingAction({ scope, title, payload, createdBy: who.email ?? null })
+    const card = cardFor(action)
+    actions.push(card)
+    // Anche la scheda ricomparsa conta: finche' non c'e' il clic non si dice "inviato".
+    if (!queued.some((a) => a.id === action.id)) queued.push(action)
+    return {
+      in_attesa_di_conferma: true,
+      id: action.id,
+      nota: duplicate
+        ? `questa stessa azione era già in attesa: ho rimesso sotto la tua risposta la stessa scheda. Ricorda a Luca che parte solo quando preme «${card.confirmLabel}»`
+        : `NON è partito niente: sotto la tua risposta compare a Luca la scheda con il contenuto esatto e i pulsanti «${card.confirmLabel}» / «Scarta». Parte solo con il suo clic: non dire che è stato fatto`,
+    }
+  }
+
+  /** Bozze email aperte -> scheda di conferma con l'elenco esatto (al posto della vecchia conferma del browser). */
+  const queueEmails = async () => {
+    const list = [...drafts.values()].slice(0, MAX_EMAILS_PER_CARD)
+    if (!list.length) return null
+    return queue(`${list.length === 1 ? '1 email' : `${list.length} email`} da inviare`, {
+      kind: 'send_emails',
+      drafts: list.map((d) => ({ leadId: d.leadId, name: d.name, email: d.email, kind: d.kind, subject: d.subject, body: d.body, threadId: d.threadId ?? null })),
+    })
+  }
+
+  /** Documento da cambiare o inviare: quello indicato, altrimenti l'ultimo. */
+  const pickDocument = async (id: string | undefined) => {
+    const target = id?.trim() || (await recentDocuments(1))[0]?.id
+    return target ? loadDocument(target) : null
+  }
 
   let formatRetried = false
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -852,7 +1006,15 @@ export async function runAssistant(
       const text = cleanReplyText(raw)
       return finish(text && !looksLikeToolCall(text) ? text : 'Non sono riuscito a completare la richiesta, puoi riprovare?')
     }
-    if (call.reply !== undefined && !call.tool) return finish(cleanReplyText(call.reply) || call.reply, Boolean(call.confirm_send))
+    if (call.reply !== undefined && !call.tool) {
+      // "Invia le bozze": niente conferma del browser, una scheda con l'elenco esatto delle email.
+      let reply = cleanReplyText(call.reply) || call.reply
+      if (call.confirm_send && drafts.size) {
+        await queueEmails().catch((error) => console.error('super chat: conferma email non creata:', error))
+        if (drafts.size > MAX_EMAILS_PER_CARD) reply = `${reply}\n\nNella scheda ci sono le prime ${MAX_EMAILS_PER_CARD} email: le altre ${drafts.size - MAX_EMAILS_PER_CARD} restano nelle bozze.`
+      }
+      return finish(reply)
+    }
 
     const args = call.args || {}
     let result: unknown
@@ -1147,16 +1309,20 @@ export async function runAssistant(
             result = { errore: 'questa persona non ci ha mai scritto su questo canale: non si può scriverle in privato tramite API' }
             break
           }
-          const action: SocialAction = {
-            kind: 'social_message',
-            platform,
-            key: await conversationKeyFor(platform, contactId),
-            name: last.contact_name || contactId,
-            text: text.slice(0, 1900),
-            lastIncomingAt: last.created_at,
+          const name = last.contact_name || contactId
+          const within = Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000
+          result = {
+            ...(await queue(`Messaggio per ${name} · ${platform === 'instagram' ? 'Instagram' : 'Facebook'}`, {
+              kind: 'social_message',
+              platform,
+              contactId,
+              name,
+              text: text.slice(0, 1900),
+              lastIncomingAt: last.created_at,
+            })),
+            entro_24_ore: within,
+            ...(within ? {} : { avviso: 'il suo ultimo messaggio ha più di 24 ore: Meta non permette di scriverle da qui, dillo a Luca (può scriverle dall’app)' }),
           }
-          actions.push(action)
-          result = { preparato: true, nota: 'compare a Luca con il pulsante Invia', entro_24_ore: Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000 }
           break
         }
         case 'site_platforms': {
@@ -1226,13 +1392,16 @@ export async function runAssistant(
         }
         case 'remove_push_device': {
           const known = new Map((await listPushDevices()).map((d) => [d.id, d.name]))
-          const ids = (asIds(args.deviceIds) || []).filter((id) => known.has(id))
+          const ids = [...new Set(asIds(args.deviceIds) || [])].filter((id) => known.has(id)).sort()
           if (!ids.length) {
             result = { errore: 'nessun dispositivo con questi id: usa list_push_devices' }
             break
           }
-          for (const id of ids) await removePushDevice(id)
-          result = { rimossi: ids.map((id) => known.get(id)), nota: 'per riattivarlo, apri Messaggi da quel dispositivo e attiva le notifiche' }
+          const devices = ids.map((id) => ({ id, name: known.get(id) || id }))
+          result = {
+            ...(await queue(`Togliere le notifiche da ${devices.map((d) => d.name).join(', ')}`.slice(0, 150), { kind: 'remove_push_devices', devices })),
+            nota_dopo: 'dopo la conferma, per riattivarlo basta aprire Messaggi da quel dispositivo e attivare le notifiche',
+          }
           break
         }
         case 'content_settings': {
@@ -1252,9 +1421,22 @@ export async function runAssistant(
         case 'set_content_directions': {
           const mode = args.mode === 'replace' || args.mode === 'clear' ? args.mode : 'append'
           const text = asText(args.text)?.trim() || ''
-          if (mode !== 'clear' && !text) {
+          if (mode === 'clear') {
+            // Cancellare non si annulla: scheda di conferma.
+            result = await queue('Cancellare le indicazioni per i contenuti', { kind: 'clear_content_directions' })
+            break
+          }
+          if (!text) {
             result = { errore: 'scrivi le indicazioni in "text"' }
             break
+          }
+          if (mode === 'replace') {
+            // Sostituire toglie quelle di prima (non si annulla): scheda con le vecchie e le nuove.
+            const previous = (await loadContentDirections()).text
+            if (previous.trim()) {
+              result = await queue('Sostituire le indicazioni per i contenuti', { kind: 'replace_content_directions', text: text.slice(0, 3000), previous })
+              break
+            }
           }
           const saved = await saveContentDirections(text, mode)
           result = { salvate: true, indicazioni: saved.text || '(nessuna)', nota: 'valgono dal prossimo articolo e carosello' }
@@ -1263,16 +1445,16 @@ export async function runAssistant(
         case 'update_blog_schedule': {
           const patch: Partial<BlogAutoSettings> = {}
           if (typeof args.enabled === 'boolean') patch.enabled = args.enabled
-          if (Array.isArray(args.days)) patch.days = args.days.map(Number)
-          if (typeof args.time === 'string') patch.time = args.time
+          if (Array.isArray(args.days)) patch.days = [...new Set(args.days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
+          if (typeof args.time === 'string' && /^\d{1,2}:\d{2}$/.test(args.time.trim())) patch.time = args.time.trim().padStart(5, '0')
           if (typeof args.shareFacebook === 'boolean') patch.shareFacebook = args.shareFacebook
           if (typeof args.shareInstagram === 'boolean') patch.shareInstagram = args.shareInstagram
           if (!Object.keys(patch).length) {
-            result = { errore: 'nessun campo da cambiare' }
+            result = { errore: 'nessun campo valido da cambiare (days: numeri da 0 a 6, time: "HH:MM")' }
             break
           }
-          const saved = await saveBlogAutoSettings(patch)
-          result = { salvato: true, impostazioni: saved }
+          // Il blog automatico pubblica da solo sui social: ogni cambio passa dalla scheda di conferma.
+          result = await queue('Cambiare il blog automatico', { kind: 'blog_schedule', patch })
           break
         }
         case 'create_carousel': {
@@ -1324,14 +1506,29 @@ export async function runAssistant(
             break
           }
           const id = asText(args.draftId) || ''
-          if (!(await loadPostDraft(id))) {
+          const draft = await loadPostDraft(id)
+          if (!draft) {
             result = { errore: 'bozza non trovata: crea prima il carosello con create_carousel' }
             break
           }
-          const platforms = (Array.isArray(args.platforms) ? args.platforms : ['instagram', 'facebook']).filter((p): p is 'instagram' | 'facebook' => p === 'instagram' || p === 'facebook')
-          reportStatus('Pubblico il carosello…')
-          const done = await publishPostDraft(id, { platforms, caption: asText(args.caption) })
-          result = { stato: done.status, instagram: done.results?.instagram ? 'pubblicato' : null, facebook: done.results?.facebook ? 'pubblicato' : null, errori: done.results?.errors }
+          const wanted = (Array.isArray(args.platforms) ? args.platforms : ['instagram', 'facebook']).filter((p): p is 'instagram' | 'facebook' => p === 'instagram' || p === 'facebook')
+          // Solo dove non e' gia' uscito (come il pulsante Pubblica).
+          const platforms = (wanted.length ? wanted : (['instagram', 'facebook'] as const)).filter((p) => !draft.results?.[p])
+          if (!platforms.length) {
+            result = { errore: 'questo carosello è già pubblicato dove chiesto: niente da fare' }
+            break
+          }
+          // Esce esattamente quello che la scheda mostra: slide, didascalia e testo Facebook di adesso.
+          const caption = asText(args.caption)?.trim().slice(0, 2200) || draft.caption
+          result = await queue(`Pubblicare «${draft.title}»`.slice(0, 150), {
+            kind: 'publish_carousel',
+            draftId: draft.id,
+            title: draft.title,
+            platforms: [...platforms],
+            base: draft.urls,
+            caption,
+            ...(draft.facebook ? { facebook: draft.facebook } : {}),
+          })
           break
         }
         case 'recent_posts': {
@@ -1400,11 +1597,166 @@ export async function runAssistant(
           break
         }
         case 'publish_blog_now': {
-          reportStatus('Avvio la scrittura dell’articolo…')
           // Sul sito vero si chiama sempre il dominio; nelle anteprime la versione stessa.
           const origin = process.env.VERCEL_ENV === 'production' ? SITE_URL : process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'
-          await requestBlogRun(origin, true)
-          result = { avviato: true, nota: 'articolo e carosello in preparazione: tra qualche minuto arriva la notifica con l’esito' }
+          result = await queue('Pubblicare subito un articolo del blog', { kind: 'publish_blog_now', origin })
+          break
+        }
+        case 'create_document': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN_DOCS }
+            break
+          }
+          const kind = asDocKind(args.kind)
+          // "about" come oggetto, come testo ("Giusy") o con i campi messi fuori: la persona non deve perdersi.
+          const about: Record<string, unknown> =
+            args.about && typeof args.about === 'object' ? (args.about as Record<string, unknown>) : { contact: asText(args.about) ?? asText(args.contact), platform: args.platform }
+          const contact = asText(about.contact) || asText(about.contactId) || asText(about.username) || asText(about.email) || asText(about.name)
+          const instructions = asText(args.instructions)?.trim() || message
+          let transcript: Transcript | null = null
+          if (contact?.trim()) {
+            reportStatus(`Cerco la conversazione con ${contact.trim().slice(0, 40)}…`)
+            const found = await resolveConversation(asText(about.platform), contact)
+            if (found.error) {
+              result = { errore: found.error }
+              break
+            }
+            if (found.options) {
+              result = {
+                piu_conversazioni: found.options.map((o) => ({ platform: o.platform, contactId: o.contactId, nome: o.name || o.contactId, ultimo_messaggio: o.last, messaggi: o.messages })),
+                nota: 'più conversazioni corrispondono: chiedi a Luca quale (nome e canale), poi richiama create_document con about.platform e about.contact = contactId',
+              }
+              break
+            }
+            transcript = found.match ? await loadTranscript(found.match.platform, found.match.contactId) : null
+            if (!transcript) {
+              result = { errore: 'la conversazione trovata non ha messaggi leggibili (forse eliminata dalla casella): chiedi a Luca come procedere' }
+              break
+            }
+          }
+          reportStatus(transcript ? `Scrivo il documento dalla chat con ${transcript.source.name}…` : 'Scrivo il documento…')
+          const knowledge = await loadKnowledge().catch(() => '')
+          const written = await writeDocument({ kind, title: asText(args.title)?.slice(0, 140), instructions: withLuca(instructions), transcript, knowledge })
+          const saved = await saveNewDocument({ kind, doc: written.doc, by: who.email ?? null, basedOn: transcript?.source ?? null, note: instructions, fromChat: written.fromChat })
+          actions.push(documentCard(saved.record, saved.version))
+          docsTouched.push(saved.version)
+          result = {
+            creato: true,
+            document_id: saved.record.id,
+            versione: saved.version.v,
+            tipo: DOC_KIND_LABEL[kind],
+            titolo: saved.version.doc.title,
+            pagine: saved.version.pages,
+            basato_su: transcript ? describeSource(transcript.source) : 'nessuna conversazione (solo la richiesta di Luca)',
+            ...(transcript?.omitted ? { nota_conversazione: `conversazione molto lunga: ${transcript.omitted} messaggi intermedi non letti` } : {}),
+            sezioni: saved.version.doc.sections.map((x) => x.heading).filter(Boolean).slice(0, 20),
+            punti_dalla_chat: written.fromChat,
+            da_completare: saved.version.placeholders,
+            nota: `la scheda con «Apri PDF» e «Scarica» compare a Luca sotto la tua risposta. Rispondi in breve: cosa contiene, su quale conversazione si basa, i punti DA COMPLETARE, e una volta: "${DOC_DISCLAIMER}"`,
+          }
+          break
+        }
+        case 'update_document': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN_DOCS }
+            break
+          }
+          const record = await pickDocument(asText(args.document_id))
+          if (!record) {
+            result = { errore: 'documento non trovato: usa list_documents (o creane uno con create_document)' }
+            break
+          }
+          const instructions = asText(args.instructions)?.trim() || message
+          const current = latestVersion(record)
+          reportStatus(`Aggiorno «${current.doc.title.slice(0, 50)}»…`)
+          const transcript = record.basedOn ? await loadTranscript(record.basedOn.platform, record.basedOn.contactId, 15_000) : null
+          const knowledge = await loadKnowledge().catch(() => '')
+          const revised = await reviseDocument({ kind: record.kind, current: current.doc, instructions: withLuca(instructions), transcript, knowledge })
+          const saved = await addDocumentVersion(record.id, revised.doc, who.email ?? null, instructions, revised.fromChat)
+          if (!saved) {
+            result = { errore: 'documento non trovato mentre lo salvavo: riprova' }
+            break
+          }
+          actions.push(documentCard(saved.record, saved.version))
+          docsTouched.push(saved.version)
+          result = {
+            aggiornato: true,
+            document_id: saved.record.id,
+            versione: saved.version.v,
+            versioni_precedenti: saved.record.versions.filter((v) => v.v !== saved.version.v).map((v) => v.v),
+            titolo: saved.version.doc.title,
+            pagine: saved.version.pages,
+            da_completare: saved.version.placeholders,
+            nota: `nuova versione mostrata a Luca (le precedenti restano scaricabili dalla scheda). Di' in breve cosa è cambiato, i punti DA COMPLETARE e una volta: "${DOC_DISCLAIMER}"`,
+          }
+          break
+        }
+        case 'list_documents': {
+          const list = await recentDocuments(10)
+          result = { documenti: list.map((d) => ({ document_id: d.id, titolo: d.title, tipo: DOC_KIND_LABEL[d.kind] || d.kind, aggiornato: d.at })) }
+          break
+        }
+        case 'send_document': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN_DOCS }
+            break
+          }
+          const record = await pickDocument(asText(args.document_id))
+          const version = record ? findVersion(record, asCount(args.version) ?? null) : null
+          if (!record || !version) {
+            result = { errore: 'documento o versione non trovati: usa list_documents' }
+            break
+          }
+          const source = record.basedOn
+          const given = asText(args.to)?.trim().toLowerCase()
+          if (given && !EMAIL_RE.test(given)) {
+            result = { errore: 'indirizzo email non valido' }
+            break
+          }
+          const to = given || (source?.platform === 'email' ? source.contactId.toLowerCase() : '')
+          if (!to) {
+            const channel = source ? PLATFORM_LABEL[source.platform] || source.platform : 'questo canale'
+            result = {
+              errore: `su ${channel} non posso allegare file da qui`,
+              nota: 'spiega a Luca che può aprire il PDF con «Apri PDF» o scaricarlo con «Scarica» e mandarlo dall’app; se ha un’email della persona posso mandarlo io per email (sempre con la sua conferma sulla scheda)',
+            }
+            break
+          }
+          // Stessa conversazione email del documento: si risponde nel thread.
+          let threadId: string | null = null
+          if (source?.platform === 'email' && source.contactId.toLowerCase() === to) {
+            const { data: last } = await supabaseAdmin
+              .from('social_messages')
+              .select('channel_account_id')
+              .eq('platform', 'email')
+              .eq('contact_id', source.contactId)
+              .not('channel_account_id', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            threadId = last?.channel_account_id ?? null
+          }
+          const name = source?.name || to
+          const title = version.doc.title
+          // Risposta nel thread: oggetto ("Re: …") e indirizzo veri, da mostrare sulla scheda.
+          const reply = threadId ? await previewThreadReply(threadId, to).catch(() => null) : null
+          const text =
+            asText(args.text)?.trim().slice(0, 6000) ||
+            `Ciao ${name.split(/\s+/)[0]},\n\nti mando in allegato "${title}" da leggere con calma. Se va bene o vuoi cambiare qualcosa, scrivimi pure.\n\nA presto,\nLuca Corrao\nFacevoice AI · www.facevoice.ai`
+          result = await queue(`Documento per ${name} · Email`.slice(0, 150), {
+            kind: 'send_document',
+            docId: record.id,
+            version: version.v,
+            title,
+            filename: pdfFilename(title),
+            pages: version.pages,
+            to,
+            name,
+            threadId,
+            subject: reply?.subject || title,
+            ...(reply ? { recipient: reply.recipient } : {}),
+            text,
+          })
           break
         }
         default:
@@ -1431,16 +1783,82 @@ export async function runAssistant(
   more = true
   return finish('Sto ancora lavorando: continuo con il resto…')
 
-  function finish(reply: string, confirmSend = false): AssistantResult {
+  function finish(reply: string): AssistantResult {
+    // honest() indica anche la scheda ancora aperta quando Luca scrive "sì, invia" in chat.
+    const text = honest(reply)
     return {
-      reply,
+      reply: text,
       drafts: [...changed.values()],
       removeDrafts: [...removed],
       refresh,
-      confirmSend: confirmSend && drafts.size > 0,
+      // Niente piu' conferma del browser: le email partono dalla scheda di conferma.
+      confirmSend: false,
       more,
       focus,
       actions,
     }
+  }
+
+  /**
+   * Risposta onesta: con azioni appena messe in attesa non si dice mai "inviato/pubblicato"
+   * (partono solo con il clic), e dopo un documento c'e' sempre l'avviso e l'elenco dei dati da completare.
+   */
+  function honest(reply: string): string {
+    let text = reply
+    // Frasi che dicono "inviato / pubblicato / partito" per un'azione ancora in attesa del clic:
+    // si tolgono (solo quelle: le frasi vere su azioni FATTE prima restano).
+    const pendingIds = new Set(queued.map((a) => a.id))
+    const stillOpen = openBefore.filter((a) => !pendingIds.has(a.id))
+    const queuedWords = new Set(queued.flatMap((a) => [...actionWords(a)]))
+    const openWords = new Set(stillOpen.flatMap((a) => [...actionWords(a)]))
+    const doneWords = new Set(waiting.filter((a) => stateOf(a) === 'done' && !pendingIds.has(a.id)).flatMap((a) => [...actionWords(a)]))
+    const deletions = [...queued, ...stillOpen].some((a) => DELETE_KINDS.includes(a.payload.kind))
+    const falseClaim = (sentence: string) => {
+      if (!claimsDone(sentence, deletions)) return false
+      const past = PAST_TIME.test(sentence)
+      const aboutDone = mentions(sentence, doneWords)
+      // Nomina l'azione in attesa: falsa, salvo che parli chiaramente di quella fatta prima (ieri…).
+      if (mentions(sentence, queuedWords) || mentions(sentence, openWords)) return !(past && aboutDone)
+      // Senza nome: con un'azione appena preparata vale per quella, salvo che parli di un'azione fatta prima.
+      return queued.length > 0 && !aboutDone && !past
+    }
+    let dropped = false
+    if (queued.length || stillOpen.length) {
+      const sentences = text.match(/[^.!?…\n]+[.!?…]*[^\S\n]*|\n+/g) || []
+      const kept = sentences.filter((s) => {
+        if (!falseClaim(s)) return true
+        dropped = true
+        return false
+      })
+      // Con una frase falsa tolta, anche il "Fatto!" da solo che la accompagna.
+      if (dropped) text = kept.filter((s) => !/^\s*(?:ecco\s+)?fatt[oaie]\s*[!.:…]*\s*$/iu.test(s)).join('').replace(/\n{3,}/g, '\n\n').trim()
+    }
+    if (queued.length) {
+      const titles = queued.map((a) => a.title).join('; ')
+      const label = cardFor(queued[0]).confirmLabel
+      if (dropped) {
+        text = [`Ho preparato: ${titles}. Non è ancora partito niente: controlla la scheda qui sotto e premi «${label}» per procedere, oppure «Scarta».`, text].filter(Boolean).join('\n\n')
+      } else if (!/accetta|conferma|pubblica|pulsante|scheda|scarta/i.test(text)) {
+        text = `${text}\n\nNon è ancora partito niente: parte solo quando premi «${label}» sulla scheda qui sotto.`.trim()
+      }
+    }
+    if (stillOpen.length && !queued.length && (dropped || typedYes)) {
+      const open = stillOpen[0]
+      // Scheda già nella chat recente (con il testo eventualmente corretto da Luca): si indica
+      // quella; altrimenti torna sotto la risposta, cosi' il pulsante e' li'.
+      const shown = history.some((t) => t.text.includes(open.id))
+      if (!shown && !actions.some((a) => a.kind === 'confirm')) actions.push(cardFor(open))
+      if (dropped || !/pulsante|scheda|accetta|conferma/i.test(text)) {
+        const lead = typedYes ? 'Da qui non parte niente' : 'Non è ancora partito niente'
+        const pointer = `${lead}: per farlo partire premi «${cardFor(open).confirmLabel}» sulla scheda «${open.title}» (${shown ? 'la trovi più su nella chat' : 'la trovi qui sotto'}), oppure «Scarta».`
+        text = [text, pointer].filter(Boolean).join('\n\n')
+      }
+    }
+    if (docsTouched.length) {
+      if (!/avvocato/i.test(text)) text = `${text}\n\n${DOC_DISCLAIMER}`.trim()
+      const missing = docsTouched[docsTouched.length - 1].placeholders
+      if (missing.length && !/da completare/i.test(text)) text = `${text}\n\nDa completare: ${missing.slice(0, 12).join('; ')}.`
+    }
+    return text
   }
 }

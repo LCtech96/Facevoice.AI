@@ -1,6 +1,6 @@
 import { cleanEmail } from '@/lib/email-address'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendNewEmail } from '@/lib/gmail'
+import { sendNewEmail, sendThreadReply } from '@/lib/gmail'
 import { DAILY_EMAIL_LIMIT, draftProblem, type Lead } from '@/lib/leads'
 
 // Invio del primo contatto via email: lo usano il pulsante "Invia" della pagina
@@ -106,4 +106,68 @@ export async function sendFirstEmail(id: string, override?: { subject?: string; 
   }
 
   return { lead: (updated || lead) as Lead }
+}
+
+/** Tetto giornaliero di email commerciali (primi contatti + follow-up) dalla casella. */
+export const DAILY_OUTREACH_LIMIT = 60
+
+export type FollowupResult = { ok: true } | { error: string; status: number }
+
+/**
+ * Follow-up a un contatto gia' scritto: risposta nello stesso thread Gmail (o nuova
+ * email se il thread manca). Lo usano il pulsante "Invia" della pagina e la scheda di
+ * conferma della super chat, con gli stessi controlli.
+ */
+export async function sendFollowupEmail(id: string, input: { subject?: string; body?: string; threadId?: string | null }): Promise<FollowupResult> {
+  const { data: lead } = await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle()
+  if (!lead) return { error: 'Contatto non trovato', status: 404 }
+  if (lead.status === 'do_not_contact') return { error: 'Ha chiesto di non essere ricontattato', status: 409 }
+  if (lead.status !== 'contacted' && lead.status !== 'no_answer') return { error: 'Il contatto ha già risposto o non è stato contattato', status: 409 }
+
+  const to = String(lead.email || '').toLowerCase()
+  const subject = String(input.subject || '').trim()
+  const text = String(input.body || '').trim()
+  if (!to || !text) return { error: 'Email o testo mancanti', status: 400 }
+
+  const since = new Date()
+  since.setHours(0, 0, 0, 0)
+  const { count } = await supabaseAdmin
+    .from('social_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('platform', 'email')
+    .eq('direction', 'out')
+    .gte('created_at', since.toISOString())
+  if ((count ?? 0) >= DAILY_OUTREACH_LIMIT) {
+    return { error: `Limite di ${DAILY_OUTREACH_LIMIT} email al giorno raggiunto: riprova domani.`, status: 429 }
+  }
+
+  const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : null
+  const sent = threadId
+    ? { ...(await sendThreadReply(threadId, to, text)), threadId }
+    : await sendNewEmail(to, subject || `Re: ${lead.email_subject || lead.name}`, text)
+  if (sent.error) return { error: `Invio non riuscito: ${sent.error}`, status: 502 }
+
+  const { data: row } = await supabaseAdmin
+    .from('social_messages')
+    .insert({
+      platform: 'email',
+      kind: 'message',
+      contact_id: to,
+      contact_name: lead.name,
+      direction: 'out',
+      external_id: sent.id ?? null,
+      channel_account_id: sent.threadId ?? threadId,
+      body: text,
+      status: 'sent',
+    })
+    .select('id')
+    .single()
+  if (row) await supabaseAdmin.from('social_messages').update({ origin: 'outreach' }).eq('id', row.id)
+
+  const note = `Follow-up inviato il ${new Date().toLocaleDateString('it-IT')}`
+  await supabaseAdmin
+    .from('leads')
+    .update({ notes: lead.notes ? `${lead.notes}\n${note}` : note })
+    .eq('id', id)
+  return { ok: true }
 }

@@ -314,42 +314,99 @@ function encodeHeader(value: string) {
   return /^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`
 }
 
+/** File allegato a un'email (es. il PDF di un documento della super chat). */
+export type EmailAttachment = { filename: string; contentType: string; data: Buffer }
+
+/**
+ * Intestazioni del contenuto e corpo: testo semplice, oppure testo + allegato
+ * (multipart/mixed) quando c'e' un file.
+ */
+function mimeContent(text: string, attachment?: EmailAttachment): string[] {
+  const textPart = ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', Buffer.from(text, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n')]
+  if (!attachment) return textPart
+  // Il trattino basso non esiste nel base64: il separatore non puo' comparire nel contenuto.
+  const boundary = `fv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+  // Nome del file solo ASCII (lo prepara chi chiama): niente codifiche speciali nell'intestazione.
+  const name = attachment.filename.replace(/[^\w.\-]+/g, '_').slice(0, 100) || 'allegato'
+  return [
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    ...textPart,
+    `--${boundary}`,
+    `Content-Type: ${attachment.contentType}; name="${name}"`,
+    `Content-Disposition: attachment; filename="${name}"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    attachment.data.toString('base64').replace(/.{76}/g, '$&\r\n'),
+    `--${boundary}--`,
+  ]
+}
+
+/** Oggetto, destinatario e riferimenti della risposta in un thread (dall'ultima email ricevuta). */
+async function threadReplyHeaders(ownEmail: string, threadId: string, to: string) {
+  const thread = await gmail<{ messages?: GmailMessage[] }>(
+    `/threads/${threadId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=From&metadataHeaders=Reply-To`
+  )
+  const incoming = (thread.messages || [])
+    .filter((m) => !parseAddress(header(m, 'From')).email.includes(ownEmail))
+    .pop()
+  // Follow-up senza risposte: ci si aggancia all'ultima email inviata da noi.
+  const ref = incoming || (thread.messages || []).slice(-1)[0]
+  const subjectRaw = ref ? header(ref, 'Subject') : ''
+  const subject = /^re:/i.test(subjectRaw) ? subjectRaw : `Re: ${subjectRaw || 'Facevoice AI'}`
+  const messageId = ref ? header(ref, 'Message-ID') : ''
+  const references = [ref ? header(ref, 'References') : '', messageId].filter(Boolean).join(' ')
+  const detected = incoming ? parseAddress(header(incoming, 'Reply-To') || header(incoming, 'From')).email : ''
+  // Ultima email da un indirizzo automatico (no-reply): si risponde all'indirizzo vero scelto per la bozza.
+  const recipient = detected && !(isAutomaticEmail(detected) && to && to.toLowerCase() !== detected.toLowerCase()) ? detected : to
+  return { subject, recipient: recipient || to, messageId, references }
+}
+
+/**
+ * Oggetto e destinatario che avrebbe la risposta nel thread, da mostrare prima di inviare
+ * (scheda di conferma della super chat). null se Gmail non risponde.
+ */
+export async function previewThreadReply(threadId: string, to: string): Promise<{ subject: string; recipient: string } | null> {
+  try {
+    const settings = await loadGmailSettings()
+    if (!settings) return null
+    const { subject, recipient } = await threadReplyHeaders(settings.email, threadId, to)
+    return { subject, recipient }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Risponde nello stesso thread Gmail. Oggetto, Message-ID e destinatario
  * si leggono dall'ultima email ricevuta nel thread, cosi' il database non
- * deve conservarli.
+ * deve conservarli. fixed: oggetto e destinatario gia' mostrati e confermati
+ * (si usano proprio quelli).
  */
-export async function sendThreadReply(threadId: string, to: string, text: string): Promise<SendResult> {
+export async function sendThreadReply(
+  threadId: string,
+  to: string,
+  text: string,
+  attachment?: EmailAttachment,
+  fixed?: { subject: string; recipient: string }
+): Promise<SendResult> {
   try {
     const settings = await loadGmailSettings()
     if (!settings) return { error: 'Casella Gmail non collegata' }
 
-    const thread = await gmail<{ messages?: GmailMessage[] }>(
-      `/threads/${threadId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=From&metadataHeaders=Reply-To`
-    )
-    const incoming = (thread.messages || [])
-      .filter((m) => !parseAddress(header(m, 'From')).email.includes(settings.email))
-      .pop()
-    // Follow-up senza risposte: ci si aggancia all'ultima email inviata da noi.
-    const ref = incoming || (thread.messages || []).slice(-1)[0]
-    const subjectRaw = ref ? header(ref, 'Subject') : ''
-    const subject = /^re:/i.test(subjectRaw) ? subjectRaw : `Re: ${subjectRaw || 'Facevoice AI'}`
-    const messageId = ref ? header(ref, 'Message-ID') : ''
-    const references = [ref ? header(ref, 'References') : '', messageId].filter(Boolean).join(' ')
-    const detected = incoming ? parseAddress(header(incoming, 'Reply-To') || header(incoming, 'From')).email : ''
-    // Ultima email da un indirizzo automatico (no-reply): si risponde all'indirizzo vero scelto per la bozza.
-    const recipient = detected && !(isAutomaticEmail(detected) && to && to.toLowerCase() !== detected.toLowerCase()) ? detected : to
+    const found = await threadReplyHeaders(settings.email, threadId, to)
+    const subject = fixed?.subject || found.subject
+    const recipient = fixed?.recipient || found.recipient
+    const { messageId, references } = found
 
     const mime = [
       `From: ${settings.email}`,
-      `To: ${recipient || to}`,
+      `To: ${recipient}`,
       `Subject: ${encodeHeader(subject)}`,
       ...(messageId ? [`In-Reply-To: ${messageId}`, `References: ${references}`] : []),
       'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
-      'Content-Transfer-Encoding: base64',
-      '',
-      Buffer.from(text, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n'),
+      ...mimeContent(text, attachment),
     ].join('\r\n')
 
     const sent = await gmail<{ id: string }>('/messages/send', {
@@ -363,7 +420,7 @@ export async function sendThreadReply(threadId: string, to: string, text: string
 }
 
 /** Nuova email (non una risposta): usata per il primo contatto della Ricerca clienti. */
-export async function sendNewEmail(to: string, subject: string, text: string): Promise<SendResult & { threadId?: string }> {
+export async function sendNewEmail(to: string, subject: string, text: string, attachment?: EmailAttachment): Promise<SendResult & { threadId?: string }> {
   try {
     const settings = await loadGmailSettings()
     if (!settings) return { error: 'Casella Gmail non collegata' }
@@ -372,10 +429,7 @@ export async function sendNewEmail(to: string, subject: string, text: string): P
       `To: ${to}`,
       `Subject: ${encodeHeader(subject)}`,
       'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
-      'Content-Transfer-Encoding: base64',
-      '',
-      Buffer.from(text, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n'),
+      ...mimeContent(text, attachment),
     ].join('\r\n')
     const sent = await gmail<{ id: string; threadId: string }>('/messages/send', {
       method: 'POST',

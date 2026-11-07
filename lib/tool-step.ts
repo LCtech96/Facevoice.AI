@@ -123,3 +123,15 @@ export function cleanReplyText(raw: string): string {
 
 /** Messaggio da aggiungere quando il modello ha sbagliato formato, per fargli rifare il passo. */
 export const FORMAT_RETRY = 'Il tuo ultimo messaggio non era nel formato giusto, quindi non è partito nessuno strumento e il cliente non ha visto niente. Rifai il passo rispondendo SOLO con un JSON valido, senza altro testo prima o dopo: {"tool": "nome", "args": {...}} oppure {"reply": "risposta finale"}. Non dire di aver fatto qualcosa finché lo strumento non ha risposto.'
+
+/**
+ * Il primo oggetto JSON della risposta che passa il controllo `accept` (es. un documento
+ * con "title" e "sections"), anche con testo intorno, blocchi ```json o virgole in piu'.
+ */
+export function parseJsonObject(raw: string, accept: (value: Record<string, unknown>) => boolean = () => true): Record<string, unknown> | null {
+  for (const span of balancedSpans(raw || '', 40)) {
+    const value = parseLoose(span)
+    if (isObject(value) && accept(value)) return value
+  }
+  return null
+}

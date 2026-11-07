@@ -11,6 +11,8 @@ import UsageButton from './UsageButton'
 import ChatMenu from './ChatMenu'
 import DraftsPanel from './DraftsPanel'
 import MessageCard from './MessageCard'
+import ConfirmCard from './ConfirmCard'
+import DocumentCard from './DocumentCard'
 import { PostCard, SnapshotCard } from './PostCard'
 import { flushSyncedTexts } from './useSyncedText'
 import { fmtCost, fmtTokens, usageLine } from './format'
@@ -21,7 +23,9 @@ import { fmtCost, fmtTokens, usageLine } from './format'
 // Dietro c'e' l'assistente della Ricerca clienti con tutti i suoi strumenti (clienti,
 // email, siti, Instagram, messaggi social, caroselli). Il lavoro gira sul server: si puo'
 // chiudere o cambiare pagina e ritrovare tutto com'era.
-// Niente parte da solo: email, messaggi e post si inviano con un tocco.
+// Doppia conferma: email, messaggi, post e cancellazioni preparati dall'assistente
+// partono solo con "Accetta e invia" (o "Conferma") sulla scheda. I documenti
+// (contratti, preventivi, lettere) si aprono in PDF con un tocco.
 
 const MODEL_KEY = 'fv_superchat_model'
 const MAX_IMAGES = 4
@@ -33,6 +37,7 @@ const EXAMPLES = [
   'Prepara le controrisposte a chi ha risposto alle email',
   'Trovami 20 ristoranti a Palermo e preparagli la prima email',
   'Crea un carosello di 3 slide con questa foto e una call to action finale',
+  'Sviluppami il contratto per il lavoro di cui ho parlato con Giusy su Instagram',
 ]
 
 type PostPreview = Extract<SocialAction, { kind: 'post_preview' }>
@@ -85,9 +90,8 @@ export default function SuperChat() {
   const dictation = useDictation((text) => setInput((current) => (current.trim() ? `${current.trim()} ${text}` : text)))
   const sendAllRef = useRef<() => Promise<void>>(async () => {})
 
-  const onJobDone = useCallback((job: Job) => {
-    if (job.result?.confirmSend) sendAllRef.current()
-  }, [])
+  // "Invia le bozze" chiesto in chat non apre piu' la conferma del browser: arriva una scheda di conferma.
+  const onJobDone = useCallback((_job: Job) => undefined, [])
   const {
     turns,
     drafts,
@@ -243,6 +247,9 @@ export default function SuperChat() {
   // le precedenti sono versioni di prima (come nella beta). La scheda viva riprende
   // didascalia, testo Facebook e social cambiati da Luca su quelle di prima (carry:
   // si salvano nella scheda viva alla sua prima modifica, poi sono suoi).
+  // Documenti: la scheda piu' recente di ogni documento e' l'ultima versione.
+  const latestDocs = new Map<string, string>()
+  for (const t of turns) t.actions?.forEach((a, i) => a.kind === 'document' && latestDocs.set(a.docId, `${t.id}:${i}`))
   const cards = new Map<string, { turnId: string; index: number; action: PostPreview }[]>()
   for (const t of turns)
     t.actions?.forEach((a, i) => {
@@ -340,8 +347,8 @@ export default function SuperChat() {
             ) : !turns.length ? (
               <div className="max-w-xl">
                 <p className="text-[var(--text-secondary)]">
-                  Scrivimi o dettami cosa vuoi fare: clienti, email, siti, Instagram, messaggi e caroselli. Allega le immagini con il pulsante{' '}
-                  <ImagePlus className="inline h-4 w-4" />. Email, messaggi e post partono solo quando premi Invia o Pubblica.
+                  Scrivimi o dettami cosa vuoi fare: clienti, email, siti, Instagram, messaggi, caroselli e documenti in PDF (contratti, preventivi, lettere). Allega le immagini con il pulsante{' '}
+                  <ImagePlus className="inline h-4 w-4" />. Email, messaggi e post partono solo quando premi «Accetta e invia» sulla scheda.
                 </p>
                 {canWrite && (
                   <div className="mt-4 flex flex-col gap-2">
@@ -387,6 +394,18 @@ export default function SuperChat() {
                         </p>
                       )}
                       {turn.actions?.map((action, i) => {
+                        if (action.kind === 'confirm')
+                          return (
+                            <ConfirmCard
+                              key={i}
+                              action={action}
+                              canConfirm={isAdmin}
+                              onUpdate={(patch) => updateAction(turn.id, i, patch)}
+                              onDiscarded={canWrite ? (title) => askFromCard(`Ho scartato: ${title}.`) : undefined}
+                            />
+                          )
+                        if (action.kind === 'document')
+                          return <DocumentCard key={i} action={action} canOpen={isAdmin} latest={latestDocs.get(action.docId) === `${turn.id}:${i}`} />
                         if (action.kind === 'social_message')
                           return (
                             <MessageCard

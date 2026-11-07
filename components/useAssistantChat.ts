@@ -19,8 +19,51 @@ export type Draft = {
 
 type ActionState = { state?: 'sending' | 'sent' | 'error'; error?: string }
 
+/** Stato di una scheda di conferma (lo decide il server). */
+export type ConfirmState = 'pending' | 'running' | 'done' | 'failed' | 'discarded' | 'expired' | 'unknown'
+
+/**
+ * Doppia conferma: azione preparata dall'assistente (messaggio, email, pubblicazione…)
+ * con il contenuto esatto. Parte solo con "Accetta e invia" (o "Conferma") sulla scheda.
+ */
+export type ConfirmAction = {
+  kind: 'confirm'
+  id: string
+  action: string
+  title: string
+  text?: string
+  editable?: boolean
+  maxLength?: number
+  lines?: string[]
+  items?: { label: string; text: string }[]
+  images?: string[]
+  warning?: string
+  confirmLabel: string
+  expiresAt: string
+  state: ConfirmState
+  outcome?: string
+  error?: string
+  retryable?: boolean
+}
+
+/** Documento scritto dall'assistente: si apre in PDF con un tocco. */
+export type DocumentAction = {
+  kind: 'document'
+  docId: string
+  version: number
+  title: string
+  docKind: string
+  basedOn: { name: string; platform: string } | null
+  pages: number
+  placeholders: string[]
+  createdAt: string
+}
+
 export type SocialAction =
+  | ConfirmAction
+  | DocumentAction
   | ({
+      /** Scheda delle chat di prima: messaggio con il pulsante Invia (le nuove sono "confirm"). */
       kind: 'social_message'
       platform: 'instagram' | 'facebook'
       key: string

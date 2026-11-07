@@ -40,6 +40,7 @@ const FEATURES: Record<string, string> = {
   traduzioni_sito: 'Traduzioni del sito',
   super_chat_carosello: 'Caroselli della super chat',
   super_chat_slide: 'Modifiche alle slide dei caroselli',
+  super_chat_documenti: 'Documenti della super chat (contratti, preventivi)',
   altro: 'Altro',
 }
 

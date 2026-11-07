@@ -11,6 +11,7 @@ import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { useStaffAccess } from './useStaffAccess'
 import { STAFF_PAGE_IDS, STAFF_PAGES, type StaffPage } from '@/lib/staff-pages'
+import { clearDocAccess } from '@/lib/doc-access-client'
 
 const STAFF_ICONS: Record<StaffPage, typeof Home> = {
   inbox: Inbox,
@@ -49,8 +50,10 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
     
     checkUser()
     
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
+      // Uscita (anche da un'altra scheda): il cookie dei PDF della super chat si cancella.
+      if (event === 'SIGNED_OUT') void clearDocAccess()
     })
     
     return () => {
@@ -85,6 +88,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }, [showUserMenu, showDropdownMenu])
 
   const handleLogout = async () => {
+    await clearDocAccess()
     await supabase.auth.signOut()
     setShowUserMenu(false)
     router.push('/home')

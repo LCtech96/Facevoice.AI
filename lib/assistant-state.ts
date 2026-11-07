@@ -54,6 +54,8 @@ export type Job = {
   steps?: string[]
   /** Chi ha scritto la richiesta e' l'amministratore: solo lui cambia e pubblica i caroselli. */
   admin?: boolean
+  /** Email di chi ha scritto la richiesta (resta nelle azioni da confermare e nei documenti). */
+  by?: string
 }
 
 /** chatId: chat aperta (le altre sono salvate a parte, vedi "Chat salvate" in fondo). */
@@ -261,9 +263,15 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
   const history = start.turns
     .slice(-9, -1)
     .map((t) => {
-      // Caroselli mostrati in anteprima: l'agente ne conosce il draftId (per correggerli).
-      const posts = (t.actions || []).flatMap((a) => (a.kind === 'post_preview' ? [`\n[Carosello in anteprima: draftId ${a.draftId}, ${a.urls.length} slide]`] : []))
-      return { role: t.role, text: `${`${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500)}${posts.slice(-3).join('')}` }
+      // Caroselli, documenti e schede di conferma mostrati sotto la risposta: l'agente ne conosce
+      // gli id (per correggerli o rimandarli) e lo stato delle conferme.
+      const cards = (t.actions || []).flatMap((a) => {
+        if (a.kind === 'post_preview') return [`\n[Carosello in anteprima: draftId ${a.draftId}, ${a.urls.length} slide]`]
+        if (a.kind === 'document') return [`\n[Documento: document_id ${a.docId}, «${a.title}», versione ${a.version}, ${a.pages} pagine]`]
+        if (a.kind === 'confirm') return [`\n[Scheda di conferma: ${a.title} (${a.id}), stato ${a.state}]`]
+        return []
+      })
+      return { role: t.role, text: `${`${t.text}${t.imageText ? `\n[Immagini allegate] ${t.imageText}` : ''}`.slice(0, 2500)}${cards.slice(-4).join('')}` }
     })
   // Token di questo giro; il totale della richiesta somma anche i giri precedenti.
   const tally: UsageTally = emptyTally()
@@ -347,7 +355,7 @@ export async function runJob(scope: Scope, jobId: string, message: string, conti
               void writeStatus(undefined, true)
             },
           },
-          { admin: job.admin === true }
+          { admin: job.admin === true, email: job.by ?? null, scope }
         )
     )
     // Prima che il server chiuda la funzione (300 s) si passa a un nuovo giro.

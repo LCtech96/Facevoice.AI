@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAssistantChat, type Draft, type Job } from '@/components/useAssistantChat'
+import { useStaffAccess } from '@/components/useStaffAccess'
 import { Check, Loader2, Send, Sparkles, X } from 'lucide-react'
+import ConfirmCard from '@/app/admin/assistant/ConfirmCard'
+import DocumentCard from '@/app/admin/assistant/DocumentCard'
 
 // Barra di chat dell'assistente: si scrive cosa fare ("scrivi a chi non abbiamo
 // ancora contattato", "follow-up a chi non ha risposto", "trovami 40 dentisti a
 // Palermo") e l'assistente prepara il lavoro. Le email partono solo dopo
-// che Luca le ha controllate e ha premuto "Invia".
+// che Luca le ha controllate e ha premuto "Invia" (o "Accetta e invia" sulla
+// scheda di conferma, quando lo chiede in chat).
 
 
 
@@ -40,11 +44,13 @@ export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) 
     async (job: Job) => {
       if (job.result?.refresh) await onRefresh()
       if (job.result?.focus?.ids?.length) onFocus?.(job.result.focus)
-      if (job.result?.confirmSend) await sendAllRef.current()
+      // "Invia le bozze" chiesto in chat: arriva la scheda di conferma (niente invio da qui).
     },
     [onRefresh, onFocus]
   )
-  const { turns: allTurns, drafts, job, running: busy, error, ask: askServer, setDrafts, appendTurn } = useAssistantChat('leads', onJobDone)
+  const { turns: allTurns, drafts, job, running: busy, error, ask: askServer, setDrafts, appendTurn, patchAction } = useAssistantChat('leads', onJobDone)
+  // Conferme e documenti: solo l'amministratore (come il server).
+  const staff = useStaffAccess()
   const turns = allTurns.slice(-8)
   const status = busy ? job?.statusText : null
   const startedAt = busy && job ? new Date(job.startedAt).getTime() : null
@@ -125,7 +131,7 @@ export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) 
       {turns.length > 0 && (
         <div className="mb-3 space-y-2 max-h-56 overflow-y-auto">
           {turns.map((turn, i) => (
-            <div key={i} className={`flex ${turn.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={`flex flex-col ${turn.role === 'user' ? 'items-end' : 'items-start'}`}>
               <p
                 className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
                   turn.role === 'user' ? 'bg-[var(--accent-blue)] text-white' : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
@@ -133,6 +139,21 @@ export default function LeadAssistant({ authFetch, onRefresh, onFocus }: Props) 
               >
                 {turn.text}
               </p>
+              {turn.actions?.map((action, k) =>
+                action.kind === 'confirm' ? (
+                  <ConfirmCard
+                    key={k}
+                    action={action}
+                    canConfirm={staff.isAdmin}
+                    onUpdate={(patch) => patchAction(turn.id, k, patch)}
+                    onDiscarded={(title) => {
+                      if (!busy) void askServer(`Ho scartato: ${title}.`)
+                    }}
+                  />
+                ) : action.kind === 'document' ? (
+                  <DocumentCard key={k} action={action} canOpen={staff.isAdmin} latest />
+                ) : null
+              )}
             </div>
           ))}
           {busy && (

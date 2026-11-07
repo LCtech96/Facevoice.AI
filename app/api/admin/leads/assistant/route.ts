@@ -144,8 +144,9 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: 'Immagini non salvate, riprova' }, { status: 500 })
   }
 
-  // Caroselli: solo l'amministratore li cambia e li pubblica (come la scheda e /api/admin/social-post).
-  const admin = Boolean((await getStaffAccess(req))?.isAdmin)
+  // Caroselli e documenti: solo l'amministratore (come la scheda e /api/admin/social-post).
+  const staff = await getStaffAccess(req)
+  const admin = Boolean(staff?.isAdmin)
   const jobId = newId()
   const now = new Date().toISOString()
   const state = await updateState(scope, (s) => {
@@ -168,6 +169,7 @@ export async function POST(req: NextRequest) {
       run: newId(),
       steps: resuming ? previous!.steps : undefined,
       admin,
+      ...(staff?.email ? { by: staff.email } : {}),
     }
   })
 
