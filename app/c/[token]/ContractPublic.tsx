@@ -1,17 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { CircleCheck, Download, ExternalLink, Loader2, MessageSquarePlus, PenLine, RefreshCw, UserRound } from 'lucide-react'
+import { CalendarClock, CircleCheck, Download, ExternalLink, Loader2, MessageSquarePlus, PenLine, RefreshCw, UserRound } from 'lucide-react'
 import ContractView from '@/components/contracts/ContractView'
 import SignForm, { type SignPayload } from '@/components/contracts/SignForm'
 import { TAX_CODE_HINT, missingData, taxCodeLooksWrong } from '@/lib/contract-parties'
+import { TERMS_DATE_LABEL, TERMS_DAYS_LABEL, TERMS_HEADING } from '@/lib/contract-terms'
 import type { PublicView } from '@/lib/contracts'
 
 // Il contratto per chi ha ricevuto il link (dopo il PIN): testo completo, PDF, "I tuoi
 // dati" (nome e cognome, codice fiscale, indirizzo... salvati mentre scrive e mostrati
-// subito nel testo, in "Le parti"), "Richiedi modifica" e "Firma il contratto" (si
-// accende quando ci sono i dati obbligatori; tre conferme e firma col dito). Pensata per
-// il telefono. Nessun avviso interno di Facevoice AI: solo il contratto.
+// subito nel testo, in "Le parti"), i «Termini della collaborazione» scelti da chi crea
+// (solo da leggere), "Richiedi modifica" e "Firma il contratto" (si accende quando ci sono
+// i dati obbligatori; tre conferme e firma col dito). Pensata per il telefono. Nessun
+// avviso interno di Facevoice AI: solo il contratto.
 
 type Datum = PublicView['myData'][number]
 
@@ -110,6 +112,8 @@ export default function ContractPublic({ token, initial }: { token: string; init
   }
   const valueOf = (id: string) => values[id] || ''
   const missing = view.canAct && !view.signed ? missingData(view.myData, valueOf) : []
+  // Termini della collaborazione non ancora scelti da chi crea: non si firma (lo controlla anche il server).
+  const termsWaiting = Boolean(view.canAct && !view.signed && view.terms && !view.terms.ready)
   const company = view.myData.find((d) => d.role === 'azienda')
   const isCompany = Boolean(company && valueOf(company.id).trim())
   const nameId = view.myData.find((d) => d.role === 'nome')?.id
@@ -182,6 +186,27 @@ export default function ContractPublic({ token, initial }: { token: string; init
         )}
       </div>
 
+      {view.terms && (
+        <section className="mt-4 rounded-2xl bg-white p-4 shadow-sm" aria-label={TERMS_HEADING}>
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <CalendarClock className="h-4 w-4" /> {TERMS_HEADING}
+          </h2>
+          <dl className="mt-2 space-y-2 text-sm">
+            <div>
+              <dt className="text-xs text-[#6b6b73]">{TERMS_DATE_LABEL}</dt>
+              <dd className="break-words font-medium">{view.terms.date || 'Da definire'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[#6b6b73]">{TERMS_DAYS_LABEL}</dt>
+              <dd className="break-words font-medium">{view.terms.days || 'Da definire'}</dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-[#6b6b73]">
+            {view.terms.ready ? `Li ha scelti ${view.creatorName}. Se vuoi cambiarli, usa «Richiedi modifica».` : `${view.creatorName} deve ancora sceglierli: potrai firmare dopo.`}
+          </p>
+        </section>
+      )}
+
       <div className="mt-4 flex flex-wrap gap-2">
         <a href={`${base}/pdf`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#d0d0d6] bg-white px-4 py-2 text-sm font-medium">
           <ExternalLink className="h-4 w-4" /> Apri PDF
@@ -246,10 +271,15 @@ export default function ContractPublic({ token, initial }: { token: string; init
                 <button type="button" onClick={() => setPanel('request')} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full border border-[#1a2a73] bg-white px-4 py-3 text-sm font-semibold text-[#1a2a73]">
                   <MessageSquarePlus className="h-5 w-5" /> Richiedi modifica
                 </button>
-                <button type="button" onClick={() => setPanel('sign')} disabled={missing.length > 0} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1a2a73] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">
+                <button type="button" onClick={() => setPanel('sign')} disabled={missing.length > 0 || termsWaiting} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1a2a73] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">
                   <PenLine className="h-5 w-5" /> Firma il contratto
                 </button>
               </div>
+              {termsWaiting && (
+                <p className="mt-2 text-center text-xs text-[#3d3d44]" role="status">
+                  {view.creatorName} deve ancora scegliere data e termine di consegna: potrai firmare dopo.
+                </p>
+              )}
               {missing.length > 0 && (
                 <p className="mt-2 text-center text-xs text-[#3d3d44]" role="status">
                   Per firmare mancano: {missing.map((m) => m.label).join(', ')}.{' '}

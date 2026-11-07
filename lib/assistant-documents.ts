@@ -5,6 +5,7 @@ import { parseJsonObject } from '@/lib/tool-step'
 import { FIELD_ID_RE, docTexts, emptyFieldLabels, fieldIdsIn, renderPdf, type DocField, type DocSection, type DocSignature, type FieldParty, type StructuredDoc } from '@/lib/pdf-doc'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
 import { dropPartyLines, ensureParties, hideRecipientValues, stripPartiesSection, tidyFields, withPartiesSection } from '@/lib/contract-parties'
+import { DELIVERY_DAYS, ESSENTIAL_EXCHANGE, ESSENTIAL_OBJECT, dateInSource, deliveryText, ensureTerms, formatCollabDate, readTerms, validLocal, type DeliveryDays } from '@/lib/contract-terms'
 
 // Documenti della super chat (contratti, preventivi, accordi, lettere) scritti
 // dall'AI a partire da una conversazione della casella Messaggi (Instagram,
@@ -338,7 +339,7 @@ export function normalizeFields(doc: StructuredDoc, rawFields: unknown): Structu
 }
 
 /** Documento valido e nei limiti, dal JSON dell'AI. null se manca l'essenziale. */
-export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDoc; fromChat: string[]; truncated?: boolean } | null {
+export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDoc; fromChat: string[]; truncated?: boolean; proposedAt?: string } | null {
   const title = cleanText(value.title, 140)
   const rawSections = Array.isArray(value.sections) ? value.sections : []
   let budget = MAX_DOC_CHARS
@@ -378,6 +379,9 @@ export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDo
     signatures.push({ label, ...(name ? { name } : {}), party })
   }
   const subtitle = cleanText(value.subtitle, 200)
+  // Data e ora della collaborazione proposte dall'AI (solo se dette chiaramente): si controllano dopo.
+  const collab = value.collaborazione && typeof value.collaborazione === 'object' ? (value.collaborazione as Record<string, unknown>) : null
+  const proposed = typeof collab?.data_ora === 'string' ? collab.data_ora.trim().slice(0, 16) : ''
   const doc: StructuredDoc = normalizeFields(
     {
       title,
@@ -388,7 +392,7 @@ export function sanitizeDoc(value: Record<string, unknown>): { doc: StructuredDo
     },
     value.fields
   )
-  return { doc, fromChat: strings(value.from_chat ?? value.fromChat, 15, 300), ...(truncated ? { truncated: true } : {}) }
+  return { doc, fromChat: strings(value.from_chat ?? value.fromChat, 15, 300), ...(truncated ? { truncated: true } : {}), ...(validLocal(proposed) ? { proposedAt: proposed } : {}) }
 }
 
 // ---------------------------------------------------------------------
@@ -544,11 +548,11 @@ export const describeSource = (s: DocSource) =>
 
 const KIND_HINTS: Record<DocKind, string> = {
   contratto:
-    'Contratto di prestazione di servizi: premesse (cosa è stato concordato in chat), oggetto, durata e rinnovo, corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e uso dei materiali, riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, firme.',
+    'Contratto di prestazione di servizi: premesse (cosa è stato concordato in chat), oggetto, cosa dà e cosa riceve ciascuna parte (causa), durata e rinnovo, consegna dei contenuti (rimanda ai Termini della collaborazione), corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e diritti d’uso dei contenuti (territorio, durata, canali), riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, forma e sottoscrizione, firme.',
   preventivo:
-    'Preventivo: oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti uno spazio da compilare), tempi di realizzazione, condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
+    'Preventivo: oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti uno spazio da compilare), tempi di realizzazione (per la data della collaborazione e la consegna dei contenuti rimanda ai Termini della collaborazione), condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
   accordo:
-    'Accordo tra le parti (collaborazione o riservatezza, secondo la richiesta): premesse, oggetto, impegni di ciascuna parte, durata, riservatezza, dati personali, recesso, legge applicabile e foro competente, firme.',
+    'Accordo tra le parti (collaborazione o riservatezza, secondo la richiesta): premesse, oggetto, cosa dà e cosa riceve ciascuna parte (causa), impegni di ciascuna parte, durata, consegna dei contenuti (rimanda ai Termini della collaborazione), diritti d’uso dei contenuti (territorio, durata, canali), riservatezza, dati personali, recesso, legge applicabile e foro competente, forma e sottoscrizione, firme.',
   lettera:
     'Lettera formale: mittente, destinatario, luogo e data, oggetto, testo in paragrafi chiari, saluti, firma. Niente clausole contrattuali se non richieste.',
   altro: 'Documento con le sezioni che servono per la richiesta di Luca, chiaro e ordinato.',
@@ -560,6 +564,20 @@ const PARTIES_RULES = `- Dati delle parti: NON scriverli tu. La sezione «Le par
 - Uno spazio da compilare non va mai subito dopo un dato già scritto: niente "3331234567: {{numero}}", niente "foro di Palermo {{foro}}".
 - Foro competente: scrivi sempre «foro di Palermo» (Facevoice AI ha sede a Terrasini, in provincia di Palermo), mai uno spazio da compilare per il foro.`
 
+/**
+ * Elementi essenziali dei contratti (art. 1325 c.c.) e «Termini della collaborazione»
+ * (lib/contract-terms: li aggiunge il sistema e li sceglie chi crea, mai l'AI da sola).
+ */
+const ESSENTIALS_RULES = `- Contratti e accordi: devono avere sempre, chiari, gli elementi essenziali dell'art. 1325 c.c.:
+  1) l'accordo delle parti: lo danno «Le parti» e le firme (li aggiunge il sistema);
+  2) OGGETTO: una sezione «Oggetto» che dice cosa si scambia, determinato o determinabile (servizi, contenuti, quantità, canali);
+  3) CAUSA: una clausola che dice cosa dà e cosa riceve ciascuna parte, cioè la funzione economica dello scambio (compenso in denaro, beni o servizi: per esempio una cena in cambio di contenuti UGC);
+  4) FORMA: una clausola «Forma e sottoscrizione»: contratto in forma scritta, firmato dalle parti con firma elettronica semplice, con luogo e data della firma (spazio "Luogo e data della firma", party "entrambi").
+  Poi le clausole abituali: durata, consegna, compenso e pagamento, diritti d'uso dei contenuti (territorio, durata, canali), recesso, riservatezza, dati personali, legge applicabile e foro competente.
+- Solo contratti, accordi e preventivi: la sezione «Termini della collaborazione» (data e ora della collaborazione; termine di consegna dei contenuti: 7, 14 o 30 giorni) la aggiunge il sistema subito dopo «Le parti», e li sceglie chi crea il contratto. Non scriverla tu (nemmeno una sezione con quel titolo), non scrivere date della collaborazione o termini di consegna nel testo e non creare "fields" per loro: nelle clausole scrivi «nella data e ora indicate nei Termini della collaborazione» e «entro il termine di consegna indicato nei Termini della collaborazione». Mai altri termini di consegna.
+- Solo contratti, accordi e preventivi: se la conversazione o la richiesta di Luca dicono chiaramente giorno e ora della collaborazione, aggiungi al JSON "collaborazione": {"data_ora": "AAAA-MM-GGTHH:MM"} (ora italiana): è solo una proposta che chi crea può cambiare. Altrimenti non mettere "collaborazione". Mai inventarla.
+- Lettere e altri documenti: niente «Termini della collaborazione»; le date dette in chat (anche quella della collaborazione) si scrivono normalmente nel testo.`
+
 /** Regole uguali per ogni documento (tipo e data sono in systemPrompt, in coda). */
 const DOC_RULES = `Prepari documenti scritti per Facevoice AI (agenzia di Luca Corrao): contratti, preventivi, accordi, lettere. Scrivi in italiano, con lo stile di un documento legale italiano ma con parole semplici e frasi chiare.
 
@@ -570,6 +588,7 @@ Regole obbligatorie:
 - Usa SOLO i fatti presenti nella conversazione e nei dati dell'azienda che ti passo. Non aggiungere servizi, prezzi, date o condizioni che nessuno ha detto.
 - Non inventare MAI dati personali o economici: codici fiscali, partite IVA del cliente, indirizzi, numeri di documento, IBAN, date, scadenze, importi o prezzi non concordati. Per ognuno lascia uno SPAZIO DA COMPILARE: aggiungi un elemento in "fields" (id breve con lettere minuscole, numeri e _; label breve e chiara, es. "IBAN"; party = chi lo compila: "creatore" per Facevoice AI, anche per date, durate o importi da decidere prima dell'invio; "destinatario" per l'altra parte; "entrambi" solo per un dato che ognuno scrive per sé quando firma, es. luogo e data della firma) e nel testo scrivi {{id}} al posto del dato, per esempio "su IBAN {{iban}}", "a partire dal {{data_inizio}}". Nel PDF lo spazio esce come una linea vuota da compilare a mano o al momento della firma.
 ${PARTIES_RULES}
+${ESSENTIALS_RULES}
 - MAI scrivere segnaposto come "[DA COMPLETARE …]", "XXX", "____" o "da definire" nel testo: usa sempre {{id}} con il suo campo. Metti "value" in un campo solo se il dato è scritto chiaramente nella conversazione.
 - Niente avvisi legali nel documento (niente "non sono un avvocato", niente "fai controllare da un professionista"): l'avviso resta solo in chat.
 - Metti "specific_approval": true sulle clausole che secondo gli artt. 1341 e 1342 c.c. vanno approvate per iscritto in modo specifico (es. limitazioni di responsabilità, recesso, tacito rinnovo, penali, foro competente); false sulle altre.
@@ -585,11 +604,18 @@ ${PARTIES_RULES}
  * documento e la data di oggi), in coda all'elenco delle regole invece che in mezzo. Le regole
  * sono le stesse di prima, con lo stesso testo: cambia solo l'ordine.
  */
+/** Contratti, accordi e preventivi hanno i «Termini della collaborazione» (withStandardParties). */
+const hasTermsBlock = (kind: DocKind) => kind === 'contratto' || kind === 'accordo' || kind === 'preventivo'
+
 function systemPrompt(kind: DocKind, today: string): { system: string; systemTail: string } {
+  const terms = hasTermsBlock(kind)
+    ? '- Questo documento ha i «Termini della collaborazione» (li aggiunge il sistema): per data della collaborazione e consegna dei contenuti rimanda a quelli.'
+    : '- Questo documento NON ha i «Termini della collaborazione»: se la conversazione o Luca dicono date (anche della collaborazione), scrivile normalmente nel testo.'
   return {
     system: DOC_RULES,
     systemTail: `
 - Inserisci le clausole abituali per questo tipo di documento. ${KIND_HINTS[kind]}
+${terms}
 - La data del documento è oggi: ${today}. Scrivi le date per esteso in italiano (es. 7 novembre 2026).`,
   }
 }
@@ -605,12 +631,132 @@ function businessBlock(knowledge: string) {
 
 const FIX_FORMAT = 'Il messaggio precedente non era un JSON valido del documento. Rispondi di nuovo SOLO con il JSON del documento intero, nel formato indicato, senza nient’altro.'
 
-type Written = { doc: StructuredDoc; fromChat: string[]; truncated?: boolean }
+/** gaps: elementi essenziali che l'AI non ha scritto nemmeno dopo il promemoria (oggetto, causa): diventati spazi di chi crea. */
+type Written = { doc: StructuredDoc; fromChat: string[]; truncated?: boolean; proposedAt?: string; gaps?: EssentialGap[] }
 
-async function askDocument(prompt: { system: string; systemTail: string }, user: string): Promise<Written> {
+export type EssentialGap = 'oggetto' | 'causa' | 'forma'
+const GAP_TEXT: Record<EssentialGap, string> = {
+  oggetto: 'una sezione «Oggetto» che dice cosa si scambia (servizi, contenuti, quantità, canali)',
+  causa: 'una clausola che dice cosa dà e cosa riceve ciascuna parte (compenso in denaro, beni o servizi)',
+  forma: 'una clausola «Forma e sottoscrizione» (forma scritta, firma elettronica semplice, luogo e data della firma)',
+}
+
+const headingWords = (s: DocSection) => (s.heading || '').toLowerCase().replace(/^\s*\d+\s*[.)]?\s*/, '')
+const sectionText = (s: DocSection) => [...(s.paragraphs || []), ...(s.bullets || [])].join(' ').toLowerCase()
+/** Forma scritta o firma elettronica dette davvero (non basta un titolo «Firme» o "sottoscritto"). */
+const FORM_WORDS = /forma scritta|firma elettronica|firmat[oa] elettronicamente/
+const isFormSection = (s: DocSection) => FORM_WORDS.test(`${headingWords(s)} ${sectionText(s)}`)
+
+/** Luogo e data della firma: nel testo ("luogo e data") o uno spazio con quell'etichetta usato nel testo (mai quelli di nascita). */
+function hasSignPlace(doc: StructuredDoc): boolean {
+  const texts = docTexts(doc)
+  if (texts.some((t) => /(?:luogo\s+e\s+data|data\s+e\s+luogo)(?!\s+(?:di\s+)?nascita)/i.test(t))) return true
+  const used = new Set(texts.flatMap(fieldIdsIn))
+  return (doc.fields || []).some((f) => used.has(f.id) && /luogo/i.test(f.label) && /data/i.test(f.label) && !/nascit/i.test(f.label))
+}
+
+/**
+ * Elementi essenziali (art. 1325 c.c.) che il contratto non ha: una sezione «Oggetto», una
+ * clausola su cosa da' e riceve ciascuna parte (causa), la clausola sulla forma (forma scritta
+ * o firma elettronica, con luogo e data della firma).
+ */
+export function essentialGaps(doc: StructuredDoc): EssentialGap[] {
+  const sections = doc.sections
+  const out: EssentialGap[] = []
+  if (!sections.some((s) => /\boggetto\b/.test(headingWords(s)))) out.push('oggetto')
+  const causa = sections.some(
+    (s) =>
+      /corrispettiv|compens|\bcausa\b|scambio|controprestazion|prestazioni delle parti|obblighi delle parti|impegni delle parti|cosa (?:da|dà|riceve)/.test(headingWords(s)) ||
+      /\bin cambio\b|\ba fronte d|\bcorrispettivo\b|\bcompenso\b|\bin contropartita\b|\bcome controprestazione\b|cosa d[aà] e cosa riceve/.test(sectionText(s))
+  )
+  if (!causa) out.push('causa')
+  if (!sections.some(isFormSection) || !hasSignPlace(doc)) out.push('forma')
+  return out
+}
+
+const essentialsReminder = (gaps: EssentialGap[]) =>
+  `Nel contratto mancano elementi essenziali (art. 1325 c.c.): ${gaps.map((g) => GAP_TEXT[g]).join('; ')}. Riscrivi il documento INTERO aggiungendoli, nello stesso formato JSON, senza inventare fatti: un dato che nessuno ha detto diventa uno spazio da compilare ({{id}} in "fields"). Rispondi SOLO con il JSON.`
+
+/** Spazio "Luogo e data della firma" (di ciascun firmatario): quello che c'e' gia' o uno nuovo. */
+function signPlaceField(fields: DocField[]): string {
+  const place = fields.find((f) => f.party === 'entrambi' && /luogo/i.test(f.label) && /data/i.test(f.label) && !/nascit/i.test(f.label))
+  if (place) return place.id
+  const id = fieldIdFrom('luogo_data_firma', new Set(fields.map((f) => f.id)))
+  fields.push({ id, label: 'Luogo e data della firma', party: 'entrambi' })
+  return id
+}
+
+/**
+ * Forma e sottoscrizione ancora mancante dopo il secondo tentativo (controllata sul testo come
+ * sara' salvato): la clausola standard (non e' un fatto, e' come si firma qui: forma scritta,
+ * firma elettronica semplice, luogo e data). Se la clausola sulla forma c'e' ma senza luogo e
+ * data, si aggiunge solo quella riga.
+ */
+function withFormClause(doc: StructuredDoc): StructuredDoc {
+  const fields = [...(doc.fields || [])]
+  const form = doc.sections.findIndex(isFormSection)
+  if (form >= 0) {
+    const id = signPlaceField(fields)
+    const sections = doc.sections.map((s, i) => (i === form ? { ...s, paragraphs: [...(s.paragraphs || []), `Luogo e data della firma: {{${id}}}.`] } : s))
+    return { ...doc, fields, sections }
+  }
+  const id = signPlaceField(fields)
+  const n = doc.sections.length + 1
+  return {
+    ...doc,
+    fields,
+    sections: [...doc.sections, { heading: `${n}. Forma e sottoscrizione`, paragraphs: [`Il presente contratto è redatto in forma scritta ed è sottoscritto dalle parti con firma elettronica semplice. Luogo e data della firma: {{${id}}}.`] }],
+  }
+}
+
+/**
+ * Oggetto o causa ancora mancanti dopo il promemoria: mai inventati, diventano spazi di chi crea
+ * (obbligatori per la sua firma) in una sezione «Oggetto» (quella che c'e' o una nuova in cima).
+ */
+function withEssentialFields(doc: StructuredDoc, gaps: EssentialGap[]): StructuredDoc {
+  const wantObject = gaps.includes('oggetto')
+  const wantExchange = gaps.includes('causa')
+  if (!wantObject && !wantExchange) return doc
+  const fields = [...(doc.fields || [])]
+  const add = (spec: { id: string; label: string }) => {
+    if (!fields.some((f) => f.id === spec.id)) fields.push({ id: spec.id, label: spec.label, party: 'creatore' })
+  }
+  const lines: string[] = []
+  if (wantObject) {
+    add(ESSENTIAL_OBJECT)
+    lines.push(`Oggetto del contratto: {{${ESSENTIAL_OBJECT.id}}}.`)
+  }
+  if (wantExchange) {
+    add(ESSENTIAL_EXCHANGE)
+    lines.push(`Cosa dà e cosa riceve ciascuna parte: {{${ESSENTIAL_EXCHANGE.id}}}.`)
+  }
+  const at = doc.sections.findIndex((s) => /\boggetto\b/.test(headingWords(s)))
+  const sections =
+    at >= 0
+      ? doc.sections.map((s, i) => (i === at ? { ...s, paragraphs: [...(s.paragraphs || []), ...lines] } : s))
+      : [{ heading: 'Oggetto', paragraphs: lines }, ...doc.sections]
+  return { ...doc, fields, sections }
+}
+
+/**
+ * Chiede il documento all'AI (JSON). check: per contratti e accordi, gli elementi essenziali
+ * che mancano (sul testo come sara' salvato); se ne manca qualcuno si riprova UNA volta con un
+ * promemoria. Se mancano ancora, la forma si aggiunge con la clausola standard e oggetto e
+ * causa diventano spazi di chi crea (mai inventati).
+ */
+async function askDocument(prompt: { system: string; systemTail: string }, user: string, check?: (doc: StructuredDoc) => EssentialGap[]): Promise<Written> {
   const accept = (v: Record<string, unknown>) => typeof v.title === 'string' && Array.isArray(v.sections)
   const messages: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: user }]
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let formatErrors = 0
+  let first: Written | null = null
+  const finish = (w: Written): Written => {
+    const gaps = check ? check(w.doc) : []
+    if (!gaps.length) return w
+    const doc = withEssentialFields(gaps.includes('forma') ? withFormClause(w.doc) : w.doc, gaps)
+    const left = gaps.filter((g) => g !== 'forma')
+    return { ...w, doc, ...(left.length ? { gaps: left } : {}) }
+  }
+  while (true) {
     const result = await callAIPaced(messages, prompt.system, {
       feature: 'super_chat_documenti',
       temperature: 0.3,
@@ -621,10 +767,20 @@ async function askDocument(prompt: { system: string; systemTail: string }, user:
     const raw = result.message || ''
     const parsed = parseJsonObject(raw, accept)
     const clean = parsed ? sanitizeDoc(parsed) : null
-    if (clean) return clean
+    if (clean) {
+      const gaps = check && !first ? check(clean.doc) : []
+      if (!gaps.length) return finish(first && check && check(clean.doc).length > check(first.doc).length ? first : clean)
+      // Un solo promemoria sugli elementi essenziali.
+      first = clean
+      messages.push({ role: 'assistant', content: raw.slice(0, 20_000) }, { role: 'user', content: essentialsReminder(gaps) })
+      continue
+    }
+    if (++formatErrors >= 2) {
+      if (first) return finish(first)
+      throw new Error('non sono riuscito a scrivere il documento in un formato valido: riprova')
+    }
     messages.push({ role: 'assistant', content: raw.slice(0, 4000) }, { role: 'user', content: FIX_FORMAT })
   }
-  throw new Error('non sono riuscito a scrivere il documento in un formato valido: riprova')
 }
 
 const todayText = () => new Date().toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', year: 'numeric' })
@@ -636,22 +792,40 @@ const todayText = () => new Date().toLocaleDateString('it-IT', { timeZone: 'Euro
  * verificati) e si tolgono sempre; in una nuova versione (previous) tornano solo quelli gia'
  * salvati, sullo stesso campo.
  */
-function withStandardParties(written: Written, kind: DocKind, previous: StructuredDoc | null): Written {
+function withStandardParties(written: Written, kind: DocKind, previous: StructuredDoc | null, terms: TermsPrefill = {}): Written {
   if (kind !== 'contratto' && kind !== 'accordo' && kind !== 'preventivo') return written
   const creator = { name: BUSINESS.name, address: BUSINESS.address, vat: BUSINESS.vat, person: BUSINESS.person }
   const cleared = ensureParties(dropPartyLines(written.doc), creator, { claim: true, clear: true })
   const kept = previous ? carryFieldValues(cleared, previous) : cleared
-  const doc = ensureParties(tidyFields(kept, { court: BUSINESS.court }), creator, { claim: true })
+  // «Termini della collaborazione»: spazi di chi crea (valori gia' scelti o dati da Luca, altrimenti vuoti).
+  const before = previous ? readTerms(previous) : null
+  const values = { date: before?.date.value || termsDateValue(terms.at), days: before?.days.value || (terms.days ? deliveryText(terms.days) : '') }
+  const doc = ensureTerms(ensureParties(tidyFields(kept, { court: BUSINESS.court }), creator, { claim: true }), values)
   return { ...written, doc: withPartiesSection(doc, creator) }
 }
 
-/** Scrive un documento nuovo dalla conversazione (o solo dalla richiesta, se non c'e' una conversazione). */
+/**
+ * Valori iniziali dei «Termini della collaborazione» dati da Luca (data e ora locali, giorni).
+ * saidAt: data e ora scritte da Luca nei suoi messaggi (vale se l'AI non ne propone una vera).
+ */
+export type TermsPrefill = { at?: string | null; days?: DeliveryDays | null; saidAt?: string | null }
+const termsDateValue = (local?: string | null) => (local && formatCollabDate(local)) || ''
+export const isDeliveryDays = (n: unknown): n is DeliveryDays => (DELIVERY_DAYS as readonly unknown[]).includes(n)
+
+/**
+ * Scrive un documento nuovo dalla conversazione (o solo dalla richiesta, se non c'e' una
+ * conversazione). Contratti e accordi: elementi essenziali controllati (un promemoria se
+ * mancano). terms: data e ora e termine di consegna dati da Luca (valori iniziali dei Termini
+ * della collaborazione); senza, la data proposta dall'AI vale solo se e' scritta davvero nella
+ * richiesta o nella conversazione.
+ */
 export async function writeDocument(input: {
   kind: DocKind
   title?: string
   instructions: string
   transcript: Transcript | null
   knowledge: string
+  terms?: TermsPrefill
 }): Promise<Written> {
   const t = input.transcript
   const user = [
@@ -665,7 +839,13 @@ export async function writeDocument(input: {
   ]
     .filter(Boolean)
     .join('\n\n')
-  return withStandardParties(await askDocument(systemPrompt(input.kind, todayText()), user), input.kind, null)
+  const contractLike = input.kind === 'contratto' || input.kind === 'accordo'
+  // Elementi essenziali controllati sul testo come sara' salvato (dopo «Le parti» e la pulizia).
+  const check = (doc: StructuredDoc) => essentialGaps(withStandardParties({ doc, fromChat: [] }, input.kind, null).doc)
+  const written = await askDocument(systemPrompt(input.kind, todayText()), user, contractLike ? check : undefined)
+  const source = `${input.instructions}\n${t?.text || ''}`
+  const proposed = written.proposedAt && dateInSource(written.proposedAt, source) ? written.proposedAt : null
+  return withStandardParties(written, input.kind, null, { at: input.terms?.at || proposed || input.terms?.saidAt || null, days: input.terms?.days ?? null })
 }
 
 /** Nuova versione: il documento attuale con la modifica chiesta da Luca, il resto identico. */

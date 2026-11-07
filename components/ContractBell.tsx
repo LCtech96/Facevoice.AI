@@ -7,8 +7,8 @@ import { authFetch } from '@/components/useAssistantChat'
 import { CONTRACT_NOTE_EVENT } from '@/lib/contract-text'
 
 // Campanella dei contratti nella barra in alto (solo l'amministratore): pallino rosso
-// se ci sono novita' (richiesta di modifica, firma del destinatario, contratto firmato
-// da tutti). Un tocco apre l'elenco; un tocco su una voce apre il contratto su quella
+// se ci sono novita' (link aperto da chi lo riceve, richiesta di modifica, firma del
+// destinatario, contratto firmato da tutti). Un tocco apre l'elenco; un tocco su una voce apre il contratto su quella
 // richiesta e la segna come letta. Si aggiorna ogni minuto e quando si torna sulla pagina.
 
 const API = '/api/admin/contracts/notifications'

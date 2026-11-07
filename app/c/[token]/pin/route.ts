@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { clientIp, json, readBody, sameOrigin } from '@/lib/contract-http'
-import { LINK_COOKIE, LINK_COOKIE_TTL_S, clearPinAttempts, contractByToken, noteWrongPin, reservePinAttempt, signLinkCookie, verifyPin } from '@/lib/contracts'
+import { LINK_COOKIE, LINK_COOKIE_TTL_S, clearPinAttempts, contractByToken, linkOrigin, noteWrongPin, reservePinAttempt, signLinkCookie, verifyPin } from '@/lib/contracts'
+import { noteOpened, runLater } from '@/lib/contract-share'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,6 +9,7 @@ export const dynamic = 'force-dynamic'
 // (il tentativo si prenota prima del controllo). PIN giusto: cookie firmato HttpOnly,
 // Secure, SameSite=Lax, valido 2 ore e solo per questo link. Link sconosciuto o revocato:
 // sempre lo stesso "Link non valido". Il PIN non si salva e non si scrive mai nei log.
+// PIN giusto = contratto aperto: avviso a chi crea (dopo la risposta, mai bloccante).
 
 const INVALID = { error: 'Link non valido.' }
 
@@ -30,6 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   await clearPinAttempts(c.share.tokenHash, ip)
   const value = signLinkCookie(c.share)
   if (!value) return json({ error: 'Pagina non disponibile in questo momento.' }, 503)
+  await runLater(() => noteOpened(c.id, linkOrigin(req.nextUrl.origin)))
   const res = json({ ok: true })
   res.cookies.set(LINK_COOKIE, value, {
     httpOnly: true,

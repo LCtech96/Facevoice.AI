@@ -3,6 +3,7 @@ import { adminOnly, clientIp, errorResponse, json, readBody } from '@/lib/contra
 import {
   CONTRACT_ID_RE,
   SHARE_CHANNELS,
+  addTermsVersion,
   applyNewVersion,
   cancelContract,
   contractDoc,
@@ -19,7 +20,7 @@ import {
   signContract,
   type ShareChannel,
 } from '@/lib/contracts'
-import { afterCompleted, shareContractNow } from '@/lib/contract-share'
+import { afterSigned, runLater, shareContractNow } from '@/lib/contract-share'
 import { loadTranscript, reviseDocument } from '@/lib/assistant-documents'
 import { loadKnowledge } from '@/lib/meta/agent'
 import { emptyFieldLabels } from '@/lib/pdf-doc'
@@ -31,7 +32,9 @@ export const maxDuration = 120
 
 // Un contratto, per l'amministratore. Ogni azione ricontrolla che sia lui.
 // GET ?link=1 (link da copiare) &seen=1 (notifiche di questo contratto lette)
-// POST { action: recipient | fields | share | revoke | reject | preview | apply | sign | cancel, ... }
+// POST { action: recipient | fields | share | revoke | reject | preview | apply | sign | cancel | terms_upgrade, ... }
+//   fields: anche i «Termini della collaborazione» ({ termini_data: "2026-11-15T20:30" | "nessuna", termini_consegna: "7" | "14" | "30" | "nessuno" })
+//   terms_upgrade: contratto di prima gia' firmato senza i termini -> nuova versione con i termini (le firme si rifanno)
 // DELETE: cancella una bozza non firmata.
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -121,11 +124,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           ip: clientIp(req),
           userAgent: req.headers.get('user-agent') || '',
         })
-        if (completed) await afterCompleted(contract, origin)
+        await runLater(() => afterSigned(contract, 'creatore', completed, origin))
         return json({ ok: true, completed, contract: view(contract) })
       }
       case 'cancel':
         return json({ ok: true, contract: view(await cancelContract(id)) })
+      case 'terms_upgrade':
+        return json({ ok: true, contract: view(await addTermsVersion(id)) })
       default:
         return json({ error: 'Azione non valida' }, 400)
     }

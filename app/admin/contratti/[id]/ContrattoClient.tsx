@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ArrowLeft, Ban, Check, Copy, Download, ExternalLink, History, KeyRound, Loader2, Pencil, PenLine, Plus, Share2, Sparkles, Trash2, TriangleAlert, UserRound, X } from 'lucide-react'
+import { ArrowLeft, Ban, CalendarClock, Check, Copy, Download, ExternalLink, History, KeyRound, Loader2, Pencil, PenLine, Plus, Share2, Sparkles, Trash2, TriangleAlert, UserRound, X } from 'lucide-react'
 import { authFetch } from '@/components/useAssistantChat'
 import ContractView from '@/components/contracts/ContractView'
 import SignForm, { type SignPayload } from '@/components/contracts/SignForm'
@@ -12,6 +12,7 @@ import { CHANNEL_LABEL, CONTRACT_NOTE_EVENT, CREATOR_DISCLAIMER, PIN_PATTERN, SH
 import { pdfFilename, type DocSection, type StructuredDoc } from '@/lib/pdf-doc'
 import type { CreatorView } from '@/lib/contracts'
 import { taxCodeLooksWrong } from '@/lib/contract-parties'
+import { DELIVERY_DAYS, NO_DATE, NO_TERM, TERMS_DATE_ID, TERMS_DATE_LABEL, TERMS_DAYS_ID, TERMS_DAYS_LABEL, TERMS_HEADING, formatCollabDate } from '@/lib/contract-terms'
 import { useAdminGate } from '../useAdminGate'
 import { STATUS_CHIP } from '../ContrattiClient'
 
@@ -19,7 +20,8 @@ import { STATUS_CHIP } from '../ContrattiClient'
 // (link + PIN), richieste di modifica con Accetta (l'AI applica e mostra prima di
 // salvare), Modifica (a mano o riscrivendo la richiesta) e Rifiuta (il testo resta),
 // dati da compilare e firma di Facevoice AI (tre conferme, nome e firma col dito), dati
-// scritti dalla controparte nella pagina del link (si aggiornano da soli mentre li scrive).
+// scritti dalla controparte nella pagina del link (si aggiornano da soli mentre li scrive),
+// «Termini della collaborazione» (data e ora, termine di consegna: servono per condividere e firmare).
 
 const when = (iso: string) => new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -34,7 +36,9 @@ const EVENT_LABEL: Record<string, string> = {
   nuova_versione: 'Nuova versione',
   dati_compilati: 'Dati compilati',
   dati_parti: 'Aggiunti gli spazi per i dati delle parti',
+  termini: 'Aggiunti i Termini della collaborazione',
   firma: 'Firma',
+  link_aperto: 'Link aperto',
   completato: 'Firmato da tutti e due',
   annullato: 'Contratto annullato',
   pin_errato: 'PIN sbagliato sul link',
@@ -50,6 +54,13 @@ const primary = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[
 const card = 'rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4'
 const input = 'w-full rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-base text-[var(--text-primary)] md:text-sm'
 
+/** Cosa manca dei Termini della collaborazione, in una frase (null: a posto). */
+export function termsBlock(c: CreatorView, action: 'condividere' | 'firmare'): string | null {
+  if (c.terms.upgrade) return 'Mancano data/ora e termine di consegna: crea una nuova versione (le firme si rifanno).'
+  if (c.terms.ready) return null
+  return `Prima di ${action} scegli nei Termini della collaborazione: ${c.terms.missing.map((m) => m.toLowerCase()).join(' e ')}.`
+}
+
 function ShareSheet({ c, onDone, onClose }: { c: CreatorView; onDone: (c: CreatorView, outcome: string) => void; onClose: () => void }) {
   const known = c.recipient.platform as ShareChannel | undefined
   const [channel, setChannel] = useState<ShareChannel>(c.recipient.email ? 'email' : known && ['instagram', 'facebook', 'whatsapp'].includes(known) ? known : 'link')
@@ -63,7 +74,8 @@ function ShareSheet({ c, onDone, onClose }: { c: CreatorView; onDone: (c: Creato
   const dm = channel === 'instagram' || channel === 'facebook' || channel === 'whatsapp'
   const dmTarget = dm && known === channel ? c.recipient.contactId || '' : ''
   const pinOk = PIN_PATTERN.test(pin) && pin.toUpperCase() === pin2.toUpperCase()
-  const ready = pinOk && name.trim().length > 0 && (channel !== 'email' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) && (!dm || Boolean(dmTarget)) && (channel === 'link' || text.trim().length > 0)
+  const blocked = termsBlock(c, 'condividere')
+  const ready = !blocked && pinOk && name.trim().length > 0 && (channel !== 'email' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) && (!dm || Boolean(dmTarget)) && (channel === 'link' || text.trim().length > 0)
 
   const submit = async () => {
     if (!ready || busy) return
@@ -91,6 +103,11 @@ function ShareSheet({ c, onDone, onClose }: { c: CreatorView; onDone: (c: Creato
           <X className="h-4 w-4" />
         </button>
       </div>
+      {blocked && (
+        <a href="#termini" onClick={onClose} className="mt-2 flex items-start gap-2 rounded-lg border border-[#FF9500]/40 bg-[#FF9500]/10 p-3 text-sm text-[var(--text-primary)]">
+          <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#FF9500]" /> {blocked}
+        </a>
+      )}
       {c.share?.active && <p className="mt-1 text-xs text-[#FF9500]">C’è già un link attivo: condividendo di nuovo cambiano link e PIN, e quello di prima non funziona più.</p>}
       <div className="mt-3 flex flex-wrap gap-2">
         {SHARE_CHANNELS.map((ch) => (
@@ -141,6 +158,106 @@ function ShareSheet({ c, onDone, onClose }: { c: CreatorView; onDone: (c: Creato
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />} {channel === 'link' ? 'Crea il link' : 'Crea il link e invia'}
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * «Termini della collaborazione»: data e ora (ora italiana) e termine di consegna (7, 14 o 30
+ * giorni), oppure «Nessuna data stabilita» / «Nessun termine» scelti apposta. Si cambiano
+ * finche' nessuno ha firmato; poi si leggono soltanto. Contratto di prima gia' firmato senza
+ * termini: avviso e pulsante per la nuova versione.
+ */
+export function TermsCard({ c, busy, onSave, onUpgrade }: { c: CreatorView; busy: string | null; onSave: (values: Record<string, string>) => void; onUpgrade: () => void }) {
+  const t = c.terms
+  const [date, setDate] = useState(t.date.none ? '' : t.date.local || '')
+  const [noDate, setNoDate] = useState(t.date.none)
+  const [days, setDays] = useState<string>(t.days.none ? 'none' : t.days.n ? String(t.days.n) : '')
+  useEffect(() => {
+    setDate(t.date.none ? '' : t.date.local || '')
+    setNoDate(t.date.none)
+    setDays(t.days.none ? 'none' : t.days.n ? String(t.days.n) : '')
+  }, [t.date.value, t.days.value, t.date.none, t.date.local, t.days.none, t.days.n])
+  const dateValue = noDate ? 'nessuna' : date
+  const savedDate = t.date.none ? 'nessuna' : t.date.local || ''
+  const savedDays = t.days.none ? 'none' : t.days.n ? String(t.days.n) : ''
+  const changed = dateValue !== savedDate || days !== savedDays
+  const preview = noDate ? NO_DATE : date ? formatCollabDate(date) : null
+  const chip = (on: boolean) => `min-h-[40px] rounded-full px-3 py-2 text-sm font-medium ${on ? 'bg-[var(--accent-blue)] text-white' : 'border border-[var(--border-color)] text-[var(--text-primary)]'}`
+
+  if (t.upgrade) {
+    return (
+      <div id="termini" className={`${card} mt-5 scroll-mt-24 border-[#FF9500]/50`}>
+        <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--text-primary)]">
+          <CalendarClock className="h-4 w-4" /> {TERMS_HEADING}
+        </h2>
+        <p className="mt-2 rounded-lg bg-[#FF9500]/10 p-3 text-sm text-[var(--text-primary)]">Mancano data/ora e termine di consegna: crea una nuova versione (le firme si rifanno).</p>
+        <button type="button" onClick={onUpgrade} disabled={busy === 'terms_upgrade'} className={`${primary} mt-3`}>
+          {busy === 'terms_upgrade' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Crea la nuova versione
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div id="termini" className={`${card} mt-5 scroll-mt-24 ${t.ready ? '' : 'border-[#FF9500]/50'}`}>
+      <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--text-primary)]">
+        <CalendarClock className="h-4 w-4" /> {TERMS_HEADING}
+      </h2>
+      {!t.editable ? (
+        <dl className="mt-2 space-y-1.5 text-sm">
+          <div>
+            <dt className="text-xs text-[var(--text-secondary)]">{TERMS_DATE_LABEL}</dt>
+            <dd className="break-words text-[var(--text-primary)]">{t.date.value || '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-[var(--text-secondary)]">{TERMS_DAYS_LABEL}</dt>
+            <dd className="break-words text-[var(--text-primary)]">{t.days.value || '—'}</dd>
+          </div>
+          <p className="pt-1 text-[11px] text-[var(--text-secondary)]">Bloccati dalla prima firma: per cambiarli serve una nuova versione (le firme si rifanno).</p>
+        </dl>
+      ) : (
+        <>
+          <p className="text-xs text-[var(--text-secondary)]">Li scegli tu: servono per condividere e firmare. Si vedono nel contratto, subito dopo «Le parti».</p>
+          <label className="mt-3 block text-sm text-[var(--text-secondary)]">
+            {TERMS_DATE_LABEL} *
+            <input
+              type="datetime-local"
+              value={noDate ? '' : date}
+              disabled={noDate}
+              onChange={(e) => setDate(e.target.value)}
+              className={`${input} mt-1 disabled:opacity-50`}
+              aria-label={TERMS_DATE_LABEL}
+              data-field={TERMS_DATE_ID}
+            />
+          </label>
+          <label className="mt-2 flex min-h-[40px] items-center gap-2 text-sm text-[var(--text-primary)]">
+            <input type="checkbox" checked={noDate} onChange={(e) => setNoDate(e.target.checked)} className="h-5 w-5" /> {NO_DATE}
+          </label>
+          {preview && <p className="text-xs text-[var(--text-secondary)]">Nel contratto: {preview}</p>}
+          <p className="mt-3 text-sm text-[var(--text-secondary)]">{TERMS_DAYS_LABEL} *</p>
+          <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label={TERMS_DAYS_LABEL} data-field={TERMS_DAYS_ID}>
+            {DELIVERY_DAYS.map((n) => (
+              <button key={n} type="button" onClick={() => setDays(String(n))} aria-pressed={days === String(n)} className={chip(days === String(n))}>
+                {n} giorni
+              </button>
+            ))}
+            <button type="button" onClick={() => setDays('none')} aria-pressed={days === 'none'} className={chip(days === 'none')}>
+              {NO_TERM}
+            </button>
+          </div>
+          {days && days !== 'none' && <p className="mt-1 text-xs text-[var(--text-secondary)]">Nel contratto: entro {days} giorni dalla data della collaborazione</p>}
+          {!t.ready && <p className="mt-2 text-xs text-[#FF9500]">Da scegliere: {t.missing.join(', ')}.</p>}
+          <button
+            type="button"
+            onClick={() => onSave({ [TERMS_DATE_ID]: dateValue, [TERMS_DAYS_ID]: days })}
+            disabled={!changed || busy === 'terms' || (!noDate && !date && !days)}
+            className={`${primary} mt-3`}
+          >
+            {busy === 'terms' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salva i termini
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -353,6 +470,7 @@ export default function ContrattoClient({ id }: { id: string }) {
   const signFields = myFields.filter((f) => !f.value?.trim()).map((f) => ({ id: f.id, label: f.label }))
   const emptyBody = myFields.filter((f) => f.kind === 'body' && !f.value?.trim())
   const partyName = (by: string) => (by === 'creatore' ? c.creator.name : by === 'destinatario' ? c.recipient.name : '')
+  const signBlocked = termsBlock(c, 'firmare')
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-28 pt-20 md:pb-16 md:pt-24">
@@ -413,6 +531,7 @@ export default function ContrattoClient({ id }: { id: string }) {
       {c.share && (
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
           {c.share.active ? `Link attivo dal ${when(c.share.createdAt)} · ${CHANNEL_LABEL[c.share.channel as ShareChannel] || c.share.channel}${c.share.to ? ` · ${c.share.to}` : ''}` : `Link revocato il ${when(c.share.revokedAt || c.share.createdAt)}`}
+          {c.share.active && c.lastOpenedAt ? ` · aperto da ${c.recipientLabel} il ${when(c.lastOpenedAt)}` : ''}
         </p>
       )}
 
@@ -539,6 +658,19 @@ export default function ContrattoClient({ id }: { id: string }) {
         </div>
       )}
 
+      {/* Termini della collaborazione */}
+      {editable && (
+        <TermsCard
+          c={c}
+          busy={busy}
+          onSave={(values) => post('terms', { action: 'fields', values }).then((d) => d && setNotice('Termini salvati.'))}
+          onUpgrade={() =>
+            window.confirm('Creare una nuova versione con i Termini della collaborazione? Le firme già date si cancellano.') &&
+            post('terms_upgrade', { action: 'terms_upgrade' }).then((d) => d && setNotice('Nuova versione creata: scegli data e termine di consegna, poi firmate di nuovo.'))
+          }
+        />
+      )}
+
       {/* Firme */}
       <div className={`${card} mt-5`}>
         <h2 className="text-base font-semibold text-[var(--text-primary)]">Firme</h2>
@@ -561,6 +693,10 @@ export default function ContrattoClient({ id }: { id: string }) {
                   Chiudi
                 </button>
               </div>
+            ) : signBlocked ? (
+              <a href="#termini" className="flex items-start gap-2 rounded-lg border border-[#FF9500]/40 bg-[#FF9500]/10 p-3 text-sm text-[var(--text-primary)]">
+                <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#FF9500]" /> {signBlocked}
+              </a>
             ) : (
               <button type="button" onClick={() => setSigning(true)} className={primary}>
                 <PenLine className="h-4 w-4" /> Firma per {c.creator.name}

@@ -1,4 +1,5 @@
 import { docTexts, fieldIdsIn, type DocField, type DocSection, type DocSignature, type StructuredDoc } from '@/lib/pdf-doc'
+import { TERMS_IDS, hasTermsFields, isTermsSection, renameTermsSections, termsSection } from '@/lib/contract-terms'
 
 // Dati delle parti dei contratti ("Le parti"), messi dal server e non lasciati all'AI.
 // Il nome del profilo Instagram, lo @username, i numeri e le email scritti in chat non
@@ -185,15 +186,18 @@ const PARTIES_HEADING_RE = /^\s*(\d+\s*[.)]?\s*)?le parti\s*$/i
 
 /**
  * Toglie la sezione "Le parti" scritta da qui (nei documenti e' nel testo, nei contratti si
- * aggiunge mostrandoli), anche se l'AI l'ha numerata ("1. Le parti"). loose: anche una
- * "Le parti" che comincia con "Tra:" scritta in altro modo (testo da preparare, mai un testo
- * gia' firmato).
+ * aggiunge mostrandoli), anche se l'AI l'ha numerata ("1. Le parti"), e con lei i «Termini
+ * della collaborazione» scritti da qui (lib/contract-terms: stessa regola). loose: anche una
+ * "Le parti" che comincia con "Tra:" scritta in altro modo e una copia dei «Termini della
+ * collaborazione» che non toglie niente (testo da preparare, mai un testo gia' firmato): una
+ * sezione con quel titolo e clausole vere resta sempre (isTermsSection).
  */
 export function stripPartiesSection<T extends StructuredDoc>(doc: T, opts: { loose?: boolean } = {}): T {
   const generated = (s: DocSection) =>
-    PARTIES_HEADING_RE.test(s.heading || '') &&
-    /^\s*Tra\s*:/i.test(s.paragraphs?.[0] || '') &&
-    (opts.loose || (s.paragraphs.length === 2 && s.paragraphs[1].trim() === 'E:' && Boolean(s.bullets?.length) && s.bullets!.every((b) => /^.+: \{\{[a-z0-9_]{1,40}\}\}$/.test(b))))
+    (PARTIES_HEADING_RE.test(s.heading || '') &&
+      /^\s*Tra\s*:/i.test(s.paragraphs?.[0] || '') &&
+      (opts.loose || (s.paragraphs.length === 2 && s.paragraphs[1].trim() === 'E:' && Boolean(s.bullets?.length) && s.bullets!.every((b) => /^.+: \{\{[a-z0-9_]{1,40}\}\}$/.test(b))))) ||
+    isTermsSection(s, opts.loose, doc.fields || [])
   return doc.sections.some(generated) ? { ...doc, sections: doc.sections.filter((s) => !generated(s)) } : doc
 }
 
@@ -201,18 +205,20 @@ export function stripPartiesSection<T extends StructuredDoc>(doc: T, opts: { loo
  * Testo non ancora firmato: via le righe "Tra: …" / "E: …" in "meta" e una "Le parti"
  * scritta dall'AI (ci pensa la sezione «Le parti»), e i campi che restano senza posto nel
  * testo (es. "Cognome" accanto al nome di Instagram). Restano i dati delle parti, che si
- * vedono in «Le parti». Restituisce lo stesso oggetto se non cambia niente.
+ * vedono in «Le parti». Una sezione «Termini della collaborazione» con clausole vere resta
+ * intera, col titolo «Condizioni della collaborazione» (renameTermsSections). Restituisce lo
+ * stesso oggetto se non cambia niente.
  */
 export function dropPartyLines(doc: StructuredDoc): StructuredDoc {
   const partyLine = (m: string) => /^\s*(Tra|E)\s*:/i.test(m)
-  const stripped = stripPartiesSection(doc, { loose: true })
+  const stripped = renameTermsSections(stripPartiesSection(doc, { loose: true }))
   const meta = (stripped.meta || []).filter((m) => !partyLine(m))
   if (stripped === doc && meta.length === (doc.meta || []).length) return doc
   const gone = new Set([...(doc.meta || []).filter(partyLine), ...doc.sections.filter((s) => !stripped.sections.includes(s)).flatMap((s) => [s.heading || '', ...(s.paragraphs || []), ...(s.bullets || [])])].flatMap(fieldIdsIn))
   const next: StructuredDoc = { ...stripped, ...(doc.meta ? { meta } : {}) }
   const used = new Set(docTexts(next).flatMap(fieldIdsIn))
   // Dati delle parti (anche quelli che passeranno alla controparte, es. "Codice fiscale del cliente" segnato di chi crea): restano.
-  const kept = new Set<string>([...Object.values(partyRoles(ensureParties(next, { name: '' }, { claim: true }))), ...CREATOR_SPECS.map((x) => x.id)] as string[])
+  const kept = new Set<string>([...Object.values(partyRoles(ensureParties(next, { name: '' }, { claim: true }))), ...CREATOR_SPECS.map((x) => x.id), ...TERMS_IDS] as string[])
   return { ...next, fields: (next.fields || []).filter((f) => !gone.has(f.id) || used.has(f.id) || kept.has(f.id)) }
 }
 
@@ -222,7 +228,10 @@ export function recipientNameToken(doc: Pick<StructuredDoc, 'fields'>): string |
   return id ? `{{${id}}}` : null
 }
 
-/** Documento da firmare (non ancora contratto): "Le parti" in cima al testo e il nome giusto sotto la firma. */
+/**
+ * Documento da firmare (non ancora contratto): "Le parti" in cima al testo (e subito dopo i
+ * «Termini della collaborazione», se il documento ne ha gli spazi) e il nome giusto sotto la firma.
+ */
 export function withPartiesSection(doc: StructuredDoc, creator: CreatorInfo): StructuredDoc {
   const base = stripPartiesSection(doc)
   const token = recipientNameToken(base)
@@ -230,7 +239,8 @@ export function withPartiesSection(doc: StructuredDoc, creator: CreatorInfo): St
     const theirs = s.party === 'destinatario' || (!s.party && i === all.length - 1 && all.length > 1)
     return theirs && token ? { ...s, name: token } : s
   })
-  return { ...base, sections: [partiesSection(base, creator), ...base.sections], ...(signatures ? { signatures } : {}) }
+  const top = [partiesSection(base, creator), ...(hasTermsFields(base) ? [termsSection()] : [])]
+  return { ...base, sections: [...top, ...base.sections], ...(signatures ? { signatures } : {}) }
 }
 
 /** Testo da mandare all'AI senza i dati scritti dalla controparte (non servono per riscrivere; tornano dopo, per id). */

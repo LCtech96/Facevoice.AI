@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import { LINK_COOKIE, contractByToken, openContract, publicView, verifyLinkCookie } from '@/lib/contracts'
+import { LINK_COOKIE, contractByToken, linkOrigin, openContract, publicView, verifyLinkCookie } from '@/lib/contracts'
+import { noteOpened, runLater } from '@/lib/contract-share'
 import PinForm from './PinForm'
 import ContractPublic from './ContractPublic'
 
@@ -54,6 +55,8 @@ export default async function ContractLinkPage({ params }: { params: Promise<{ t
   }
   // Aperto: i contratti di prima ricevono qui gli spazi per i dati delle parti (testo e firme restano).
   const opened = (await openContract(c.id).catch(() => null)) || c
+  // Riaperto (anche dopo «contratto aggiornato»): avviso a chi crea se tocca, dopo la risposta.
+  await runLater(() => noteOpened(c.id, linkOrigin(null)))
   return (
     <Shell brand={c.creator.name}>
       <ContractPublic token={token} initial={publicView(opened)} />

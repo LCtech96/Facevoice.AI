@@ -4,7 +4,7 @@ import { CONTRACT_ID_RE, listNotes, markNotesRead } from '@/lib/contracts'
 
 export const dynamic = 'force-dynamic'
 
-// Campanella dei contratti (solo l'amministratore): richieste di modifica, firme, contratti completati.
+// Campanella dei contratti (solo l'amministratore): link aperti, richieste di modifica, firme, contratti completati.
 // GET: ultime notifiche e quante non lette. POST { ids } | { contractId } | { all: true }: segna come lette.
 
 export async function GET(req: NextRequest) {

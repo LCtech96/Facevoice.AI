@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { clientIp, errorResponse, json, readBody, sameOrigin } from '@/lib/contract-http'
 import { LINK_COOKIE, addChangeRequest, contractByToken, linkOrigin, publicView, saveRecipientData, signContract, verifyLinkCookie } from '@/lib/contracts'
-import { afterCompleted, notifyCreator } from '@/lib/contract-share'
+import { afterSigned, notifyCreator, runLater } from '@/lib/contract-share'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   try {
     if (body.action === 'richiesta') {
       const { contract, request } = await addChangeRequest(c.id, { text: body.text, section: body.section })
-      await notifyCreator(contract, 'modifica', request.id)
+      await runLater(() => notifyCreator(contract, 'modifica', { requestId: request.id }))
       return json({ ok: true, view: publicView(contract) })
     }
     if (body.action === 'dati') {
@@ -40,8 +40,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         ip: clientIp(req),
         userAgent: req.headers.get('user-agent') || '',
       })
-      if (completed) await afterCompleted(contract, linkOrigin(req.nextUrl.origin))
-      else await notifyCreator(contract, 'firma_destinatario')
+      // Avvisi a chi crea (campanella, push, email) dopo la risposta: la firma e' gia' salvata.
+      const origin = linkOrigin(req.nextUrl.origin)
+      await runLater(() => afterSigned(contract, 'destinatario', completed, origin))
       return json({ ok: true, completed, view: publicView(contract) })
     }
     return json({ error: 'Azione non valida.' }, 400)

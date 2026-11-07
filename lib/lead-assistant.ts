@@ -56,6 +56,7 @@ import {
   recentDocuments,
   resolveConversation,
   reviseDocument,
+  isDeliveryDays,
   saveNewDocument,
   writeDocument,
   type DocVersion,
@@ -63,7 +64,8 @@ import {
   type Transcript,
 } from '@/lib/assistant-documents'
 import { pdfFilename } from '@/lib/pdf-doc'
-import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, applyNewVersion, contractForDocument, contractFromDocument, listContracts, loadContract, type ShareChannel } from '@/lib/contracts'
+import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, applyNewVersion, contractForDocument, contractFromDocument, listContracts, loadContract, termsProblem, type ShareChannel } from '@/lib/contracts'
+import { DELIVERY_DAYS, formatCollabDate, parseDateTimeInput, readTerms, statedDateTime, statedDeliveryDays, type DeliveryDays } from '@/lib/contract-terms'
 import { MAX_SHARE_TEXT, defaultShareText } from '@/lib/contract-share'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
@@ -737,12 +739,13 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 Già oggi, senza indicazioni, ogni carosello ha: un gancio fortissimo scritto in grande sulla prima slide, un'immagine generata dall'AI in copertina e nelle slide, e colori che cambiano a ogni post restando nella palette di Facevoice.
 
 Documenti (contratti, preventivi, accordi, lettere: Luca li apre in PDF con un tocco, li legge, li stampa o li scarica):
-- "create_document": {"kind": "contratto|preventivo|accordo|lettera|altro", "title": "opzionale", "about": {"platform": "instagram|facebook|whatsapp|email|web, opzionale", "contact": "nome, @username, email o contactId, come l'ha detto Luca"}, "instructions": "cosa vuole Luca, con le sue parole"} → scrive il documento usando TUTTA la conversazione con quella persona su quel canale (messaggi ricevuti, nostre risposte automatiche e scritte a mano, con le date) e i dati di Facevoice AI, e mostra a Luca la scheda del PDF con «Apri PDF» e «Scarica». Se più persone (o più canali) corrispondono restituisce l'elenco: chiedi a Luca quale e richiamalo con about.platform e about.contact = contactId. Se non trova nessuno, dillo e chiedi il nome esatto o il canale. Senza "about" scrive il documento solo dalla richiesta. Usalo SEMPRE quando Luca chiede di sviluppare, scrivere o preparare un contratto, un preventivo, un accordo, una lettera o un altro documento (anche "a proposito della conversazione con <nome>"): non dire mai che non puoi. Ci vuole circa un minuto.
+- "create_document": {"kind": "contratto|preventivo|accordo|lettera|altro", "title": "opzionale", "about": {"platform": "instagram|facebook|whatsapp|email|web, opzionale", "contact": "nome, @username, email o contactId, come l'ha detto Luca"}, "instructions": "cosa vuole Luca, con le sue parole", "collaboration_at": "contratti e accordi: data e ora della collaborazione dette da Luca, ISO (2026-11-15T20:30) o come le ha dette, opzionale", "delivery_days": "contratti e accordi: termine di consegna dei contenuti detto da Luca, 7, 14 o 30, opzionale", "dates_skipped": "true solo se Luca ha detto che non ci sono date, opzionale"} → scrive il documento usando TUTTA la conversazione con quella persona su quel canale (messaggi ricevuti, nostre risposte automatiche e scritte a mano, con le date) e i dati di Facevoice AI, e mostra a Luca la scheda del PDF con «Apri PDF» e «Scarica». Se più persone (o più canali) corrispondono restituisce l'elenco: chiedi a Luca quale e richiamalo con about.platform e about.contact = contactId. Se non trova nessuno, dillo e chiedi il nome esatto o il canale. Senza "about" scrive il documento solo dalla richiesta. Usalo SEMPRE quando Luca chiede di sviluppare, scrivere o preparare un contratto, un preventivo, un accordo, una lettera o un altro documento (anche "a proposito della conversazione con <nome>"): non dire mai che non puoi. Ci vuole circa un minuto.
 - "update_document": {"document_id": "opzionale, senza = l'ultimo documento", "instructions": "cosa cambiare, con le parole di Luca (es. cambia la clausola 3, aggiungi la penale)"} → nuova versione dello stesso documento con la modifica; le versioni di prima restano scaricabili. Usalo per ogni modifica a un documento già fatto. Se il documento è già un contratto condiviso, si aggiorna anche il contratto (le firme già date si cancellano).
 - "list_documents": {} → ultimi documenti (document_id, titolo, tipo, versione, data).
 - "share_contract": {"document_id": "opzionale, senza = l'ultimo documento", "contract_id": "opzionale", "recipient": {"name": "nome di chi lo riceve", "contact": "nome, @username o contactId della conversazione, opzionale", "email": "opzionale"}, "channel": "email|instagram|facebook|whatsapp|link", "text": "messaggio breve che accompagna il link, opzionale"} → PREPARA l'invio del contratto con una pagina «Contratto tra Facevoice AI e <nome>» su un link unico protetto da PIN: chi lo riceve lo legge, chiede modifiche o firma col dito dal telefono. Compare la scheda di conferma: Luca sceglie lì il PIN e parte solo con «Accetta e invia» (con "link" crea solo il link da copiare). Usalo quando Luca dice "invialo a Giusy", "mandalo a …", "condividi il contratto", "fallo firmare". Canale: quello che dice Luca; altrimenti email se c'è un'email, altrimenti il canale della conversazione da cui nasce il documento, altrimenti "link". Il PIN lo sceglie Luca SOLO sulla scheda: non chiederlo, non scriverlo mai in chat né nel testo; se Luca scrive un PIN in chat non ripeterlo e digli di scriverlo nella scheda. Ricordagli di mandare il PIN a parte (a voce, SMS). Richieste di modifica e firme arrivano nella campanella in alto e nella pagina Contratti.
 - "list_contracts": {} → ultimi contratti (contract_id, titolo, destinatario, stato: bozza, inviato, modifica richiesta, in firma, firmato, annullato).
 - "send_document": {"document_id": "opzionale", "version": "numero, opzionale", "to": "email, opzionale", "text": "testo dell'email che accompagna il PDF"} → PREPARA l'invio del PDF per email (nella conversazione email da cui nasce il documento, o all'indirizzo "to" dato da Luca): compare la scheda di conferma, parte solo con «Accetta e invia». Su Instagram, Facebook, WhatsApp e chat del sito non si possono allegare file da qui: spiega a Luca che può aprire il PDF, scaricarlo e mandarlo dall'app (o darti un'email della persona).
+PRIMA DI UN CONTRATTO O UN ACCORDO (regola obbligatoria): ogni contratto ha i «Termini della collaborazione»: data e ora della collaborazione e termine di consegna dei contenuti (7, 14 o 30 giorni). Se né la richiesta di Luca né la conversazione dicono la data e ora della collaborazione E il termine di consegna, NON chiamare subito create_document: chiedi PRIMA a Luca, in un solo messaggio breve con al massimo 3 domande: 1) data e ora della collaborazione (o «nessuna data»); 2) termine di consegna dei contenuti: 7, 14 o 30 giorni (o nessuno); 3) solo se manca davvero, un altro fatto essenziale (per esempio cosa riceve la controparte in cambio). Poi chiama create_document con collaboration_at, delivery_days e, se Luca dice che non ci sono date, dates_skipped: true. Non inventare mai date o termini. I valori restano modificabili nella pagina del contratto prima della firma; senza i due termini il contratto non si condivide e non si firma (se share_contract lo dice, spiega a Luca cosa scegliere nella pagina del contratto).
 Dopo create_document o update_document la risposta dice in 2-3 frasi cosa contiene e su quale conversazione si basa, elenca gli spazi lasciati vuoti (dati che nessuno ha detto: nel PDF sono linee da compilare a mano o al momento della firma, mai segnaposto nel testo) e scrive UNA volta: "${DOC_DISCLAIMER}" (l'avviso sta solo qui in chat, mai nel documento). Non incollare il testo del documento in chat: è nel PDF.
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
@@ -786,6 +789,20 @@ function slideCountFrom(message: string): number | undefined {
 const asCount = (value: unknown) => {
   const n = typeof value === 'string' && value.trim() ? Number(value) : value
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+}
+
+/** Termini della collaborazione del documento appena scritto, per la risposta dell'agente. */
+function termsSummary(doc: Parameters<typeof readTerms>[0], opts: { skipped: boolean; unparsed: boolean }) {
+  const t = readTerms(doc)
+  return {
+    data_ora: t.date.value || 'da scegliere nella pagina del contratto',
+    consegna: t.days.value || `da scegliere nella pagina del contratto (${DELIVERY_DAYS.join(', ')} giorni)`,
+    nota: opts.skipped
+      ? 'Luca ha detto che non ci sono date: nella pagina del contratto deve scegliere «Nessuna data stabilita» / «Nessun termine» prima di condividerlo o firmarlo'
+      : opts.unparsed
+        ? 'la data detta da Luca non ha giorno e ora chiari: va scelta nella pagina del contratto'
+        : 'valori modificabili nella pagina del contratto prima della firma; senza tutti e due il contratto non si condivide e non si firma',
+  }
 }
 
 /** Caroselli: cambiarli e pubblicarli spetta solo all'amministratore (come la scheda). */
@@ -1653,9 +1670,50 @@ export async function runAssistant(
               break
             }
           }
+          // Contratti e accordi: data e ora della collaborazione e termine di consegna (Termini della collaborazione).
+          // Se Luca non li ha dati (ne' detto che non ci sono) e la conversazione non parla di date: prima si chiede.
+          const contractLike = kind === 'contratto' || kind === 'accordo'
+          const atText = contractLike ? asText(args.collaboration_at)?.trim() || (typeof args.collaboration_at === 'number' ? String(args.collaboration_at) : '') : ''
+          const daysArg = contractLike ? asCount(args.delivery_days) : undefined
+          const deliveryDays = isDeliveryDays(daysArg) ? daysArg : null
+          const skipped = contractLike && (args.dates_skipped === true || args.dates_skipped === 'true' || /^(nessun[ao]?|no|senza)\b/i.test(atText))
+          const collabAt = atText && !skipped ? parseDateTimeInput(atText) : null
+          if (daysArg !== undefined && deliveryDays === null) {
+            result = { errore: `termine di consegna non valido (${daysArg}): può essere solo 7, 14 o 30 giorni. Chiedi a Luca quale` }
+            break
+          }
+          // Senza argomenti: valgono solo giorno, mese e ora detti davvero (prima nei messaggi di Luca, poi nella
+          // conversazione) e un termine di 7, 14 o 30 giorni detto davvero; altrimenti prima si chiede.
+          // Valori iniziali solo da questo messaggio e dalla richiesta di prima (non da richieste vecchie su altro).
+          const lucaTurns = history.filter((t) => t.role === 'user').map((t) => t.text)
+          const lucaNow = [message, ...lucaTurns.slice(-1)].join('\n')
+          const lucaSaid = [message, ...lucaTurns.slice(-6)].join('\n')
+          let saidAt: string | null = null
+          let saidDays: DeliveryDays | null = null
+          if (contractLike && !atText && deliveryDays === null && !skipped) {
+            saidAt = statedDateTime(lucaNow)
+            const chatAt = saidAt || statedDateTime(lucaSaid) || statedDateTime(transcript?.text || '')
+            saidDays = statedDeliveryDays(lucaNow)
+            const anyDays = saidDays ?? statedDeliveryDays(lucaSaid) ?? statedDeliveryDays(transcript?.text || '')
+            if (!chatAt) {
+              result = {
+                errore: 'chiedi prima a Luca data/ora della collaborazione e termine di consegna (7, 14 o 30 giorni)',
+                nota: 'documento NON creato. In un solo messaggio breve (massimo 3 domande) chiedi: data e ora della collaborazione (o «nessuna data»), termine di consegna dei contenuti (7, 14 o 30 giorni, o nessuno) e solo se manca davvero un altro fatto essenziale (es. cosa riceve la controparte in cambio). Poi richiama create_document con collaboration_at, delivery_days o dates_skipped: true.',
+              }
+              break
+            }
+            if (!anyDays) {
+              result = {
+                errore: 'chiedi prima a Luca il termine di consegna dei contenuti (7, 14 o 30 giorni, o nessuno)',
+                data_ora_trovata: formatCollabDate(chatAt),
+                nota: 'documento NON creato. In un solo messaggio breve chiedi il termine di consegna dei contenuti (7, 14 o 30 giorni, o nessuno) e conferma la data e ora trovata (o «nessuna data»). Poi richiama create_document con collaboration_at e delivery_days (o dates_skipped: true se Luca dice che non ci sono date).',
+              }
+              break
+            }
+          }
           reportStatus(transcript ? `Scrivo il documento dalla chat con ${transcript.source.name}…` : 'Scrivo il documento…')
           const knowledge = await loadKnowledge().catch(() => '')
-          const written = await writeDocument({ kind, title: asText(args.title)?.slice(0, 140), instructions: withLuca(instructions), transcript, knowledge })
+          const written = await writeDocument({ kind, title: asText(args.title)?.slice(0, 140), instructions: withLuca(instructions), transcript, knowledge, terms: { at: collabAt, days: deliveryDays ?? saidDays, saidAt } })
           const saved = await saveNewDocument({ kind, doc: written.doc, by: who.email ?? null, basedOn: transcript?.source ?? null, note: instructions, fromChat: written.fromChat })
           actions.push(documentCard(saved.record, saved.version))
           docsTouched.push(saved.version)
@@ -1671,6 +1729,13 @@ export async function runAssistant(
             sezioni: saved.version.doc.sections.map((x) => x.heading).filter(Boolean).slice(0, 20),
             punti_dalla_chat: written.fromChat,
             spazi_vuoti: saved.version.placeholders,
+            ...(contractLike ? { termini_della_collaborazione: termsSummary(saved.version.doc, { skipped, unparsed: Boolean(atText && !skipped && !collabAt) }) } : {}),
+            ...(written.gaps?.length
+              ? {
+                  elementi_essenziali_mancanti: written.gaps,
+                  nota_elementi: `nella chat non c'erano tutti gli elementi essenziali (${written.gaps.join(', ')}): sono diventati spazi di Luca da compilare nella pagina del contratto prima di firmarlo (es. cosa riceve la controparte in cambio). Diglielo; se ti dice i fatti, usa update_document`,
+                }
+              : {}),
             ...(written.truncated ? { nota_lunghezza: 'il documento era troppo lungo ed è stato accorciato: dillo a Luca e proponi di dividerlo' } : {}),
             nota: `la scheda con «Apri PDF» e «Scarica» compare a Luca sotto la tua risposta. Rispondi in breve: cosa contiene, su quale conversazione si basa, gli spazi lasciati vuoti da compilare (a mano o alla firma), e una volta: "${DOC_DISCLAIMER}"`,
           }
@@ -1757,6 +1822,17 @@ export async function runAssistant(
           }
           if (contract.status === 'annullato') {
             result = { errore: 'questo contratto è stato annullato: creane uno nuovo' }
+            break
+          }
+          // Senza data e ora della collaborazione e termine di consegna non si condivide: si spiega cosa manca.
+          const termsMissing = termsProblem(contract, 'condividere')
+          if (termsMissing) {
+            result = {
+              errore: termsMissing,
+              contract_id: contract.id,
+              pagina_del_contratto: `/admin/contratti/${contract.id}`,
+              nota: 'NON preparato. Spiega a Luca in breve cosa manca: nella pagina del contratto (Contratti) sceglie data e ora della collaborazione (o «Nessuna data stabilita») e il termine di consegna (7, 14 o 30 giorni, o «Nessun termine»); poi può condividerlo.',
+            }
             break
           }
           const rec = args.recipient && typeof args.recipient === 'object' ? (args.recipient as Record<string, unknown>) : {}
