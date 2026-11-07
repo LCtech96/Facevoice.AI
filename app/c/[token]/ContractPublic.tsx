@@ -1,14 +1,49 @@
 'use client'
 
-import { useState } from 'react'
-import { CircleCheck, Download, ExternalLink, Loader2, MessageSquarePlus, PenLine, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { CircleCheck, Download, ExternalLink, Loader2, MessageSquarePlus, PenLine, RefreshCw, UserRound } from 'lucide-react'
 import ContractView from '@/components/contracts/ContractView'
 import SignForm, { type SignPayload } from '@/components/contracts/SignForm'
+import { TAX_CODE_HINT, missingData, taxCodeLooksWrong } from '@/lib/contract-parties'
 import type { PublicView } from '@/lib/contracts'
 
-// Il contratto per chi ha ricevuto il link (dopo il PIN): testo completo, PDF, "Richiedi
-// modifica" e "Firma il contratto" (tre conferme, nome e firma col dito). Pensata per
+// Il contratto per chi ha ricevuto il link (dopo il PIN): testo completo, PDF, "I tuoi
+// dati" (nome e cognome, codice fiscale, indirizzo... salvati mentre scrive e mostrati
+// subito nel testo, in "Le parti"), "Richiedi modifica" e "Firma il contratto" (si
+// accende quando ci sono i dati obbligatori; tre conferme e firma col dito). Pensata per
 // il telefono. Nessun avviso interno di Facevoice AI: solo il contratto.
+
+type Datum = PublicView['myData'][number]
+
+const KEYBOARD: Record<string, 'text' | 'email' | 'tel'> = { email: 'email', tel: 'tel', text: 'text' }
+const capitalizeFor = (d: Datum) => (d.role === 'cf' ? 'characters' : d.role === 'email' ? 'none' : d.role === 'nome' || d.role === 'indirizzo' || d.role === 'nascita' ? 'words' : 'sentences')
+
+/** Un dato da scrivere: tastiera e completamento giusti, asterisco se obbligatorio, avviso gentile sul codice fiscale. */
+function DataInput({ d, value, needed, other, onChange }: { d: Datum; value: string; needed: boolean; other: string; onChange: (v: string) => void }) {
+  const warn = d.role === 'cf' && value.replace(/\s+/g, '').length >= 11 && taxCodeLooksWrong(value)
+  return (
+    <label className="block text-sm">
+      <span className="text-[#3d3d44]">
+        {d.label}
+        {needed && <span className="text-[#c4271b]"> *</span>}
+      </span>
+      {d.shared && <span className="block text-xs text-[#6b6b73]">Scrivi il tuo: {other} scrive il suo.</span>}
+      <input
+        type={d.input}
+        inputMode={KEYBOARD[d.input] || 'text'}
+        value={value}
+        onChange={(e) => onChange(e.target.value.slice(0, 300))}
+        autoComplete={d.autoComplete}
+        autoCapitalize={capitalizeFor(d)}
+        spellCheck={false}
+        enterKeyHint="next"
+        aria-required={needed}
+        className="mt-1 w-full rounded-xl border border-[#d0d0d6] bg-white px-3 py-2.5 text-base text-[#1d1d1f]"
+      />
+      {warn && <span className="mt-1 block text-xs text-[#9a5a00]">{TAX_CODE_HINT}</span>}
+    </label>
+  )
+}
 
 const romeStamp = (iso: string) =>
   new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -34,7 +69,13 @@ export default function ContractPublic({ token, initial }: { token: string; init
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(initial.myData.map((d) => [d.id, d.value])))
+  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const latest = useRef(values)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const seq = useRef(0)
   const base = `/c/${encodeURIComponent(token)}`
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), [])
 
   const post = async (body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> => {
     const res = await fetch(`${base}/azione`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) }).catch(() => null)
@@ -43,6 +84,36 @@ export default function ContractPublic({ token, initial }: { token: string; init
     if (res?.status === 401 && data?.pin) window.location.reload()
     return { ok: Boolean(res?.ok), status: res?.status || 0, data }
   }
+
+  // I dati si salvano poco dopo che smetti di scrivere: il testo del contratto si aggiorna.
+  const saveData = async () => {
+    const n = ++seq.current
+    setSaving('saving')
+    const { ok, data } = await post({ action: 'dati', values: latest.current })
+    if (n !== seq.current) return
+    if (!ok) {
+      setSaving('error')
+      return setError(String(data?.error || 'Non sono riuscito a salvare i tuoi dati: riprova.'))
+    }
+    setError(null)
+    setView(data.view as PublicView)
+    setSaving('saved')
+  }
+  const change = (id: string, value: string) => {
+    latest.current = { ...latest.current, [id]: value }
+    setValues(latest.current)
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      saveData()
+    }, 700)
+  }
+  const valueOf = (id: string) => values[id] || ''
+  const missing = view.canAct && !view.signed ? missingData(view.myData, valueOf) : []
+  const company = view.myData.find((d) => d.role === 'azienda')
+  const isCompany = Boolean(company && valueOf(company.id).trim())
+  const nameId = view.myData.find((d) => d.role === 'nome')?.id
+  const signerName = (nameId ? valueOf(nameId) : '') || view.signerName
 
   const sendRequest = async () => {
     if (busy || text.trim().length < 3) return
@@ -59,7 +130,14 @@ export default function ContractPublic({ token, initial }: { token: string; init
   }
 
   const sign = async (payload: SignPayload): Promise<string | null> => {
-    const { ok, status, data } = await post({ action: 'firma', versionId: view.versionId, ...payload })
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    // Un salvataggio dei dati ancora in viaggio non deve riportare la pagina a prima della firma.
+    seq.current++
+    // I dati scritti partono con la firma: quelli di quel momento finiscono nel registro delle firme.
+    const { ok, status, data } = await post({ action: 'firma', versionId: view.versionId, ...payload, values: latest.current })
     if (status === 409 && /cambiato/.test(String(data?.error || ''))) {
       window.location.reload()
       return String(data.error)
@@ -97,6 +175,11 @@ export default function ContractPublic({ token, initial }: { token: string; init
           </p>
         )}
         {!view.complete && !view.signed && view.otherSigned && <p className="rounded-xl bg-[#e6ecff] p-3 text-sm text-[#1a2a73]">{view.creatorName} ha già firmato: manca la tua firma.</p>}
+        {view.canAct && !view.signed && missing.length > 0 && (
+          <a href="#i-tuoi-dati" className="flex items-start gap-2 rounded-xl bg-white p-3 text-sm text-[#1a2a73] shadow-sm">
+            <UserRound className="mt-0.5 h-4 w-4 shrink-0" /> Prima di firmare scrivi i tuoi dati veri (nome e cognome, codice fiscale, indirizzo): vanno nel contratto.
+          </a>
+        )}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -112,6 +195,29 @@ export default function ContractPublic({ token, initial }: { token: string; init
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm sm:p-8">
         <ContractView doc={view.doc} />
       </div>
+
+      {view.canAct && !view.signed && view.myData.length > 0 && (
+        <section id="i-tuoi-dati" className="mt-5 scroll-mt-4 rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <UserRound className="h-4 w-4" /> I tuoi dati
+            </h2>
+            <span className="text-xs text-[#6b6b73]" aria-live="polite">
+              {saving === 'saving' ? 'Salvo…' : saving === 'saved' ? 'Salvato' : saving === 'error' ? 'Non salvato' : ''}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[#6b6b73]">Vanno nel contratto, in «Le parti». Si salvano mentre scrivi e puoi cambiarli fino a quando firmi.</p>
+          <div className="mt-3 space-y-3">
+            {view.myData.map((d) => (
+              <DataInput key={d.id} d={d} value={valueOf(d.id)} needed={d.role === 'cf' ? !isCompany : d.required} other={view.creatorName} onChange={(v) => change(d.id, v)} />
+            ))}
+          </div>
+          {saving === 'error' && error && <p className="mt-3 text-sm text-[#c4271b]">{error}</p>}
+          <p className="mt-3 text-xs text-[#6b6b73]">
+            <span className="text-[#c4271b]">*</span> obbligatorio (per un’azienda basta ragione sociale e P.IVA al posto del codice fiscale). I dati vuoti restano una linea da compilare a mano.
+          </p>
+        </section>
+      )}
 
       {view.requests.length > 0 && (
         <div className="mt-5 rounded-2xl bg-white p-4 shadow-sm">
@@ -135,14 +241,24 @@ export default function ContractPublic({ token, initial }: { token: string; init
       {view.canAct && !view.signed && (
         <div className="sticky bottom-0 -mx-4 mt-5 border-t border-[#e2e2e6] bg-[#f4f4f6]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
           {panel === 'none' && (
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setPanel('request')} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full border border-[#1a2a73] bg-white px-4 py-3 text-sm font-semibold text-[#1a2a73]">
-                <MessageSquarePlus className="h-5 w-5" /> Richiedi modifica
-              </button>
-              <button type="button" onClick={() => setPanel('sign')} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1a2a73] px-4 py-3 text-sm font-semibold text-white">
-                <PenLine className="h-5 w-5" /> Firma il contratto
-              </button>
-            </div>
+            <>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setPanel('request')} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full border border-[#1a2a73] bg-white px-4 py-3 text-sm font-semibold text-[#1a2a73]">
+                  <MessageSquarePlus className="h-5 w-5" /> Richiedi modifica
+                </button>
+                <button type="button" onClick={() => setPanel('sign')} disabled={missing.length > 0} className="inline-flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1a2a73] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">
+                  <PenLine className="h-5 w-5" /> Firma il contratto
+                </button>
+              </div>
+              {missing.length > 0 && (
+                <p className="mt-2 text-center text-xs text-[#3d3d44]" role="status">
+                  Per firmare mancano: {missing.map((m) => m.label).join(', ')}.{' '}
+                  <a href="#i-tuoi-dati" className="font-semibold text-[#1a2a73] underline">
+                    Scrivi i tuoi dati
+                  </a>
+                </p>
+              )}
+            </>
           )}
 
           {panel === 'request' && (
@@ -187,7 +303,7 @@ export default function ContractPublic({ token, initial }: { token: string; init
               </div>
               <p className="mt-1 text-xs text-[#6b6b73]">Firmi la versione {view.versionN} che hai qui sopra.</p>
               <div className="mt-3">
-                <SignForm statements={view.statements} fields={view.myFields} defaultName={view.recipientName === 'Destinatario' ? '' : view.recipientName} onSubmit={sign} />
+                <SignForm statements={view.statements} fields={[]} fixedName={signerName} onSubmit={sign} />
               </div>
             </div>
           )}

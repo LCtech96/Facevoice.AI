@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ArrowLeft, Ban, Check, Copy, Download, ExternalLink, History, KeyRound, Loader2, Pencil, PenLine, Plus, Share2, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react'
+import { ArrowLeft, Ban, Check, Copy, Download, ExternalLink, History, KeyRound, Loader2, Pencil, PenLine, Plus, Share2, Sparkles, Trash2, TriangleAlert, UserRound, X } from 'lucide-react'
 import { authFetch } from '@/components/useAssistantChat'
 import ContractView from '@/components/contracts/ContractView'
 import SignForm, { type SignPayload } from '@/components/contracts/SignForm'
@@ -11,13 +11,15 @@ import { openContractPdf } from '@/components/contracts/adminPdf'
 import { CHANNEL_LABEL, CONTRACT_NOTE_EVENT, CREATOR_DISCLAIMER, PIN_PATTERN, SHARE_CHANNELS, SIGNATURE_NOTE, defaultShareText, type ShareChannel } from '@/lib/contract-text'
 import { pdfFilename, type DocSection, type StructuredDoc } from '@/lib/pdf-doc'
 import type { CreatorView } from '@/lib/contracts'
+import { taxCodeLooksWrong } from '@/lib/contract-parties'
 import { useAdminGate } from '../useAdminGate'
 import { STATUS_CHIP } from '../ContrattiClient'
 
 // Pagina di un contratto per l'admin: anteprima, stato e cronologia, PDF, condivisione
 // (link + PIN), richieste di modifica con Accetta (l'AI applica e mostra prima di
 // salvare), Modifica (a mano o riscrivendo la richiesta) e Rifiuta (il testo resta),
-// dati da compilare e firma di Facevoice AI (tre conferme, nome e firma col dito).
+// dati da compilare e firma di Facevoice AI (tre conferme, nome e firma col dito), dati
+// scritti dalla controparte nella pagina del link (si aggiornano da soli mentre li scrive).
 
 const when = (iso: string) => new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -31,6 +33,7 @@ const EVENT_LABEL: Record<string, string> = {
   modifica_rifiutata: 'Richiesta rifiutata',
   nuova_versione: 'Nuova versione',
   dati_compilati: 'Dati compilati',
+  dati_parti: 'Aggiunti gli spazi per i dati delle parti',
   firma: 'Firma',
   completato: 'Firmato da tutti e due',
   annullato: 'Contratto annullato',
@@ -200,10 +203,14 @@ export default function ContrattoClient({ id }: { id: string }) {
   const [recipient, setRecipient] = useState<{ name: string; email: string } | null>(null)
   const [signing, setSigning] = useState(false)
   const scrolled = useRef<string | null>(null)
+  const serverFields = useRef<Record<string, string>>({})
 
-  const apply = (next: CreatorView) => {
+  // keepEdits: aggiornamento automatico, i dati che stai scrivendo e non hai ancora salvato restano.
+  const apply = (next: CreatorView, keepEdits = false) => {
     setC(next)
-    setFields(Object.fromEntries(next.fields.map((f) => [f.id, f.value || ''])))
+    const fresh = Object.fromEntries(next.myFields.map((f) => [f.id, f.value || '']))
+    setFields((cur) => (keepEdits ? Object.fromEntries(Object.entries(fresh).map(([k, v]) => [k, cur[k] !== undefined && cur[k] !== (serverFields.current[k] ?? '') ? cur[k] : v])) : fresh))
+    serverFields.current = fresh
   }
 
   const load = useCallback(async () => {
@@ -217,6 +224,19 @@ export default function ContrattoClient({ id }: { id: string }) {
   useEffect(() => {
     if (allowed) load()
   }, [allowed, load])
+
+  // Contratto inviato e non ancora firmato da chi lo riceve: i suoi dati si vedono mentre li scrive.
+  const live = Boolean(c && !c.final && c.status !== 'annullato' && !c.signatures.destinatario && c.share?.active)
+  useEffect(() => {
+    if (!allowed || !live) return
+    const timer = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return
+      const res = await authFetch(`/api/admin/contracts/${encodeURIComponent(id)}`).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      if (data?.contract) apply(data.contract as CreatorView, true)
+    }, 15_000)
+    return () => clearInterval(timer)
+  }, [allowed, live, id])
 
   // Tocco sulla campanella mentre si e' gia' su questa pagina: con Next la pagina resta
   // montata (cambia solo ?req=), quindi si ricarica qui il contratto.
@@ -328,9 +348,10 @@ export default function ContrattoClient({ id }: { id: string }) {
   const open = c.requests.filter((r) => r.status === 'aperta')
   const closed = c.requests.filter((r) => r.status !== 'aperta')
   const editable = c.status !== 'annullato' && !c.final
-  const myFields = c.fields.filter((f) => f.party !== 'destinatario')
-  // Come fieldsToSign sul server: i dati comuni solo se l'altra parte non ha ancora firmato.
-  const signFields = c.fields.filter((f) => !f.value?.trim() && (f.party === 'creatore' || (f.party === 'entrambi' && !c.signatures.destinatario))).map((f) => ({ id: f.id, label: f.label }))
+  const myFields = c.myFields
+  // Come sul server: i dati nel testo finche' nessuno firma, la propria parte dei dati "entrambi" fino alla propria firma.
+  const signFields = myFields.filter((f) => !f.value?.trim()).map((f) => ({ id: f.id, label: f.label }))
+  const emptyBody = myFields.filter((f) => f.kind === 'body' && !f.value?.trim())
   const partyName = (by: string) => (by === 'creatore' ? c.creator.name : by === 'destinatario' ? c.recipient.name : '')
 
   return (
@@ -549,23 +570,58 @@ export default function ContrattoClient({ id }: { id: string }) {
         )}
       </div>
 
-      {/* Dati da compilare (finche' nessuno ha firmato) */}
-      {myFields.length > 0 && c.canEditFields && (
+      {/* Dati di Facevoice AI: nel testo finche' nessuno firma, la propria parte dei dati "entrambi" fino alla propria firma */}
+      {myFields.length > 0 && c.canEditOwn && (
         <div className={`${card} mt-5`}>
           <h2 className="text-base font-semibold text-[var(--text-primary)]">I dati di {c.creator.name}</h2>
-          <p className="text-xs text-[var(--text-secondary)]">Vuoti restano una linea da compilare a mano. I dati di {c.recipient.name} li inserisce lui quando firma.</p>
+          <p className="text-xs text-[var(--text-secondary)]">Vuoti restano una linea da compilare a mano.</p>
+          {emptyBody.length > 0 && !c.signatures.destinatario && <p className="mt-1 text-xs text-[#FF9500]">Compilali prima di inviare: dopo la prima firma i dati nel testo non si cambiano più.</p>}
           <div className="mt-2 space-y-2">
             {myFields.map((f) => (
               <label key={f.id} className="block text-sm text-[var(--text-secondary)]">
                 {f.label}
-                {f.party === 'entrambi' ? ' (comune)' : ''}
+                {f.required ? ' *' : ''}
+                {f.party === 'entrambi' ? ` (il tuo: ${c.recipientLabel} scrive il suo)` : ''}
                 <input value={fields[f.id] || ''} onChange={(e) => setFields({ ...fields, [f.id]: e.target.value.slice(0, 300) })} className={`${input} mt-1`} />
               </label>
             ))}
           </div>
-          <button type="button" onClick={() => post('fields', { action: 'fields', values: fields }).then((d) => d && setNotice('Dati salvati.'))} disabled={busy === 'fields'} className={`${primary} mt-3`}>
+          <button
+            type="button"
+            onClick={() => post('fields', { action: 'fields', values: Object.fromEntries(myFields.map((f) => [f.id, fields[f.id] || ''])) }).then((d) => d && setNotice('Dati salvati.'))}
+            disabled={busy === 'fields'}
+            className={`${primary} mt-3`}
+          >
             Salva i dati
           </button>
+        </div>
+      )}
+
+      {/* Dati della controparte (li scrive nella pagina del link; si aggiornano da soli) */}
+      {c.recipientData.length > 0 && (
+        <div className={`${card} mt-5`}>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--text-primary)]">
+            <UserRound className="h-4 w-4" /> I dati di {c.recipientLabel}
+          </h2>
+          {c.recipientWaiting ? (
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">In attesa dei dati di {c.recipientLabel}: li scrive nella pagina del link, prima di firmare.</p>
+          ) : (
+            <dl className="mt-2 space-y-1.5 text-sm">
+              {c.recipientData.map((d) => (
+                <div key={d.id} className="min-w-0">
+                  <dt className="text-xs text-[var(--text-secondary)]">
+                    {d.label}
+                    {d.shared ? ' (il suo)' : ''}
+                  </dt>
+                  <dd className="break-words text-[var(--text-primary)]">
+                    {d.value.trim() ? d.value : <span className="text-[var(--text-secondary)]">{d.required && !c.signatures.destinatario ? `In attesa dei dati di ${c.recipientLabel}` : '—'}</span>}
+                    {d.role === 'cf' && d.value.trim() && taxCodeLooksWrong(d.value) && <span className="ml-1 text-xs text-[#FF9500]">· da controllare</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {!c.signatures.destinatario && !c.final && <p className="mt-2 text-[11px] text-[var(--text-secondary)]">Li può cambiare fino a quando firma: non cambiano il testo che hai firmato.</p>}
         </div>
       )}
 

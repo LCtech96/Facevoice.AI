@@ -4,6 +4,7 @@ import { callAIPaced } from '@/lib/ai'
 import { parseJsonObject } from '@/lib/tool-step'
 import { FIELD_ID_RE, docTexts, emptyFieldLabels, fieldIdsIn, renderPdf, type DocField, type DocSection, type DocSignature, type FieldParty, type StructuredDoc } from '@/lib/pdf-doc'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
+import { ensureParties, hideRecipientValues, tidyFields, withPartiesSection } from '@/lib/contract-parties'
 
 // Documenti della super chat (contratti, preventivi, accordi, lettere) scritti
 // dall'AI a partire da una conversazione della casella Messaggi (Instagram,
@@ -38,11 +39,13 @@ export const PDF_FOOTER = ''
 /** Dati della nostra azienda: gli unici dati di Facevoice che il documento puo' usare. */
 export const BUSINESS = {
   name: 'Facevoice AI',
-  address: 'Via Vito Di Stefano 32, Terrasini (PA)',
+  address: 'Via Vito Di Stefano 32, 90049 Terrasini (PA)',
   vat: '07272010823',
   person: 'Luca Corrao',
   site: 'www.facevoice.ai',
   email: 'luca@facevoice.ai',
+  /** Foro competente dei contratti (sede a Terrasini, provincia di Palermo). */
+  court: 'Palermo',
 }
 
 export const PLATFORM_LABEL: Record<string, string> = {
@@ -541,32 +544,39 @@ export const describeSource = (s: DocSource) =>
 
 const KIND_HINTS: Record<DocKind, string> = {
   contratto:
-    'Contratto di prestazione di servizi: parti (con i dati noti e spazi da compilare per quelli mancanti), premesse (cosa è stato concordato in chat), oggetto, durata e rinnovo, corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e uso dei materiali, riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, firme.',
+    'Contratto di prestazione di servizi: premesse (cosa è stato concordato in chat), oggetto, durata e rinnovo, corrispettivo e modalità di pagamento (solo importi concordati in chat), obblighi del fornitore, obblighi del cliente, proprietà e uso dei materiali, riservatezza, trattamento dei dati personali (GDPR, Reg. UE 2016/679), responsabilità e limitazioni, recesso e risoluzione, comunicazioni tra le parti, legge applicabile e foro competente, firme.',
   preventivo:
-    'Preventivo: intestazione con i dati delle parti, oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti uno spazio da compilare), tempi di realizzazione, condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
+    'Preventivo: oggetto, descrizione dei servizi o delle voci, importi solo se concordati in chat (altrimenti uno spazio da compilare), tempi di realizzazione, condizioni di pagamento, validità dell’offerta, cosa non è incluso, modalità di accettazione, firme per accettazione.',
   accordo:
-    'Accordo tra le parti (collaborazione o riservatezza, secondo la richiesta): parti, premesse, oggetto, impegni di ciascuna parte, durata, riservatezza, dati personali, recesso, legge applicabile e foro competente, firme.',
+    'Accordo tra le parti (collaborazione o riservatezza, secondo la richiesta): premesse, oggetto, impegni di ciascuna parte, durata, riservatezza, dati personali, recesso, legge applicabile e foro competente, firme.',
   lettera:
     'Lettera formale: mittente, destinatario, luogo e data, oggetto, testo in paragrafi chiari, saluti, firma. Niente clausole contrattuali se non richieste.',
   altro: 'Documento con le sezioni che servono per la richiesta di Luca, chiaro e ordinato.',
 }
 
+/** Regole sui dati delle parti: "Le parti" la aggiunge il server (lib/contract-parties), mai l'AI. */
+const PARTIES_RULES = `- Dati delle parti: NON scriverli tu. La sezione «Le parti» (Facevoice AI con sede e P.IVA; la controparte con nome e cognome, luogo e data di nascita, codice fiscale, indirizzo di residenza, email, telefono) la aggiunge il sistema in cima al documento, con gli spazi che la controparte compila prima di firmare. Non creare "fields" per questi dati e non scrivere righe "Tra: …" / "E: …" in "meta".
+- Il nome del profilo Instagram o Facebook, lo @username, i numeri di telefono o WhatsApp e le email scritti in chat NON sono dati verificati: non usarli mai come dati della controparte e non scriverli nelle clausole (niente "numero WhatsApp 3331234567"). Nelle clausole chiama la controparte in modo generico: «il Cliente», «la Controparte» o «il/la Creator».
+- Uno spazio da compilare non va mai subito dopo un dato già scritto: niente "3331234567: {{numero}}", niente "foro di Palermo {{foro}}".
+- Foro competente: scrivi sempre «foro di Palermo» (Facevoice AI ha sede a Terrasini, in provincia di Palermo), mai uno spazio da compilare per il foro.`
+
 /** Regole uguali per ogni documento (tipo e data sono in systemPrompt, in coda). */
 const DOC_RULES = `Prepari documenti scritti per Facevoice AI (agenzia di Luca Corrao): contratti, preventivi, accordi, lettere. Scrivi in italiano, con lo stile di un documento legale italiano ma con parole semplici e frasi chiare.
 
 Rispondi SOLO con un JSON valido, senza testo prima o dopo, in questo formato:
-{"title": "titolo del documento", "subtitle": "riga sotto il titolo, opzionale", "meta": ["Data: ...", "Tra: ...", "E: Giusy, codice fiscale {{cf_cliente}}"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["..."], "bullets": ["..."], "specific_approval": false}], "fields": [{"id": "cf_cliente", "label": "Codice fiscale", "party": "destinatario"}, {"id": "data_inizio", "label": "Data di inizio", "party": "entrambi"}], "signatures": [{"label": "Per Facevoice AI", "name": "Luca Corrao", "party": "creatore"}, {"label": "Il Cliente", "name": "...", "party": "destinatario"}], "from_chat": ["punto concordato nella conversazione", "..."]}
+{"title": "titolo del documento", "subtitle": "riga sotto il titolo, opzionale", "meta": ["Data: ..."], "sections": [{"heading": "1. Oggetto", "paragraphs": ["..."], "bullets": ["..."], "specific_approval": false}], "fields": [{"id": "iban", "label": "IBAN", "party": "creatore"}, {"id": "luogo_data_firma", "label": "Luogo e data della firma", "party": "entrambi"}], "signatures": [{"label": "Per Facevoice AI", "name": "Luca Corrao", "party": "creatore"}, {"label": "Il Cliente", "party": "destinatario"}], "from_chat": ["punto concordato nella conversazione", "..."]}
 
 Regole obbligatorie:
 - Usa SOLO i fatti presenti nella conversazione e nei dati dell'azienda che ti passo. Non aggiungere servizi, prezzi, date o condizioni che nessuno ha detto.
-- Non inventare MAI dati personali o economici: codici fiscali, partite IVA del cliente, indirizzi, numeri di documento, IBAN, date, scadenze, importi o prezzi non concordati. Per ognuno lascia uno SPAZIO DA COMPILARE: aggiungi un elemento in "fields" (id breve con lettere minuscole, numeri e _; label breve e chiara, es. "Codice fiscale"; party = chi lo compila: "creatore" per Facevoice AI, "destinatario" per l'altra parte, "entrambi" se lo decidono insieme) e nel testo scrivi {{id}} al posto del dato, per esempio "codice fiscale {{cf_cliente}}", "a partire dal {{data_inizio}}". Nel PDF lo spazio esce come una linea vuota da compilare a mano o al momento della firma.
+- Non inventare MAI dati personali o economici: codici fiscali, partite IVA del cliente, indirizzi, numeri di documento, IBAN, date, scadenze, importi o prezzi non concordati. Per ognuno lascia uno SPAZIO DA COMPILARE: aggiungi un elemento in "fields" (id breve con lettere minuscole, numeri e _; label breve e chiara, es. "IBAN"; party = chi lo compila: "creatore" per Facevoice AI, anche per date, durate o importi da decidere prima dell'invio; "destinatario" per l'altra parte; "entrambi" solo per un dato che ognuno scrive per sé quando firma, es. luogo e data della firma) e nel testo scrivi {{id}} al posto del dato, per esempio "su IBAN {{iban}}", "a partire dal {{data_inizio}}". Nel PDF lo spazio esce come una linea vuota da compilare a mano o al momento della firma.
+${PARTIES_RULES}
 - MAI scrivere segnaposto come "[DA COMPLETARE …]", "XXX", "____" o "da definire" nel testo: usa sempre {{id}} con il suo campo. Metti "value" in un campo solo se il dato è scritto chiaramente nella conversazione.
 - Niente avvisi legali nel documento (niente "non sono un avvocato", niente "fai controllare da un professionista"): l'avviso resta solo in chat.
 - Metti "specific_approval": true sulle clausole che secondo gli artt. 1341 e 1342 c.c. vanno approvate per iscritto in modo specifico (es. limitazioni di responsabilità, recesso, tacito rinnovo, penali, foro competente); false sulle altre.
 - Nelle premesse (o in una sezione iniziale) di' chiaramente quali punti sono stati concordati nella conversazione, citando canale e data (es. "come concordato nella conversazione su Instagram del 5 novembre 2026"). Metti gli stessi punti, in breve, in "from_chat".
 - I messaggi "Noi" sono nostri (Facevoice AI), sia quelli automatici sia quelli scritti a mano: valgono allo stesso modo.
 - Numera le sezioni (1., 2., 3. …). Paragrafi brevi. Niente markdown, niente asterischi, niente emoji.
-- Il nome del cliente è quello della conversazione; se manca il cognome aggiungi uno spazio da compilare per il nome completo.`
+- Il nome della conversazione serve solo a capire di chi si parla: non è il nome vero della controparte.`
 
 /**
  * Istruzioni per scrivere un documento, divise in due. system: le regole uguali per ogni
@@ -619,6 +629,20 @@ async function askDocument(prompt: { system: string; systemTail: string }, user:
 
 const todayText = () => new Date().toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', year: 'numeric' })
 
+/**
+ * Contratti, accordi e preventivi: spazi messi bene (mai dopo un dato, foro di Palermo) e
+ * sezione «Le parti» in cima con i dati standard delle parti (lib/contract-parties), mai
+ * lasciati all'AI. fresh: documento nuovo, i valori dei dati personali scritti dall'AI
+ * vengono dalla chat (non verificati) e si tolgono.
+ */
+function withStandardParties(written: Written, kind: DocKind, fresh: boolean): Written {
+  if (kind !== 'contratto' && kind !== 'accordo' && kind !== 'preventivo') return written
+  const creator = { name: BUSINESS.name, address: BUSINESS.address, vat: BUSINESS.vat, person: BUSINESS.person }
+  const cleared = fresh ? ensureParties(written.doc, creator, { claim: true, clear: true }) : written.doc
+  const doc = ensureParties(tidyFields(cleared, { court: BUSINESS.court }), creator, { claim: true })
+  return { ...written, doc: withPartiesSection(doc, creator) }
+}
+
 /** Scrive un documento nuovo dalla conversazione (o solo dalla richiesta, se non c'e' una conversazione). */
 export async function writeDocument(input: {
   kind: DocKind
@@ -639,7 +663,7 @@ export async function writeDocument(input: {
   ]
     .filter(Boolean)
     .join('\n\n')
-  return askDocument(systemPrompt(input.kind, todayText()), user)
+  return withStandardParties(await askDocument(systemPrompt(input.kind, todayText()), user), input.kind, true)
 }
 
 /** Nuova versione: il documento attuale con la modifica chiesta da Luca, il resto identico. */
@@ -653,7 +677,7 @@ export async function reviseDocument(input: {
   const { footer: _footer, ...current } = input.current
   const t = input.transcript
   const user = [
-    `Documento attuale (JSON):\n${JSON.stringify(current).slice(0, 70_000)}`,
+    `Documento attuale (JSON):\n${JSON.stringify(hideRecipientValues(current)).slice(0, 70_000)}`,
     `Modifica chiesta da Luca: ${input.instructions}`,
     'Restituisci il documento INTERO con la modifica, nello stesso formato JSON. Lascia identico tutto quello che Luca non ha chiesto di cambiare (stessa numerazione, salvo che aggiungere o togliere una clausola la sposti). Tieni gli stessi "fields" e gli stessi {{id}} nel testo (con i loro valori). Le regole sui dati da non inventare valgono anche qui: per un dato nuovo che non è nella conversazione aggiungi un campo in "fields" e scrivi {{id}} nel testo, mai segnaposto come [DA COMPLETARE].',
     businessBlock(input.knowledge),
@@ -662,7 +686,7 @@ export async function reviseDocument(input: {
     .filter(Boolean)
     .join('\n\n')
   const written = await askDocument(systemPrompt(input.kind, todayText()), user)
-  return { ...written, doc: carryFieldValues(written.doc, input.current) }
+  return withStandardParties({ ...written, doc: carryFieldValues(written.doc, input.current) }, input.kind, false)
 }
 
 /** Valori gia' compilati che l'AI ha perso riscrivendo: tornano sullo stesso campo (stesso id). */

@@ -1,12 +1,13 @@
 import { NextRequest } from 'next/server'
 import { clientIp, errorResponse, json, readBody, sameOrigin } from '@/lib/contract-http'
-import { LINK_COOKIE, addChangeRequest, contractByToken, linkOrigin, publicView, signContract, verifyLinkCookie } from '@/lib/contracts'
+import { LINK_COOKIE, addChangeRequest, contractByToken, linkOrigin, publicView, saveRecipientData, signContract, verifyLinkCookie } from '@/lib/contracts'
 import { afterCompleted, notifyCreator } from '@/lib/contract-share'
 
 export const dynamic = 'force-dynamic'
 
 // Azioni di chi ha ricevuto il link (dopo il PIN, con il cookie di questo link):
 //   { action: 'richiesta', text, section? }  -> richiesta di modifica, avviso a Facevoice AI
+//   { action: 'dati', values }                -> i dati di chi riceve (nome, codice fiscale...), salvati mentre scrive
 //   { action: 'firma', versionId, name, accepted: [true,true,true], strokes, values }
 // La firma vale solo per la versione mostrata: se il contratto e' cambiato si ricarica.
 
@@ -22,6 +23,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     if (body.action === 'richiesta') {
       const { contract, request } = await addChangeRequest(c.id, { text: body.text, section: body.section })
       await notifyCreator(contract, 'modifica', request.id)
+      return json({ ok: true, view: publicView(contract) })
+    }
+    if (body.action === 'dati') {
+      // Bozza dei dati: niente avvisi e niente log (sono dati personali).
+      const contract = await saveRecipientData(c.id, body.values)
       return json({ ok: true, view: publicView(contract) })
     }
     if (body.action === 'firma') {
