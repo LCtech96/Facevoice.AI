@@ -43,6 +43,15 @@ const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 /** Parole che indicano chi crea il contratto: quei dati non sono della controparte. */
 const CREATOR_WORDS = /\b(facevoice|fornitore|agenzia|prestatore)\b/
+/** Parole che indicano la controparte ("Codice fiscale del cliente", "Nome del/della Creator"). */
+const RECIPIENT_WORDS = '(cliente|controparte|creator|creatrice|collaboratore|collaboratrice|committente|influencer|contraente|sottoscrittore|sottoscrittrice|firmatario|firmataria|destinatario|destinataria|ospite|professionista|lavoratore|lavoratrice)'
+const NAMES_RECIPIENT = new RegExp(`\\b${RECIPIENT_WORDS}\\b`)
+/** Nome di una persona: "Nome e cognome", "Nome completo (del cliente)", "Nominativo", "Nome cliente"; mai "Nome della struttura". */
+const PERSON_NAME = new RegExp(
+  `^(?:(?:nome e cognome|nome cognome|cognome e nome|nome completo|nominativo|generalita)(?: .+)?|nome(?: (?:del|della|dello|dell|di)(?: (?:del|della|dello|dell))?)? ${RECIPIENT_WORDS}(?: .+)?)$`
+)
+/** Nomi di cose, non di persone: "Nome del B&B", "Nome del profilo Instagram"... */
+const NOT_A_PERSON = /\b(struttura|b b|bnb|hotel|locale|attivita|negozio|ristorante|profilo|account|pagina|canale|brand|marchio|progetto|evento|prodotto|sito|dominio|campagna|servizio)\b/
 
 /** Che dato della controparte e' un campo, dal suo id o dalla sua etichetta (null: nessuno). */
 export function roleOf(field: Pick<DocField, 'id' | 'label'>): PartyRole | null {
@@ -57,8 +66,27 @@ export function roleOf(field: Pick<DocField, 'id' | 'label'>): PartyRole | null 
   if (/\b(nascita|nato|nata)\b/.test(text)) return 'nascita'
   if (/\b(ragione sociale|partita iva|p iva|piva|societa|azienda|impresa)\b/.test(text)) return 'azienda'
   if (/\b(residenza|residente|domicilio|indirizzo)\b/.test(text) && !/\b(ip|web|sito|consegna)\b/.test(text)) return 'indirizzo'
-  if (/^(nome|nome e cognome|nome cognome|nome completo|nominativo|generalita)( (del|della|dello|dell|di) .+)?$/.test(label)) return 'nome'
+  // Nel dubbio nessuno: si aggiunge "Nome e cognome" (un doppione non fa danni, un nome mancante si').
+  if (PERSON_NAME.test(label) && !NOT_A_PERSON.test(label)) return 'nome'
   return null
+}
+
+/** Dato di un firmatario (luogo e data della firma, sua email o telefono): ognuno scrive il suo. Gli altri dati "entrambi" sono termini del contratto. */
+export function isSignerField(field: Pick<DocField, 'id' | 'label'>): boolean {
+  const role = roleOf(field)
+  if (role) return role === 'email' || role === 'telefono'
+  const text = squash(`${field.label} ${field.id.replace(/_/g, ' ')}`)
+  return /\b(firma|firme|firmato|sottoscrizione|sottoscritto)\b/.test(text) || /\bluogo\b.*\bdata\b|\bdata\b.*\bluogo\b/.test(text)
+}
+
+/**
+ * Contratto non ancora firmato: un dato "entrambi" che non e' di un firmatario (data di
+ * inizio, durata, foro...) e' un termine del contratto e lo scrive chi crea, nel testo.
+ * Restituisce lo stesso oggetto se non cambia niente.
+ */
+export function termsToCreator(doc: StructuredDoc): StructuredDoc {
+  if (!doc.fields?.some((f) => f.party === 'entrambi' && !isSignerField(f))) return doc
+  return { ...doc, fields: doc.fields.map((f) => (f.party === 'entrambi' && !isSignerField(f) ? { ...f, party: 'creatore' as const } : f)) }
 }
 
 /** Per ogni dato della controparte, il campo che lo contiene (prima quelli riservati, poi quelli dell'AI). */
@@ -91,12 +119,22 @@ export type EnsureOptions = {
 export function ensureParties(doc: StructuredDoc, creator: CreatorInfo, opts: EnsureOptions = {}): StructuredDoc {
   let fields = [...(doc.fields || [])]
   let changed = false
+  // Gli spazi riservati ai dati della controparte sono sempre suoi (anche se l'AI li segna di un altro).
+  fields = fields.map((f) => {
+    if (f.party === 'destinatario' || !RECIPIENT_ROLES.some((r) => r.id === f.id)) return f
+    changed = true
+    return { ...f, party: 'destinatario' as const }
+  })
   if (opts.claim) {
     fields = fields.map((f) => {
-      const role = f.party === 'entrambi' ? roleOf(f) : null
-      if (!role || role === 'email' || role === 'telefono') return f
+      const role = f.party === 'entrambi' || f.party === 'creatore' ? roleOf(f) : null
+      if (!role) return f
+      // "entrambi": un dato personale e' della controparte (email e telefono possono essere di tutti e due).
+      // "creatore": solo se l'etichetta nomina la controparte ("Codice fiscale del cliente").
+      if (f.party === 'entrambi' ? role === 'email' || role === 'telefono' : CREATOR_SPECS.some((x) => x.id === f.id) || !NAMES_RECIPIENT.test(squash(`${f.label} ${f.id.replace(/_/g, ' ')}`))) return f
       changed = true
-      return { ...f, party: 'destinatario' as const }
+      const { value: _creatorValue, ...rest } = f
+      return { ...rest, party: 'destinatario' as const }
     })
   }
   const roles = partyRoles({ fields })
@@ -143,10 +181,39 @@ export function partiesSection(doc: Pick<StructuredDoc, 'fields'>, creator: Crea
   return { heading: PARTIES_HEADING, paragraphs: [[`Tra: ${creator.name}`, address, vat, person].filter(Boolean).join(', '), 'E:'], bullets }
 }
 
-/** Toglie la sezione "Le parti" scritta da qui (nei documenti e' nel testo, nei contratti si aggiunge mostrandoli). */
-export function stripPartiesSection<T extends StructuredDoc>(doc: T): T {
-  const generated = (s: DocSection) => s.heading === PARTIES_HEADING && /^Tra: /.test(s.paragraphs?.[0] || '') && (s.bullets || []).every((b) => /^.+: \{\{[a-z0-9_]{1,40}\}\}$/.test(b))
+const PARTIES_HEADING_RE = /^\s*(\d+\s*[.)]?\s*)?le parti\s*$/i
+
+/**
+ * Toglie la sezione "Le parti" scritta da qui (nei documenti e' nel testo, nei contratti si
+ * aggiunge mostrandoli), anche se l'AI l'ha numerata ("1. Le parti"). loose: anche una
+ * "Le parti" che comincia con "Tra:" scritta in altro modo (testo da preparare, mai un testo
+ * gia' firmato).
+ */
+export function stripPartiesSection<T extends StructuredDoc>(doc: T, opts: { loose?: boolean } = {}): T {
+  const generated = (s: DocSection) =>
+    PARTIES_HEADING_RE.test(s.heading || '') &&
+    /^\s*Tra\s*:/i.test(s.paragraphs?.[0] || '') &&
+    (opts.loose || (s.paragraphs.length === 2 && s.paragraphs[1].trim() === 'E:' && Boolean(s.bullets?.length) && s.bullets!.every((b) => /^.+: \{\{[a-z0-9_]{1,40}\}\}$/.test(b))))
   return doc.sections.some(generated) ? { ...doc, sections: doc.sections.filter((s) => !generated(s)) } : doc
+}
+
+/**
+ * Testo non ancora firmato: via le righe "Tra: …" / "E: …" in "meta" e una "Le parti"
+ * scritta dall'AI (ci pensa la sezione «Le parti»), e i campi che restano senza posto nel
+ * testo (es. "Cognome" accanto al nome di Instagram). Restano i dati delle parti, che si
+ * vedono in «Le parti». Restituisce lo stesso oggetto se non cambia niente.
+ */
+export function dropPartyLines(doc: StructuredDoc): StructuredDoc {
+  const partyLine = (m: string) => /^\s*(Tra|E)\s*:/i.test(m)
+  const stripped = stripPartiesSection(doc, { loose: true })
+  const meta = (stripped.meta || []).filter((m) => !partyLine(m))
+  if (stripped === doc && meta.length === (doc.meta || []).length) return doc
+  const gone = new Set([...(doc.meta || []).filter(partyLine), ...doc.sections.filter((s) => !stripped.sections.includes(s)).flatMap((s) => [s.heading || '', ...(s.paragraphs || []), ...(s.bullets || [])])].flatMap(fieldIdsIn))
+  const next: StructuredDoc = { ...stripped, ...(doc.meta ? { meta } : {}) }
+  const used = new Set(docTexts(next).flatMap(fieldIdsIn))
+  // Dati delle parti (anche quelli che passeranno alla controparte, es. "Codice fiscale del cliente" segnato di chi crea): restano.
+  const kept = new Set<string>([...Object.values(partyRoles(ensureParties(next, { name: '' }, { claim: true }))), ...CREATOR_SPECS.map((x) => x.id)] as string[])
+  return { ...next, fields: (next.fields || []).filter((f) => !gone.has(f.id) || used.has(f.id) || kept.has(f.id)) }
 }
 
 /** Nome della controparte sotto la sua linea di firma: lo spazio "Nome e cognome" (mai il nome della chat). */
@@ -178,6 +245,23 @@ export function hideRecipientValues(doc: StructuredDoc): StructuredDoc {
 /** Un dato gia' scritto (telefono, email, @username, sito) seguito subito da uno spazio da compilare. */
 const VALUE_THEN_FIELD = /(\+?\d[\d .\/-]{6,}\d|[\w.+-]+@[\w-]+\.[\w.]+|@[A-Za-z0-9._]{2,30}|https?:\/\/\S+|www\.\S+)(\s*[:–-]\s*|\s+)\{\{\s*([a-z0-9_]{1,40})\s*\}\}/g
 const DATE_LIKE = /^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/
+
+/**
+ * La citta' del foro al posto dello spazio, con le parole giuste per la frase prima:
+ * "il foro di {{x}}" / "Foro competente: {{x}}" -> "Palermo"; "competente il {{x}}" -> "foro di
+ * Palermo"; "come foro competente {{x}}" -> "quello di Palermo"; "il Tribunale {{x}}" -> "di
+ * Palermo"; altrimenti ("è competente in via esclusiva {{x}}") -> "il foro di Palermo".
+ */
+export function courtWords(before: string, court: string): string {
+  // Solo la frase in cui sta lo spazio.
+  const tail = (before.split(/[.;:!?](?=\s|$)/).pop() ?? '').toLowerCase()
+  if (/(\b(di|del|della)|:)\s*$/.test(before.toLowerCase())) return court
+  if (/\bl['’]\s*$/.test(tail)) return `autorità giudiziaria di ${court}`
+  if (/\b(il|lo|la)\s*$/.test(tail)) return `foro di ${court}`
+  if (/\b(foro|tribunale)\s+competente\s*$/.test(tail) || /\b(foro|tribunale)\b.*(^|\s)(è|e'|sarà|sara|sia|resta|rimane)\s*$/.test(tail)) return `quello di ${court}`
+  if (/\b(foro|tribunale)\b/.test(tail)) return `di ${court}`
+  return `il foro di ${court}`
+}
 
 const isCourtField = (f: Pick<DocField, 'id' | 'label'>) => /\b(foro|tribunale|giurisdizione)\b/.test(squash(`${f.label} ${f.id.replace(/_/g, ' ')}`))
 
@@ -218,6 +302,13 @@ export function tidyFields(doc: StructuredDoc, opts: { court?: string; courts?: 
     next = mapTexts(next, (text) => {
       let out = text
       for (const id of courts) {
+        // "davanti a {{foro}}" -> "davanti al foro di Palermo".
+        if (court) {
+          out = out.replace(new RegExp(`\\b([Aa])\\s+\\{\\{\\s*${id}\\s*\\}\\}`, 'g'), (_all: string, a: string) => {
+            touched.add(id)
+            return `${a}l foro di ${court}`
+          })
+        }
         out = out.replace(new RegExp(`(\\s*)\\{\\{\\s*${id}\\s*\\}\\}`, 'g'), (all: string, space: string, offset: number, whole: string) => {
           const before = whole.slice(0, offset)
           // "foro di Palermo {{foro}}": la citta' c'e' gia', lo spazio si toglie.
@@ -227,7 +318,7 @@ export function tidyFields(doc: StructuredDoc, opts: { court?: string; courts?: 
           }
           if (!court) return all
           touched.add(id)
-          return `${space}${/\b(di|del)\s*$|:\s*$/i.test(before) ? '' : 'di '}${court}`
+          return `${space}${courtWords(before, court)}`
         })
       }
       return out
