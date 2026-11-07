@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import { AI_TOOLS_DETAILED_INFO } from '@/lib/ai-tools-info'
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-})
+import { callAI, runWithStatus } from '@/lib/ai'
+import { getGeminiApiKey } from '@/lib/gemini'
 
 // Lista completa degli AI Tools (deve corrispondere a mockAITools in Feed.tsx)
 const AI_TOOLS = [
@@ -200,74 +197,33 @@ const AI_TOOLS = [
   },
 ]
 
-export async function POST(req: NextRequest) {
-  try {
-    const { query } = await req.json()
-
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Query di ricerca richiesta' },
-        { status: 400 }
-      )
+/** Elenco dei tool con le informazioni dettagliate: fisso, sempre nello stesso ordine. */
+const TOOLS_DESCRIPTION = AI_TOOLS.map((tool) => {
+  const detailedInfo = AI_TOOLS_DETAILED_INFO[tool.id]
+  let desc = `- ${tool.name} (ID: ${tool.id}): ${tool.description} [Categoria: ${tool.category}]`
+  if (detailedInfo?.bestFor) {
+    desc += `\n  Migliore per: ${detailedInfo.bestFor.join(', ')}`
+  }
+  if (detailedInfo?.strengths) {
+    desc += `\n  Punti di forza: ${detailedInfo.strengths.join('; ')}`
+  }
+  if (detailedInfo?.pricing) {
+    if (detailedInfo.pricing.free) {
+      desc += `\n  Pricing: Gratuito disponibile`
     }
-
-    if (!process.env.ANTHROPIC_API_KEY) {
-      // Fallback: ricerca semplice se non c'è API key
-      const queryLower = query.toLowerCase()
-      const matched = AI_TOOLS.filter(tool => {
-        const searchText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
-        return searchText.includes(queryLower)
-      })
-      return NextResponse.json({ toolIds: matched.map(t => t.id) })
+    if (detailedInfo.pricing.plans && detailedInfo.pricing.plans.length > 0) {
+      desc += `\n  Pricing: ${detailedInfo.pricing.plans.map((p) => `${p.name} ${p.price}`).join(', ')}`
     }
+  }
+  if (detailedInfo?.useCase) {
+    desc += `\n  Quando usarlo: ${detailedInfo.useCase}`
+  }
+  return desc
+}).join('\n\n')
 
-    // Prepara le informazioni dettagliate per i tool disponibili
-    const toolsWithDetails = AI_TOOLS.map(tool => {
-      const detailedInfo = AI_TOOLS_DETAILED_INFO[tool.id]
-      if (detailedInfo) {
-        return {
-          id: tool.id,
-          name: tool.name,
-          description: tool.description,
-          category: tool.category,
-          pricing: detailedInfo.pricing,
-          bestFor: detailedInfo.bestFor,
-          strengths: detailedInfo.strengths,
-          limitations: detailedInfo.limitations,
-          useCase: detailedInfo.useCase,
-        }
-      }
-      return {
-        id: tool.id,
-        name: tool.name,
-        description: tool.description,
-        category: tool.category,
-      }
-    })
-
-    const toolsDescription = toolsWithDetails.map(tool => {
-      let desc = `- ${tool.name} (ID: ${tool.id}): ${tool.description} [Categoria: ${tool.category}]`
-      if ('bestFor' in tool && tool.bestFor) {
-        desc += `\n  Migliore per: ${tool.bestFor.join(', ')}`
-      }
-      if ('strengths' in tool && tool.strengths) {
-        desc += `\n  Punti di forza: ${tool.strengths.join('; ')}`
-      }
-      if ('pricing' in tool && tool.pricing) {
-        if (tool.pricing.free) {
-          desc += `\n  Pricing: Gratuito disponibile`
-        }
-        if (tool.pricing.plans && tool.pricing.plans.length > 0) {
-          desc += `\n  Pricing: ${tool.pricing.plans.map(p => `${p.name} ${p.price}`).join(', ')}`
-        }
-      }
-      if ('useCase' in tool && tool.useCase) {
-        desc += `\n  Quando usarlo: ${tool.useCase}`
-      }
-      return desc
-    }).join('\n\n')
-
-    const systemPrompt = `Sei un assistente esperto che aiuta gli utenti a trovare gli AI Tools più rilevanti per le loro esigenze.
+// Parte stabile prima (istruzioni + elenco dei tool, uguali per tutte le ricerche: con Claude
+// si rileggono dalla cache), la richiesta dell'utente per ultima.
+const SYSTEM_PROMPT = `Sei un assistente esperto che aiuta gli utenti a trovare gli AI Tools più rilevanti per le loro esigenze.
 
 Analizza la richiesta dell'utente e gli AI Tools disponibili (con informazioni su pricing, punti di forza, limitazioni e casi d'uso).
 
@@ -287,47 +243,63 @@ Restituisci un JSON con:
 - toolIds: array di ID ordinati per rilevanza (max 5-8 tool, solo quelli davvero rilevanti)
 - explanations: oggetto con chiave=ID del tool e valore=spiegazione breve (2-3 frasi) sul perché è consigliato
 
-Formato risposta: {"toolIds": ["id1", "id2"], "explanations": {"id1": "spiegazione perché id1 è consigliato", "id2": "spiegazione perché id2 è consigliato"}}`
-
-    const userPrompt = `Richiesta utente: "${query}"
+Formato risposta: {"toolIds": ["id1", "id2"], "explanations": {"id1": "spiegazione perché id1 è consigliato", "id2": "spiegazione perché id2 è consigliato"}}
 
 AI Tools disponibili con informazioni dettagliate:
-${toolsDescription}
+${TOOLS_DESCRIPTION}`
+
+const userPrompt = (query: string) => `Richiesta utente: "${query}"
 
 Quali AI Tools sono più rilevanti per questa richiesta? 
 Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascuno.`
 
-    // Chiama Claude
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022', // Usa Haiku per velocità e costo
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-        },
-      ],
-    })
+/** Ricerca semplice per parole, senza AI. */
+function simpleMatch(query: string) {
+  const queryLower = query.toLowerCase()
+  return AI_TOOLS.filter((tool) => `${tool.name} ${tool.description} ${tool.category}`.toLowerCase().includes(queryLower)).map((t) => t.id)
+}
 
-    // Estrai il testo dalla risposta
-    const responseText = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n')
+export async function POST(req: NextRequest) {
+  let query = ''
+  try {
+    const body = await req.json().catch(() => ({}))
+    query = typeof body?.query === 'string' ? body.query.trim().slice(0, 500) : ''
+
+    if (!query) {
+      return NextResponse.json(
+        { error: 'Query di ricerca richiesta' },
+        { status: 400 }
+      )
+    }
+
+    if (!getGeminiApiKey()) {
+      // Ricerca semplice se non c'e' la chiave Gemini.
+      return NextResponse.json({ toolIds: simpleMatch(query) })
+    }
+
+    // Solo Gemini: la pagina e' pubblica e senza login, non deve consumare credito Anthropic (come
+    // il widget del sito). Se Gemini e' al limite o non risponde: ricerca semplice (catch qui sotto).
+    const result = await runWithStatus({ status: () => {}, model: 'gemini' }, () =>
+      callAI([{ role: 'user', content: userPrompt(query) }], SYSTEM_PROMPT, {
+        feature: 'ricerca_tools',
+        maxOutputTokens: 2000,
+        json: true,
+      })
+    )
+    const responseText = result.message || ''
 
     // Prova a parsare la risposta JSON
     let toolIds: string[] = []
     let explanations: Record<string, string> = {}
-    
+
     try {
       // Cerca JSON nella risposta (potrebbe avere testo prima/dopo)
       const jsonMatch = responseText.match(/\{[\s\S]*"toolIds"[\s\S]*\}/)
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0])
         toolIds = Array.isArray(parsed.toolIds) ? parsed.toolIds : []
-        explanations = parsed.explanations && typeof parsed.explanations === 'object' 
-          ? parsed.explanations 
+        explanations = parsed.explanations && typeof parsed.explanations === 'object'
+          ? parsed.explanations
           : {}
       } else {
         // Fallback: cerca array diretto
@@ -337,69 +309,36 @@ Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascu
         }
       }
     } catch (parseError) {
-      console.error('Errore nel parsing della risposta di Claude:', parseError)
-      console.error('Risposta ricevuta:', responseText)
-      
-      // Fallback: ricerca semplice
-      const queryLower = query.toLowerCase()
-      const matched = AI_TOOLS.filter(tool => {
-        const searchText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
-        return searchText.includes(queryLower)
-      })
-      toolIds = matched.map(t => t.id)
+      console.error('Errore nel parsing della risposta AI della ricerca tools:', parseError instanceof Error ? parseError.message : parseError)
+      toolIds = simpleMatch(query)
     }
 
     // Valida che gli ID esistano
-    const validToolIds = toolIds.filter(id => 
-      AI_TOOLS.some(tool => tool.id === id)
-    )
-    
+    const validToolIds = toolIds.filter((id) => AI_TOOLS.some((tool) => tool.id === id))
+
     // Aggiungi spiegazioni dai dati dettagliati se mancanti
     const finalExplanations: Record<string, string> = {}
-    validToolIds.forEach(id => {
+    validToolIds.forEach((id) => {
       if (explanations[id]) {
         finalExplanations[id] = explanations[id]
       } else {
         // Genera spiegazione dai dati dettagliati
         const detailedInfo = AI_TOOLS_DETAILED_INFO[id]
         if (detailedInfo) {
-          const tool = AI_TOOLS.find(t => t.id === id)
+          const tool = AI_TOOLS.find((t) => t.id === id)
           finalExplanations[id] = `${detailedInfo.useCase || tool?.description}${detailedInfo.pricing?.free ? ' Piano gratuito disponibile.' : ''}`
         }
       }
     })
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       toolIds: validToolIds,
-      explanations: finalExplanations 
+      explanations: finalExplanations,
     })
   } catch (error) {
-    console.error('Errore nella ricerca AI Tools:', error)
-    
-    // Fallback: ricerca semplice
-    try {
-      const { query } = await req.json()
-      const queryLower = query.toLowerCase()
-      const matched = AI_TOOLS.filter(tool => {
-        const searchText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
-        return searchText.includes(queryLower)
-      })
-      return NextResponse.json({ toolIds: matched.map(t => t.id) })
-    } catch (fallbackError) {
-      return NextResponse.json(
-        { error: 'Errore nella ricerca' },
-        { status: 500 }
-      )
-    }
+    console.error('Errore nella ricerca AI Tools:', error instanceof Error ? error.message : error)
+    // Ricerca semplice (la richiesta e' gia' stata letta: si usa la query salvata).
+    if (query) return NextResponse.json({ toolIds: simpleMatch(query) })
+    return NextResponse.json({ error: 'Errore nella ricerca' }, { status: 500 })
   }
 }
-
-
-
-
-
-
-
-
-
-

@@ -271,6 +271,10 @@ export default function AIChatMain({
           } else if (event.type === 'delta') {
             streamed += event.text
             setStreamingText(streamed)
+          } else if (event.type === 'reset') {
+            // Risposta rifiutata e rifatta da un altro modello: il testo parziale non vale.
+            streamed = ''
+            setStreamingText('')
           } else if (event.type === 'done') {
             finalEvent = event
           } else if (event.type === 'error') {

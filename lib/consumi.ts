@@ -487,6 +487,7 @@ export const SITE_FEATURES: Record<string, string> = {
   super_chat_carosello: 'Caroselli della super chat',
   super_chat_slide: 'Modifiche alle slide dei caroselli',
   super_chat_documenti: 'Documenti della super chat (contratti, preventivi)',
+  ricerca_tools: 'Ricerca AI Tools',
   altro: 'Altro',
 }
 

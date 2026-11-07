@@ -6,6 +6,7 @@ import { SITE_URL } from '@/lib/seo/site'
 import { internalOrigin } from '@/lib/internal-origin'
 import { shareBlogPost } from '@/lib/blog-share'
 import { loadContentDirections } from '@/lib/content-directions'
+import { parseJsonObject } from '@/lib/tool-step'
 
 // Blog automatico: nei giorni scelti (es. martedi' e venerdi') il sito legge le
 // ultime notizie sull'intelligenza artificiale da testate vere (feed RSS), l'AI
@@ -199,22 +200,118 @@ Regole (obbligatorie):
 Rispondi SOLO con JSON valido, senza testo prima o dopo:
 {"title": "titolo dell'articolo (max 90 caratteri, senza virgolette)", "content": "testo completo dell'articolo", "used": [numeri delle notizie usate]}`
 
-function parseArticle(raw: string): { title: string; content: string; used: number[] } | null {
-  const json = raw.match(/\{[\s\S]*\}/)?.[0]
-  if (!json) return null
+export type ParsedArticle = { title: string; content: string; used: number[] }
+
+/**
+ * Caratteri di controllo (a capo, tab) scritti "veri" dentro le stringhe JSON: JSON.parse li
+ * rifiuta, ma i modelli li mettono spesso nel testo dell'articolo (paragrafi separati da una
+ * riga vuota). Si trasformano in \\n, \\r, \\t solo dentro le stringhe.
+ */
+export function escapeControlCharsInStrings(text: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      else if (ch === '\n') {
+        out += '\\n'
+        continue
+      } else if (ch === '\r') {
+        out += '\\r'
+        continue
+      } else if (ch === '\t') {
+        out += '\\t'
+        continue
+      }
+    } else if (ch === '"') inString = true
+    out += ch
+  }
+  return out
+}
+
+/** Testo di una stringa JSON presa cosi' com'e' (sequenze \\n, \\" ...), anche se non valida. */
+function unescapeLoose(value: string): string {
   try {
-    const data = JSON.parse(json)
-    const title = String(data.title || '').replace(/^["«]|["»]$/g, '').trim()
-    const content = String(data.content || '')
-      .replace(/\*\*?|__|^#+\s*/gm, '')
-      .replace(/\n*Fonti:[\s\S]*$/i, '')
-      .trim()
-    const used = Array.isArray(data.used) ? data.used.map(Number).filter(Number.isInteger) : []
-    return title && content.length > 800 ? { title: title.slice(0, 140), content, used } : null
+    return JSON.parse(`"${escapeControlCharsInStrings(`"${value}"`).slice(1, -1)}"`)
   } catch {
-    return null
+    return value.replace(/\\n/g, '\n').replace(/\\r/g, '').replace(/\\t/g, ' ').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
   }
 }
+
+/**
+ * Ultima risorsa: i campi presi uno per uno dal testo, anche con virgolette non escapate dentro
+ * il titolo o l'articolo (il titolo va fino alla virgoletta seguita da , "content" / , "used" /
+ * graffa; "content" fino all'ultimo "used" o all'ultima virgoletta).
+ */
+function extractFields(raw: string): Record<string, unknown> | null {
+  const titleStart = raw.match(/"title"\s*:\s*"/)
+  const start = raw.match(/"content"\s*:\s*"/)
+  if (!titleStart || titleStart.index === undefined || !start || start.index === undefined) return null
+  const titleRest = raw.slice(titleStart.index + titleStart[0].length)
+  const titleEnd = titleRest.search(/"\s*(?:,\s*"(?:content|used)"\s*:|\})/)
+  const title = titleEnd > 0 ? titleRest.slice(0, titleEnd) : ''
+  // Titolo non delimitato, su piu' righe o lunghissimo: formato rotto, meglio la riprova che un titolo tagliato.
+  if (!title || title.length > 200 || /[\r\n]/.test(title)) return null
+  const from = start.index + start[0].length
+  const rest = raw.slice(from)
+  const usedAt = rest.search(/"\s*,\s*"used"\s*:/)
+  const end = usedAt >= 0 ? usedAt : rest.lastIndexOf('"')
+  // Stringa mai chiusa: risposta interrotta a meta' (es. limite di token), mai da pubblicare.
+  if (end <= 0) return { title: unescapeLoose(title), content: unescapeLoose(rest), used: [], truncated: true }
+  const used = raw.match(/"used"\s*:\s*\[([\d\s,]*)\]/)?.[1]
+  return {
+    title: unescapeLoose(title),
+    content: unescapeLoose(rest.slice(0, end)),
+    used: used ? used.split(',').map((n) => Number(n.trim())).filter(Number.isInteger) : [],
+  }
+}
+
+/** Motivo per cui una risposta non diventa un articolo (null = va bene). */
+export type ArticleProblem = 'json' | 'title' | 'short' | 'truncated' | 'format'
+
+/**
+ * Articolo dalla risposta dell'AI, con un controllo serio prima di pubblicare: JSON letto anche
+ * con testo intorno, blocchi ```json, virgole in piu', a capo veri dentro le stringhe o
+ * virgolette non escapate; poi titolo presente, testo di almeno 800 caratteri, niente pezzi di
+ * JSON nel testo e testo non troncato (deve finire con la fine di una frase).
+ */
+export function readArticle(raw: string): { article: ParsedArticle | null; problem: ArticleProblem | null } {
+  const accept = (v: Record<string, unknown>) => typeof v.title === 'string' && typeof v.content === 'string'
+  const data = parseJsonObject(raw, accept) || parseJsonObject(escapeControlCharsInStrings(raw), accept) || extractFields(raw)
+  if (!data) return { article: null, problem: 'json' }
+  // Virgolette intorno a tutto il titolo: via. Quelle di un nome dentro il titolo (es. Arriva "Nova") restano.
+  const title = String(data.title || '').replace(/\s+/g, ' ').trim().replace(/^["«“]([^"«»“”]*)["»”]$/, '$1').trim()
+  const content = String(data.content || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\*\*?|__|^#+\s*/gm, '')
+    .replace(/\n*Fonti:[\s\S]*$/i, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  const used = Array.isArray(data.used) ? data.used.map(Number).filter(Number.isInteger) : []
+  if (data.truncated) return { article: null, problem: 'truncated' }
+  if (!title) return { article: null, problem: 'title' }
+  if (content.length <= 800) return { article: null, problem: 'short' }
+  if (/"(title|content|used)"\s*:|```|^\s*[{[]\s*"/m.test(content)) return { article: null, problem: 'format' }
+  if (!/[.!?…»”"')’]$/.test(content)) return { article: null, problem: 'truncated' }
+  return { article: { title: title.slice(0, 140), content, used }, problem: null }
+}
+
+const PROBLEM_TEXT: Record<ArticleProblem, string> = {
+  json: 'JSON non leggibile',
+  title: 'titolo mancante',
+  short: 'testo troppo corto',
+  truncated: 'testo interrotto',
+  format: 'testo con pezzi di JSON',
+}
+
+/** Secondo tentativo, quando la prima risposta non era un articolo valido. */
+const FORMAT_REMINDER = (problem: ArticleProblem) =>
+  `La tua risposta precedente ${
+    problem === 'truncated' ? 'si è interrotta a metà' : problem === 'short' ? 'era troppo corta' : 'non era un JSON valido'
+  }, quindi l'articolo NON è stato pubblicato. Rispondi di nuovo SOLO con il JSON {"title": "...", "content": "...", "used": [numeri]}, senza testo prima o dopo e senza blocchi di codice. Dentro "content" scrivi \\n per andare a capo (niente a capo veri dentro le stringhe) e non usare virgolette doppie nel testo (usa « »). Resta tra 450 e 650 parole e chiudi l'ultima frase.`
 
 const slugify = (title: string) =>
   title
@@ -255,13 +352,26 @@ export async function generateNewsPost(): Promise<GenerateResult> {
   const prompt = directions
     ? `${PROMPT}\n\nIndicazioni di Luca per i prossimi contenuti (seguile, ma senza mai inventare fatti e restando sulle notizie fornite):\n${directions}`
     : PROMPT
-  const result = await callAI([{ role: 'user', content: `Oggi è ${today}. Notizie:\n\n${list}` }], prompt, {
-    feature: 'blog_automatico',
-    temperature: 0.5,
-    maxOutputTokens: 4096,
-  })
-  const article = parseArticle(result.message || '')
-  if (!article) return { ok: false, reason: 'risposta AI non valida' }
+  const request = { role: 'user', content: `Oggi è ${today}. Notizie:\n\n${list}` }
+  // Gemini se disponibile (risposta in JSON), altrimenti Claude: lo decide callAI.
+  const first = await callAI([request], prompt, { feature: 'blog_automatico', temperature: 0.5, maxOutputTokens: 4096, json: true })
+  let parsed = readArticle(first.message || '')
+  if (!parsed.article) {
+    // Una sola riprova, con il promemoria del formato (stesse istruzioni e stesse notizie: con
+    // Claude il prefisso si rilegge dalla cache). Mai pubblicare un articolo vuoto o rotto.
+    console.warn(`blog auto: risposta AI non valida (${parsed.problem}, ${first.provider} ${first.model}, ${(first.message || '').length} caratteri): riprovo una volta`)
+    const second = await callAI(
+      [request, { role: 'assistant', content: (first.message || '').slice(0, 6000) || '(vuota)' }, { role: 'user', content: FORMAT_REMINDER(parsed.problem || 'json') }],
+      prompt,
+      { feature: 'blog_automatico', temperature: 0.4, maxOutputTokens: 6144, json: true }
+    )
+    parsed = readArticle(second.message || '')
+    if (!parsed.article) {
+      console.warn(`blog auto: anche la seconda risposta non è valida (${parsed.problem}, ${second.provider} ${second.model}, ${(second.message || '').length} caratteri)`)
+      return { ok: false, reason: `risposta AI non valida anche al secondo tentativo (${PROBLEM_TEXT[parsed.problem || 'json']}): non pubblicato` }
+    }
+  }
+  const article = parsed.article
 
   // Le fonti le aggiunge il codice, dai numeri indicati dall'AI: i link restano esatti.
   const cited = [...new Set(article.used)].map((i) => news[i - 1]).filter((n): n is NewsItem => Boolean(n))

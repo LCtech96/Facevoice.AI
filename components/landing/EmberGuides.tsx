@@ -7,7 +7,10 @@ import styles from './EmberGuides.module.css'
 
 // Guide in home: i testi sono quelli dei caroselli Instagram di Facevoice AI,
 // riadattati allo stile "ember". Le foto arrivano da /api/guide-images
-// (generate una volta sola); senza foto la scheda resta comunque completa.
+// (generate una volta sola); finche' una foto manca (o non si carica) si vede
+// un segnaposto fisso, senza nuove richieste.
+
+const PLACEHOLDER = '/guides/placeholder.svg'
 
 type Guide = {
   id: string
@@ -67,6 +70,7 @@ const GUIDES: Guide[] = [
 
 export default function EmberGuides() {
   const [images, setImages] = useState<Record<string, string>>({})
+  const [broken, setBroken] = useState<Record<string, boolean>>({})
   const [contactOpen, setContactOpen] = useState(false)
   const [active, setActive] = useState(0)
   const trackRef = useRef<HTMLDivElement>(null)
@@ -126,13 +130,17 @@ export default function EmberGuides() {
 
       <div ref={trackRef} className={styles.track} onScroll={onScroll}>
         {GUIDES.map((guide) => {
-          const image = images[guide.id]
+          const image = images[guide.id] && !broken[guide.id] ? images[guide.id] : PLACEHOLDER
           return (
-            <article key={guide.id} className={`${styles.card} ${image ? styles.withImage : ''}`}>
-              {image && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img className={styles.photo} src={image} alt="" loading="lazy" />
-              )}
+            <article key={guide.id} className={`${styles.card} ${styles.withImage}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className={styles.photo}
+                src={image}
+                alt=""
+                loading="lazy"
+                onError={() => image !== PLACEHOLDER && setBroken((b) => ({ ...b, [guide.id]: true }))}
+              />
               <span className={styles.number} aria-hidden="true">
                 {guide.number}
               </span>

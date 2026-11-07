@@ -638,31 +638,35 @@ async function generateReply(
   ])
   const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
 
-  const system = [
+  const { system, stableTail, systemTail } = buildAgentSystem({
     base,
-    commentRules ? `\n\n${commentRules}` : '',
-    postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
-    outreach ? (outreachRules ? `\n\n${outreachRules}` : '') + outreachFacts(outreach) + strategy : '',
-    funnel ? `\n\n${funnel}` : '',
-    fromComment ? '' : appointmentRules(booked),
-    knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+    commentRules,
+    postCaption,
+    outreachRules: outreach ? outreachRules : '',
+    outreachFacts: outreach ? outreachFacts(outreach) : '',
+    strategy: outreach ? strategy : '',
+    funnel,
+    appointments: fromComment ? '' : appointmentRules(booked),
+    knowledge,
     styleExamples,
-    personal ? `\n\n${personal}` : '',
-    clientBlock(contactName, history.messages.filter((m) => m.role === 'assistant').length),
-    instructions !== undefined
-      ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
-      : '',
-    `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
-    CLARITY_RULES,
+    personal,
+    client: clientBlock(contactName, history.messages.filter((m) => m.role === 'assistant').length),
+    instructions:
+      instructions !== undefined
+        ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
+        : '',
+    dateTime: `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     // Regole per i commenti solo nella risposta pubblica; il privato che la segue ha le sue.
-    identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
+    identity: identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
     // Dopo le regole generali (pesa di piu'): la chat aperta da noi si continua, non si riparte da zero.
-    outreach ? '' : conversationContext(history),
-    languageRule(fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content),
-  ].join('')
+    context: outreach ? '' : conversationContext(history),
+    language: languageRule(fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content),
+  })
 
   try {
     const result = await callAI(history.messages, system, {
+      stableTail,
+      systemTail,
       feature: outreach ? 'controrisposte_clienti' : platform === 'email' ? 'risposte_email' : 'risposte_social',
       temperature: 0.5,
       maxOutputTokens: platform === 'email' ? 2048 : 1024,
@@ -674,6 +678,63 @@ async function generateReply(
     console.error(`${platform} agent: generazione risposta fallita`, error)
     return ''
   }
+}
+
+/** Pezzi del prompt dell'agente, gia' formattati (stringa vuota = sezione assente). */
+export type AgentPromptParts = {
+  base: string
+  commentRules: string
+  postCaption?: string | null
+  outreachRules: string
+  outreachFacts: string
+  strategy: string
+  funnel: string
+  appointments: string
+  knowledge: string
+  styleExamples: string
+  personal: string
+  client: string
+  instructions: string
+  dateTime: string
+  identity: string
+  context: string
+  language: string
+}
+
+/**
+ * Prompt dell'agente diviso in tre: prima la parte uguale per tutte le conversazioni della
+ * piattaforma (istruzioni, regole, informazioni ufficiali: con Claude si rilegge dalla cache a
+ * un decimo del prezzo, con Gemini aiuta la cache implicita), poi gli esempi di stile e le
+ * indicazioni personali (stableTail: gli esempi cambiano a ogni risposta inviata, approvata o
+ * corretta da Luca, e con un secondo breakpoint la parte prima resta in cache), infine quello
+ * che cambia a ogni risposta (post commentato, scheda del cliente, orari occupati, nome, data e
+ * ora, verifica, contesto della chat, lingua). Le sezioni restano le stesse, con lo stesso
+ * testo: cambia solo l'ordine (gli orari degli appuntamenti restano prima di "Data e ora", a
+ * cui rimandano).
+ */
+export function buildAgentSystem(p: AgentPromptParts): { system: string; stableTail: string; systemTail: string } {
+  const system = [
+    p.base,
+    p.commentRules ? `\n\n${p.commentRules}` : '',
+    p.outreachRules ? `\n\n${p.outreachRules}` : '',
+    p.strategy,
+    p.funnel ? `\n\n${p.funnel}` : '',
+    p.knowledge ? `\n\n## Informazioni ufficiali\n${p.knowledge}` : '',
+  ].join('')
+  const stableTail = [p.styleExamples, p.personal ? `\n\n${p.personal}` : ''].join('')
+  const systemTail = [
+    p.postCaption ? `\n\n## Post commentato\n${p.postCaption}` : '',
+    p.outreachFacts,
+    p.appointments,
+    p.client,
+    p.instructions,
+    p.dateTime,
+    CLARITY_RULES,
+    p.identity,
+    p.context,
+    p.language,
+  ].join('')
+  return { system, stableTail, systemTail }
 }
 
 export type OutgoingTarget = {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDisabledModels } from '@/lib/chat-access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { refusalNotice, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
+import { refusalNotice, refusalRetryModel, streamClaude, type ClaudeChatMessage } from '@/lib/claude'
 import {
   calculateCostUsd,
   getModelProvider,
@@ -159,7 +159,8 @@ export async function POST(req: NextRequest) {
 
     // --- Risposta in streaming (NDJSON) -------------------------------
     // Ogni riga e' un evento JSON: 'chat' (id definitivo), 'delta'
-    // (testo), 'done' (messaggio salvato + consumo), 'error'.
+    // (testo), 'reset' (testo mostrato finora da cancellare: risposta
+    // rifiutata e rifatta), 'done' (messaggio salvato + consumo), 'error'.
     const finalChatId = chatId
     const encoder = new TextEncoder()
 
@@ -180,6 +181,8 @@ export async function POST(req: NextRequest) {
 
           let refused = false
           let servedModel = model
+          /** Modello a cui si addebita la risposta (quello scelto, o la riserva dopo un rifiuto). */
+          let billedModel = model
           let usageTotals = {
             input_tokens: 0,
             output_tokens: 0,
@@ -214,28 +217,52 @@ export async function POST(req: NextRequest) {
 
             send({ type: 'delta', text: fullText })
           } else {
-            const claudeStream = streamClaude(conversation, model, projectInstructions)
-
-            for await (const event of claudeStream) {
-              if (
-                event.type === 'content_block_delta' &&
-                event.delta.type === 'text_delta'
-              ) {
-                fullText += event.delta.text
-                send({ type: 'delta', text: event.delta.text })
+            // Una risposta in streaming; il testo si legge solo dai blocchi "text" (i blocchi
+            // "thinking" di Haiku 5.5 non si mostrano).
+            const runClaude = async (retryAfterRefusal: boolean) => {
+              const claudeStream = streamClaude(conversation, model, projectInstructions, { retryAfterRefusal })
+              for await (const event of claudeStream) {
+                if (
+                  event.type === 'content_block_delta' &&
+                  event.delta.type === 'text_delta'
+                ) {
+                  fullText += event.delta.text
+                  send({ type: 'delta', text: event.delta.text })
+                }
               }
+              return claudeStream.finalMessage()
             }
+            const usageOf = (message: Awaited<ReturnType<typeof runClaude>>) => ({
+              input_tokens: message.usage.input_tokens ?? 0,
+              output_tokens: message.usage.output_tokens ?? 0,
+              cache_creation_input_tokens: message.usage.cache_creation_input_tokens ?? 0,
+              cache_read_input_tokens: message.usage.cache_read_input_tokens ?? 0,
+            })
 
-            const finalMessage = await claudeStream.finalMessage()
+            let finalMessage = await runClaude(false)
+            const retryModel = refusalRetryModel(model)
+            if (finalMessage.stop_reason === 'refusal' && retryModel) {
+              // Haiku 5.5 non ha una riserva lato server: si registra la chiamata rifiutata e
+              // la stessa richiesta si rifa' una volta con Haiku 4.5 (nei log solo la categoria).
+              console.warn(`Chat: ${finalMessage.model} ha rifiutato la richiesta (categoria: ${finalMessage.stop_details?.category ?? 'non indicata'}), la rifaccio con ${retryModel}`)
+              const refusedUsage = usageOf(finalMessage)
+              await recordUsage({
+                userId: member.user_id,
+                chatId: finalChatId,
+                model,
+                usage: refusedUsage,
+                costUsd: calculateCostUsd(model, refusedUsage),
+              })
+              // Il testo parziale della risposta rifiutata non vale: il messaggio finale e' quello della
+              // riprova. 'reset' fa cancellare al client l'anteprima gia' mostrata.
+              fullText = ''
+              send({ type: 'reset' })
+              billedModel = retryModel
+              finalMessage = await runClaude(true)
+            }
             refused = finalMessage.stop_reason === 'refusal'
             servedModel = finalMessage.model
-            usageTotals = {
-              input_tokens: finalMessage.usage.input_tokens ?? 0,
-              output_tokens: finalMessage.usage.output_tokens ?? 0,
-              cache_creation_input_tokens:
-                finalMessage.usage.cache_creation_input_tokens ?? 0,
-              cache_read_input_tokens: finalMessage.usage.cache_read_input_tokens ?? 0,
-            }
+            usageTotals = usageOf(finalMessage)
           }
 
           const content = refused ? refusalNotice() : fullText.trim()
@@ -251,11 +278,12 @@ export async function POST(req: NextRequest) {
             .select('id, created_at')
             .single()
 
-          const costUsd = calculateCostUsd(model, usageTotals)
+          // Prezzo del modello che ha risposto davvero (es. Haiku 4.5 dopo un rifiuto di Haiku 5.5).
+          const costUsd = calculateCostUsd(billedModel, usageTotals)
           await recordUsage({
             userId: member.user_id,
             chatId: finalChatId,
-            model,
+            model: billedModel,
             usage: usageTotals,
             costUsd,
           })

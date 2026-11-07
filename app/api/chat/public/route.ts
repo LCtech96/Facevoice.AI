@@ -57,11 +57,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Istruzioni fisse prima, data e ora (cambiano a ogni richiesta) in fondo: cache implicita di Gemini.
     const systemMessage = `Sei un assistente AI di Facevoice.AI in una chat condivisa fra piu' partecipanti.
 
-${buildRealtimeDateTimeInstructions()}
+Rispondi in modo breve e concreto (2-4 frasi), nella lingua di chi scrive. Quando qualcuno invia un'immagine, analizzala con attenzione.
 
-Rispondi in modo breve e concreto (2-4 frasi), nella lingua di chi scrive. Quando qualcuno invia un'immagine, analizzala con attenzione.`
+${buildRealtimeDateTimeInstructions()}`
 
     const result = await callGeminiWithFallback(
       validMessages,

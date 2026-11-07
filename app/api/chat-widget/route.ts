@@ -108,11 +108,12 @@ export async function POST(req: NextRequest) {
       ? `\n\n## Informazioni ufficiali dal sito\n${knowledgeText}\n\nPer dettagli su servizi e progetti usa queste informazioni. Non inventare dati non presenti qui.`
       : ''
 
+    // Istruzioni fisse prima, data e ora (cambiano a ogni richiesta) in fondo: cache implicita di Gemini.
     const systemPrompt = [
       SYSTEM_PROMPT,
       knowledgeGuardrail,
-      `\n## Data e ora\n${timeGuardrail}`,
       `\n## Regole finali\n- Completa sempre la frase: niente risposte di una sola parola.\n- Se chiedono che giorno è oggi, indica giorno della settimana, data e ora (fuso Europe/Rome).\n- Dopo 2-3 scambi utili, suggerisci naturalmente WhatsApp (${CONTACT_INFO.whatsapp}) o email (${CONTACT_INFO.email}) per una consulenza gratuita.`,
+      `\n## Data e ora\n${timeGuardrail}`,
     ].join('')
 
     const chatMessages: Array<{ role: string; content: string }> = [

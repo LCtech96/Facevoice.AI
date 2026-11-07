@@ -4,6 +4,7 @@ import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
 import { SITE_URL } from '@/lib/seo/site'
+import { currentChatModelId } from '@/lib/chat-models'
 
 // Richieste di accesso alla chat interna: chi si registra e non e' abilitato
 // preme "Richiedi accesso"; l'admin riceve push ed email con i link Approva /
@@ -169,11 +170,14 @@ export async function sendWelcomeEmail(email: string, displayName: string | null
 
 const MODELS_PREFIX = 'chat_models_disabled:'
 
+/** Modelli salvati con un id vecchio (es. Haiku 4.5) valgono per il successore (Haiku 5.5). */
+const currentIds = (list: unknown): string[] =>
+  Array.isArray(list) ? [...new Set(list.filter((m): m is string => typeof m === 'string').map(currentChatModelId))] : []
+
 export async function getDisabledModels(userId: string): Promise<string[]> {
   const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', MODELS_PREFIX + userId).maybeSingle()
   try {
-    const list = data?.value ? JSON.parse(data.value) : []
-    return Array.isArray(list) ? list.filter((m): m is string => typeof m === 'string') : []
+    return currentIds(data?.value ? JSON.parse(data.value) : [])
   } catch {
     return []
   }
@@ -190,7 +194,7 @@ export async function allDisabledModels(): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>()
   for (const row of data || []) {
     try {
-      map.set(row.key.slice(MODELS_PREFIX.length), JSON.parse(row.value))
+      map.set(row.key.slice(MODELS_PREFIX.length), currentIds(JSON.parse(row.value)))
     } catch {}
   }
   return map

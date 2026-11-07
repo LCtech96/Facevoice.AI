@@ -226,15 +226,19 @@ export async function handleSiteMessage(
     : [...clientHistory.slice(-HISTORY_LIMIT), { role: 'user', content: text }]
 
   const knowledge = await loadKnowledge().catch(() => '')
+  // Prima le istruzioni uguali per tutti i visitatori (si rileggono dalla cache), poi quelle
+  // di questo visitatore e di questo momento (nome, lingua, data e ora, verifica).
   const system = [
     await sectionText(SITE_PROMPT),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+    CLARITY_RULES,
+  ].join('')
+  const systemTail = [
     contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
     language !== 'it'
       ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
       : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
-    CLARITY_RULES,
     identityPrompt(identity, WEB_PLATFORM),
   ].join('')
 
@@ -244,6 +248,7 @@ export async function handleSiteMessage(
       feature: 'chat_sito',
       temperature: 0.5,
       maxOutputTokens: 512,
+      systemTail,
     })
     raw = (result.message || '').trim()
   } catch (error) {
@@ -361,20 +366,23 @@ async function draftVerificationReply(sessionId: string, contactName: string | n
   }))
   if (!history.length) return
   const knowledge = await loadKnowledge().catch(() => '')
+  // Stessa parte stabile della chat del sito (cache), poi quello che riguarda questa bozza.
   const system = [
     await sectionText(SITE_PROMPT),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+    CLARITY_RULES,
+  ].join('')
+  const systemTail = [
     contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
     `\n\n## Operatore\nLa conversazione è seguita da un operatore del team: scrivi la risposta come bozza, che l'operatore controlla prima di inviarla. Non aggiungere ${HANDOFF_TAG}.`,
     language !== 'it' ? `\n\n## Lingua\nRispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}.` : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
-    CLARITY_RULES,
     identityPrompt(identity, WEB_PLATFORM),
   ].join('')
 
   let raw = ''
   try {
-    raw = ((await callAI(history, system, { feature: 'chat_sito', temperature: 0.4, maxOutputTokens: 512 })).message || '').trim()
+    raw = ((await callAI(history, system, { feature: 'chat_sito', temperature: 0.4, maxOutputTokens: 512, systemTail })).message || '').trim()
   } catch (error) {
     console.error('site chat verifica identità, bozza:', error)
     return

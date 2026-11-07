@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          'Generazione immagini non disponibile. Verifica GEMINI_API_KEY o i limiti del piano gratuito.',
+          'Generazione immagini non disponibile in questo momento. Riprova più tardi.',
       },
       { status: 503 }
     )

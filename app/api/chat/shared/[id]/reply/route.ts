@@ -105,11 +105,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     attachments: i === history.length - 1 && m.role === 'user' && attachments.length ? attachments : undefined,
   }))
 
+  // Istruzioni fisse prima, data e ora (cambiano a ogni richiesta) in fondo: cache implicita di Gemini.
   const system = `Sei l'assistente AI di Facevoice.AI in una chat condivisa fra più partecipanti.
 
-${buildRealtimeDateTimeInstructions()}
+Rispondi in modo breve e concreto, SEMPRE nella stessa lingua dell'ultimo messaggio di chi scrive. Quando qualcuno invia un'immagine, analizzala con attenzione.
 
-Rispondi in modo breve e concreto, SEMPRE nella stessa lingua dell'ultimo messaggio di chi scrive. Quando qualcuno invia un'immagine, analizzala con attenzione.`
+${buildRealtimeDateTimeInstructions()}`
 
   try {
     const result = await callGeminiWithFallback(messages, GEMINI_DEFAULT_MODEL, system, { maxOutputTokens: 2048 })

@@ -50,11 +50,12 @@ export const CHAT_MODELS: ChatModel[] = [
     pricing: { input: 2, output: 10 },
   },
   {
-    id: 'claude-haiku-4-5',
-    name: 'Claude Haiku 4.5',
+    id: 'claude-haiku-5-5',
+    name: 'Claude Haiku 5.5',
     provider: 'anthropic',
     description: "Il più economico e rapido. Per domande brevi.",
-    pricing: { input: 1, output: 5 },
+    // Fino a 100K token di prompt (oltre: $0,50 / $2,50, vedi calculateCostUsd).
+    pricing: { input: 0.1, output: 0.5 },
   },
   {
     id: 'gemini-3.6-flash',
@@ -83,6 +84,19 @@ export function getChatModel(modelId: string): ChatModel | undefined {
   return CHAT_MODELS.find((m) => m.id === modelId)
 }
 
+/**
+ * Modelli non piu' nel menu ma ancora da conteggiare: vecchie righe di consumo e la
+ * riprova con Haiku 4.5 quando Haiku 5.5 rifiuta una richiesta.
+ */
+const RETIRED_PRICING: Record<string, ModelPricing> = {
+  'claude-haiku-4-5': { input: 1, output: 5 },
+}
+
+/** Haiku 5.5: con un prompt oltre 100K token si paga la tariffa piu' alta su tutta la richiesta. */
+const LONG_PROMPT_PRICING: Record<string, { from: number; pricing: ModelPricing }> = {
+  'claude-haiku-5-5': { from: 100_000, pricing: { input: 0.5, output: 2.5 } },
+}
+
 export function getModelProvider(modelId: string): ChatProvider {
   return getChatModel(modelId)?.provider ?? 'anthropic'
 }
@@ -103,6 +117,17 @@ const LEGACY_MODEL_MAP: Record<string, string> = {
   'gemini-flash-latest': 'gemini-3.6-flash',
   'llama-3.1-8b-instant': 'gemini-3.6-flash',
   'llama-3.3-70b-versatile': 'gemini-3.6-flash',
+  'claude-haiku-4-5': 'claude-haiku-5-5',
+}
+
+/**
+ * Id attuale di un modello salvato (es. nei modelli disattivati per un utente): i vecchi
+ * passano al successore, quelli sconosciuti restano come sono.
+ */
+export function currentChatModelId(modelId: string): string {
+  if (CHAT_MODELS.some((m) => m.id === modelId)) return modelId
+  const next = LEGACY_MODEL_MAP[modelId]
+  return next && next.startsWith('claude-') ? next : modelId
 }
 
 export function getChatModelName(modelId: string): string {
@@ -130,8 +155,13 @@ export function calculateCostUsd(
     cache_read_input_tokens?: number
   }
 ): number {
-  const pricing = getChatModel(model)?.pricing
-  if (!pricing) return 0
+  const base =
+    getChatModel(model)?.pricing ??
+    RETIRED_PRICING[Object.keys(RETIRED_PRICING).find((id) => model.startsWith(id)) || '']
+  if (!base) return 0
+  const prompt = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0)
+  const long = LONG_PROMPT_PRICING[model]
+  const pricing = long && prompt > long.from ? long.pricing : base
 
   const perToken = (millionPrice: number) => millionPrice / 1_000_000
 
