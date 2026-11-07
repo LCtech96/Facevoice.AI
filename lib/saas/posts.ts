@@ -2,7 +2,7 @@ import sharp from 'sharp'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { fontPreset } from '@/lib/font-presets'
-import { callAI, describeMedia, hasAIProvider } from '@/lib/ai'
+import { callAI, describeMedia, hasAIProvider, recordImageAnswer } from '@/lib/ai'
 import { assertAIAllowed } from '@/lib/usage-limits'
 import { asPhotoLayout, asTextLayout, checkFont, createPhotoCarousel, fitPostPhoto, PALETTE_MIXES, PHOTO_LAYOUTS, TEXT_LAYOUTS, type Cta, type Palette, type PhotoLayout, type Slide, type TextLayout } from '@/lib/blog-image'
 import { generateGeminiImage, getGeminiApiKey } from '@/lib/gemini'
@@ -114,15 +114,19 @@ export async function storeWebImage(workspaceId: string, input: Buffer): Promise
   return store(workspaceId, 'web', jpeg)
 }
 
+/** Funzione nei consumi (ai_usage) per le foto create o modificate dall'AI. */
+const IMAGE_FEATURE = 'saas_immagini'
+
 /**
  * Immagine dall'AI di Gemini (l'unica che crea e modifica le foto): sul piano gratuito
  * a volte risponde "limite di richieste al minuto". Si aspetta e si riprova da soli
  * (fino a due volte, circa un minuto) invece di far fallire la correzione.
+ * Ogni risposta di Google si registra nei consumi dello spazio, con i token veri.
  */
-async function geminiImage(prompt: string, reference?: { mimeType: string; data: string }) {
+async function geminiImage(workspaceId: string, prompt: string, reference?: { mimeType: string; data: string }) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await generateGeminiImage(prompt, reference)
+      return await generateGeminiImage(prompt, reference, (answer) => recordImageAnswer(workspaceId, IMAGE_FEATURE, answer))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!/rate limit|429|limiti di richieste|resource.?exhausted/i.test(message)) throw error
@@ -141,7 +145,7 @@ export async function editImage(workspaceId: string, url: string, instruction: s
   const prompt = `Edit the attached photo following this instruction from a small business owner (in Italian): "${instruction.slice(0, 600)}".
 Keep the same subject, people, products and composition unless the instruction asks otherwise. Photorealistic, high quality, suitable for an Instagram post.
 If the instruction asks for text in the image, write it exactly as requested and spell it correctly; otherwise add no text, no logos and no watermarks.`
-  const { imageUrl } = await geminiImage(prompt, { mimeType: 'image/jpeg', data: original.toString('base64') })
+  const { imageUrl } = await geminiImage(workspaceId, prompt, { mimeType: 'image/jpeg', data: original.toString('base64') })
   const base64 = imageUrl.replace(/^data:[^;]+;base64,/, '')
   if (!base64) throw new Error('l’AI non ha restituito l’immagine')
   const jpeg = await sharp(Buffer.from(base64, 'base64')).rotate().jpeg({ quality: 88 }).toBuffer()
@@ -153,6 +157,7 @@ export async function generateImage(workspaceId: string, description: string): P
   if (!getGeminiApiKey()) throw new Error('creazione delle immagini non disponibile (manca la chiave Gemini)')
   await assertAIAllowed(workspaceId)
   const { imageUrl } = await geminiImage(
+    workspaceId,
     `Photorealistic image for an Instagram post of a small business. ${description.slice(0, 800)}
 Portrait 4:5. No text, no logos, no watermarks unless explicitly requested.`
   )

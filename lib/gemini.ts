@@ -98,6 +98,33 @@ function extractGeminiText(data: any): string {
     .trim()
 }
 
+/** Token di una risposta di Gemini (usageMetadata), se Google li ha mandati. */
+export type GeminiUsage = { prompt_tokens?: number; completion_tokens?: number }
+
+function usageOf(data: any): GeminiUsage | undefined {
+  const meta = data?.usageMetadata
+  return meta ? { prompt_tokens: meta.promptTokenCount, completion_tokens: meta.candidatesTokenCount } : undefined
+}
+
+/**
+ * Gemini ha risposto (HTTP 200) ma senza un testo utile (bloccata, interrotta): l'errore porta
+ * i token di quella risposta, cosi' la chiamata si registra lo stesso nei consumi (lib/ai.ts).
+ */
+export class GeminiEmptyAnswerError extends Error {
+  readonly usage: GeminiUsage | undefined
+  constructor(message: string, usage: GeminiUsage | undefined) {
+    super(message)
+    this.name = 'GeminiEmptyAnswerError'
+    this.usage = usage
+  }
+}
+
+/** Token della risposta se l'errore e' una risposta di Gemini senza testo (null: Gemini non ha risposto). */
+export function geminiAnswerUsage(error: unknown): GeminiUsage | null {
+  if (!(error instanceof Error) || error.name !== 'GeminiEmptyAnswerError') return null
+  return (error as GeminiEmptyAnswerError).usage ?? {}
+}
+
 function extractGeminiImage(data: any): string | null {
   const parts = data?.candidates?.[0]?.content?.parts
   if (!Array.isArray(parts)) return null
@@ -293,7 +320,7 @@ export async function callGeminiAPI(
   }
 
   const failureReason = getGeminiFailureReason(data)
-  throw new Error(failureReason || 'Invalid response from Gemini API')
+  throw new GeminiEmptyAnswerError(failureReason || 'Invalid response from Gemini API', usageOf(data))
 }
 
 /** Pagina trovata dalla ricerca Google (uri spesso e' un rimando vertexaisearch.cloud.google.com). */
@@ -338,7 +365,7 @@ export async function callGeminiGrounded(
   const data = await response.json().catch(() => ({}))
   if (!response.ok) throw parseGeminiError(response, data)
   const text = extractGeminiText(data)
-  if (!text) throw new Error(getGeminiFailureReason(data) || 'Invalid response from Gemini API')
+  if (!text) throw new GeminiEmptyAnswerError(getGeminiFailureReason(data) || 'Invalid response from Gemini API', usageOf(data))
   const meta = data?.candidates?.[0]?.groundingMetadata || {}
   const chunks: GroundingChunk[] = (Array.isArray(meta.groundingChunks) ? meta.groundingChunks : []).map((c: { web?: { uri?: unknown; title?: unknown } }) => ({
     uri: typeof c?.web?.uri === 'string' ? c.web.uri : '',
@@ -397,7 +424,9 @@ export async function callGeminiWithFallback(
 
 export async function generateGeminiImage(
   prompt: string,
-  referenceImage?: GeminiAttachment
+  referenceImage?: GeminiAttachment,
+  /** Ogni risposta di Google (HTTP 200, con o senza immagine), con i token veri: per i consumi. */
+  onAnswer?: (answer: { model: string; usage: GeminiUsage | undefined; ok: boolean }) => void
 ) {
   const apiKey = getGeminiApiKey()
   if (!apiKey) {
@@ -443,6 +472,9 @@ export async function generateGeminiImage(
       }
 
       const imageUrl = extractGeminiImage(data)
+      try {
+        onAnswer?.({ model: (data.modelVersion as string) || imageModel, usage: usageOf(data), ok: Boolean(imageUrl) })
+      } catch {}
       if (imageUrl) {
         return {
           imageUrl,

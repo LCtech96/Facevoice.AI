@@ -5,9 +5,11 @@ import {
   GEMINI_DEFAULT_MODEL,
   callGeminiAPI,
   callGeminiGrounded,
+  geminiAnswerUsage,
   geminiErrorInfo,
   getGeminiApiKey,
   type GeminiChatMessage,
+  type GeminiUsage,
   type GroundedAnswer,
   type GroundingChunk,
   type GroundingSupport,
@@ -135,6 +137,23 @@ function recordUsage(row: {
     .catch(() => false)
   // Soglie del piano del cliente (gettoni, blocco, avvisi a Facevoice): dopo la risposta.
   if ((row.outcome || 'ok') === 'ok') afterAIUsage(workspaceId, cost, logged)
+}
+
+/**
+ * Risposta di Gemini a una richiesta di immagine (creata o modificata, lib/saas/posts.ts): si
+ * registra nello spazio con i token veri della risposta (ok: c'era l'immagine). Costo 0 come
+ * prima: non entra nel limite in euro del piano, ma la chiamata si vede nei consumi.
+ */
+export function recordImageAnswer(workspaceId: string, feature: string, answer: { model: string; usage: GeminiUsage | undefined; ok: boolean }) {
+  recordUsage({
+    feature,
+    workspaceId,
+    provider: 'gemini',
+    model: answer.model,
+    outcome: answer.ok ? 'ok' : 'error',
+    input: answer.usage?.prompt_tokens,
+    output: answer.usage?.completion_tokens,
+  })
 }
 export type AIResult = { message: string; provider: 'gemini' | 'claude'; model: string }
 
@@ -467,7 +486,9 @@ async function geminiGroundedSearch(prompt: string, options: GroundedSearchOptio
         console.warn(`Ricerca sul web: Gemini ${model} rifiuta la richiesta, provo il modello successivo · ${geminiDetail(error)}`)
         continue
       }
-      recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'error' })
+      // Gemini ha risposto senza testo utile: i token della risposta si contano lo stesso.
+      const answered = geminiAnswerUsage(error)
+      recordUsage({ feature: options.feature, workspaceId, provider: 'gemini', model, outcome: 'error', input: answered?.prompt_tokens, output: answered?.completion_tokens })
       throw error
     }
   }
@@ -652,8 +673,9 @@ async function tryGemini(
   options?: AIOptions
 ): Promise<AIResult> {
   let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
-  const record = (model: string, outcome: 'limit' | 'error') =>
-    recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'gemini', model, outcome })
+  // usage: token della risposta quando Gemini ha risposto (testo interrotto o senza testo utile).
+  const record = (model: string, outcome: 'limit' | 'error', usage?: GeminiUsage | null) =>
+    recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'gemini', model, outcome, input: usage?.prompt_tokens, output: usage?.completion_tokens })
   /** Modelli che hanno rifiutato questa richiesta: a riposo solo se un altro modello la accetta. */
   const rejected: string[] = []
   /** Un modello l'ha rifiutata anche senza thinkingConfig: e' la richiesta, non thinkingConfig. */
@@ -673,7 +695,7 @@ async function tryGemini(
         // si restituisce come risposta completa, si prova il modello successivo.
         if (withoutThinkingConfig && result.finishReason === 'MAX_TOKENS') {
           lastError = new Error(`Gemini ${model}: risposta interrotta (MAX_TOKENS) senza thinkingConfig`)
-          record(model, 'error')
+          record(model, 'error', result.usage)
           console.warn(`Gemini ${model} senza thinkingConfig ha troncato la risposta, provo il modello successivo`)
           break
         }
@@ -722,12 +744,15 @@ async function tryGemini(
           console.warn(`Gemini ${model} rifiuta la richiesta, provo il modello successivo · ${geminiDetail(error)}`)
           break
         }
+        // Gemini ha risposto ma senza testo utile: la risposta (con i suoi token) si registra qui.
+        const answered = geminiAnswerUsage(error)
         // Seconda prova (senza thinkingConfig) fallita per altro: si passa al successivo, senza riposo.
         if (withoutThinkingConfig && !remembered) {
-          record(model, 'error')
+          record(model, 'error', answered)
           console.warn(`Gemini ${model} senza thinkingConfig non risponde, provo il modello successivo · ${geminiDetail(error)}`)
           break
         }
+        if (answered) record(model, 'error', answered)
         throw error
       }
     }
@@ -742,7 +767,8 @@ function noteGeminiFailure(error: unknown, feature?: string, workspaceId?: strin
     console.warn(`Tutti i modelli Gemini sono al limite, passo a Claude: ${message} · ${geminiDetail(error)}`)
     if (getAnthropicApiKey()) reportStatus('Gemini ha raggiunto il limite: continuo con Claude…')
   } else {
-    recordUsage({ feature, workspaceId, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
+    // Una risposta di Gemini senza testo e' gia' registrata (con i suoi token) da tryGemini.
+    if (!geminiAnswerUsage(error)) recordUsage({ feature, workspaceId, provider: 'gemini', model: GEMINI_DEFAULT_MODEL, outcome: 'error' })
     console.warn(`Gemini non disponibile, passo a Claude: ${message}`)
   }
   return message

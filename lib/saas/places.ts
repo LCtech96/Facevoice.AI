@@ -2,9 +2,12 @@ import { workspaceDb } from '@/lib/workspace-db'
 import { afterAIUsage } from '@/lib/usage-limits'
 
 // Ricerca di aziende su Google Maps per Trova clienti (Places API ufficiale, "Text Search"
-// della versione nuova, come il Motore clienti del sito principale), una pagina piccola per
-// richiesta. Ogni richiesta riuscita costa e si registra nei consumi del cliente (ai_usage,
-// funzione "saas_trova_clienti_maps"), cosi' conta nel limite in euro del suo piano.
+// della versione nuova, come il Motore clienti del sito principale), una pagina per
+// richiesta. Ogni richiesta a cui Google risponde si registra nei consumi del cliente
+// (ai_usage, funzione "saas_trova_clienti_maps"): quella riuscita con il suo costo (conta nel
+// limite in euro del piano), quella con un errore di Google a 0 USD con outcome "error"
+// (Google non la fa pagare, ma e' una richiesta vera). Senza risposta (rete, tempo
+// scaduto) non si registra niente.
 
 /**
  * Prezzo di listino Google per una richiesta Text Search (Places API New) con i campi che
@@ -58,6 +61,29 @@ type PlacesResponse = {
 // Chiave non valida, bloccata o senza fatturazione: Google risponde anche con 400 (API_KEY_INVALID).
 const KEY_PROBLEM = /API_KEY_INVALID|API key not valid|API_KEY_SERVICE_BLOCKED|API_KEY_HTTP_REFERRER_BLOCKED|API_KEY_IP_ADDRESS_BLOCKED|BILLING_DISABLED|billing/i
 
+/**
+ * Richiesta a Google Maps a cui Google ha risposto con un errore (HTTP non 2xx): nei consumi
+ * reali del cliente, a 0 USD (non entra nel limite del piano). Non fa mai fallire la ricerca.
+ */
+export function recordPlacesError(workspaceId: string): Promise<boolean> {
+  return Promise.resolve(
+    workspaceDb(workspaceId).from('ai_usage').insert({
+      feature: PLACES_FEATURE,
+      provider: 'gemini',
+      model: PLACES_MODEL,
+      outcome: 'error',
+      input_tokens: 0,
+      output_tokens: 0,
+      cost_usd: 0,
+    })
+  )
+    .then(({ error }) => {
+      if (error) console.warn('ai_usage (google maps, errore):', error.message)
+      return !error
+    })
+    .catch(() => false)
+}
+
 /** Costo di una richiesta a Google Maps nei consumi del cliente (non blocca e non fa fallire la ricerca). */
 export function recordPlacesFee(workspaceId: string): Promise<boolean> {
   const logged = Promise.resolve(
@@ -87,7 +113,8 @@ export function recordPlacesFee(workspaceId: string): Promise<boolean> {
 export async function searchPlacesPage(workspaceId: string, query: string, options: { pageSize?: number; timeoutMs?: number } = {}): Promise<Place[]> {
   const key = placesKey()
   if (!key) throw new PlacesError('ricerca non disponibile', true)
-  const pageSize = Math.min(20, Math.max(1, Math.round(options.pageSize ?? 10)))
+  // 20 = il massimo di Google: stesso prezzo per richiesta, il doppio delle aziende rispetto a 10.
+  const pageSize = Math.min(20, Math.max(1, Math.round(options.pageSize ?? 20)))
   let response: Response
   try {
     response = await fetch(ENDPOINT, {
@@ -101,6 +128,8 @@ export async function searchPlacesPage(workspaceId: string, query: string, optio
   }
   const data = (await response.json().catch(() => ({}))) as PlacesResponse
   if (!response.ok) {
+    // Google ha risposto: e' una richiesta vera anche se in errore (nei consumi reali, a 0 USD).
+    await recordPlacesError(workspaceId)
     // Mai la chiave nei messaggi (se Google la ripetesse).
     const reason = String(data.error?.message || `errore ${response.status}`).split(key).join('***').slice(0, 200)
     const keyProblem = response.status === 400 && KEY_PROBLEM.test(JSON.stringify(data.error || {}))

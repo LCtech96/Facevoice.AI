@@ -6,7 +6,7 @@ import { eurPerUsd, eurPerUsdNow } from '@/lib/eur'
 import { updateSetting } from '@/lib/settings-store'
 import { workspaceOwnerId } from '@/lib/workspace'
 import { accessFrom, enabledAssistantUsers, type AssistantAccess } from '@/lib/assistant-access'
-import { automationsFrom, automationsSentToday, enabledAutomationsUsers } from '@/lib/automations-access'
+import { automationsFrom, automationsSentToday, enabledAutomationsUsers, romeDay } from '@/lib/automations-access'
 import {
   allBillingStates,
   billingConfigured,
@@ -238,6 +238,8 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   saas_lettura_foto: 'content',
   saas_recupero_testi: 'content',
   saas_estrai_foto: 'content',
+  // Foto create o modificate dall'AI (lib/saas/posts.ts).
+  saas_immagini: 'content',
   // Ricerca sul web (eventi e immagini per i caroselli): senza questa riga "web" la metterebbe in "Chat del sito".
   saas_ricerca_web: 'content',
   // Automazioni: email scritte dall'AI a ogni invio (lib/saas/automations.ts).
@@ -782,6 +784,213 @@ export function afterAIUsage(workspaceId: string | null | undefined, costUsd: nu
   })
 }
 
+// --- Consumo reale per il pannello (richieste e token alla risposta del fornitore) -----
+
+/**
+ * Righe di Google Maps (Trova clienti) in ai_usage: stesso valore di PLACES_MODEL in
+ * lib/saas/places.ts (ripetuto qui per non legare questo modulo a quello).
+ */
+export const PLACES_USAGE_MODEL = 'google-places-text-search'
+
+/** Nomi delle funzioni per il pannello (le altre prendono il nome del collegamento). */
+export const FEATURE_LABELS: Record<string, string> = {
+  saas_risposte: 'Risposte ai messaggi',
+  saas_commenti: 'Risposte ai commenti',
+  saas_lettura_media: 'Foto e video ricevuti',
+  saas_correzioni: 'Correzioni imparate',
+  saas_assistente: 'Assistente',
+  saas_post: 'Post',
+  saas_slide: 'Caroselli',
+  saas_didascalia: 'Didascalie',
+  saas_lettura_foto: 'Foto lette dall\'AI',
+  saas_recupero_testi: 'Testi letti dalle slide',
+  saas_estrai_foto: 'Foto prese dagli screenshot',
+  saas_immagini: 'Foto create o modificate',
+  saas_ricerca_web: 'Ricerca sul web',
+  saas_automazioni: 'Automazioni',
+  saas_trova_clienti: 'Trova clienti: ricerche e email',
+  saas_trova_clienti_maps: 'Trova clienti: Google Maps',
+  chat_sito: 'Chat del sito',
+  risposte_email: 'Risposte email',
+  risposte_social: 'Risposte social',
+  controrisposte_clienti: 'Risposte ai clienti cercati',
+  assistente_clienti: 'Assistente Ricerca clienti',
+  email_clienti: 'Email ai clienti',
+  analisi_clienti: 'Analisi dei siti',
+  lettura_immagini: 'Immagini lette dall\'AI',
+  lettura_media_direct: 'Foto e video in Direct',
+  traduzioni_sito: 'Traduzioni del sito',
+  traduzioni_messaggi: 'Traduzioni dei messaggi',
+  blog_automatico: 'Blog',
+  blog_carosello: 'Caroselli del blog',
+  super_chat_carosello: 'Caroselli della Super chat',
+  altro: 'Altro',
+}
+
+/** Nome mostrato di una funzione di ai_usage (con il canale, se c'e': "Risposte ai messaggi · Instagram"). */
+export function featureLabel(feature: string): string {
+  const [base, channel] = String(feature || '').toLowerCase().split(':')
+  const name = FEATURE_LABELS[base] || CONNECTIONS[connectionOf(base)]
+  return channel && CHANNEL_KEYS.has(channel as ConnectionKey) ? `${name} · ${CONNECTIONS[channel as ConnectionKey]}` : name
+}
+
+export type ProviderUsage = { calls: number; input: number; output: number }
+export type RealUsageTotals = { places: { ok: number; error: number }; ai: { gemini: ProviderUsage; claude: ProviderUsage } }
+/** places = richieste a Google Maps con risposta (riuscite + errori); aiCalls, input, output = chiamate AI con risposta e loro token. */
+export type RealUsageFeature = { feature: string; label: string; places: number; aiCalls: number; input: number; output: number }
+/** Campo "usage" del collegamento con il sito principale: oggi e mese (da periodStart), giorno e mese italiani. */
+export type BridgeUsage = { periodStart: string; today: RealUsageTotals; month: RealUsageTotals; byFeature: RealUsageFeature[] }
+
+export type RealUsageRow = {
+  feature: string | null
+  provider: string | null
+  model: string | null
+  outcome: string | null
+  input_tokens: number | string | null
+  output_tokens: number | string | null
+  created_at: string
+}
+
+const emptyTotals = (): RealUsageTotals => ({ places: { ok: 0, error: 0 }, ai: { gemini: { calls: 0, input: 0, output: 0 }, claude: { calls: 0, input: 0, output: 0 } } })
+const tokens = (value: unknown) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0)
+
+/**
+ * Cosa conta una riga di ai_usage (null: niente).
+ * - Google Maps (model PLACES_USAGE_MODEL): ogni riga e' una richiesta a cui Google ha risposto;
+ *   outcome "ok" = riuscita, altrimenti errore di Google.
+ * - AI: conta solo se il fornitore ha risposto: outcome "ok", oppure una risposta con i token
+ *   veri ma inutilizzabile (es. Claude che rifiuta, Gemini che interrompe il testo). Le righe
+ *   "limit" e quelle "error" senza token (limite, errore, nessuna risposta) non sono chiamate.
+ */
+export function classifyUsageRow(row: RealUsageRow): { kind: 'places'; ok: boolean } | { kind: 'ai'; provider: 'gemini' | 'claude'; input: number; output: number } | null {
+  if (row.model === PLACES_USAGE_MODEL) return { kind: 'places', ok: row.outcome === 'ok' }
+  const provider = row.provider === 'claude' ? 'claude' : row.provider === 'gemini' ? 'gemini' : null
+  if (!provider) return null
+  const input = tokens(row.input_tokens)
+  const output = tokens(row.output_tokens)
+  const answered = (row.outcome || 'ok') === 'ok' || input + output > 0
+  return answered ? { kind: 'ai', provider, input, output } : null
+}
+
+type UsageAccumulator = { today: RealUsageTotals; month: RealUsageTotals; features: Map<string, Omit<RealUsageFeature, 'label'>> }
+const emptyAccumulator = (): UsageAccumulator => ({ today: emptyTotals(), month: emptyTotals(), features: new Map() })
+
+function addTotals(into: RealUsageTotals, from: RealUsageTotals) {
+  into.places.ok += from.places.ok
+  into.places.error += from.places.error
+  for (const p of ['gemini', 'claude'] as const) {
+    into.ai[p].calls += from.ai[p].calls
+    into.ai[p].input += from.ai[p].input
+    into.ai[p].output += from.ai[p].output
+  }
+}
+
+/** Somma le righe (gia' dal periodo in poi): oggi = da dayStart. */
+export function accumulateUsage(rows: RealUsageRow[], dayStart: Date, acc: UsageAccumulator = emptyAccumulator()): UsageAccumulator {
+  for (const row of rows) {
+    const what = classifyUsageRow(row)
+    if (!what) continue
+    const at = Date.parse(row.created_at)
+    const targets = Number.isFinite(at) && at >= dayStart.getTime() ? [acc.month, acc.today] : [acc.month]
+    const feature = String(row.feature || 'altro')
+    const f = acc.features.get(feature) || { feature, places: 0, aiCalls: 0, input: 0, output: 0 }
+    if (what.kind === 'places') {
+      for (const t of targets) t.places[what.ok ? 'ok' : 'error']++
+      f.places++
+    } else {
+      for (const t of targets) {
+        t.ai[what.provider].calls++
+        t.ai[what.provider].input += what.input
+        t.ai[what.provider].output += what.output
+      }
+      f.aiCalls++
+      f.input += what.input
+      f.output += what.output
+    }
+    acc.features.set(feature, f)
+  }
+  return acc
+}
+
+function bridgeUsageFrom(parts: UsageAccumulator[], periodStart: Date): BridgeUsage {
+  const today = emptyTotals()
+  const month = emptyTotals()
+  const features = new Map<string, Omit<RealUsageFeature, 'label'>>()
+  for (const part of parts) {
+    addTotals(today, part.today)
+    addTotals(month, part.month)
+    for (const [key, f] of part.features) {
+      const into = features.get(key) || { feature: key, places: 0, aiCalls: 0, input: 0, output: 0 }
+      into.places += f.places
+      into.aiCalls += f.aiCalls
+      into.input += f.input
+      into.output += f.output
+      features.set(key, into)
+    }
+  }
+  const byFeature = [...features.values()]
+    .map((f) => ({ ...f, label: featureLabel(f.feature) }))
+    .sort((a, b) => b.places + b.aiCalls - (a.places + a.aiCalls) || b.input + b.output - (a.input + a.output) || a.feature.localeCompare(b.feature))
+  return { periodStart: periodStart.toISOString(), today, month, byFeature }
+}
+
+/** Istante della mezzanotte italiana del giorno (o del primo del mese) di "now". */
+export function romeStartOf(now: Date, unit: 'day' | 'month'): Date {
+  const [year, month, day] = romeDay(now).split('-').map(Number)
+  const wall = Date.UTC(year, month - 1, unit === 'month' ? 1 : day)
+  // Scarto di Roma da UTC in quel momento (+1 o +2 ore): i cambi d'ora non cadono a mezzanotte.
+  const offsetAt = (at: number) => {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(at))
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value || 0)
+    return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute')) - Math.floor(at / 60_000) * 60_000
+  }
+  let at = wall - offsetAt(wall)
+  at = wall - offsetAt(at)
+  return new Date(at)
+}
+
+/** Righe di ai_usage di uno spazio dal periodo in poi (tutte: riuscite, errori, limiti), solo le colonne che servono. */
+async function readRealUsage(workspaceId: string, since: Date): Promise<RealUsageRow[]> {
+  const rows: RealUsageRow[] = []
+  for (let from = 0; from < 100_000; from += 1000) {
+    const { data, error } = await workspaceDb(workspaceId)
+      .from('ai_usage')
+      .select('feature, provider, model, outcome, input_tokens, output_tokens, created_at')
+      .gte('created_at', since.toISOString())
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + 999)
+    if (error) throw new Error(`consumo reale non letto: ${error.message}`)
+    rows.push(...((data || []) as RealUsageRow[]))
+    if (!data || data.length < 1000) break
+  }
+  return rows
+}
+
+/**
+ * Consumo reale di un gruppo di spazi (oggi e mese italiani). cache: per non rileggere lo
+ * stesso spazio per ogni persona che ci lavora (dentro un solo elenco del pannello).
+ */
+export async function realUsageOf(
+  workspaceIds: string[],
+  now = new Date(),
+  cache: Map<string, Promise<UsageAccumulator>> = new Map()
+): Promise<BridgeUsage> {
+  const periodStart = romeStartOf(now, 'month')
+  const dayStart = romeStartOf(now, 'day')
+  const parts = await Promise.all(
+    [...new Set(workspaceIds)].map((id) => {
+      let part = cache.get(id)
+      if (!part) {
+        part = readRealUsage(id, periodStart).then((rows) => accumulateUsage(rows, dayStart))
+        cache.set(id, part)
+      }
+      return part
+    })
+  )
+  return bridgeUsageFrom(parts, periodStart)
+}
+
 // --- Elenco per il pannello di Facevoice (collegamento con il sito principale) -------
 
 export type BridgeUser = {
@@ -816,6 +1025,11 @@ export type BridgeUser = {
   automations: boolean
   /** Email inviate oggi (giorno italiano) dalle automazioni dei suoi spazi (di cui e' titolare; se non ne ha, quelli di cui e' membro). */
   automationsSentToday: number
+  /**
+   * Consumo REALE degli stessi spazi di automationsSentToday: richieste e token registrati quando
+   * il fornitore ha risposto davvero (nessuna stima, nessun euro). Vedi realUsageOf().
+   */
+  usage: BridgeUsage
 }
 
 export type BridgeSubscription = {
@@ -903,9 +1117,10 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
     spacesOf.set(row.user_id, list)
   }
 
-  // Conti in parallelo, pochi alla volta.
+  // Conti in parallelo, pochi alla volta. Consumo reale: ogni spazio si legge una volta sola.
   const queue = [...users]
   const result: BridgeUser[] = []
+  const realUsageCache = new Map<string, Promise<UsageAccumulator>>()
   const worker = async () => {
     for (let user = queue.shift(); user; user = queue.shift()) {
       const spaces = spacesOf.get(user.id) || []
@@ -928,6 +1143,9 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
       // Senza piano l'AI e' ferma qualunque sia la spesa (non e' un limite raggiunto).
       const level = resolved.noPlan ? 'none' : levelFor(eur, budget)
       const override = overrides.get(user.id) ?? null
+      // Stessi spazi di automationsSentToday: quelli di cui e' titolare, se non ne ha quelli in cui lavora.
+      const usageSpaces = (owned.length ? owned : spaces).map((w) => w.id)
+      const usage = await realUsageOf(usageSpaces, now, realUsageCache)
       result.push({
         id: user.id,
         email: (user.email || '').toLowerCase(),
@@ -954,6 +1172,7 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
         assistant: accessFrom(spaces.map((w) => w.id), assistantOn.has(user.id)),
         automations: automationsFrom(spaces.map((w) => w.id), automationsOn.has(user.id)),
         automationsSentToday: (owned.length ? owned : spaces).reduce((sum, w) => sum + (sentToday.get(w.id) || 0), 0),
+        usage,
       })
     }
   }

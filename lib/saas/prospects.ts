@@ -46,8 +46,9 @@ import { isFreeMail, isSharedHost, readBusinessSite, siteDomain } from './prospe
 // rivolgersi (nicchia o pubblico, zona, cosa offre); ogni giorno all'ora scelta (ora
 // italiana, nei giorni scelti) il motore, come il Motore clienti del sito principale:
 // 1) trasforma la nicchia in ricerche per Google Maps (con l'AI, a rotazione, senza ripetere);
-// 2) cerca le aziende (Places API, pagine piccole); 3) legge il sito di quelle nuove (lettura
-// sicura) per trovare l'email pubblica dell'azienda e cosa fa; 4) l'AI scrive una prima email
+// 2) cerca le aziende (Places API, 20 per richiesta; si saltano le ricerche che non portano
+// piu' aziende nuove); 3) legge il sito di quelle nuove (lettura sicura) per trovare
+// l'email pubblica dell'azienda e cosa fa; 4) l'AI scrive una prima email
 // personalizzata (controllata come draftProblem del sito principale); 5) all'orario invia
 // prima le email approvate (le piu' vecchie prima) dalla casella collegata, distanziate, una
 // per destinatario. Con "Approvo io ogni email" le bozze aspettano l'approvazione; con
@@ -61,7 +62,7 @@ import { isFreeMail, isSharedHost, readBusinessSite, siteDomain } from './prospe
 // - "prospects:<spazio>"          = Prospect[] (al massimo 300: si tolgono prima le chiuse piu' vecchie)
 // - "prospects_book:<spazio>"     = { sent: impronte (8 caratteri l'una, una stringa sola: 40000 indirizzi e domini contattati,
 //                                    ~320 KB, cioe' anni), blocked: (email | @dominio)[] (Non contattare: mai tolti da soli) }
-// - "prospects_memory:<spazio>"   = ricerche (rotazione, gia' fatte) e aziende gia' viste (3000)
+// - "prospects_memory:<spazio>"   = ricerche (rotazione, gia' fatte, quelle senza aziende nuove) e aziende gia' viste (3000)
 // - "prospects_day:<spazio>"      = contatori del giorno italiano (invii, ricerche, letture, bozze…)
 // - "prospects_run:<spazio>"      = giro in corso (presa a tempo, ripresa nei minuti dopo) e ultimi giri
 // Il cron (app/api/cron/saas, ogni minuto) lavora a piccoli passi dentro il suo tempo: il
@@ -78,15 +79,22 @@ export const MAX_BLOCKED = 10_000
 const HARD_MAX_BLOCKED = 50_000
 const MAX_PLACES_SEEN = 3000
 const MAX_USED_QUERIES = 150
+/** Ricerche finite senza aziende nuove tenute a mente (anche oltre le 150 gia' fatte). */
+const MAX_DRY_QUERIES = 500
+/** Una ricerca che le ultime 2 volte non ha portato nessuna azienda nuova non si rifa' piu'. */
+export const DEAD_QUERY_RUNS = 2
 const MAX_HISTORY = 10
 /** Bodies tenuti per le email gia' inviate (le altre chiuse restano senza testo, per lo spazio). */
 const KEEP_SENT_BODIES = 40
 /** Bozze scartate dal cliente che tengono il testo (si possono ripristinare). */
 const KEEP_DISCARDED_BODIES = 40
-/** Tetti al giorno (costi): richieste a Google Maps, siti letti, bozze dell'AI, bozze rifatte, piani di ricerca, "Cerca ora". */
-export const DAILY_CAPS = { places: 6, reads: 40, drafts: 30, regen: 30, plans: 3, manual: 5 } as const
-/** Risultati per richiesta a Google Maps (una pagina piccola). */
-export const PAGE_SIZE = 10
+/**
+ * Tetti al giorno (costi): richieste a Google Maps, siti letti, bozze dell'AI, bozze rifatte, piani di ricerca, "Cerca ora".
+ * Google Maps: 4 richieste da 20 aziende (fino a 80) bastano per i 40 siti letti al giorno.
+ */
+export const DAILY_CAPS = { places: 4, reads: 40, drafts: 30, regen: 30, plans: 3, manual: 5 } as const
+/** Risultati per richiesta a Google Maps: 20, il massimo (Google fa pagare la richiesta, non i risultati). */
+export const PAGE_SIZE = 20
 const LEASE_MS = 150_000
 const SEND_LEASE_MS = 120_000
 /** Un orario saltato (cron fermo) si recupera entro questo tempo, poi si salta (niente email a tarda sera). */
@@ -185,7 +193,9 @@ type RunState = { lastSlot: string | null; run: ProspectRun | null; history: Run
 /** sent: impronte di indirizzi e domini contattati, una dopo l'altra (HASH_LEN caratteri l'una). */
 type Book = { sent: string; blocked: string[] }
 type QueryUse = { q: string; at: string; found: number; added: number; error?: string }
-type Memory = { key: string; queries: string[]; used: QueryUse[]; places: string[] }
+/** Ricerca (scritta con fold) e quante volte di fila, le ultime, non ha portato aziende nuove. */
+type DryQuery = { q: string; n: number }
+type Memory = { key: string; queries: string[]; used: QueryUse[]; places: string[]; dry: DryQuery[] }
 export type DayCounters = { day: string; sent: number; places: number; reads: number; drafts: number; regen: number; plans: number; manual: number }
 
 export class ProspectError extends Error {
@@ -315,6 +325,12 @@ const parseMemory = (raw: unknown): Memory => {
     queries: strings(v.queries, 30),
     used: Array.isArray(v.used) ? v.used.filter((u) => u && typeof u.q === 'string').slice(-MAX_USED_QUERIES) : [],
     places: strings(v.places, MAX_PLACES_SEEN),
+    dry: Array.isArray(v.dry)
+      ? v.dry
+          .filter((d) => d && typeof d.q === 'string' && Number.isFinite(Number(d.n)) && Number(d.n) > 0)
+          .map((d) => ({ q: d.q, n: Math.floor(Number(d.n)) }))
+          .slice(-MAX_DRY_QUERIES)
+      : [],
   }
 }
 const countersFrom = (raw: unknown, day: string): DayCounters => {
@@ -1258,8 +1274,11 @@ export function fallbackQueries(s: ProspectSettings): string[] {
   return cities.length ? cities.map((c) => `${niche} ${c}`) : [niche]
 }
 
-/** L'AI trasforma la nicchia (e la zona) in ricerche per Google Maps, diverse da quelle gia' fatte. */
-export async function planQueries(ws: string, s: ProspectSettings, used: string[]): Promise<string[]> {
+/**
+ * L'AI trasforma la nicchia (e la zona) in ricerche per Google Maps, diverse da quelle gia' fatte.
+ * skip: altre ricerche da scartare (quelle che non portano piu' aziende nuove).
+ */
+export async function planQueries(ws: string, s: ProspectSettings, used: string[], skip: string[] = []): Promise<string[]> {
   const system = `Trasformi il pubblico a cui un'attività vuole scrivere in ricerche per Google Maps.
 Regole:
 - Ogni ricerca è "tipo di attività + città" (es. "ristoranti Palermo", "studi dentistici Bari"), al massimo 5 parole, una sola città per ricerca.
@@ -1276,7 +1295,20 @@ Rispondi SOLO con JSON: {"queries": ["...", "..."]} con 6-12 ricerche.`
     const parsed = json ? (JSON.parse(json) as { queries?: unknown }) : null
     list = Array.isArray(parsed?.queries) ? parsed!.queries : []
   } catch {}
-  return cleanQueries(list, new Set(used.map(fold)))
+  return cleanQueries(list, new Set([...used, ...skip].map(fold)))
+}
+
+/** Ricerche da non rifare: le ultime DEAD_QUERY_RUNS volte non hanno portato nessuna azienda nuova (scritte con fold). */
+export function deadQueries(memory: Pick<Memory, 'dry'>): Set<string> {
+  return new Set(memory.dry.filter((d) => d.n >= DEAD_QUERY_RUNS).map((d) => d.q))
+}
+
+/** Dopo una ricerca: con aziende nuove si dimentica, senza si conta una volta in piu'. */
+function noteDry(dry: DryQuery[], q: string, added: number): DryQuery[] {
+  const k = fold(q)
+  const before = dry.find((d) => d.q === k)
+  const rest = dry.filter((d) => d.q !== k)
+  return (added > 0 ? rest : [...rest, { q: k, n: (before?.n || 0) + 1 }]).slice(-MAX_DRY_QUERIES)
 }
 
 /** Prossima ricerca da fare (la tiene nella rotazione finche' non e' fatta). */
@@ -1284,19 +1316,22 @@ async function nextQuery(ctx: Ctx, s: ProspectSettings): Promise<string | null> 
   const ws = ctx.workspaceId
   const memory = await loadMemory(ws)
   const key = queryKey(s)
-  const used = new Set(memory.used.map((u) => fold(u.q)))
-  let pool = (memory.key === key ? memory.queries : []).filter((q) => !used.has(fold(q)))
+  // Gia' fatte, e quelle che le ultime 2 volte non hanno portato aziende nuove: una richiesta
+  // a Google Maps costa anche se non trova niente di nuovo, quindi si saltano.
+  const dead = deadQueries(memory)
+  const skip = new Set([...memory.used.map((u) => fold(u.q)), ...dead])
+  let pool = (memory.key === key ? memory.queries : []).filter((q) => !skip.has(fold(q)))
   if (!pool.length) {
     let planned: string[] = []
     if (await takeDay(ws, 'plans', DAILY_CAPS.plans, ctx.now())) {
       try {
-        planned = await planQueries(ws, s, memory.used.map((u) => u.q))
+        planned = await planQueries(ws, s, memory.used.map((u) => u.q), [...dead])
       } catch (error) {
         if (isAIBlockedError(error)) throw error
         console.warn('trova clienti: ricerche non pensate dall’AI:', error instanceof Error ? error.message : error)
       }
     }
-    pool = planned.length ? planned : cleanQueries(fallbackQueries(s), used)
+    pool = planned.length ? planned : cleanQueries(fallbackQueries(s), skip)
   }
   await updateSetting<Memory>(memoryKey(ws), parseMemory, (m) => ({ ...m, key, queries: pool }))
   return pool[0] || null
@@ -1358,6 +1393,7 @@ async function rememberQuery(ws: string, q: string, placeIds: string[], found: n
     queries: m.queries.filter((x) => fold(x) !== fold(q)),
     used: [...m.used, { q, at: new Date().toISOString(), found, added, ...(error ? { error: error.slice(0, 160) } : {}) }].slice(-MAX_USED_QUERIES),
     places: [...new Set([...m.places, ...placeIds])].slice(-MAX_PLACES_SEEN),
+    dry: noteDry(m.dry, q, added),
   }))
 }
 
