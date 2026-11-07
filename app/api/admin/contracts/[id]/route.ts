@@ -11,6 +11,7 @@ import {
   linkOrigin,
   loadContract,
   markNotesRead,
+  openContract,
   rejectRequest,
   revokeLink,
   setCreatorFields,
@@ -22,6 +23,7 @@ import { afterCompleted, shareContractNow } from '@/lib/contract-share'
 import { loadTranscript, reviseDocument } from '@/lib/assistant-documents'
 import { loadKnowledge } from '@/lib/meta/agent'
 import { emptyFieldLabels } from '@/lib/pdf-doc'
+import { stripPartiesSection } from '@/lib/contract-parties'
 
 export const dynamic = 'force-dynamic'
 // L'anteprima di una modifica con l'AI puo' durare un minuto.
@@ -43,7 +45,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const access = await adminOnly(req)
   if (!('userId' in access)) return access
   const id = await target(ctx)
-  const c = id ? await loadContract(id) : null
+  // Aperto: i contratti di prima ricevono qui gli spazi per i dati delle parti (testo e firme restano).
+  const c = id ? await openContract(id) : null
   if (!c) return json({ error: 'Contratto non trovato.' }, 404)
   if (req.nextUrl.searchParams.get('seen') === '1') await markNotesRead({ contractId: c.id }).catch(() => undefined)
   return json({ contract: creatorView(c, linkOrigin(req.nextUrl.origin), req.nextUrl.searchParams.get('link') === '1') })
@@ -98,8 +101,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           transcript,
           knowledge,
         })
-        const preview = contractDoc({ ...c, version: { ...c.version, doc: revised.doc }, signatures: {}, final: undefined })
-        return json({ ok: true, proposal: revised.doc, preview, missing: emptyFieldLabels(revised.doc) })
+        // "Le parti" nel contratto si aggiunge mostrandolo: non sta nel testo da salvare.
+        const proposal = stripPartiesSection(revised.doc)
+        const preview = contractDoc({ ...c, version: { ...c.version, doc: proposal }, signatures: {}, final: undefined })
+        return json({ ok: true, proposal, preview, missing: emptyFieldLabels(proposal) })
       }
       case 'apply': {
         const mode = body.mode === 'modificata' ? 'modificata' : 'accettata'

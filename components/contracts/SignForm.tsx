@@ -6,6 +6,7 @@ import SignaturePad from './SignaturePad'
 
 // Firma: tre conferme separate e tutte obbligatorie, nome e cognome scritti, dati da
 // compilare (se ce ne sono) e firma col dito. Uguale per chi riceve e per chi crea.
+// fixedName: chi riceve firma col nome e cognome che ha scritto nei suoi dati (niente secondo campo).
 
 export type SignPayload = { accepted: boolean[]; name: string; strokes: number[][]; values: Record<string, string> }
 
@@ -15,6 +16,7 @@ export default function SignForm({
   defaultName = '',
   onSubmit,
   submitLabel = 'Firmo il contratto',
+  fixedName,
 }: {
   statements: string[]
   fields: { id: string; label: string }[]
@@ -22,6 +24,7 @@ export default function SignForm({
   /** Restituisce un messaggio di errore, oppure null se e' andata. */
   onSubmit: (payload: SignPayload) => Promise<string | null>
   submitLabel?: string
+  fixedName?: string
 }) {
   const [accepted, setAccepted] = useState<boolean[]>(statements.map(() => false))
   const [name, setName] = useState(defaultName)
@@ -31,13 +34,14 @@ export default function SignForm({
   const [error, setError] = useState<string | null>(null)
 
   const points = strokes.reduce((n, s) => n + s.length / 2, 0)
-  const ready = accepted.length === 3 && accepted.every(Boolean) && name.trim().length >= 3 && points >= 2
+  const signer = fixedName?.trim() ? fixedName.trim() : name.trim()
+  const ready = accepted.length === 3 && accepted.every(Boolean) && signer.length >= 3 && points >= 2
 
   const submit = async () => {
     if (!ready || busy) return
     setBusy(true)
     setError(null)
-    const message = await onSubmit({ accepted, name: name.trim(), strokes, values })
+    const message = await onSubmit({ accepted, name: signer, strokes, values })
     setBusy(false)
     if (message) setError(message)
   }
@@ -79,15 +83,22 @@ export default function SignForm({
         </div>
       )}
 
-      <label className="block text-sm">
-        <span className="font-semibold">Nome e cognome</span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value.slice(0, 120))}
-          autoComplete="name"
-          className="mt-1 w-full rounded-xl border border-[#d0d0d6] bg-white px-3 py-2.5 text-base text-[#1d1d1f]"
-        />
-      </label>
+      {fixedName?.trim() ? (
+        <p className="text-sm">
+          <span className="text-[#6b6b73]">Firmi come </span>
+          <span className="font-semibold break-words">{fixedName.trim()}</span>
+        </p>
+      ) : (
+        <label className="block text-sm">
+          <span className="font-semibold">Nome e cognome</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value.slice(0, 120))}
+            autoComplete="name"
+            className="mt-1 w-full rounded-xl border border-[#d0d0d6] bg-white px-3 py-2.5 text-base text-[#1d1d1f]"
+          />
+        </label>
+      )}
 
       <div>
         <p className="mb-1 text-sm font-semibold">La tua firma</p>

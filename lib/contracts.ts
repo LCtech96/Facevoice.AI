@@ -3,7 +3,8 @@ import { readSetting, updateSetting } from '@/lib/settings-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SITE_URL } from '@/lib/seo/site'
 import { BUSINESS, DOC_KIND_LABEL, carryFieldValues, latestVersion, loadDocument, normalizeFields, sanitizeDoc, type DocKind } from '@/lib/assistant-documents'
-import { emptyFieldLabels, fillText, renderPdf, type DocField, type DocSection, type DocSignature, type StructuredDoc } from '@/lib/pdf-doc'
+import { BLANK_LINE, emptyFieldLabels, fillText, renderPdf, type DocField, type DocSection, type DocSignature, type StructuredDoc } from '@/lib/pdf-doc'
+import { cleanValue, ensureParties, inputSpec, missingData, partiesSection, partyRoles, recipientNameToken, stripPartiesSection, tidyFields, CREATOR_SPECS, RECIPIENT_ROLES, type CreatorInfo, type DataEntry, type PartyRole } from '@/lib/contract-parties'
 import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, type ContractStatus, type ShareChannel } from '@/lib/contract-text'
 
 // Contratti del sito (area admin): un documento della super chat diventa un contratto
@@ -11,6 +12,13 @@ import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, type ContractStatus, type 
 // un link unico (www.facevoice.ai/c/<token>) solo con il PIN scelto da Luca, chiede
 // modifiche o firma (tre accettazioni separate, nome scritto e firma col dito). Quando
 // hanno firmato tutti e due resta solo la versione firmata con i dati minimi della firma.
+//
+// Dati delle parti ("Le parti", lib/contract-parties): la controparte scrive i suoi dati
+// veri (nome e cognome, codice fiscale, indirizzo...) nella pagina del link, salvati
+// mentre scrive. Sono suoi e fanno parte della SUA firma: non entrano nell'impronta del
+// testo firmato da chi crea (bodyHash), quindi compilarli dopo la firma di chi crea non
+// la invalida. Ogni firma salva l'impronta del testo e quella dei dati di chi firma (con i
+// valori al momento della firma); il PDF finale li stampa nel registro delle firme.
 //
 // Sicurezza: del link si salva solo lo SHA-256 (per trovarlo) e una copia cifrata con
 // un segreto del server (per "Copia link"); del PIN solo un hash scrypt con sale. Il PIN
@@ -71,7 +79,13 @@ export type ContractSignature = {
   statements: string[]
   versionId: string
   versionN: number
+  /** Impronta del testo firmato (testo, dati di chi crea, nomi dei campi; non i dati della controparte). */
+  bodyHash?: string
+  /** Impronta dei dati scritti da chi firma, con i valori al momento della firma (data). */
+  dataHash?: string
+  data?: SignedDatum[]
 }
+export type SignedDatum = { id: string; label: string; value: string }
 export type ShareInfo = { gen: string; tokenHash: string; tokenEnc: string; pinHash: string; createdAt: string; channel: ShareChannel; to: string; revokedAt?: string }
 export type ContractEvent = { at: string; kind: string; by: Party | 'sistema'; detail?: string }
 export type Contract = {
@@ -95,6 +109,10 @@ export type Contract = {
   /** Il contratto e' cambiato dopo l'invio: chi lo riceve vede "contratto aggiornato". */
   updatedAt_notice?: string
   final?: { at: string; contentHash: string; signaturesHash: string; requestsDeleted: number; versionsDeleted: number }
+  /** Dati "entrambi" (es. luogo e data della firma): ognuno scrive il suo, finche' non firma. */
+  signerData?: Partial<Record<Party, Record<string, string>>>
+  /** Da quando il contratto ha la sezione "Le parti" (i contratti vecchi la ricevono all'apertura). */
+  partiesAt?: string
 }
 
 export type IndexItem = { id: string; title: string; recipient: string; status: ContractStatus; docId: string | null; at: string; createdAt: string }
@@ -167,7 +185,7 @@ const addEvent = (c: Contract, kind: string, by: ContractEvent['by'], detail?: s
  * Modifica sicura del contratto (salvataggio con confronto, come le altre impostazioni).
  * fn lancia ContractError per rifiutare; restituisce il contratto nuovo.
  */
-async function mutate(id: string, fn: (c: Contract) => Contract): Promise<Contract> {
+async function mutate(id: string, fn: (c: Contract) => Contract, opts: { index?: boolean } = {}): Promise<Contract> {
   if (!CONTRACT_ID_RE.test(id)) throw new ContractError('Contratto non trovato.', 404)
   let failure: ContractError | null = null
   const saved = await updateSetting<Contract | null>(KEY(id), parseContract, (current) => {
@@ -177,7 +195,8 @@ async function mutate(id: string, fn: (c: Contract) => Contract): Promise<Contra
       return false
     }
     try {
-      const next = fn(structuredClone(current))
+      // Contratti di prima: ricevono i dati delle parti prima di ogni modifica (testo e firme restano).
+      const next = fn(structuredClone(withParties(current)))
       next.status = deriveStatus(next)
       next.updatedAt = now()
       if (JSON.stringify(next).length > MAX_RECORD_CHARS) throw new ContractError('Il contratto è troppo grande per essere salvato: accorcia il testo.', 413)
@@ -189,8 +208,174 @@ async function mutate(id: string, fn: (c: Contract) => Contract): Promise<Contra
   })
   if (failure) throw failure
   if (!saved) throw new ContractError('Contratto non trovato.', 404)
-  await touchIndex(saved)
+  if (opts.index !== false) await touchIndex(saved)
   return saved
+}
+
+// ---------------------------------------------------------------------
+// Dati delle parti ("Le parti")
+// ---------------------------------------------------------------------
+
+const creatorInfo = (c: Pick<Contract, 'creator'>): CreatorInfo => ({ name: c.creator.name, address: c.creator.address, vat: c.creator.vat, person: c.creator.person })
+const anySigned = (c: Pick<Contract, 'signatures'>) => Boolean(c.signatures.creatore || c.signatures.destinatario)
+
+/**
+ * Contratto con i dati delle parti: se mancano (contratti di prima) si aggiungono come
+ * spazi della controparte, senza cambiare il testo, la versione o le firme. Finche'
+ * nessuno ha firmato si toglie anche lo spazio messo subito dopo un dato (es. dopo un
+ * numero di telefono non verificato). I contratti firmati da tutti o annullati restano come sono.
+ */
+export function withParties(c: Contract): Contract {
+  if (c.final || c.status === 'annullato') return c
+  const unsigned = !anySigned(c)
+  const tidy = unsigned ? tidyFields(c.version.doc, { courts: false }) : c.version.doc
+  const doc = ensureParties(tidy, creatorInfo(c), { claim: unsigned, creatorFields: unsigned })
+  if (doc === c.version.doc && c.partiesAt) return c
+  return { ...c, version: doc === c.version.doc ? c.version : { ...c.version, doc }, partiesAt: c.partiesAt || now() }
+}
+
+/**
+ * Apertura del contratto (pagina di chi crea o del link): se mancano i dati delle parti
+ * si salvano subito, senza cambiare data di modifica, versione o firme.
+ */
+export async function openContract(id: string): Promise<Contract | null> {
+  if (!CONTRACT_ID_RE.test(id)) return null
+  return updateSetting<Contract | null>(KEY(id), parseContract, (current) => {
+    if (!current) return false
+    const next = withParties(current)
+    if (next === current) return false
+    const added = (next.version.doc.fields || []).length - (current.version.doc.fields || []).length
+    return added > 0 ? { ...next, events: addEvent(next, 'dati_parti', 'sistema', `${added} spazi per i dati delle parti`) } : next
+  })
+}
+
+/** Testo del contratto pronto per essere salvato: senza la sezione "Le parti" scritta nel documento, spazi messi bene, dati delle parti garantiti. */
+function prepareBody(doc: StructuredDoc, creator: CreatorInfo, clear: boolean): StructuredDoc {
+  const base = stripPartiesSection(doc)
+  // Prima si tolgono i valori della chat (cosi' uno spazio dopo un dato si riconosce come vuoto), poi la pulizia.
+  const cleared = clear ? ensureParties(base, creator, { claim: true, clear: true }) : base
+  return ensureParties(tidyFields(cleared, { court: BUSINESS.court }), creator, { claim: true, creatorFields: true })
+}
+
+/** Valore di un dato della controparte (nome, codice fiscale...) gia' scritto, o ''. */
+function identityValue(c: Pick<Contract, 'version'>, role: PartyRole): string {
+  const id = partyRoles(c.version.doc)[role]
+  return id ? (c.version.doc.fields || []).find((f) => f.id === id)?.value?.trim() || '' : ''
+}
+
+/** Nome della controparte: quello che ha scritto nei suoi dati, altrimenti quello dato alla condivisione. */
+const recipientLabel = (c: Contract, fallback = c.recipient.name) => identityValue(c, 'nome') || fallback
+
+export type FillEntry = DataEntry & { party: DocField['party']; kind: 'body' | 'own'; value: string; input: 'text' | 'email' | 'tel'; autoComplete: string }
+
+/**
+ * Dati di una parte (senza guardare se ha gia' firmato): per chi riceve i suoi (prima
+ * quelli di "Le parti") e la sua parte dei dati "entrambi"; per chi crea i suoi, che sono
+ * nel testo e si fermano alla prima firma di chi riceve, e la sua parte dei dati "entrambi".
+ */
+function dataEntries(c: Contract, party: Party): FillEntry[] {
+  const fields = c.version.doc.fields || []
+  const roles = partyRoles(c.version.doc)
+  const roleById = new Map(Object.entries(roles).map(([role, id]) => [id as string, role as PartyRole]))
+  const rank = (id: string) => {
+    const role = roleById.get(id)
+    return role ? RECIPIENT_ROLES.findIndex((r) => r.role === role) : RECIPIENT_ROLES.length
+  }
+  const own = c.signerData?.[party] || {}
+  const out: FillEntry[] = []
+  if (party === 'destinatario') {
+    const mine = fields.filter((f) => f.party === 'destinatario').sort((a, b) => rank(a.id) - rank(b.id))
+    for (const f of mine) {
+      const role = roleById.get(f.id)
+      out.push({ id: f.id, label: f.label, party: f.party, kind: 'own', value: f.value || '', role, required: Boolean(role && RECIPIENT_ROLES.find((r) => r.role === role)?.required), ...inputSpec(role) })
+    }
+  } else if (!c.signatures.destinatario) {
+    for (const f of fields.filter((x) => x.party === 'creatore')) {
+      out.push({ id: f.id, label: f.label, party: f.party, kind: 'body', value: f.value || '', required: CREATOR_SPECS.some((x) => x.id === f.id), ...inputSpec(undefined) })
+    }
+  }
+  for (const f of fields) {
+    if (f.party === 'entrambi' && !f.value?.trim()) out.push({ id: f.id, label: f.label, party: f.party, kind: 'own', value: own[f.id] || '', required: false, ...inputSpec(undefined) })
+  }
+  return out
+}
+
+/** Dati che una parte puo' scrivere o cambiare adesso (niente dopo la sua firma). */
+export function fillable(c: Contract, party: Party): FillEntry[] {
+  if (c.final || c.status === 'annullato' || c.signatures[party]) return []
+  return dataEntries(c, party)
+}
+
+/** Dati obbligatori ancora vuoti di una parte (etichette). */
+export function missingFor(c: Contract, party: Party): string[] {
+  const entries = fillable(c, party)
+  const byId = new Map(entries.map((e) => [e.id, e.value]))
+  return missingData(entries, (id) => byId.get(id) || '').map((e) => e.label)
+}
+
+/**
+ * Scrive i dati mandati da una parte (solo quelli che puo' scrivere adesso; gli altri si
+ * ignorano). Un dato di chi crea arrivato da una pagina vecchia, dopo la firma di chi
+ * riceve, fa ricaricare. bodyChanged: e' cambiato un dato che sta nel testo (di chi crea).
+ */
+function applyValues(c: Contract, party: Party, raw: unknown): { contract: Contract; bodyChanged: boolean; changed: number } {
+  const none = { contract: c, bodyChanged: false, changed: 0 }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return none
+  const entries = new Map(fillable(c, party).map((e) => [e.id, e]))
+  let fields = c.version.doc.fields || []
+  const own = { ...(c.signerData?.[party] || {}) }
+  let bodyChanged = false
+  let changed = 0
+  for (const [id, raw2] of Object.entries(raw as Record<string, unknown>).slice(0, 80)) {
+    if (typeof raw2 !== 'string') continue
+    const value = cleanValue(raw2, MAX_FIELD_VALUE)
+    const entry = entries.get(id)
+    if (!entry) {
+      const f = fields.find((x) => x.id === id)
+      if (party === 'creatore' && f?.party === 'creatore' && value && (f.value || '') !== value) throw new ContractError('Il contratto è cambiato mentre lo leggevi: ricarica la pagina e rileggilo prima di firmare.', 409)
+      continue
+    }
+    if (entry.value === value) continue
+    changed++
+    if (entry.party === 'entrambi') {
+      if (value) own[id] = value
+      else delete own[id]
+      continue
+    }
+    if (entry.kind === 'body') bodyChanged = true
+    fields = fields.map((f) => {
+      if (f.id !== id) return f
+      const { value: _old, ...rest } = f
+      return value ? { ...rest, value } : rest
+    })
+  }
+  if (!changed) return none
+  return { contract: { ...c, version: { ...c.version, doc: { ...c.version.doc, fields } }, signerData: { ...(c.signerData || {}), [party]: own } }, bodyChanged, changed }
+}
+
+/** Dati scritti da chi firma, al momento della firma (per il registro e la sua impronta). */
+function signedData(c: Contract, party: Party): SignedDatum[] {
+  return dataEntries(c, party)
+    .filter((e) => e.kind === 'own')
+    .map((e) => ({ id: e.id, label: e.label, value: e.value }))
+}
+
+/** "Entrambi": ognuno il suo valore; nel testo escono tutti e due con il nome di chi l'ha scritto. */
+function shownFields(c: Contract): DocField[] {
+  const data = c.signerData || {}
+  const other = recipientLabel(c, 'la controparte')
+  return (c.version.doc.fields || []).map((f) => {
+    if (f.party !== 'entrambi' || f.value?.trim()) return f
+    const mine = data.creatore?.[f.id]?.trim() || ''
+    const theirs = data.destinatario?.[f.id]?.trim() || ''
+    if (!mine && !theirs) return f
+    return { ...f, value: mine && theirs && mine === theirs ? mine : `${mine || BLANK_LINE} (${c.creator.name}); ${theirs || BLANK_LINE} (${other})` }
+  })
+}
+
+/** Dati che la controparte ha scritto (anche dopo la sua firma), per la pagina di chi crea. */
+function recipientData(c: Contract) {
+  return dataEntries(c, 'destinatario').map((e) => ({ id: e.id, label: e.label, value: e.value, required: e.required, ...(e.role ? { role: e.role } : {}), shared: e.party === 'entrambi' }))
 }
 
 // ---------------------------------------------------------------------
@@ -222,7 +407,9 @@ export async function contractFromDocument(docId: string, by: string | null): Pr
   const record = await loadDocument(docId)
   if (!record) throw new ContractError('Documento non trovato.', 404)
   const version = latestVersion(record)
-  const doc = normalizeFields(version.doc, version.doc.fields || [])
+  const creator = { name: BUSINESS.name, address: BUSINESS.address, vat: BUSINESS.vat, person: BUSINESS.person, email: BUSINESS.email }
+  // Dati delle parti dal server: i valori dei dati personali scritti dall'AI vengono dalla chat (non verificati) e si tolgono.
+  const doc = prepareBody(normalizeFields(version.doc, version.doc.fields || []), creator, true)
   const list = await listContracts()
   if (list.length >= MAX_CONTRACTS) {
     // Pieno: si fa posto togliendo la bozza o l'annullato piu' vecchio (mai i firmati).
@@ -240,7 +427,7 @@ export async function contractFromDocument(docId: string, by: string | null): Pr
     createdAt: at,
     updatedAt: at,
     createdBy: by,
-    creator: { name: BUSINESS.name, address: BUSINESS.address, vat: BUSINESS.vat, person: BUSINESS.person, email: BUSINESS.email },
+    creator,
     recipient: {
       name: guessRecipientName(doc, source?.name ?? null),
       ...(source?.platform === 'email' ? { email: source.contactId.toLowerCase() } : {}),
@@ -253,6 +440,7 @@ export async function contractFromDocument(docId: string, by: string | null): Pr
     signatures: {},
     share: null,
     events: [{ at, kind: 'creato', by: 'creatore', detail: `dal documento «${doc.title.slice(0, 80)}»` }],
+    partiesAt: at,
   }
   await updateSetting<Contract | null>(KEY(c.id), parseContract, () => c)
   await touchIndex(c)
@@ -299,7 +487,7 @@ export const statementsFor = (doc: StructuredDoc) => [STATEMENT_READ, statementA
 const romeFull = (iso: string) =>
   new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
-/** Le due caselle di firma: chi crea e chi riceve (con la firma disegnata, se c'e'). */
+/** Le due caselle di firma: chi crea e chi riceve (con la firma disegnata, se c'e'). Sotto la linea della controparte il suo "Nome e cognome". */
 function signatureBoxes(c: Contract): DocSignature[] {
   const sigs = c.version.doc.signatures || []
   const mine = sigs.find((s) => s.party === 'creatore') || sigs.find((s) => /facevoice/i.test(`${s.label} ${s.name || ''}`))
@@ -310,11 +498,17 @@ function signatureBoxes(c: Contract): DocSignature[] {
   }
   return [
     { label: mine?.label || `Per ${c.creator.name}`, name: mine?.name || c.creator.person, party: 'creatore', ...drawn('creatore') },
-    { label: theirs?.label || 'Il destinatario', name: theirs?.name || c.recipient.name, party: 'destinatario', ...drawn('destinatario') },
+    { label: theirs?.label || 'Il destinatario', name: (c.partiesAt && recipientNameToken(c.version.doc)) || theirs?.name || c.recipient.name, party: 'destinatario', ...drawn('destinatario') },
   ]
 }
 
-/** Pagina finale "Registro delle firme": parti, ora, IP, dispositivo, dichiarazioni, impronte. */
+/** Controparte per il registro: nome, ragione sociale, codice fiscale e residenza che ha scritto. */
+function recipientSummary(c: Contract): string {
+  const v = (role: PartyRole) => identityValue(c, role)
+  return [v('nome') || c.recipient.name, v('azienda'), v('cf') && `codice fiscale ${v('cf')}`, v('indirizzo') && `residente in ${v('indirizzo')}`].filter(Boolean).join(', ')
+}
+
+/** Pagina finale "Registro delle firme": parti, ora, IP, dispositivo, dati scritti, dichiarazioni, impronte. */
 function signatureRegister(c: Contract): DocSection[] {
   if (!c.final) return []
   const out: DocSection[] = [
@@ -322,7 +516,7 @@ function signatureRegister(c: Contract): DocSection[] {
       heading: 'Registro delle firme',
       paragraphs: [
         `Contratto: ${fillText(c.version.doc.title, c.version.doc.fields)} (versione ${c.version.n}).`,
-        `Parti: ${c.creator.name}, ${c.creator.address}, P.IVA ${c.creator.vat}; ${c.recipient.name}.`,
+        `Parti: ${c.creator.name}, ${c.creator.address}, P.IVA ${c.creator.vat}; ${recipientSummary(c)}.`,
         'Tipo di firma: firma elettronica semplice, con tre accettazioni separate, nome scritto e firma tracciata a mano sullo schermo. Orari in ora italiana (Europe/Rome).',
       ],
     },
@@ -331,8 +525,18 @@ function signatureRegister(c: Contract): DocSection[] {
     const s = c.signatures[party]
     if (!s) continue
     out.push({
-      heading: party === 'creatore' ? `Firma di ${c.creator.name}` : `Firma di ${c.recipient.name}`,
-      paragraphs: [`Nome scritto: ${s.name}`, `Data e ora: ${romeFull(s.at)}`, `Indirizzo IP: ${s.ip}`, `Dispositivo: ${s.device}`, 'Dichiarazioni accettate una per una:'],
+      heading: party === 'creatore' ? `Firma di ${c.creator.name}` : `Firma di ${s.name}`,
+      paragraphs: [
+        `Nome scritto: ${s.name}`,
+        `Data e ora: ${romeFull(s.at)}`,
+        `Indirizzo IP: ${s.ip}`,
+        `Dispositivo: ${s.device}`,
+        // Dati scritti da chi firma, come erano al momento della firma.
+        ...(s.data?.length ? [`Dati scritti da chi firma: ${s.data.map((d) => `${d.label}: ${d.value || 'non scritto'}`).join('; ')}.`] : []),
+        ...(s.bodyHash ? [`Impronta del testo firmato (SHA-256): ${s.bodyHash}`] : []),
+        ...(s.dataHash ? [`Impronta dei dati scritti (SHA-256): ${s.dataHash}`] : []),
+        'Dichiarazioni accettate una per una:',
+      ],
       bullets: s.statements,
     })
   }
@@ -344,9 +548,11 @@ function signatureRegister(c: Contract): DocSection[] {
 }
 
 /** Documento da mostrare: testo, approvazione specifica, caselle di firma ed eventuale registro. */
-export function contractDoc(c: Contract): StructuredDoc {
-  const d = c.version.doc
-  const sections = [...d.sections]
+export function contractDoc(contract: Contract): StructuredDoc {
+  const c = withParties(contract)
+  const d = stripPartiesSection(c.version.doc)
+  // "Le parti" in cima (dopo titolo e righe sotto): chi crea e i dati della controparte.
+  const sections = [...(c.partiesAt ? [partiesSection(d, creatorInfo(c))] : []), ...d.sections]
   const titles = approvalTitles(d)
   if (titles.length) {
     sections.push({
@@ -360,7 +566,7 @@ export function contractDoc(c: Contract): StructuredDoc {
     ...(d.subtitle ? { subtitle: d.subtitle } : {}),
     meta: d.meta || [],
     sections,
-    fields: d.fields || [],
+    fields: shownFields(c),
     signatures: signatureBoxes(c),
     ...(register.length ? { appendix: register } : {}),
   }
@@ -378,11 +584,44 @@ export function contentHash(doc: StructuredDoc): string {
   return sha256(JSON.stringify(canonical))
 }
 
+/**
+ * Impronta del testo firmato: testo, dati di chi crea (anche quelli dell'azienda in "Le
+ * parti") e nomi dei campi "entrambi". Non i dati della controparte (sono suoi e fanno parte
+ * della sua firma) e non i valori "entrambi" (ognuno il suo). Resta uguale quando la
+ * controparte scrive i suoi dati dopo la firma di chi crea, e nel contratto finale.
+ */
+export function bodyHash(c: Pick<Contract, 'version' | 'creator'>): string {
+  const d = stripPartiesSection(c.version.doc)
+  const canonical = {
+    title: d.title,
+    subtitle: d.subtitle || '',
+    meta: d.meta || [],
+    sections: d.sections.map((s) => ({ heading: s.heading || '', paragraphs: s.paragraphs || [], bullets: s.bullets || [], approval: Boolean(s.specificApproval) })),
+    creator: { name: c.creator.name, address: c.creator.address || '', vat: c.creator.vat || '', person: c.creator.person || '' },
+    fields: (d.fields || []).filter((f) => f.party !== 'destinatario').map((f) => ({ id: f.id, label: f.label, party: f.party, value: f.party === 'creatore' ? f.value || '' : '' })),
+  }
+  return sha256(JSON.stringify(canonical))
+}
+
+/** Impronta dei dati scritti da chi firma (con i valori di quel momento). */
+export const dataHash = (data: SignedDatum[]) => sha256(JSON.stringify(data.map((d) => ({ id: d.id, label: d.label, value: d.value }))))
+
 export function signaturesHash(signatures: Contract['signatures']): string {
   const list = (['creatore', 'destinatario'] as Party[])
     .map((p) => signatures[p])
     .filter((s): s is ContractSignature => Boolean(s))
-    .map((s) => ({ party: s.party, name: s.name, at: s.at, ip: s.ip, device: s.device, statements: s.statements, strokes: s.strokes, versionId: s.versionId }))
+    .map((s) => ({
+      party: s.party,
+      name: s.name,
+      at: s.at,
+      ip: s.ip,
+      device: s.device,
+      statements: s.statements,
+      strokes: s.strokes,
+      versionId: s.versionId,
+      ...(s.bodyHash ? { bodyHash: s.bodyHash } : {}),
+      ...(s.dataHash ? { dataHash: s.dataHash } : {}),
+    }))
   return sha256(JSON.stringify(list))
 }
 
@@ -470,38 +709,14 @@ export type SignInput = {
 }
 
 /**
- * Dati che una parte puo' compilare al momento della firma: i suoi ancora vuoti e quelli
- * comuni ancora vuoti, ma i comuni solo finche' l'altra parte non ha firmato. Dopo, la
- * firma dell'altra parte finirebbe su un dato deciso da uno solo: restano da compilare
- * a mano (o con una nuova versione, che toglie le firme).
- */
-export function fieldsToSign(c: Pick<Contract, 'version' | 'signatures'>, party: Party): DocField[] {
-  const otherSigned = Boolean(c.signatures[party === 'creatore' ? 'destinatario' : 'creatore'])
-  return (c.version.doc.fields || []).filter((f) => !f.value?.trim() && (f.party === party || (f.party === 'entrambi' && !otherSigned)))
-}
-
-/** Valori dei campi che chi firma puo' compilare ora (vedi fieldsToSign). */
-function signerValues(c: Contract, party: Party, raw: unknown): Record<string, string> {
-  const out: Record<string, string> = {}
-  if (!raw || typeof raw !== 'object') return out
-  const allowed = new Set(fieldsToSign(c, party).map((f) => f.id))
-  for (const f of c.version.doc.fields || []) {
-    const v = (raw as Record<string, unknown>)[f.id]
-    if (typeof v !== 'string' || !v.trim() || f.value?.trim()) continue
-    // Pagina aperta prima che l'altra parte firmasse: un dato comune non si compila piu'.
-    if (f.party === 'entrambi' && !allowed.has(f.id)) throw new ContractError('Il contratto è cambiato mentre lo leggevi: ricarica la pagina e rileggilo prima di firmare.', 409)
-    if (allowed.has(f.id)) out[f.id] = v.replace(/\s+/g, ' ').trim().slice(0, MAX_FIELD_VALUE)
-  }
-  return out
-}
-
-/**
- * Firma di una parte: tre accettazioni tutte vere, nome scritto, firma disegnata non
- * vuota, sulla versione mostrata (se il contratto e' cambiato si rifiuta: va ricaricato).
+ * Firma di una parte: tre accettazioni tutte vere, firma disegnata non vuota, i dati
+ * obbligatori di chi firma (per chi riceve: nome e cognome, codice fiscale, indirizzo),
+ * sulla versione mostrata (se il testo e' cambiato si rifiuta: va ricaricato). Chi riceve
+ * firma col nome e cognome che ha scritto nei suoi dati. I dati di chi riceve non sono nel
+ * testo firmato da chi crea: scriverli dopo la firma di chi crea non la invalida.
  */
 export async function signContract(id: string, party: Party, input: SignInput): Promise<{ contract: Contract; completed: boolean }> {
-  const name = String(input.name || '').replace(/\s+/g, ' ').trim()
-  if (name.length < 3 || name.length > MAX_SIGNER_NAME) throw new ContractError('Scrivi il tuo nome e cognome per firmare.')
+  const typed = String(input.name || '').replace(/\s+/g, ' ').trim()
   const accepted = Array.isArray(input.accepted) ? input.accepted : []
   if (accepted.length !== 3 || !accepted.every((a) => a === true)) throw new ContractError('Per firmare servono tutte e tre le conferme.')
   const strokes = cleanStrokes(input.strokes)
@@ -513,10 +728,18 @@ export async function signContract(id: string, party: Party, input: SignInput): 
     if (c.signatures[party]) throw new ContractError('Hai già firmato questo contratto.', 409)
     if (input.versionId !== c.version.id) throw new ContractError('Il contratto è cambiato mentre lo leggevi: ricarica la pagina e rileggilo prima di firmare.', 409)
     if (party === 'destinatario' && (!c.share || c.share.revokedAt)) throw new ContractError('Link non valido.', 404)
-    const values = signerValues(c, party, input.values)
-    const fields = (c.version.doc.fields || []).map((f) => (values[f.id] ? { ...f, value: values[f.id] } : f))
-    const doc = { ...c.version.doc, fields }
-    const changed = Object.keys(values).length > 0
+    const applied = applyValues(c, party, input.values)
+    // I dati di chi crea sono nel testo: compilati alla firma, l'altra parte firma la versione nuova.
+    let next: Contract = applied.bodyChanged ? { ...applied.contract, version: { ...applied.contract.version, id: newId('v') } } : applied.contract
+    const missing = missingFor(next, party)
+    if (missing.length) throw new ContractError(`Prima di firmare scrivi: ${missing.join(', ')}.`)
+    const name = (party === 'destinatario' && identityValue(next, 'nome')) || typed
+    if (name.length < 3 || name.length > MAX_SIGNER_NAME) throw new ContractError('Scrivi il tuo nome e cognome per firmare.')
+    const body = bodyHash(next)
+    const other = c.signatures[party === 'creatore' ? 'destinatario' : 'creatore']
+    // L'altra parte ha firmato questo stesso testo (succede sempre: il testo si blocca alla prima firma).
+    if (other?.bodyHash && other.bodyHash !== body) throw new ContractError('Il contratto è cambiato mentre lo leggevi: ricarica la pagina e rileggilo prima di firmare.', 409)
+    const data = signedData(next, party)
     const at = now()
     const signature: ContractSignature = {
       party,
@@ -526,16 +749,17 @@ export async function signContract(id: string, party: Party, input: SignInput): 
       ip: input.ip,
       device: deviceOf(input.userAgent),
       userAgent: input.userAgent.slice(0, 300),
-      statements: statementsFor(doc),
-      versionId: c.version.id,
-      versionN: c.version.n,
+      statements: statementsFor(next.version.doc),
+      versionId: next.version.id,
+      versionN: next.version.n,
+      bodyHash: body,
+      data,
+      dataHash: dataHash(data),
     }
-    let next: Contract = {
-      ...c,
-      // I dati compilati alla firma cambiano il contenuto: l'altra parte firma la versione nuova.
-      version: changed ? { ...c.version, id: newId('v'), doc } : c.version,
-      signatures: { ...c.signatures, [party]: signature },
-      events: addEvent(c, 'firma', party, `${name}${changed ? ` (compilati ${Object.keys(values).length} dati)` : ''}`),
+    next = {
+      ...next,
+      signatures: { ...next.signatures, [party]: signature },
+      events: addEvent(c, 'firma', party, `${name}${applied.changed ? ` (compilati ${applied.changed} dati)` : ''}`),
     }
     if (next.signatures.creatore && next.signatures.destinatario) {
       completed = true
@@ -550,8 +774,10 @@ export async function signContract(id: string, party: Party, input: SignInput): 
  * Firmato da tutti: impronte del contenuto e delle firme; si cancellano le versioni di
  * prima e le richieste di modifica (restano solo i conteggi e gli eventi minimi).
  */
-function finalize(c: Contract): Contract {
+function finalize(signed: Contract): Contract {
   const at = now()
+  // I valori "entrambi" di tutti e due entrano nel testo finale (e nella sua impronta).
+  const c: Contract = { ...signed, version: { ...signed.version, doc: { ...signed.version.doc, fields: shownFields(signed) } }, signerData: undefined }
   const final = {
     at,
     contentHash: contentHash(c.version.doc),
@@ -574,24 +800,40 @@ function finalize(c: Contract): Contract {
 // Dati da compilare, richieste di modifica, nuove versioni
 // ---------------------------------------------------------------------
 
-/** Chi crea compila i suoi dati (e quelli comuni) finche' nessuno ha firmato. */
+/**
+ * Chi crea compila i suoi dati: quelli nel testo finche' nessuno ha firmato, la sua parte
+ * dei dati "entrambi" finche' non firma lui.
+ */
 export async function setCreatorFields(id: string, values: Record<string, unknown>): Promise<Contract> {
   return mutate(id, (c) => {
     if (c.status === 'annullato' || c.final) throw new ContractError('Il contratto non si può più cambiare.', 409)
-    if (c.signatures.creatore || c.signatures.destinatario) throw new ContractError('Qualcuno ha già firmato: i dati si compilano al momento della firma o con una nuova versione.', 409)
-    let changed = false
-    const fields = (c.version.doc.fields || []).map((f) => {
-      if (!(f.id in values) || f.party === 'destinatario') return f
-      const raw = values[f.id]
-      const value = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, MAX_FIELD_VALUE) : ''
-      if ((f.value || '') === value) return f
-      changed = true
-      const { value: _old, ...rest } = f
-      return value ? { ...rest, value } : rest
-    })
+    if (c.signatures.creatore) throw new ContractError('Hai già firmato: i tuoi dati non si cambiano più.', 409)
+    if (c.signatures.destinatario) {
+      const body = (c.version.doc.fields || []).some((f) => f.party === 'creatore' && f.id in values && cleanValue(values[f.id], MAX_FIELD_VALUE) !== (f.value || ''))
+      if (body) throw new ContractError(`${recipientLabel(c)} ha già firmato: i dati nel testo non si cambiano più (serve una nuova versione).`, 409)
+    }
+    const { contract, bodyChanged, changed } = applyValues(c, 'creatore', values)
     if (!changed) return c
-    return { ...c, version: { ...c.version, id: newId('v'), doc: { ...c.version.doc, fields } }, events: addEvent(c, 'dati_compilati', 'creatore') }
+    return { ...contract, version: bodyChanged ? { ...contract.version, id: newId('v') } : contract.version, events: addEvent(c, 'dati_compilati', 'creatore') }
   })
+}
+
+/**
+ * Dati della controparte dalla pagina del link, salvati mentre scrive (bozza): si vedono
+ * subito nel testo e nella pagina di chi crea. Si possono cambiare fino alla sua firma,
+ * anche dopo la firma di chi crea (non sono nel testo che ha firmato).
+ */
+export async function saveRecipientData(id: string, values: unknown): Promise<Contract> {
+  return mutate(
+    id,
+    (c) => {
+      if (c.status === 'annullato' || c.final) throw new ContractError('Il contratto non si può più cambiare.', 409)
+      if (!c.share || c.share.revokedAt) throw new ContractError('Link non valido.', 404)
+      if (c.signatures.destinatario) throw new ContractError('Hai già firmato: i tuoi dati non si cambiano più.', 409)
+      return applyValues(c, 'destinatario', values).contract
+    },
+    { index: false }
+  )
 }
 
 /** "Richiedi modifica" dalla pagina del link. */
@@ -658,7 +900,8 @@ export async function applyNewVersion(id: string, input: { doc: unknown; request
     const request = input.requestId ? c.requests.find((r) => r.id === input.requestId) : null
     if (input.requestId && !request) throw new ContractError('Richiesta non trovata.', 404)
     if (request && request.status !== 'aperta') throw new ContractError('Questa richiesta ha già una risposta.', 409)
-    const doc = cleanIncomingDoc(input.doc, c.version.doc)
+    // Dati delle parti garantiti (anche se l'AI li ha tolti); i valori gia' scritti restano.
+    const doc = carryFieldValues(prepareBody(cleanIncomingDoc(input.doc, c.version.doc), creatorInfo(c), false), c.version.doc)
     const at = now()
     const hadSignatures = Boolean(c.signatures.creatore || c.signatures.destinatario)
     return {
@@ -989,14 +1232,17 @@ export async function markNotesRead(input: { ids?: string[]; contractId?: string
 
 const firstName = (name: string) => name.split(/\s+/)[0] || name
 
-export function creatorView(c: Contract, origin: string, withLink = false) {
+export function creatorView(contract: Contract, origin: string, withLink = false) {
+  const c = withParties(contract)
   const doc = contractDoc(c)
+  const mine = fillable(c, 'creatore')
+  const theirs = recipientData(c)
   return {
     id: c.id,
     docId: c.docId,
     kind: DOC_KIND_LABEL[c.kind] || 'Documento',
     title: c.version.doc.title,
-    heading: `Contratto tra ${c.creator.name} e ${c.recipient.name}`,
+    heading: `Contratto tra ${c.creator.name} e ${recipientLabel(c)}`,
     status: c.status,
     statusLabel: STATUS_LABEL[c.status],
     createdAt: c.createdAt,
@@ -1010,6 +1256,13 @@ export function creatorView(c: Contract, origin: string, withLink = false) {
     previous: c.previous.map((v) => ({ n: v.n, at: v.at })),
     fields: (c.version.doc.fields || []) as DocField[],
     missing: emptyFieldLabels(c.version.doc),
+    /** Dati che chi crea puo' scrivere adesso: nel testo (finche' nessuno firma) e la sua parte dei dati "entrambi". */
+    myFields: mine,
+    myMissing: missingFor(c, 'creatore'),
+    /** Dati scritti dalla controparte (si aggiornano mentre li scrive). */
+    recipientData: theirs,
+    recipientWaiting: !c.signatures.destinatario && !theirs.some((d) => d.value.trim()),
+    recipientLabel: recipientLabel(c),
     requests: [...c.requests].reverse(),
     signatures: Object.fromEntries(
       (['creatore', 'destinatario'] as Party[]).flatMap((p) => {
@@ -1023,21 +1276,23 @@ export function creatorView(c: Contract, origin: string, withLink = false) {
     events: [...c.events].reverse().slice(0, 40),
     final: c.final || null,
     canEditFields: !c.final && c.status !== 'annullato' && !c.signatures.creatore && !c.signatures.destinatario,
+    canEditOwn: mine.length > 0,
   }
 }
 
 export type CreatorView = ReturnType<typeof creatorView>
 
 /** Pagina del link: niente segreti, niente avvisi legali per chi crea, niente dati interni. */
-export function publicView(c: Contract) {
+export function publicView(contract: Contract) {
+  const c = withParties(contract)
   const doc = contractDoc(c)
   const mine = c.signatures.destinatario
   const theirs = c.signatures.creatore
   return {
-    heading: `Contratto tra ${c.creator.name} e ${c.recipient.name}`,
+    heading: `Contratto tra ${c.creator.name} e ${recipientLabel(c)}`,
     creatorName: c.creator.name,
-    recipientName: c.recipient.name,
-    greeting: firstName(c.recipient.name),
+    recipientName: recipientLabel(c),
+    greeting: firstName(recipientLabel(c)),
     status: c.status,
     statusLabel: STATUS_LABEL[c.status],
     versionId: c.version.id,
@@ -1045,8 +1300,11 @@ export function publicView(c: Contract) {
     updated: Boolean(c.updatedAt_notice && !mine),
     doc,
     sections: c.version.doc.sections.map((s) => (s.heading ? fillText(s.heading, c.version.doc.fields) : '')).filter(Boolean),
-    /** Dati che chi riceve compila (i suoi e quelli comuni ancora vuoti, finche' l'altra parte non ha firmato). */
-    myFields: fieldsToSign(c, 'destinatario').map((f) => ({ id: f.id, label: f.label })),
+    /** Dati che chi riceve scrive (salvati mentre scrive, fino alla sua firma): prima quelli di "Le parti". */
+    myData: fillable(c, 'destinatario').map((e) => ({ id: e.id, label: e.label, value: e.value, required: e.required, ...(e.role ? { role: e.role } : {}), input: e.input, autoComplete: e.autoComplete, shared: e.party === 'entrambi' })),
+    missing: missingFor(c, 'destinatario'),
+    /** Chi riceve firma con il nome e cognome che ha scritto nei suoi dati. */
+    signerName: identityValue(c, 'nome'),
     statements: statementsFor(c.version.doc),
     signed: mine ? { name: mine.name, at: mine.at } : null,
     otherSigned: theirs ? { name: theirs.name, at: theirs.at } : null,
