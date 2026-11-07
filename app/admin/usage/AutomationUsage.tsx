@@ -34,6 +34,7 @@ const FEATURES: Record<string, string> = {
   email_clienti: 'Email e follow-up ai clienti',
   analisi_clienti: 'Analisi dei siti dei clienti',
   traduzioni_sito: 'Traduzioni del sito',
+  ricerca_strumenti: 'Ricerca AI Tools',
   altro: 'Altro',
 }
 

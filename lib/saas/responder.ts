@@ -331,28 +331,37 @@ export async function respondToMessage(
     lang.source === 'dashboard'
       ? `LINGUA DELLA RISPOSTA (regola principale): dal messaggio non si capisce la lingua, quindi scrivi la risposta in ${lang.language}.`
       : `LINGUA DELLA RISPOSTA (regola principale): il cliente scrive in ${lang.language}. Scrivi TUTTA la risposta in ${lang.language}, anche se queste istruzioni sono in un'altra lingua: traduci tu le informazioni che ti servono. Saluti e firma compresi.`
-  const system = [
-    languageRule,
-    `Rispondi ai messaggi che arrivano a "${name}" (clienti, creator, partner…), come la persona migliore dello staff.`,
-    CHANNEL_STYLE[message.platform] || '',
-    message.contact_name ? `La persona si chiama "${message.contact_name}" (usa il nome di battesimo solo se sembra un nome di persona).` : '',
-    message.subject ? `Oggetto dell'email ricevuta: "${message.subject}".` : '',
-    // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
-    ...(campaign
-      ? [campaignSection(campaign, message.platform, 'message')]
-      : [
-          `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
-          specific ? `## Istruzioni per questo canale\n${specific}` : '',
-          hasInstructions ? '' : 'Non hai istruzioni: ricava il contesto dalla conversazione, rispondi in modo cortese e non dare informazioni che non conosci; per i dettagli di\' che glieli confermi a breve.',
-        ]),
-    corrections,
-    salesRules(name),
-    conversationRules(openedByUs),
-    buildRealtimeDateTimeInstructionsItalian(),
-    RULES,
-  ]
-    .filter(Boolean)
-    .join('\n\n')
+  // Cache dei prompt: prima la parte uguale per tutti i messaggi dello spazio (lingua, istruzioni,
+  // metodo), poi quella che cambia a ogni messaggio (persona, oggetto, correzioni vicine al
+  // messaggio, data e ora) e le regole fisse in fondo, come prima.
+  const system = {
+    stable: [
+      languageRule,
+      `Rispondi ai messaggi che arrivano a "${name}" (clienti, creator, partner…), come la persona migliore dello staff.`,
+      CHANNEL_STYLE[message.platform] || '',
+      // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
+      ...(campaign
+        ? [campaignSection(campaign, message.platform, 'message')]
+        : [
+            `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
+            specific ? `## Istruzioni per questo canale\n${specific}` : '',
+            hasInstructions ? '' : 'Non hai istruzioni: ricava il contesto dalla conversazione, rispondi in modo cortese e non dare informazioni che non conosci; per i dettagli di\' che glieli confermi a breve.',
+          ]),
+      salesRules(name),
+      conversationRules(openedByUs),
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+    volatile: [
+      message.contact_name ? `La persona si chiama "${message.contact_name}" (usa il nome di battesimo solo se sembra un nome di persona).` : '',
+      message.subject ? `Oggetto dell'email ricevuta: "${message.subject}".` : '',
+      corrections,
+      buildRealtimeDateTimeInstructionsItalian(),
+      RULES,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  }
 
   let draft: string
   try {

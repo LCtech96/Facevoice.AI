@@ -26,10 +26,19 @@ import { afterAIUsage, assertAIAllowed, isAIBlockedError } from '@/lib/usage-lim
 // senza attese.
 // ---------------------------------------------------------------------
 
-// Riserva quando tutti i modelli Gemini gratuiti sono al limite: Haiku 4.5 e' il
-// Claude piu' economico ($1/$5 per milione di token), adatto a testi brevi,
-// analisi e traduzioni.
-export const CLAUDE_FALLBACK_MODEL = 'claude-haiku-4-5'
+// Riserva quando tutti i modelli Gemini gratuiti sono al limite: Claude Haiku 5.5, il Claude
+// piu' economico ($0,10 / $0,50 per milione di token con prompt fino a 100K token; Haiku 4.5
+// costava $1 / $5), adatto a testi brevi, analisi e traduzioni. La cache dei prompt parte gia'
+// da 512 token (con Haiku 4.5 da 4096: quasi nessun prompt ci arrivava).
+export const CLAUDE_FALLBACK_MODEL = 'claude-haiku-5-5'
+/**
+ * Haiku 5.5 puo' rifiutare una richiesta (stop_reason "refusal": filtri di sicurezza che a volte
+ * scattano anche su lavoro normale) e per lui non c'e' una riserva lato server: la stessa
+ * richiesta si riprova una volta con Haiku 4.5 (vale anche per Sonnet e Opus scelti dal cliente).
+ */
+export const CLAUDE_REFUSAL_RETRY_MODEL = 'claude-haiku-4-5'
+/** Haiku 5.5 conta circa il 30% di token in piu' di Haiku 4.5 per lo stesso testo (tokenizer nuovo). */
+const TOKENIZER_GROWTH = 1.3
 
 // Il piano gratuito di Gemini ha limiti separati per ogni modello: prima di
 // passare a Claude si provano tutti, dal migliore al piu' leggero.
@@ -61,21 +70,89 @@ type AIOptions = {
    */
   workspaceId?: string
   /**
-   * Conversazione che si rimanda piu' volte (es. i passi dell'assistente): con Claude
-   * la parte gia' mandata si rilegge dalla cache a circa un decimo del prezzo.
-   * Per le chiamate singole no: la prima scrittura in cache costa il 25% in piu'.
+   * Cache dei prompt con Claude (5 minuti; scrittura 1,25x, lettura 0,1x del prezzo dell'input):
+   * - di base: si mette in cache solo la parte fissa delle istruzioni (AISystem.stable, o tutto il
+   *   testo se e' una stringa), che le chiamate dopo della stessa funzione rileggono;
+   * - true: anche la conversazione (cache automatica sull'ultimo messaggio), per quella che si
+   *   rimanda piu' volte nella stessa richiesta (es. i passi dell'assistente);
+   * - false: niente cache (istruzioni diverse a ogni chiamata: la scrittura costerebbe il 25% in piu').
    */
   cache?: boolean
 }
 
-// Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito).
-const CLAUDE_PRICES: Record<string, { input: number; output: number }> = {
+/**
+ * Istruzioni per l'AI. Una stringa vale tutta come parte fissa. In due parti, per la cache dei
+ * prompt: stable = quello che resta uguale da una chiamata all'altra (regole, informazioni
+ * dell'attivita'), sempre per primo; volatile = quello che cambia a ogni richiesta (data e ora,
+ * nome della persona, dati del momento), dopo. Con Claude la cache si ferma alla fine di stable;
+ * a Gemini arriva il testo unico stable + volatile (la parte fissa in testa: cache implicita).
+ */
+export type AISystem = string | { stable: string; volatile?: string }
+
+/** Testo unico delle istruzioni (Gemini): prima la parte fissa, poi quella che cambia. */
+export function systemText(system?: AISystem): string | undefined {
+  if (system === undefined || typeof system === 'string') return system
+  return [system.stable.trim(), (system.volatile || '').trim()].filter(Boolean).join('\n\n')
+}
+
+/**
+ * Istruzioni per Claude in blocchi di testo: il breakpoint della cache (cache_control
+ * ephemeral, 5 minuti) chiude la parte fissa; la parte che cambia va in un blocco dopo, fuori
+ * dalla cache, staccata da una riga vuota come nel testo unico (systemText). cache false:
+ * nessun breakpoint.
+ */
+export function claudeSystem(system: AISystem | undefined, cache = true): Anthropic.TextBlockParam[] | undefined {
+  if (system === undefined) return undefined
+  const stable = (typeof system === 'string' ? system : system.stable).trim()
+  const volatile = typeof system === 'string' ? '' : (system.volatile || '').trim()
+  const blocks: Anthropic.TextBlockParam[] = []
+  if (stable) blocks.push({ type: 'text', text: stable, ...(cache ? { cache_control: { type: 'ephemeral' as const } } : {}) })
+  if (volatile) blocks.push({ type: 'text', text: stable ? `\n\n${volatile}` : volatile })
+  return blocks.length ? blocks : undefined
+}
+
+// Prezzi Claude in USD per milione di token (Gemini e' sul piano gratuito). long = tariffa per i
+// prompt oltre LONG_PROMPT_TOKENS (cache compresa); cacheRead = moltiplicatore della lettura dalla
+// cache se diverso da CACHE_READ_MULTIPLIER.
+type ClaudePrice = { input: number; output: number; cacheRead?: number; long?: { input: number; output: number } }
+const CLAUDE_PRICES: Record<string, ClaudePrice> = {
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, long: { input: 0.5, output: 2.5 } },
+  // Righe vecchie e riprova dopo un rifiuto di Haiku 5.5.
   'claude-haiku-4-5': { input: 1, output: 5 },
   'claude-sonnet-5-5': { input: 2, output: 10 },
-  'claude-opus-5-5': { input: 4, output: 20 },
+  // Opus 5.5: la lettura dalla cache costa 0,05x ($0,20 per milione), non 0,1x.
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.05 },
 }
+/** Scrittura in cache (5 minuti) e lettura dalla cache, rispetto al prezzo dell'input. */
+export const CACHE_WRITE_MULTIPLIER = 1.25
+export const CACHE_READ_MULTIPLIER = 0.1
+/** Haiku 5.5: oltre questi token di prompt (cache compresa) vale la tariffa long. */
+const LONG_PROMPT_TOKENS = 100_000
 const priceOf = (model: string) =>
   CLAUDE_PRICES[Object.keys(CLAUDE_PRICES).find((id) => model.startsWith(id)) || 'claude-haiku-4-5']
+
+/**
+ * Costo in USD di una chiamata a Claude. input = tutti i token del prompt come li conta l'API
+ * (input_tokens + cache_creation_input_tokens + cache_read_input_tokens); di questi cacheWrite
+ * si paga 1,25x e cacheRead 0,1x (0,05x Opus 5.5), il resto a prezzo pieno.
+ */
+export function claudeCostUsd(model: string, usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): number {
+  const input = usage.input || 0
+  const read = usage.cacheRead || 0
+  const write = usage.cacheWrite || 0
+  const plain = Math.max(0, input - read - write)
+  const base = priceOf(model)
+  const rate = base.long && input > LONG_PROMPT_TOKENS ? base.long : base
+  const readMultiplier = base.cacheRead ?? CACHE_READ_MULTIPLIER
+  return ((plain + read * readMultiplier + write * CACHE_WRITE_MULTIPLIER) * rate.input + (usage.output || 0) * rate.output) / 1_000_000
+}
+
+/** Token di una risposta di Claude per ai_usage: input = prompt intero come lo conta l'API (cache compresa). */
+function claudeUsage(usage: Anthropic.Usage) {
+  const cacheRead = usage.cache_read_input_tokens || 0
+  const cacheWrite = usage.cache_creation_input_tokens || 0
+  return { input: (usage.input_tokens || 0) + cacheRead + cacheWrite, output: usage.output_tokens || 0, cacheRead, cacheWrite }
+}
 
 export { AI_MODEL_CHOICES, asModelChoice, type AIModelChoice } from '@/lib/ai-models'
 import type { AIModelChoice } from '@/lib/ai-models'
@@ -91,9 +168,10 @@ function recordUsage(row: {
   provider: 'gemini' | 'claude'
   model: string
   outcome?: 'ok' | 'limit' | 'error'
+  /** Token del prompt come li conta il fornitore: con Claude compresi quelli letti e scritti in cache. */
   input?: number
   output?: number
-  /** Parte dell'input letta dalla cache (~0,1x) e scritta in cache (1,25x): gia' compresa in input. */
+  /** Parte dell'input letta dalla cache (0,1x) e scritta in cache (1,25x): gia' compresa in input. */
   cacheRead?: number
   cacheWrite?: number
   /** Costo in piu' oltre ai token, in USD (es. la ricerca Google: GROUNDING_FEE_USD). */
@@ -102,12 +180,12 @@ function recordUsage(row: {
   const input = row.input || 0
   const output = row.output || 0
   const workspaceId = row.workspaceId || work.getStore()?.workspaceId
-  const price = priceOf(row.model)
-  const read = row.cacheRead || 0
-  const write = row.cacheWrite || 0
-  const plain = Math.max(0, input - read - write)
-  const tokens = row.provider === 'claude' ? ((plain + read * 0.1 + write * 1.25) * price.input + output * price.output) / 1_000_000 : 0
-  const cost = tokens + ((row.outcome || 'ok') === 'ok' ? Math.max(0, row.extraCost || 0) : 0)
+  // ai_usage non ha colonne per la cache: i token letti e scritti in cache sono in input_tokens
+  // (come li conta l'API) e il loro prezzo vero (0,1x / 1,25x) in cost_usd.
+  const tokens = row.provider === 'claude' ? claudeCostUsd(row.model, { input, output, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite }) : 0
+  // extraCost (ricerche fatte davvero) si paga anche quando la risposta non si puo' usare: resta in
+  // cost_usd; il limite in euro del cliente e i totali dell'admin contano solo le righe "ok".
+  const cost = tokens + Math.max(0, row.extraCost || 0)
   const tally = work.getStore()?.usage
   if (tally && (row.outcome || 'ok') === 'ok') {
     tally.calls++
@@ -281,44 +359,112 @@ function toClaudeMessages(messages: GeminiChatMessage[]): Anthropic.MessageParam
 
 const preferredModel = (): AIModelChoice => work.getStore()?.model || 'auto'
 
-async function callClaudeText(
-  messages: GeminiChatMessage[],
-  system: string | undefined,
-  options?: AIOptions,
-  model: string = CLAUDE_FALLBACK_MODEL
-): Promise<AIResult> {
-  if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
-  const isHaiku = model.startsWith('claude-haiku')
-  const response = await claudeClient.messages.create({
-    model,
-    // Sonnet e Opus ragionano prima di rispondere: serve piu' spazio per il pensiero.
-    max_tokens: isHaiku ? Math.min(8192, Math.max(1024, options?.maxOutputTokens || 2048)) : 16000,
-    ...(system ? { system } : {}),
-    messages: toClaudeMessages(messages),
-    // Passi successivi della stessa conversazione: il prefisso gia' mandato si rilegge dalla cache.
-    ...(options?.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
-    // Haiku accetta la temperatura; Sonnet/Opus 5.5 no, e con effort basso costano meno.
-    ...(isHaiku
-      ? options?.temperature !== undefined
-        ? { temperature: options.temperature }
-        : {}
-      : { output_config: { effort: 'low' as const } }),
-  })
-  const text = response.content
+const claude = () => (claudeClient ||= new Anthropic({ apiKey: getAnthropicApiKey() }))
+
+/** Testi (risposte, chat, analisi, lettura di immagini) o ricerca sul web con web_search. */
+type ClaudeRoute = 'text' | 'search'
+
+/**
+ * Parametri che dipendono dal modello (guida di migrazione a Haiku 5.5):
+ * - Haiku 5.5: niente temperature/top_p/top_k (400 se diversi dal default), niente budget_tokens,
+ *   niente prefill (la conversazione finisce sempre con l'utente, toClaudeMessages). Testi: thinking
+ *   spento + effort "low", come Haiku 4.5 che non ragionava: nessun token di ragionamento pagato
+ *   (spento si puo' fino a effort "high"). Ricerca sul web: thinking adattivo + effort "low" (con il
+ *   pensiero spento il modello puo' saltare la ricerca quando la risposta deve essere un JSON).
+ * - Haiku 4.5 (solo la riprova dopo un rifiuto): la temperatura chiesta, niente effort (errore su 4.5).
+ * - Sonnet/Opus 5.5 scelti dal cliente: effort "low"; thinking quello predefinito (adattivo, su
+ *   Opus 5.5 non si puo' spegnere); niente temperatura.
+ */
+export function claudeModelParams(
+  model: string,
+  route: ClaudeRoute,
+  temperature?: number
+): Pick<Anthropic.MessageCreateParamsNonStreaming, 'temperature' | 'thinking' | 'output_config'> {
+  if (model.startsWith(CLAUDE_REFUSAL_RETRY_MODEL)) return temperature !== undefined ? { temperature } : {}
+  if (model.startsWith('claude-haiku')) return { thinking: { type: route === 'search' ? 'adaptive' : 'disabled' }, output_config: { effort: 'low' } }
+  return { output_config: { effort: 'low' } }
+}
+
+/**
+ * max_tokens per Claude (si pagano solo i token scritti davvero, il limite non costa). Haiku 4.5:
+ * il limite chiesto, tra 1024 e 8192. Haiku 5.5 conta circa il 30% di token in piu' per lo stesso
+ * testo: il limite chiesto (pensato per Gemini e Haiku 4.5) +30%, tra 1024 e 16000, per non tagliare
+ * le risposte. Sonnet/Opus ragionano prima di rispondere: other (16000 di base).
+ */
+export function claudeMaxTokens(model: string, requested?: number, other = 16000): number {
+  const want = requested || 2048
+  if (model.startsWith(CLAUDE_REFUSAL_RETRY_MODEL)) return Math.min(8192, Math.max(1024, want))
+  if (model.startsWith('claude-haiku')) return Math.min(16000, Math.max(1024, Math.ceil(want * TOKENIZER_GROWTH)))
+  return other
+}
+
+type ClaudeBody = Omit<Anthropic.MessageCreateParamsNonStreaming, 'model' | 'max_tokens' | 'temperature' | 'top_p' | 'top_k' | 'thinking' | 'output_config'>
+
+/**
+ * Una richiesta a Claude con i parametri giusti per il modello. Se il modello rifiuta
+ * (stop_reason "refusal") la stessa richiesta si rifa' una volta con CLAUDE_REFUSAL_RETRY_MODEL:
+ * onRefused registra la risposta rifiutata (token e categoria nei log); quella restituita e'
+ * l'ultima, da registrare a parte.
+ */
+async function claudeCreate(
+  call: {
+    model: string
+    route: ClaudeRoute
+    body: ClaudeBody
+    /** max_tokens chiesto (vedi claudeMaxTokens) e quello per Sonnet/Opus. */
+    maxTokens?: number
+    otherMaxTokens?: number
+    temperature?: number
+    /** Opzioni della chiamata, rilette per la riprova (es. il tempo che resta). */
+    requestOptions?: () => Anthropic.RequestOptions
+  },
+  onRefused: (response: Anthropic.Message) => void
+): Promise<Anthropic.Message> {
+  const send = (model: string) =>
+    claude().messages.create(
+      { ...call.body, model, max_tokens: claudeMaxTokens(model, call.maxTokens, call.otherMaxTokens), ...claudeModelParams(model, call.route, call.temperature) },
+      call.requestOptions?.()
+    )
+  const first = await send(call.model)
+  if (first.stop_reason !== 'refusal' || call.model.startsWith(CLAUDE_REFUSAL_RETRY_MODEL)) return first
+  onRefused(first)
+  console.warn(`Claude ${first.model || call.model} ha rifiutato la richiesta (categoria: ${first.stop_details?.category ?? 'nessuna'}): la riprovo una volta con ${CLAUDE_REFUSAL_RETRY_MODEL}`)
+  return send(CLAUDE_REFUSAL_RETRY_MODEL)
+}
+
+const claudeText = (response: Anthropic.Message) =>
+  response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('\n')
     .trim()
-  recordUsage({
-    feature: options?.feature, workspaceId: options?.workspaceId,
-    provider: 'claude',
-    model: response.model,
-    outcome: text && response.stop_reason !== 'refusal' ? 'ok' : 'error',
-    input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0) + (response.usage.cache_read_input_tokens || 0),
-    output: response.usage.output_tokens || 0,
-    cacheRead: response.usage.cache_read_input_tokens || 0,
-    cacheWrite: response.usage.cache_creation_input_tokens || 0,
-  })
+
+async function callClaudeText(
+  messages: GeminiChatMessage[],
+  system: AISystem | undefined,
+  options?: AIOptions,
+  model: string = CLAUDE_FALLBACK_MODEL
+): Promise<AIResult> {
+  const sys = claudeSystem(system, options?.cache !== false)
+  const record = (response: Anthropic.Message, outcome: 'ok' | 'error') =>
+    recordUsage({ feature: options?.feature, workspaceId: options?.workspaceId, provider: 'claude', model: response.model || model, outcome, ...claudeUsage(response.usage) })
+  const response = await claudeCreate(
+    {
+      model,
+      route: 'text',
+      maxTokens: options?.maxOutputTokens,
+      temperature: options?.temperature,
+      body: {
+        ...(sys ? { system: sys } : {}),
+        messages: toClaudeMessages(messages),
+        // Passi successivi della stessa conversazione: il prefisso gia' mandato si rilegge dalla cache.
+        ...(options?.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
+      },
+    },
+    (refused) => record(refused, 'error')
+  )
+  const text = claudeText(response)
+  record(response, text && response.stop_reason !== 'refusal' ? 'ok' : 'error')
   if (response.stop_reason === 'refusal' || !text) throw new Error('Claude non ha restituito una risposta')
   return { message: text, provider: 'claude', model: response.model }
 }
@@ -516,8 +662,11 @@ function claudeRetryAfterMs(error: unknown): number | null {
 /**
  * La stessa ricerca con Claude e lo strumento web_search (messages.create, senza streaming).
  * Modello: quello scelto dal cliente se e' un Claude, altrimenti la riserva di sempre
- * (CLAUDE_FALLBACK_MODEL, Haiku 4.5: niente "thinking"). Tempo: options.timeoutMs per tutta la
- * ricerca (riprese comprese), al massimo CLAUDE_SEARCH_EXTRA_MS oltre il tempo gia' usato da Gemini.
+ * (CLAUDE_FALLBACK_MODEL, Haiku 5.5 con thinking adattivo ed effort "low"); se rifiuta, la stessa
+ * richiesta (e le riprese dopo) con CLAUDE_REFUSAL_RETRY_MODEL. Cache: breakpoint alla fine delle
+ * istruzioni e cache automatica sulla conversazione, cosi' le pagine trovate si rileggono a 0,1x
+ * nei giri della ricerca e nelle riprese. Tempo: options.timeoutMs per tutta la ricerca (riprese
+ * comprese), al massimo CLAUDE_SEARCH_EXTRA_MS oltre il tempo gia' usato da Gemini.
  */
 async function claudeWebSearch(
   prompt: string,
@@ -527,10 +676,8 @@ async function claudeWebSearch(
   /** Ricerche pagate finora (anche se poi la ricerca non riesce). */
   spent: { searches: number } = { searches: 0 }
 ): Promise<GroundedResult> {
-  if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
   const pref = preferredModel()
-  const model = pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL
-  const isHaiku = model.startsWith('claude-haiku')
+  let model: string = pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL
   const limit = options.timeoutMs ?? 60_000
   const deadline = Math.min(Date.now() + limit, startedAt + limit + CLAUDE_SEARCH_EXTRA_MS)
   const city = options.place?.city?.trim()
@@ -541,30 +688,15 @@ async function claudeWebSearch(
     max_uses: CLAUDE_SEARCH_MAX_USES,
     user_location: { type: 'approximate', country: 'IT', timezone: 'Europe/Rome', ...(city ? { city: city.slice(0, 80) } : {}), ...(region ? { region: region.slice(0, 80) } : {}) },
   }
-  const system = [options.system, CLAUDE_SEARCH_SYSTEM, options.claudeSystem].filter(Boolean).join('\n\n')
+  const system = claudeSystem([options.system, CLAUDE_SEARCH_SYSTEM, options.claudeSystem].filter(Boolean).join('\n\n'))
   const content: Anthropic.ContentBlock[] = []
   let usedModel: string = model
   let paused = false
-  for (let resume = 0; ; resume++) {
-    // Ogni ripresa e' un'altra chiamata pagata: il piano si ricontrolla (AIBlockedError passa cosi' com'e').
-    if (resume > 0) await assertAIAllowed(workspaceId)
-    const left = deadline - Date.now()
-    if (left < 5_000) throw new Error('tempo finito per la ricerca sul web')
-    const response = await claudeClient.messages.create(
-      {
-        model,
-        max_tokens: CLAUDE_SEARCH_MAX_TOKENS,
-        system,
-        tools: [tool],
-        // Ripresa dopo "pause_turn": si rimanda la risposta in pausa cosi' com'e' (niente "continua").
-        messages: [{ role: 'user', content: prompt }, ...(content.length ? [{ role: 'assistant' as const, content: content as Anthropic.ContentBlockParam[] }] : [])],
-        // Haiku accetta la temperatura; Sonnet/Opus 5.5 no, e con effort basso costano meno.
-        ...(isHaiku ? (options.temperature !== undefined ? { temperature: options.temperature } : {}) : { output_config: { effort: 'low' as const } }),
-      },
-      // Un solo tentativo per chiamata: una chiamata lenta non si moltiplica.
-      { timeout: left, maxRetries: 0 }
-    )
-    usedModel = response.model || model
+  /**
+   * Registra una risposta. Quella rifiutata va come "error", come nei testi: i token e le ricerche
+   * fatte restano nel costo (Facevoice li paga), ma non entrano nel limite in euro del cliente.
+   */
+  const record = (response: Anthropic.Message, outcome: 'ok' | 'error') => {
     const usage = response.usage
     // Ricerche fatte davvero (quelle finite in errore non si pagano).
     const searches =
@@ -575,13 +707,40 @@ async function claudeWebSearch(
       feature: options.feature,
       workspaceId,
       provider: 'claude',
-      model: usedModel,
-      input: (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0),
-      output: usage.output_tokens || 0,
-      cacheRead: usage.cache_read_input_tokens || 0,
-      cacheWrite: usage.cache_creation_input_tokens || 0,
+      model: response.model || model,
+      outcome,
+      ...claudeUsage(usage),
       extraCost: Math.max(0, searches) * CLAUDE_WEB_SEARCH_FEE_USD,
     })
+  }
+  for (let resume = 0; ; resume++) {
+    // Ogni ripresa e' un'altra chiamata pagata: il piano si ricontrolla (AIBlockedError passa cosi' com'e').
+    if (resume > 0) await assertAIAllowed(workspaceId)
+    const left = deadline - Date.now()
+    if (left < 5_000) throw new Error('tempo finito per la ricerca sul web')
+    const response = await claudeCreate(
+      {
+        model,
+        route: 'search',
+        maxTokens: CLAUDE_SEARCH_MAX_TOKENS,
+        otherMaxTokens: CLAUDE_SEARCH_MAX_TOKENS,
+        temperature: options.temperature,
+        body: {
+          ...(system ? { system } : {}),
+          tools: [tool],
+          // Ripresa dopo "pause_turn": si rimanda la risposta in pausa cosi' com'e' (niente "continua").
+          messages: [{ role: 'user', content: prompt }, ...(content.length ? [{ role: 'assistant' as const, content: content as Anthropic.ContentBlockParam[] }] : [])],
+          cache_control: { type: 'ephemeral' },
+        },
+        // Un solo tentativo per chiamata: una chiamata lenta non si moltiplica (la riprova dopo un rifiuto ha il tempo che resta).
+        requestOptions: () => ({ timeout: Math.max(1_000, deadline - Date.now()), maxRetries: 0 }),
+      },
+      (refused) => record(refused, 'error')
+    )
+    usedModel = response.model || model
+    // Dopo un rifiuto le riprese vanno al modello che ha accettato.
+    if (usedModel.startsWith(CLAUDE_REFUSAL_RETRY_MODEL)) model = CLAUDE_REFUSAL_RETRY_MODEL
+    record(response, response.stop_reason === 'refusal' ? 'error' : 'ok')
     content.push(...response.content)
     if (response.stop_reason === 'refusal') throw new Error('Claude non ha fatto la ricerca')
     paused = response.stop_reason === 'pause_turn'
@@ -669,7 +828,7 @@ const isMissingModel = (message: string) => /not found|NOT_FOUND|is not supporte
  */
 async function tryGemini(
   messages: GeminiChatMessage[],
-  system: string | undefined,
+  system: AISystem | undefined,
   options?: AIOptions
 ): Promise<AIResult> {
   let lastError: unknown = new Error('Rate limit: tutti i modelli Gemini sono a riposo')
@@ -685,7 +844,8 @@ async function tryGemini(
     let withoutThinkingConfig = remembered
     for (;;) {
       try {
-        const result = await callGeminiAPI(messages, model, system, {
+        // Istruzioni in un testo solo, con la parte fissa in testa (cache implicita di Gemini).
+        const result = await callGeminiAPI(messages, model, systemText(system), {
           ...options,
           withoutThinkingConfig,
           // Senza thinkingConfig il ragionamento pesca dallo stesso budget: spazio in piu'.
@@ -777,7 +937,7 @@ function noteGeminiFailure(error: unknown, feature?: string, workspaceId?: strin
 /** Una chiamata singola: Gemini se disponibile, altrimenti (o al limite) Claude. */
 export async function callAI(
   messages: GeminiChatMessage[],
-  system?: string,
+  system?: AISystem,
   options?: AIOptions
 ): Promise<AIResult> {
   // AI del piano finita: la chiamata non parte (lo spazio Facevoice non ha limiti).
@@ -810,7 +970,7 @@ function geminiOnlyError(pref: AIModelChoice, error: unknown) {
  */
 export async function callAIPaced(
   messages: GeminiChatMessage[],
-  system?: string,
+  system?: AISystem,
   options?: AIOptions
 ): Promise<AIResult> {
   await assertAIAllowed(workspaceOf(options))
@@ -819,7 +979,7 @@ export async function callAIPaced(
 
 function pacedCall(
   messages: GeminiChatMessage[],
-  system?: string,
+  system?: AISystem,
   options?: AIOptions
 ): Promise<AIResult> {
   const pref = preferredModel()
@@ -872,37 +1032,35 @@ export async function readImages(images: ImageInput[], request: string): Promise
   await assertAIAllowed(workspaceOf())
   const pref = preferredModel()
   const prompt = `${IMAGE_PROMPT}\n\nRichiesta di Luca: ${request || '(nessun testo)'}`
+  // Immagini (diverse a ogni richiesta) e istruzioni brevi, sotto i 512 token della cache: niente breakpoint.
   const viaClaude = async () => {
-    if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
     const model = pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL
-    const response = await claudeClient.messages.create({
-      model,
-      max_tokens: 3000,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            ...images.map((img) => ({
-              type: 'image' as const,
-              source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
-            })),
-            { type: 'text' as const, text: prompt },
+    const record = (response: Anthropic.Message, outcome: 'ok' | 'error') =>
+      recordUsage({ feature: 'lettura_immagini', provider: 'claude', model: response.model || model, outcome, ...claudeUsage(response.usage) })
+    const response = await claudeCreate(
+      {
+        model,
+        route: 'text',
+        maxTokens: 3000,
+        body: {
+          messages: [
+            {
+              role: 'user',
+              content: [
+                ...images.map((img) => ({
+                  type: 'image' as const,
+                  source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
+                })),
+                { type: 'text' as const, text: prompt },
+              ],
+            },
           ],
         },
-      ],
-    })
-    recordUsage({
-      feature: 'lettura_immagini',
-      provider: 'claude',
-      model: response.model,
-      input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0) + (response.usage.cache_read_input_tokens || 0),
-      output: response.usage.output_tokens || 0,
-    })
-    return response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n')
-      .trim()
+      },
+      (refused) => record(refused, 'error')
+    )
+    record(response, response.stop_reason === 'refusal' ? 'error' : 'ok')
+    return response.stop_reason === 'refusal' ? '' : claudeText(response)
   }
   const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
   if (pref.startsWith('claude') && claudeReady) return viaClaude()
@@ -951,27 +1109,31 @@ export async function describeMedia(media: ImageInput[], prompt = MEDIA_PROMPT, 
   }
   const images = media.filter((m) => m.mimeType.startsWith('image/'))
   if (!images.length || !getAnthropicApiKey()) return ''
-  if (!claudeClient) claudeClient = new Anthropic({ apiKey: getAnthropicApiKey() })
-  const response = await claudeClient.messages.create({
-    model: CLAUDE_FALLBACK_MODEL,
-    max_tokens: 600,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          ...images.map((img) => ({
-            type: 'image' as const,
-            source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
-          })),
-          { type: 'text' as const, text: prompt },
+  // Immagini (diverse a ogni messaggio) e istruzioni brevi, sotto i 512 token della cache: niente breakpoint.
+  const record = (response: Anthropic.Message, outcome: 'ok' | 'error') =>
+    recordUsage({ feature, workspaceId, provider: 'claude', model: response.model || CLAUDE_FALLBACK_MODEL, outcome, ...claudeUsage(response.usage) })
+  const response = await claudeCreate(
+    {
+      model: CLAUDE_FALLBACK_MODEL,
+      route: 'text',
+      maxTokens: 600,
+      body: {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              ...images.map((img) => ({
+                type: 'image' as const,
+                source: { type: 'base64' as const, media_type: img.mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: img.data },
+              })),
+              { type: 'text' as const, text: prompt },
+            ],
+          },
         ],
       },
-    ],
-  })
-  recordUsage({ feature, workspaceId, provider: 'claude', model: response.model, input: response.usage.input_tokens || 0, output: response.usage.output_tokens || 0 })
-  return response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim()
+    },
+    (refused) => record(refused, 'error')
+  )
+  record(response, response.stop_reason === 'refusal' ? 'error' : 'ok')
+  return response.stop_reason === 'refusal' ? '' : claudeText(response)
 }

@@ -33,6 +33,30 @@ Rispondi nella lingua dell'utente (di norma italiano). Sii diretto e concreto: n
 
 Ogni risposta deve restare entro circa 300 caratteri (poche frasi). Se il compito richiede davvero più spazio, dai la parte più utile ora e chiedi se continuare.`
 
+/**
+ * Claude Haiku 5.5 puo' rifiutare una richiesta (stop_reason "refusal") e non ha una riserva
+ * lato server: la chat rifa' la stessa richiesta una volta con Haiku 4.5.
+ */
+export const REFUSAL_RETRY_MODEL = 'claude-haiku-4-5'
+
+/** Modello con cui rifare una richiesta rifiutata (solo per Haiku 5.5), altrimenti null. */
+export function refusalRetryModel(model: string): string | null {
+  return model.startsWith('claude-haiku-5') ? REFUSAL_RETRY_MODEL : null
+}
+
+/**
+ * Parametri per modello. Haiku 5.5 (guida di migrazione): thinking adattivo con effort "low",
+ * il livello indicato per la chat (pensa poco o niente e costa meno); niente temperature,
+ * top_p, top_k, budget_tokens ne' prefill (lo storico finisce sempre col messaggio
+ * dell'utente). Gli altri modelli restano come prima.
+ */
+function modelSettings(model: string): Pick<Anthropic.MessageCreateParams, 'thinking' | 'output_config'> {
+  if (model.startsWith('claude-haiku-5')) {
+    return { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } }
+  }
+  return {}
+}
+
 export function getAnthropicApiKey(): string {
   return (process.env.ANTHROPIC_API_KEY || '').trim()
 }
@@ -115,17 +139,24 @@ function buildSystem(projectInstructions?: string | null): Anthropic.TextBlockPa
 export function streamClaude(
   messages: ClaudeChatMessage[],
   model: string,
-  projectInstructions?: string | null
+  projectInstructions?: string | null,
+  /** Riprova dopo un rifiuto: la stessa richiesta col modello di riserva (refusalRetryModel). */
+  options?: { retryAfterRefusal?: boolean }
 ) {
   const client = getClient()
   const apiMessages = toApiMessages(messages)
+  const chosen = resolveChatModel(model) || DEFAULT_CHAT_MODEL
+  const resolvedModel = options?.retryAfterRefusal ? refusalRetryModel(chosen) || chosen : chosen
 
+  // max_tokens: Haiku 5.5 scrive fino a 128K token (il tokenizer nuovo conta ~30% in piu'),
+  // Haiku 4.5 fino a 64K: 64000 basta a entrambi, si pagano solo i token scritti.
   return client.messages.stream({
-    model: resolveChatModel(model) || DEFAULT_CHAT_MODEL,
+    model: resolvedModel,
     max_tokens: 64000,
     system: buildSystem(projectInstructions),
     messages: apiMessages,
     cache_control: { type: 'ephemeral' },
+    ...modelSettings(resolvedModel),
   })
 }
 
@@ -165,6 +196,7 @@ export async function callClaude(
     // Cache automatica sull'ultimo blocco: copre il prefisso della
     // conversazione, che è la parte che cresce a ogni turno.
     cache_control: { type: 'ephemeral' },
+    ...modelSettings(resolvedModel),
   })
 
   const text = response.content

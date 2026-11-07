@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { callAI, runWithStatus } from '@/lib/ai'
+import { getGeminiApiKey } from '@/lib/gemini'
 import { AI_TOOLS_DETAILED_INFO } from '@/lib/ai-tools-info'
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-})
 
 // Lista completa degli AI Tools (deve corrispondere a mockAITools in Feed.tsx)
 const AI_TOOLS = [
@@ -201,18 +198,21 @@ const AI_TOOLS = [
 ]
 
 export async function POST(req: NextRequest) {
+  // Letta una volta sola: il corpo della richiesta non si puo' rileggere nel catch.
+  let query = ''
   try {
-    const { query } = await req.json()
+    const body = await req.json()
+    query = typeof body?.query === 'string' ? body.query.trim() : ''
 
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    if (!query) {
       return NextResponse.json(
         { error: 'Query di ricerca richiesta' },
         { status: 400 }
       )
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
-      // Fallback: ricerca semplice se non c'è API key
+    if (!getGeminiApiKey()) {
+      // Fallback: ricerca semplice se non c'è la chiave Gemini (qui Claude non si usa)
       const queryLower = query.toLowerCase()
       const matched = AI_TOOLS.filter(tool => {
         const searchText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()
@@ -289,32 +289,25 @@ Restituisci un JSON con:
 
 Formato risposta: {"toolIds": ["id1", "id2"], "explanations": {"id1": "spiegazione perché id1 è consigliato", "id2": "spiegazione perché id2 è consigliato"}}`
 
+    // Elenco dei tool (uguale per tutti) nelle istruzioni, dopo le regole; la richiesta, che cambia
+    // ogni volta, nel messaggio: la parte fissa resta in testa e si rilegge dalla cache.
+    const toolsList = `AI Tools disponibili con informazioni dettagliate:
+${toolsDescription}`
     const userPrompt = `Richiesta utente: "${query}"
-
-AI Tools disponibili con informazioni dettagliate:
-${toolsDescription}
 
 Quali AI Tools sono più rilevanti per questa richiesta? 
 Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascuno.`
 
-    // Chiama Claude
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022', // Usa Haiku per velocità e costo
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-        },
-      ],
-    })
-
-    // Estrai il testo dalla risposta
-    const responseText = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n')
+    // Pagina pubblica, senza accesso: solo Gemini gratuito, niente credito Anthropic (come il
+    // widget del sito). Se Gemini non risponde si passa alla ricerca semplice (catch qui sotto).
+    const result = await runWithStatus({ status: () => {}, model: 'gemini' }, () =>
+      callAI([{ role: 'user', content: userPrompt }], { stable: `${systemPrompt}\n\n${toolsList}` }, {
+        feature: 'ricerca_strumenti',
+        temperature: 0.3,
+        maxOutputTokens: 2000,
+      })
+    )
+    const responseText = result.message || ''
 
     // Prova a parsare la risposta JSON
     let toolIds: string[] = []
@@ -337,7 +330,7 @@ Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascu
         }
       }
     } catch (parseError) {
-      console.error('Errore nel parsing della risposta di Claude:', parseError)
+      console.error('Errore nel parsing della risposta AI:', parseError)
       console.error('Risposta ricevuta:', responseText)
       
       // Fallback: ricerca semplice
@@ -376,9 +369,9 @@ Restituisci il JSON con toolIds ordinati per rilevanza e explanations per ciascu
   } catch (error) {
     console.error('Errore nella ricerca AI Tools:', error)
     
-    // Fallback: ricerca semplice
+    // Fallback: ricerca semplice con la richiesta gia' letta
     try {
-      const { query } = await req.json()
+      if (!query) throw new Error('richiesta non leggibile')
       const queryLower = query.toLowerCase()
       const matched = AI_TOOLS.filter(tool => {
         const searchText = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase()

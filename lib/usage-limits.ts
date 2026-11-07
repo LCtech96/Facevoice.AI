@@ -268,6 +268,7 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   traduzioni_sito: 'other',
   traduzioni_messaggi: 'other',
   analisi_clienti: 'other',
+  ricerca_strumenti: 'other',
 }
 
 /** Collegamento di una riga di ai_usage: dal canale nel nome, altrimenti dal tipo di funzione. */
@@ -824,6 +825,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   lettura_media_direct: 'Foto e video in Direct',
   traduzioni_sito: 'Traduzioni del sito',
   traduzioni_messaggi: 'Traduzioni dei messaggi',
+  ricerca_strumenti: 'Ricerca AI Tools',
   blog_automatico: 'Blog',
   blog_carosello: 'Caroselli del blog',
   super_chat_carosello: 'Caroselli della Super chat',
