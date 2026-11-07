@@ -7,9 +7,10 @@ import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
 import {
-  AUTOMATIONS_DAILY_LIMIT,
   assistantFrom,
+  automationsFull,
   automationsLocked,
+  automationsSpaces,
   automationsTodayText,
   daysLeftText,
   formatEur,
@@ -240,9 +241,9 @@ function AssistantChip() {
   )
 }
 
-/** Nella lista: chi ha la pagina Automazioni visibile, con le email mandate oggi. */
-function AutomationsChip({ automations }: { automations: BetaAutomations }) {
-  const full = automations.sentToday >= AUTOMATIONS_DAILY_LIMIT
+/** Nella lista: chi ha la pagina Automazioni visibile, con le email mandate oggi (spaces: spazi sommati dalla beta). */
+function AutomationsChip({ automations, spaces }: { automations: BetaAutomations; spaces: number }) {
+  const full = automationsFull(automations.sentToday, spaces)
   return (
     <span
       className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -250,7 +251,7 @@ function AutomationsChip({ automations }: { automations: BetaAutomations }) {
       }`}
     >
       <Clock className="h-3 w-3" aria-hidden="true" />
-      Automazioni · {automationsTodayText(automations.sentToday)}
+      Automazioni · {automationsTodayText(automations.sentToday, spaces)}
     </span>
   )
 }
@@ -519,7 +520,7 @@ export default function UtentiClient() {
                   <div className="mt-1 flex min-w-0 flex-wrap gap-1">
                     <SubscriptionBadge user={user} />
                     {user.assistant?.enabled && <AssistantChip />}
-                    {user.automations?.enabled && <AutomationsChip automations={user.automations} />}
+                    {user.automations?.enabled && <AutomationsChip automations={user.automations} spaces={automationsSpaces(user.workspaces)} />}
                   </div>
                 )}
                 <div className="mt-2 flex items-baseline justify-between gap-2">
@@ -737,7 +738,7 @@ function UserSheet({
             title="Automazioni"
             description={
               (automationsLocked(user) ? 'Sempre visibile (Facevoice)' : 'La pagina Automazioni nell’area clienti della beta') +
-              (user.automations.enabled ? ` · email ${automationsTodayText(user.automations.sentToday)}` : '')
+              (user.automations.enabled ? ` · email ${automationsTodayText(user.automations.sentToday, automationsSpaces(user.workspaces))}` : '')
             }
             on={user.automations.enabled}
             locked={automationsLocked(user)}

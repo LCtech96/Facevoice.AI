@@ -230,8 +230,21 @@ export function automationsFrom(enabled: unknown, sentToday?: unknown): BetaAuto
 export const automationsLocked = (user: Pick<BetaUser, 'assistant' | 'automations'>) =>
   Boolean(user.assistant?.locked && user.automations?.enabled)
 
-/** "oggi 3/20" */
-export const automationsTodayText = (sentToday: number) => `oggi ${sentToday}/${AUTOMATIONS_DAILY_LIMIT}`
+/**
+ * Spazi le cui email la beta somma in "automationsSentToday" (stessa regola della beta:
+ * quelli di cui e' titolare; se non ne ha, tutti i suoi). Almeno 1.
+ */
+export function automationsSpaces(workspaces: readonly Pick<BetaWorkspace, 'role'>[]): number {
+  const owned = workspaces.filter((w) => w.role === 'owner').length
+  return Math.max(1, owned || workspaces.length)
+}
+
+/** Il limite e' per spazio: "oggi 3/20" con uno spazio, "oggi 22 in 2 spazi" con piu' spazi (la beta manda la somma). */
+export const automationsTodayText = (sentToday: number, spaces = 1) =>
+  spaces > 1 ? `oggi ${sentToday} in ${spaces} spazi` : `oggi ${sentToday}/${AUTOMATIONS_DAILY_LIMIT}`
+
+/** Limite di oggi finito in tutti gli spazi contati (la beta ne ferma ognuno a 20, quindi la somma basta). */
+export const automationsFull = (sentToday: number, spaces = 1) => sentToday >= AUTOMATIONS_DAILY_LIMIT * Math.max(1, spaces)
 
 function thresholdsFrom(v: unknown): BetaThresholds | null {
   if (!v || typeof v !== 'object') return null
