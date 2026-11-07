@@ -2,7 +2,7 @@ import { callAI, hasAIProvider } from '@/lib/ai'
 import { parseSuspicious } from '@/lib/clarity-rules'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { replyLanguage } from '@/lib/reply-language'
+import { detectLanguage } from '@/lib/reply-language'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { channelFeature, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { AI_BLOCKED_MESSAGE } from '@/lib/usage-shared'
@@ -86,20 +86,68 @@ async function dashboardLanguage(workspaceId: string): Promise<string> {
   return data?.value === 'en' ? 'inglese' : 'italiano'
 }
 
+/** Messaggi precedenti della persona letti per la lingua (i piu' recenti). */
+const LANGUAGE_MESSAGES = 10
 /**
- * Lingua della risposta: quella del messaggio ricevuto; se non si capisce
- * (es. "test", "ok"), quella dei messaggi precedenti della persona; altrimenti
- * la lingua della dashboard.
+ * Testo scritto dalla persona: senza le descrizioni tra [ ] di foto, storie e allegati (le
+ * scriviamo noi, in italiano), anche quando la didascalia dentro va a capo.
+ */
+const ownWords = (text: string) =>
+  text.replace(/\[(?:Ha inviato|Sta rispondendo)[\s\S]*?\](?=[ \t]*(?:\n|$))/g, ' ').replace(/\[[^\]\n]*\]/g, ' ')
+
+/**
+ * Lingua della risposta. Si seguono i messaggi della persona dal piu' vecchio al piu'
+ * recente (previous, poi current): vale la lingua del primo in cui si capisce e cambia
+ * solo se la persona scrive chiaramente in un'altra (o se quella di prima era incerta).
+ * I messaggi in cui non si capisce (es. "ok", "E necessario?") non la cambiano. Se cosi'
+ * non e' sicura (o non si capisce), si leggono i messaggi tutti insieme (tanti pezzi corti,
+ * es. "Ciao", "Grazie", "Perfetto"). Se non si capisce neanche cosi': la lingua della dashboard.
  */
 export async function languageFor(workspaceId: string, current: string, previous: string[]): Promise<{ language: string; source: 'messaggio' | 'conversazione' | 'dashboard' }> {
-  const fromMessage = replyLanguage(current)
-  if (fromMessage) return { language: fromMessage, source: 'messaggio' }
-  const fromThread = replyLanguage(previous.join('\n'))
-  if (fromThread) return { language: fromThread, source: 'conversazione' }
+  let language: string | null = null
+  let sure = false
+  let source: 'messaggio' | 'conversazione' = 'conversazione'
+  const texts = [...previous.slice(-LANGUAGE_MESSAGES), current]
+  texts.forEach((text, i) => {
+    const found = detectLanguage(ownWords(text))
+    if (!found) return
+    const isCurrent = i === texts.length - 1
+    if (found.language === language) {
+      // Due messaggi nella stessa lingua: ormai e' sicura.
+      sure = true
+      if (isCurrent) source = 'messaggio'
+      return
+    }
+    if (language && sure && !found.clear) return
+    language = found.language
+    sure = found.clear
+    source = isCurrent ? 'messaggio' : 'conversazione'
+  })
+  if (language && sure) return { language, source }
+  // Messaggi tutti insieme: se dicono un'altra lingua vale quella (un solo pezzo incerto non decide).
+  const together = detectLanguage(ownWords(texts.join('\n')))?.language
+  if (together && together !== language) return { language: together, source: 'conversazione' }
+  if (language) return { language, source }
   return { language: await dashboardLanguage(workspaceId), source: 'dashboard' }
 }
 
-type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; origin?: string | null; reply_to?: string | null; created_at: string }
+/**
+ * Regola sulla lingua in fondo alle istruzioni (vicino alla risposta, dove pesa di piu'),
+ * come ultima delle regole fisse: istruzioni, campagna, correzioni o esempi in un'altra
+ * lingua non devono cambiarla.
+ */
+export function languageReminder(lang: { language: string; source: 'messaggio' | 'conversazione' | 'dashboard' }): string {
+  const why =
+    lang.source === 'messaggio'
+      ? `la lingua in cui scrive la persona`
+      : lang.source === 'conversazione'
+        ? `la lingua in cui scrive la persona (l'ultimo messaggio è corto o poco chiaro: vale la lingua dei suoi messaggi precedenti)`
+        : 'dal messaggio non si capisce la lingua'
+  const exception = lang.source === 'messaggio' ? '' : ` Usa un'altra lingua solo se l'ultimo messaggio della persona è scritto chiaramente e per intero in quella lingua.`
+  return `- LINGUA (regola fissa): scrivi TUTTA la risposta in ${lang.language} (${why}). Istruzioni, campagna, correzioni, esempi o nostri messaggi precedenti in un'altra lingua non cambiano la lingua della risposta: traducili, non copiarli.${exception}`
+}
+
+type HistoryRow = { direction: 'in' | 'out'; body: string; status: string | null; origin?: string | null; reply_to?: string | null; external_id?: string | null; created_at: string }
 
 const PLATFORM_NAMES: Record<string, string> = { email: 'email', instagram: 'Instagram', facebook: 'Messenger', whatsapp: 'WhatsApp', web: 'chat del sito' }
 /** Messaggi inviati dall'Assistente AI su richiesta del titolare: contano come messaggi del team. */
@@ -117,17 +165,30 @@ const stamp = (iso: string) =>
  * La conversazione in ordine, con chi ha scritto ogni messaggio: NOI (la nostra
  * attivita', anche i messaggi scritti a mano dall'app) e PERSONA.
  */
-export function conversationTranscript(rows: HistoryRow[], platform: string, options: { gapAfterFirst?: boolean } = {}): string {
+export function conversationTranscript(rows: HistoryRow[], platform: string, options: { gapAfterFirst?: boolean; language?: string } = {}): string {
   const lines = rows.map((row, i) => {
     const who = row.direction === 'in' ? 'PERSONA' : HAND_ORIGINS.includes(row.origin || '') ? 'NOI · scritto a mano' : 'NOI'
     const gap = options.gapAfterFirst && i === 1 ? '[…messaggi più vecchi non mostrati…]\n\n' : ''
     const body = i < rows.length - 3 ? clip(row.body.trim(), OLD_MESSAGE_CHARS) : row.body.trim()
     return `${gap}[${who} · ${stamp(row.created_at)}]\n${body}`
   })
+  // Messaggi della persona dopo il nostro ultimo: molti scrivono a pezzi, si risponde a tutti insieme.
+  let unanswered = 0
+  for (let i = rows.length - 1; i >= 0 && rows[i].direction === 'in'; i--) unanswered++
+  const ours = rows.some((row) => row.direction === 'out')
+  const ask = [
+    unanswered > 1
+      ? `Scrivi ora il prossimo messaggio di NOI. ${ours ? 'Dopo il nostro ultimo messaggio la PERSONA' : 'La PERSONA'} ha scritto ${unanswered} messaggi di fila (molti scrivono a pezzi): leggili come un unico messaggio e rispondi a tutti insieme in UN solo messaggio, non uno per uno.`
+      : 'Scrivi ora il prossimo messaggio di NOI: rispondi all’ultimo messaggio della PERSONA.',
+    // Solo in chat: nelle email saluto e firma restano (stile del canale).
+    ours && platform !== 'email' ? 'Se in questa chat abbiamo già salutato, non salutare di nuovo: vai dritto al punto.' : '',
+    options.language ? `Scrivi in ${options.language}.` : '',
+    'Solo il testo del messaggio, senza etichette.',
+  ]
   return [
     `Conversazione su ${PLATFORM_NAMES[platform] || platform}, dal messaggio più vecchio al più recente. NOI = la nostra attività (messaggi già inviati, anche quelli scritti a mano dall’app). PERSONA = chi ci scrive.`,
     lines.join('\n\n'),
-    'Scrivi ora il prossimo messaggio di NOI: rispondi all’ultimo messaggio della PERSONA. Solo il testo del messaggio, senza etichette.',
+    ask.filter(Boolean).join(' '),
   ].join('\n\n')
 }
 
@@ -276,19 +337,38 @@ export async function respondToMessage(
   const conversation = () =>
     db
       .from('social_messages')
-      .select('direction, body, status, origin, reply_to, created_at')
+      .select('direction, body, status, origin, reply_to, external_id, created_at')
       .eq('platform', message.platform)
       .eq('contact_id', message.contact_id)
       .eq('kind', 'message')
       // Solo messaggi ricevuti e risposte davvero inviate (non bozze o scartate).
       .or('direction.eq.in,status.eq.sent')
-  const [{ data: history }, { data: first }, { data: firstIn }] = await Promise.all([
+  const [{ data: history }, { data: first }, { data: firstIn }, { data: late }] = await Promise.all([
     // Tutta la chat recente (le email, piu' lunghe, un po' meno): l'AI deve capire il contesto.
     conversation().lte('created_at', message.created_at).order('created_at', { ascending: false }).limit(message.platform === 'email' ? 10 : 20),
     conversation().order('created_at', { ascending: true }).limit(1).maybeSingle(),
     conversation().eq('direction', 'in').order('created_at', { ascending: true }).limit(1).maybeSingle(),
+    // Nostre risposte partite dopo questo messaggio ma scritte per quelli prima (arrivato mentre la risposta partiva).
+    conversation().eq('direction', 'out').gt('created_at', message.created_at).order('created_at', { ascending: true }).limit(5),
   ])
   const rows = ((history || []) as HistoryRow[]).reverse()
+  const inboundAt = (externalId: string | null | undefined, before = rows.length) =>
+    externalId ? rows.slice(0, before).findIndex((row) => row.direction === 'in' && row.external_id === externalId) : -1
+  for (const reply of (late || []) as HistoryRow[]) {
+    if (reply.reply_to !== message.external_id && inboundAt(reply.reply_to) >= 0) rows.push(reply)
+  }
+  // Le nostre risposte automatiche vanno subito dopo il messaggio a cui rispondono (partite
+  // dopo altri messaggi arrivati mentre si scrivevano): cosi' l'AI vede quali messaggi hanno
+  // gia' avuto risposta e risponde a tutti quelli dopo (niente seconda risposta alle stesse cose).
+  for (let i = 0; i < rows.length; i++) {
+    const reply = rows[i]
+    if (reply.direction !== 'out' || !String(reply.origin || '').startsWith('ai')) continue
+    const at = inboundAt(reply.reply_to, i)
+    if (at < 0) continue
+    let next = at + 1
+    while (next < i && rows[next].direction === 'out') next++
+    if (next < i) rows.splice(next, 0, ...rows.splice(i, 1))
+  }
   // Chi ha aperto la conversazione: se siamo stati noi, il primo messaggio e' la nostra proposta.
   // Non vale la risposta privata a un commento (li' ha scritto prima la persona) ne' la
   // risposta automatica di Meta al primo messaggio della persona.
@@ -300,9 +380,8 @@ export async function respondToMessage(
   const openerShown = rows.some((row) => row.created_at === opener?.created_at && row.body === opener?.body)
   if (openedByUs && opener && !openerShown) rows.unshift(opener)
   if (!rows.length || rows[rows.length - 1].direction !== 'in') rows.push({ direction: 'in', body: message.body, status: null, created_at: message.created_at })
-  const turns = [{ role: 'user' as const, content: conversationTranscript(rows, message.platform, { gapAfterFirst: openedByUs && !openerShown }) }]
-
-  const inbound = rows.filter((row) => row.direction === 'in').map((row) => row.body)
+  // Messaggi precedenti della persona (l'ultima riga e' il messaggio a cui si risponde): servono per la lingua.
+  const inbound = rows.slice(0, -1).filter((row) => row.direction === 'in').map((row) => row.body)
   // Campagna accesa per questo canale (email, Direct, Messenger)? Letta adesso: anche le
   // risposte in coda usano quella valida al momento in cui si scrivono.
   const campaignRead = readCampaign(db.workspaceId).then((c) => campaignFor(c, message.platform, 'message'))
@@ -327,10 +406,9 @@ export async function respondToMessage(
   // Con la campagna il testo c'e' sempre (non si accende vuota): l'invio automatico resta possibile.
   const hasInstructions = campaign ? true : Boolean(general || specific)
 
-  const languageRule =
-    lang.source === 'dashboard'
-      ? `LINGUA DELLA RISPOSTA (regola principale): dal messaggio non si capisce la lingua, quindi scrivi la risposta in ${lang.language}.`
-      : `LINGUA DELLA RISPOSTA (regola principale): il cliente scrive in ${lang.language}. Scrivi TUTTA la risposta in ${lang.language}, anche se queste istruzioni sono in un'altra lingua: traduci tu le informazioni che ti servono. Saluti e firma compresi.`
+  const turns = [{ role: 'user' as const, content: conversationTranscript(rows, message.platform, { gapAfterFirst: openedByUs && !openerShown, language: lang.language }) }]
+  // In testa (parte fissa, uguale per tutti i messaggi nella stessa lingua) e di nuovo in fondo con il motivo.
+  const languageRule = `LINGUA DELLA RISPOSTA (regola principale): scrivi TUTTA la risposta in ${lang.language}, anche se queste istruzioni, la campagna, le correzioni o gli esempi sono in un'altra lingua: traduci tu le informazioni che ti servono, non copiare frasi in un'altra lingua. Saluti e firma compresi.`
   // Cache dei prompt: prima la parte uguale per tutti i messaggi dello spazio (lingua, istruzioni,
   // metodo), poi quella che cambia a ogni messaggio (persona, oggetto, correzioni vicine al
   // messaggio, data e ora) e le regole fisse in fondo, come prima.
@@ -357,7 +435,7 @@ export async function respondToMessage(
       message.subject ? `Oggetto dell'email ricevuta: "${message.subject}".` : '',
       corrections,
       buildRealtimeDateTimeInstructionsItalian(),
-      RULES,
+      `${RULES}\n${languageReminder(lang)}`,
     ]
       .filter(Boolean)
       .join('\n\n'),

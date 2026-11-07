@@ -9,7 +9,10 @@ import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, wroteAfter } from
 import { respondToMessage, type ReplyOutcome } from './responder'
 
 // Ritardo delle risposte automatiche (scelto dal cliente nell'omnichat) e coda
-// delle risposte in attesa. Funziona senza processi sempre accesi: ogni risposta
+// delle risposte in attesa. Nei messaggi diretti (Instagram, Messenger) si aspetta
+// sempre almeno MIN_DM_DELAY_SECONDS dopo l'ultimo messaggio della persona, anche
+// con il ritardo a 0: molti scrivono a pezzi e ricevono una sola risposta per tutti.
+// Funziona senza processi sempre accesi: ogni risposta
 // in attesa e' una riga di app_settings, reply_queue:<spazio>:<canale>:<persona>,
 // con l'ora prevista. La manda chi arriva per primo all'ora giusta: l'attesa
 // dentro il webhook (ritardi fino a 45 s) o il cron di ogni minuto. La risposta
@@ -23,10 +26,14 @@ export type DelayUnit = 'secondi' | 'minuti'
 export type ReplyDelay = { seconds: number; unit: DelayUnit }
 
 export const MAX_DELAY_SECONDS = 30 * 60
+/** Attesa minima delle risposte automatiche nei messaggi diretti, per tutti gli spazi (anche con il ritardo a 0). */
+export const MIN_DM_DELAY_SECONDS = 30
 /** Fino a questo ritardo la risposta si aspetta anche dentro il webhook; oltre, solo il cron. */
 export const AFTER_WAIT_MAX_SECONDS = 45
-/** Variazione casuale del ritardo (+/- 20%). */
+/** Variazione casuale del ritardo: solo in piu' (da 0 a +20%), mai sotto il ritardo scelto o il minimo. */
 const JITTER = 0.2
+/** Tetto di una serie di messaggi: primo messaggio + 2 volte il ritardo, almeno 3 minuti; poi la risposta parte comunque. */
+const SERIES_CAP_MIN_MS = 3 * 60_000
 /** Una risposta "presa" da qualcuno da piu' di 3 minuti si considera abbandonata (funzione interrotta). */
 const CLAIM_STALE_MS = 3 * 60_000
 /** Meta permette di rispondere entro 24 ore dall'ultimo messaggio della persona: si tiene 1 ora di margine. */
@@ -67,6 +74,11 @@ export function parseDelay(raw: string | null | undefined): ReplyDelay {
   } catch {
     return NO_DELAY
   }
+}
+
+/** Ritardo che vale davvero (secondi): nei messaggi diretti almeno MIN_DM_DELAY_SECONDS, l'email come scelto (anche 0). */
+export function effectiveDelaySeconds(platform: string, seconds: number): number {
+  return META_PLATFORMS.includes(platform) ? Math.max(seconds, MIN_DM_DELAY_SECONDS) : seconds
 }
 
 export async function readReplyDelay(workspaceId: string): Promise<ReplyDelay> {
@@ -114,16 +126,21 @@ export function parseItem(raw: string | null): QueueItem | null {
   }
 }
 
-/** Ritardo con la variazione casuale (+/- 20%). */
-export const withJitter = (ms: number, random = Math.random()) => Math.round(ms * (1 - JITTER + random * 2 * JITTER))
+/** Ritardo con la variazione casuale (da 0 a +20%: mai meno del ritardo). */
+export const withJitter = (ms: number, random = Math.random()) => Math.round(ms * (1 + random * JITTER))
+
+/** Ora oltre la quale una serie di messaggi non sposta piu' l'invio. */
+export const seriesCap = (firstAt: number, delayMs: number) => firstAt + Math.max(2 * delayMs, SERIES_CAP_MIN_MS)
 
 const claimedNow = (item: QueueItem, now: number) => Boolean(item.claimId && item.claimedAt && now - item.claimedAt < CLAIM_STALE_MS)
 
 /**
  * Nuovo messaggio ricevuto: nuova risposta in coda, oppure (se ce n'e' gia' una
- * in attesa) si sposta l'invio a "adesso + ritardo", ma mai oltre il primo
- * messaggio + 2 volte il ritardo. Se la risposta e' in invio proprio ora non si
- * tocca: alla fine chi la invia vede il messaggio nuovo e rimette in coda.
+ * in attesa) si sposta l'invio a "adesso + ritardo", ma mai oltre il tetto della
+ * serie (seriesCap: primo messaggio + 2 volte il ritardo, almeno 3 minuti). Se la
+ * risposta e' in invio proprio ora resta di chi la invia, ma si segna il messaggio
+ * nuovo (cambia il timbro): alla fine chi la invia rilegge la riga, vede il messaggio
+ * nuovo e rimette in coda (una risposta sola per lui, anche se arriva all'ultimo istante).
  */
 export function nextQueueItem(
   current: QueueItem | null,
@@ -131,11 +148,12 @@ export function nextQueueItem(
   now: number,
   random = Math.random()
 ): QueueItem | false {
-  if (current && claimedNow(current, now)) return false
+  if (current && claimedNow(current, now)) return { ...current, messageId: input.messageId, triggerMid: input.triggerMid }
   if (current && !current.claimId) {
-    const cap = current.firstAt + 2 * current.delayMs
-    const pushed = Math.min(now + withJitter(current.delayMs, random), cap)
-    return { ...current, messageId: input.messageId, triggerMid: input.triggerMid, dueAt: Math.max(current.dueAt, pushed) }
+    // Il ritardo di adesso (es. il minimo dei messaggi diretti) vale anche per la serie gia' in coda.
+    const delayMs = Math.max(current.delayMs, input.delayMs)
+    const pushed = Math.min(now + withJitter(delayMs, random), seriesCap(current.firstAt, delayMs))
+    return { ...current, messageId: input.messageId, triggerMid: input.triggerMid, delayMs, dueAt: Math.max(current.dueAt, pushed) }
   }
   // Nessuna in coda, oppure presa da una funzione che si e' interrotta: si riparte.
   return { ...input, firstAt: now, dueAt: now + withJitter(input.delayMs, random), claimId: null, claimedAt: null, attempts: current?.attempts ?? 0 }
@@ -158,8 +176,9 @@ async function senderAction(db: WorkspaceDb, platform: string, accountId: string
 }
 
 /**
- * Messaggio appena ricevuto: con l'invio automatico e un ritardo scelto la
- * risposta va in coda, altrimenti si prepara subito (anche le bozze da approvare).
+ * Messaggio appena ricevuto: con l'invio automatico la risposta va in coda (nei
+ * messaggi diretti sempre, almeno MIN_DM_DELAY_SECONDS; l'email solo con un ritardo
+ * scelto), altrimenti si prepara subito (anche le bozze da approvare).
  */
 export async function scheduleReply(db: WorkspaceDb, messageId: string): Promise<ScheduleResult> {
   const now = async () => ({ status: 'now' as const, outcome: await respondToMessage(db, messageId) })
@@ -173,7 +192,8 @@ export async function scheduleReply(db: WorkspaceDb, messageId: string): Promise
     db.from('social_channels').select('automation_enabled, reply_mode').eq('platform', message.platform).maybeSingle(),
     readReplyDelay(db.workspaceId),
   ])
-  if (!channel?.automation_enabled || channel.reply_mode !== 'auto' || delay.seconds <= 0) return now()
+  const seconds = effectiveDelaySeconds(message.platform as string, delay.seconds)
+  if (!channel?.automation_enabled || channel.reply_mode !== 'auto' || seconds <= 0) return now()
 
   const key = queueKey(db.workspaceId, message.platform as string, message.contact_id as string)
   const input = {
@@ -182,7 +202,7 @@ export async function scheduleReply(db: WorkspaceDb, messageId: string): Promise
     contactId: message.contact_id as string,
     messageId: message.id as string,
     triggerMid: (message.external_id as string | null) ?? null,
-    delayMs: delay.seconds * 1000,
+    delayMs: seconds * 1000,
   }
   let item: QueueItem | null
   try {

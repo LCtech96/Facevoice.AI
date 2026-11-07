@@ -17,7 +17,7 @@ const SCRIPTS: [RegExp, string][] = [
 
 // Parole comuni (gia' in minuscolo, senza punteggiatura) per le lingue con alfabeto latino.
 const WORDS: Record<string, string[]> = {
-  italiano: ['il', 'lo', 'gli', 'che', 'di', 'è', 'per', 'con', 'come', 'quanto', 'ciao', 'grazie', 'sono', 'una', 'del', 'della', 'non', 'anche', 'questo', 'vorrei', 'buongiorno', 'salve', 'costa', 'sì', 'si', 'vede', 'bene', 'prego', 'certo', 'perfetto', 'allora', 'però', 'perché', 'cosa', 'dove', 'quando', 'vero', 'tutto', 'molto', 'ancora', 'sempre', 'ho', 'hai', 'ha', 'sei', 'siete', 'abbiamo', 'mi', 'ti', 'ci', 'va', 'grazie', 'bello', 'bellissimo', 'bravi', 'brava', 'bravo', 'fatto', 'niente', 'adesso', 'oggi', 'domani', 'anch', 'chi', 'nel', 'nella', 'sul', 'alla', 'al'],
+  italiano: ['il', 'lo', 'gli', 'che', 'di', 'è', 'per', 'con', 'come', 'quanto', 'ciao', 'grazie', 'sono', 'una', 'del', 'della', 'non', 'anche', 'questo', 'vorrei', 'buongiorno', 'salve', 'costa', 'sì', 'si', 'vede', 'bene', 'prego', 'certo', 'perfetto', 'allora', 'però', 'perché', 'cosa', 'dove', 'quando', 'vero', 'tutto', 'molto', 'ancora', 'sempre', 'ho', 'hai', 'ha', 'sei', 'siete', 'abbiamo', 'mi', 'ti', 'ci', 'va', 'grazie', 'bello', 'bellissimo', 'bravi', 'brava', 'bravo', 'fatto', 'niente', 'adesso', 'oggi', 'domani', 'anch', 'chi', 'nel', 'nella', 'sul', 'alla', 'al', 'devo', 'devi', 'deve', 'sapere', 'qualcosa', 'qualcuno', 'necessario', 'necessaria', 'bisogno', 'servono', 'voglio', 'vuoi', 'puoi', 'può', 'quindi', 'capito', 'ecco', 'già', 'più', 'funziona', 'funzionano', 'scusa', 'scusate', 'quale', 'quali', 'fare'],
   inglese: ['the', 'and', 'you', 'is', 'are', 'to', 'of', 'for', 'with', 'what', 'how', 'this', 'that', 'your', 'can', 'do', 'my', 'please', 'hi', 'hello', 'much', 'price', 'thanks', 'want', 'love', 'yes', 'yeah', 'see', 'sounds', 'good', 'great', 'nice', 'sure', 'thank', 'awesome', 'cool', 'me', 'i', 'we', 'am', 'will', 'would', 'like', 'know', 'sorry', 'okay', 'it', 'be', 'have', 'not', 'there', 'who', 'when', 'where', 'why'],
   spagnolo: ['el', 'los', 'las', 'que', 'y', 'es', 'por', 'para', 'como', 'cuánto', 'cuanto', 'hola', 'gracias', 'usted', 'una', 'del', 'muy', 'quiero', 'precio', 'cómo', 'también'],
   francese: ['le', 'les', 'des', 'est', 'et', 'je', 'vous', 'pour', 'avec', 'bonjour', 'merci', 'combien', 'une', 'du', 'c’est', "c'est", 'très', 'nous', 'pas', 'prix'],
@@ -34,8 +34,11 @@ const ACCENTS: [RegExp, string][] = [
   [/[êâîôûëïç]/, 'francese'],
 ]
 
-/** Nome della lingua (in italiano) o null se non e' chiaro. */
-export function replyLanguage(text: string | null | undefined): string | null {
+/**
+ * Lingua (nome in italiano) e quanto e' sicura: clear = piu' parole tipiche (o un alfabeto
+ * diverso), abbastanza per cambiare lingua a meta' conversazione. null se non e' chiaro.
+ */
+export function detectLanguage(text: string | null | undefined): { language: string; clear: boolean } | null {
   const value = (text || '').replace(/https?:\/\/\S+|@\w+|#\w+/g, ' ').trim()
   if (!value) return null
 
@@ -43,7 +46,7 @@ export function replyLanguage(text: string | null | undefined): string | null {
   if (!letters) return null
   for (const [re, name] of SCRIPTS) {
     // Basta una parte consistente del testo in quell'alfabeto.
-    if ((value.match(re) || []).length >= Math.max(2, letters * 0.3)) return name
+    if ((value.match(re) || []).length >= Math.max(2, letters * 0.3)) return { language: name, clear: true }
   }
 
   const tokens = value.toLowerCase().split(/[^\p{L}'’]+/u).filter(Boolean)
@@ -51,6 +54,11 @@ export function replyLanguage(text: string | null | undefined): string | null {
   for (const [re, lang] of ACCENTS) if (re.test(value.toLowerCase())) scores.find((s) => s[0] === lang)![1] += 1.5
   scores.sort((a, b) => b[1] - a[1])
   const [best, second] = scores
-  if (best[1] >= 1.5 && best[1] > second[1]) return best[0]
+  if (best[1] >= 1.5 && best[1] > second[1]) return { language: best[0], clear: best[1] >= 3 && best[1] >= 2 * second[1] }
   return null
+}
+
+/** Nome della lingua (in italiano) o null se non e' chiaro. */
+export function replyLanguage(text: string | null | undefined): string | null {
+  return detectLanguage(text)?.language ?? null
 }

@@ -16,7 +16,10 @@ import { useTranslation } from '@/lib/i18n/LanguageContext'
 type Mode = 'off' | 'approval' | 'auto'
 type Channel = { platform: string; status: string; handle: string | null; mode: Mode }
 type DelayUnit = 'secondi' | 'minuti'
-type ReplyDelay = { seconds: number; unit: DelayUnit }
+/** dmSeconds: quello che vale per Instagram e Messenger (almeno MIN_DM_SECONDS). */
+type ReplyDelay = { seconds: number; unit: DelayUnit; dmSeconds?: number }
+/** Attesa minima nei messaggi diretti, uguale per tutti (MIN_DM_DELAY_SECONDS in lib/saas/reply-queue.ts). */
+const MIN_DM_SECONDS = 30
 type Conversation = {
   platform: string
   contactId: string
@@ -809,6 +812,11 @@ function CorrectionSheet({
 }
 
 const shownDelay = (d: ReplyDelay) => String(d.unit === 'minuti' ? Math.round((d.seconds / 60) * 10) / 10 : d.seconds)
+const durationLabel = (seconds: number) => {
+  if (seconds < 60) return `${seconds} secondi`
+  const minutes = Math.round((seconds / 60) * 10) / 10
+  return `${String(minutes).replace('.', ',')} ${minutes === 1 ? 'minuto' : 'minuti'}`
+}
 
 /** Ritardo delle risposte automatiche (uno per spazio): lo cambiano titolare e amministratori. */
 function DelayCard({ delay, canManage, onSave }: { delay: ReplyDelay; canManage: boolean; onSave: (value: number, unit: DelayUnit) => Promise<boolean> }) {
@@ -874,7 +882,11 @@ function DelayCard({ delay, canManage, onSave }: { delay: ReplyDelay; canManage:
         )}
       </div>
       <p className="mt-1.5 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">
-        La risposta parte dopo questo tempo, con qualche secondo di variazione, come una persona vera. Vale per i canali in Automatica. 0 = subito, massimo 30 minuti.
+        La risposta parte dopo questo tempo, con qualche secondo in più, come una persona vera. Vale per i canali in Automatica, massimo 30 minuti. Email: 0 = subito.
+      </p>
+      <p className="mt-1 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">
+        Instagram e Messenger aspettano sempre almeno {MIN_DM_SECONDS} secondi dopo l’ultimo messaggio della persona e rispondono a tutto in un solo messaggio. Ora per loro:{' '}
+        <span className="font-semibold text-[var(--text-primary)]">{durationLabel(delay.dmSeconds ?? Math.max(delay.seconds, MIN_DM_SECONDS))}</span>.
       </p>
       {!canManage && <p className="mt-1 max-w-[16rem] text-[11px] text-[var(--text-secondary)]">Lo cambiano il titolare o un amministratore.</p>}
       {error && <p className="mt-1 text-[11px] text-[#ff6b6b]">{error}</p>}
