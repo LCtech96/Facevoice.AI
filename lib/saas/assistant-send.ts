@@ -156,6 +156,93 @@ export function matchCandidates(candidates: Candidate[], to: string): Candidate[
   return [...found]
 }
 
+/**
+ * Forma "a orecchio" di un nome: minuscole, senza accenti, numeri e simboli, y/j come i, k come c,
+ * lettere doppie una sola volta ("Giusyy" e "Giusi" diventano entrambi "giusi"). Le lettere
+ * decorative di Instagram (𝓖𝓲𝓾𝓼𝔂) tornano normali con NFKD.
+ */
+export function soundKey(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[yj]/g, 'i')
+    .replace(/k/g, 'c')
+    .replace(/[^a-z\s]+/g, ' ')
+    .replace(/([a-z])\1+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Quante lettere vanno cambiate per passare da a a b (si ferma oltre il massimo). */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]
+    let best = cur[0]
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+      best = Math.min(best, cur[j])
+    }
+    if (best > max) return max + 1
+    prev = cur
+  }
+  return prev[b.length]
+}
+
+/** Una parola scritta dal cliente somiglia a una parola del nome? */
+function wordLooksLike(q: string, t: string): boolean {
+  if (q === t) return true
+  if (q.length >= 3 && t.startsWith(q)) return true
+  if (t.length >= 3 && q.startsWith(t)) return true
+  if (q.length >= 4 && t.length >= 4) return editDistance(q, t, q.length >= 7 ? 2 : 1) <= (q.length >= 7 ? 2 : 1)
+  return false
+}
+
+/**
+ * Quando nessun nome corrisponde (es. "Giusi" o "Giusyy" per "Giusy B." o "@giusy.b"): le persone
+ * con un nome che suona uguale o quasi. Il cliente vede sempre chi e' stato scelto (scheda di
+ * conferma o nome nella risposta), quindi un nome simile basta per proporla.
+ */
+export function fuzzyCandidates(candidates: Candidate[], to: string): Candidate[] {
+  const query = soundKey(to.replace(/@/g, ' '))
+  const words = query.split(' ').filter((w) => w.length >= 3)
+  if (!words.length) return []
+  const scored: { c: Candidate; score: number }[] = []
+  for (const c of candidates) {
+    let best = 0
+    for (const n of c.names) {
+      const key = soundKey(n.replace(/[._\-]+/g, ' '))
+      const own = key.split(' ').filter(Boolean)
+      const joined = key.replace(/\s+/g, '')
+      if (!own.length) continue
+      if (key === query || joined === query.replace(/\s+/g, '')) best = Math.max(best, 3)
+      else if (words.every((w) => own.some((t) => t === w))) best = Math.max(best, 2)
+      else if (words.every((w) => own.some((t) => wordLooksLike(w, t)) || joined.includes(w))) best = Math.max(best, 1)
+    }
+    if (best) scored.push({ c, score: best })
+  }
+  if (!scored.length) return []
+  const top = Math.max(...scored.map((s) => s.score))
+  return scored.filter((s) => s.score === top).map((s) => s.c)
+}
+
+/** I nomi salvati anche sui nostri messaggi (risposte, conversazioni importate) aiutano a trovare la persona. */
+export function addKnownNames(candidates: Candidate[], rows: { platform: string; contact_id: string | null; contact_name: string | null }[]) {
+  const byKey = new Map(candidates.map((c) => [`${c.platform}:${c.contactId}`, c]))
+  for (const row of rows) {
+    const platform = asSendPlatform(row.platform)
+    if (!platform || !row.contact_id || !row.contact_name) continue
+    const c = byKey.get(`${platform}:${row.contact_id}`)
+    if (c && !c.names.includes(row.contact_name)) c.names.push(row.contact_name)
+  }
+}
+
+/** Le persone che hanno scritto di recente (per proporle quando il nome non si trova). */
+export const recentCandidates = (candidates: Candidate[], limit = 8) =>
+  [...candidates].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1)).slice(0, limit)
+
 const CLITIC = '(?:le|gli|la|lo|li|ne|ci|mi|glie(?:lo|la|li|le|ne))?'
 /** Verbi con cui il titolare chiede di scrivere a qualcuno (imperativo o infinito, anche "scrivile", "mandarle", "invialo"). */
 const WRITE_VERB = new RegExp(
@@ -251,19 +338,31 @@ async function planSend(
     .limit(2000)
   if (error) return { ok: false, error: 'messaggi ricevuti non letti, riprova' }
   const everyone = groupCandidates((data || []) as Row[])
+  const { data: ours } = await db
+    .from('social_messages')
+    .select('platform, contact_id, contact_name')
+    .eq('direction', 'out')
+    .order('created_at', { ascending: false })
+    .limit(2000)
+  addKnownNames(everyone, (ours || []) as { platform: string; contact_id: string | null; contact_name: string | null }[])
   const label = asked ? CHANNEL_LABELS[asked] : 'nessun canale'
   const onChannel = asked ? everyone.filter((c) => c.platform === asked) : everyone
-  const matches = matchCandidates(onChannel, to)
+  let matches = matchCandidates(onChannel, to)
+  // Nome scritto in modo diverso ("Giusi", "Giusyy" per "Giusy"): chi ha un nome che suona uguale.
+  if (!matches.length) matches = fuzzyCandidates(onChannel, to)
 
   if (!matches.length) {
     const elsewhere = asked ? matchCandidates(everyone.filter((c) => c.platform !== asked), to) : []
     const hint = elsewhere.length
       ? ` Ci ha scritto però su ${[...new Set(elsewhere.map((c) => CHANNEL_LABELS[c.platform]))].join(' e ')} (${elsewhere.map(displayName).join(', ')}): chiedi al cliente se scriverle lì.`
       : ''
+    const recent = elsewhere.length ? [] : recentCandidates(onChannel)
     return {
       ok: false,
-      error: `questa persona non ci ha mai scritto su ${asked ? CHANNEL_LABELS[asked] : 'nessun canale'}: si può scrivere solo a chi ci ha scritto prima.${hint}`,
-      ...(elsewhere.length ? { candidates: elsewhere.slice(0, 6).map(view) } : {}),
+      error: `nessuno con il nome "${to}" ci ha scritto su ${asked ? CHANNEL_LABELS[asked] : 'nessun canale'}: si può scrivere solo a chi ci ha scritto prima.${hint}${
+        recent.length ? ' Mostra al cliente, per nome, le persone che hanno scritto di recente (candidati) e chiedigli quale intende: non dire solo "non ho trovato".' : ''
+      }`,
+      ...(elsewhere.length ? { candidates: elsewhere.slice(0, 6).map(view) } : recent.length ? { candidates: recent.map(view) } : {}),
       copyText: text,
     }
   }

@@ -6,7 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseJsonObject, stripMarkdown } from '@/lib/tool-step'
 import { assertAIAllowed } from '@/lib/usage-limits'
 import type { WorkspaceDb } from '@/lib/workspace-db'
-import { CHANNEL_LABELS, asSendPlatform, displayName, groupCandidates, matchCandidates, type CandidateView, type SendPlatform } from './assistant-send'
+import { CHANNEL_LABELS, addKnownNames, asSendPlatform, displayName, fuzzyCandidates, groupCandidates, matchCandidates, recentCandidates, type CandidateView, type SendPlatform } from './assistant-send'
 import { campaignFor, readCampaign } from './campaign'
 import { ASSISTANT_ORIGIN, readInstructions, workspaceName } from './responder'
 
@@ -230,15 +230,27 @@ export async function resolveContact(db: WorkspaceDb, platformInput: unknown, co
     .limit(2000)
   if (error) return { ok: false, error: 'messaggi non letti, riprova' }
   const everyone = groupCandidates((data || []) as Parameters<typeof groupCandidates>[0])
+  const { data: ours } = await db
+    .from('social_messages')
+    .select('platform, contact_id, contact_name')
+    .eq('direction', 'out')
+    .order('created_at', { ascending: false })
+    .limit(2000)
+  addKnownNames(everyone, (ours || []) as { platform: string; contact_id: string | null; contact_name: string | null }[])
   const pool = wanted ? everyone.filter((c) => c.platform === wanted) : everyone
-  const matches = matchCandidates(pool, contact)
+  let matches = matchCandidates(pool, contact)
+  // Nome scritto in modo diverso ("Giusi", "Giusyy" per "Giusy"): chi ha un nome che suona uguale.
+  if (!matches.length) matches = fuzzyCandidates(pool, contact)
   const view = (c: (typeof everyone)[number]): CandidateView => ({ nome: c.names.join(' / ') || c.contactId, contact_id: c.contactId, canale: c.platform, ultimo: stamp(c.lastAt), tipo: c.lastMessage ? 'messaggio' : 'commento' })
   if (!matches.length) {
     const elsewhere = wanted ? matchCandidates(everyone.filter((c) => c.platform !== wanted), contact) : []
+    const recent = elsewhere.length ? [] : recentCandidates(pool)
     return {
       ok: false,
-      error: `nessuna conversazione con "${contact}"${wanted ? ` su ${CHANNEL_LABELS[wanted]}` : ''}: dillo al cliente${elsewhere.length ? ` (ci ha scritto però su ${[...new Set(elsewhere.map((c) => CHANNEL_LABELS[c.platform]))].join(' e ')}: chiedigli se intende quella)` : ''}.`,
-      ...(elsewhere.length ? { candidates: elsewhere.slice(0, 6).map(view) } : {}),
+      error: `nessuna conversazione con "${contact}"${wanted ? ` su ${CHANNEL_LABELS[wanted]}` : ''}${elsewhere.length ? ` (ci ha scritto però su ${[...new Set(elsewhere.map((c) => CHANNEL_LABELS[c.platform]))].join(' e ')}: chiedi al cliente se intende quella)` : ''}.${
+        recent.length ? ' Mostra al cliente, per nome, le persone che hanno scritto di recente (candidati) e chiedigli quale intende: non dire solo "non ho trovato".' : ''
+      }`,
+      ...(elsewhere.length ? { candidates: elsewhere.slice(0, 6).map(view) } : recent.length ? { candidates: recent.map(view) } : {}),
     }
   }
   if (matches.length > 1) {
