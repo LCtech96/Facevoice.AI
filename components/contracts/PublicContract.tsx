@@ -1,13 +1,17 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, Download, KeyRound, Loader2, MessageSquareText, PenLine, RefreshCw } from 'lucide-react'
+import { identityWarning, missingRequired } from '@/lib/saas/parties-shared'
 import ContractBody, { type ViewDoc, type ViewField } from './ContractBody'
 import SignaturePad, { type SignatureValue } from './SignaturePad'
 
 // Pagina del contratto per chi lo riceve (/c/<token>): prima il PIN (mai nell'indirizzo, mai
 // salvato nella pagina: il campo si svuota subito), poi "Contratto tra … e …", il testo, il PDF,
 // «Richiedi modifica» e «Firma il contratto» (tre accettazioni separate, nome e firma col dito).
+// In «Le parti» chi riceve scrive i suoi dati veri (nome e cognome, codice fiscale, residenza…):
+// si salvano mentre scrive e si possono cambiare fino alla sua firma, anche se l'altra parte ha
+// gia' firmato. Senza i dati obbligatori «Firma il contratto» resta spento (con l'elenco di cosa manca).
 // Il cookie del PIN giusto lo mette il server (httpOnly): la pagina non lo vede.
 
 type Change = { id: string; at: string; text: string; section?: string; status: 'aperta' | 'accettata' | 'modificata' | 'rifiutata'; note?: string }
@@ -21,6 +25,10 @@ type View = {
   updated: boolean
   doc: ViewDoc
   fields: ViewField[]
+  /** Puo' scrivere i suoi dati (fino alla sua firma). */
+  canFill: boolean
+  /** Dati obbligatori ancora vuoti (sul server). */
+  missing: string[]
   headings: string[]
   statements: [string, string, string]
   signatures: { creatore?: { name: string; at: string }; destinatario?: { name: string; at: string } }
@@ -83,6 +91,7 @@ export default function PublicContract({ token }: { token: string }) {
               setView(v)
               setNotice(message ?? null)
             }}
+            onFresh={setView}
             onPin={() => setState('pin')}
             reload={load}
           />
@@ -160,21 +169,93 @@ function PinForm({ api, onOpen, onInvalid }: { api: string; onOpen: (v: View) =>
   )
 }
 
-function Contract({ api, view, notice, onView, onPin, reload }: { api: string; view: View; notice: string | null; onView: (v: View, message?: string) => void; onPin: () => void; reload: () => Promise<void> }) {
+function Contract({
+  api,
+  view,
+  notice,
+  onView,
+  onFresh,
+  onPin,
+  reload,
+}: {
+  api: string
+  view: View
+  notice: string | null
+  onView: (v: View, message?: string) => void
+  /** Contratto aggiornato senza cambiare l'avviso (bozza dei dati salvata). */
+  onFresh: (v: View) => void
+  onPin: () => void
+  reload: () => Promise<void>
+}) {
+  // Dati scritti in questa pagina (le caselle partono dai valori gia' salvati).
   const [values, setValues] = useState<Record<string, string>>({})
-  // I propri campi vuoti; quelli di entrambi solo se l'altra parte non ha ancora firmato.
-  const mine = useMemo(() => new Set(view.canSign ? view.fields.filter((f) => !f.value && (f.party === 'destinatario' || (f.party === 'entrambi' && !view.signatures.creatore))).map((f) => f.id) : []), [view])
+  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const pending = useRef<Record<string, string>>({})
+  const [tick, setTick] = useState(0)
+  const editable = useMemo(() => new Set(view.canFill ? view.fields.filter((f) => f.editable).map((f) => f.id) : []), [view])
+  const mineFields = useMemo(() => view.fields.filter((f) => editable.has(f.id)), [view, editable])
+  const valueOf = useCallback((id: string) => values[id] ?? view.fields.find((f) => f.id === id)?.own ?? '', [values, view])
+  const missing = useMemo(() => missingRequired(mineFields, valueOf), [mineFields, valueOf])
+  const warnings = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const f of mineFields) {
+      const w = identityWarning(f.kind, valueOf(f.id))
+      if (w) out[f.id] = w
+    }
+    return out
+  }, [mineFields, valueOf])
   const [panel, setPanel] = useState<'none' | 'change' | 'sign'>('none')
 
-  const post = async (body: Record<string, unknown>): Promise<{ ok: boolean; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }> => {
-    const res = await fetch(api, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
-    const data = res ? await res.json().catch(() => null) : null
-    if (res?.status === 401 && data?.code === 'pin') onPin()
-    return { ok: Boolean(res?.ok), data: data || (res ? null : { error: 'Connessione non riuscita, riprova.' }) }
+  const post = useCallback(
+    async (body: Record<string, unknown>): Promise<{ ok: boolean; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }> => {
+      const res = await fetch(api, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
+      const data = res ? await res.json().catch(() => null) : null
+      if (res?.status === 401 && data?.code === 'pin') onPin()
+      return { ok: Boolean(res?.ok), data: data || (res ? null : { error: 'Connessione non riuscita, riprova.' }) }
+    },
+    [api, onPin]
+  )
+
+  const onValue = (id: string, value: string) => {
+    setValues((old) => ({ ...old, [id]: value }))
+    pending.current = { ...pending.current, [id]: value }
+    setSaving('idle')
+    setTick((t) => t + 1)
   }
+
+  // Bozza dei dati: si salva da sola dopo una breve pausa (mai il PIN, mai nei log).
+  const latest = useRef({ post, onFresh, reload })
+  latest.current = { post, onFresh, reload }
+  useEffect(() => {
+    if (!Object.keys(pending.current).length) return
+    const timer = setTimeout(async () => {
+      const batch = pending.current
+      pending.current = {}
+      setSaving('saving')
+      const { ok, data } = await latest.current.post({ op: 'fields', values: batch })
+      if (ok && data?.contract) {
+        setSaving('saved')
+        setSaveError(null)
+        latest.current.onFresh(data.contract)
+        return
+      }
+      setSaving('error')
+      setSaveError(data?.error || 'Dati non salvati: riprova.')
+      if (data?.code === 'signed' || data?.code === 'closed') await latest.current.reload()
+      else if (data?.code !== 'pin') {
+        // Connessione caduta: si riprova tra poco con gli stessi dati.
+        pending.current = { ...batch, ...pending.current }
+        setTimeout(() => setTick((t) => t + 1), 4000)
+      }
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [tick])
 
   const status = view.status
   const chip = status === 'firmato' ? 'bg-[#e6f6ec] text-[#1e7b3c]' : status === 'modifica_richiesta' ? 'bg-[#fff4e0] text-[#a05a00]' : 'bg-[#eef1fb] text-[#1b2559]'
+  const canOpenSign = view.canSign && missing.length === 0
+  const nameField = view.fields.find((f) => f.kind === 'nome' && f.party === 'destinatario')
   return (
     <>
       <header>
@@ -197,6 +278,15 @@ function Contract({ api, view, notice, onView, onPin, reload }: { api: string; v
       )}
       {notice && <p className="mt-4 rounded-xl bg-[#e6f6ec] px-4 py-3 text-sm text-[#1e5b30]">{notice}</p>}
 
+      {view.canFill && editable.size > 0 && (
+        <p className="mt-4 rounded-xl bg-white px-4 py-3 text-sm text-[#3d4352] shadow-sm">
+          Scrivi i tuoi dati veri in <a href="#le-parti" className="font-semibold text-[#3b5bdb]">«Le parti»</a>: si salvano mentre scrivi e puoi cambiarli fino alla firma.
+          <span className="mt-1 block text-xs text-[#5b6170]" aria-live="polite">
+            {saving === 'saving' ? 'Salvataggio…' : saving === 'saved' ? 'Dati salvati.' : saving === 'error' ? saveError : ''}
+          </span>
+        </p>
+      )}
+
       <div className="mt-5 flex flex-wrap gap-2">
         <a href={`${api}?pdf=1`} target="_blank" rel="noreferrer noopener" className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-[#d6d9e0] bg-white px-4 py-2 text-sm font-medium">
           <Download className="h-4 w-4" /> Scarica PDF
@@ -207,11 +297,19 @@ function Contract({ api, view, notice, onView, onPin, reload }: { api: string; v
           </button>
         )}
         {view.canSign && (
-          <button onClick={() => setPanel('sign')} className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#1b2559] px-4 py-2 text-sm font-semibold text-white">
+          <button onClick={() => canOpenSign && setPanel('sign')} disabled={!canOpenSign} className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#1b2559] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             <PenLine className="h-4 w-4" /> Firma il contratto
           </button>
         )}
       </div>
+      {view.canSign && missing.length > 0 && (
+        <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-3 py-2 text-sm text-[#7a4500]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Per firmare scrivi in <a href="#le-parti" className="font-semibold underline">«Le parti»</a>: {missing.join(', ')}.
+          </span>
+        </p>
+      )}
 
       {panel === 'change' && view.canRequest && <ChangeForm view={view} post={post} onDone={(v) => { onView(v, 'Richiesta inviata: riceverai la risposta su questa pagina.'); setPanel('none') }} />}
 
@@ -236,18 +334,21 @@ function Contract({ api, view, notice, onView, onPin, reload }: { api: string; v
       )}
 
       <div className="mt-5 rounded-2xl bg-white p-5 shadow-sm">
-        <ContractBody doc={view.doc} fields={view.fields} editable={panel === 'sign' ? mine : undefined} values={values} onValue={(id, v) => setValues((old) => ({ ...old, [id]: v }))} />
+        <ContractBody doc={view.doc} fields={view.fields} editable={editable} values={values} onValue={onValue} warnings={warnings} otherName={view.creatorName} />
       </div>
 
       {panel === 'sign' && view.canSign && (
         <SignForm
           view={view}
-          values={values}
-          missing={[...mine].filter((id) => !values[id]?.trim()).length}
+          values={Object.fromEntries(mineFields.map((f) => [f.id, valueOf(f.id)]))}
+          initialName={nameField ? valueOf(nameField.id) : ''}
+          missing={missing}
+          empty={mineFields.filter((f) => !valueOf(f.id).trim()).length}
           post={post}
           onDone={(v, completed) => {
             onView(v, completed ? 'Contratto firmato da entrambi: puoi scaricare il PDF firmato.' : `Hai firmato. Quando firma anche ${v.creatorName} il contratto è completo.`)
             setPanel('none')
+            pending.current = {}
             setValues({})
             window.scrollTo({ top: 0, behavior: 'smooth' })
           }}
@@ -322,34 +423,40 @@ function ChangeForm({ view, post, onDone }: { view: View; post: (b: Record<strin
   )
 }
 
-/** Firma: tre accettazioni separate (tutte), nome e cognome, firma col dito; solo la versione mostrata. */
+/** Firma: tre accettazioni separate (tutte), nome e cognome, firma col dito; solo la versione mostrata (con i dati scritti). */
 function SignForm({
   view,
   values,
+  initialName,
   missing,
+  empty,
   post,
   onDone,
   onStale,
 }: {
   view: View
   values: Record<string, string>
-  missing: number
+  initialName: string
+  missing: string[]
+  /** Caselle facoltative ancora vuote. */
+  empty: number
   post: (b: Record<string, unknown>) => Promise<{ ok: boolean; data: { error?: string; code?: string; contract?: View; completed?: boolean } | null }>
   onDone: (v: View, completed: boolean) => void
   onStale: () => Promise<void>
 }) {
   const [accept, setAccept] = useState<[boolean, boolean, boolean]>([false, false, false])
-  const [name, setName] = useState('')
+  const [name, setName] = useState(initialName)
   const [signature, setSignature] = useState<SignatureValue | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ready = accept.every(Boolean) && name.trim().length >= 3 && signature !== null
+  const ready = accept.every(Boolean) && name.trim().length >= 3 && signature !== null && missing.length === 0
 
   const sign = async () => {
     if (!ready || busy) return
     setBusy(true)
     setError(null)
-    const fields = Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim()))
+    // Tutti i propri dati (anche cancellati): la firma li copre come sono adesso.
+    const fields = values
     const { ok, data } = await post({ op: 'sign', versionId: view.version.id, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields })
     setBusy(false)
     if (!ok || !data?.contract) {
@@ -366,10 +473,15 @@ function SignForm({
   return (
     <section className="mt-5 rounded-2xl border-2 border-[#1b2559] bg-white p-4 shadow-sm">
       <h2 className="text-lg font-bold">Firma il contratto</h2>
-      <p className="mt-0.5 text-sm text-[#5b6170]">Versione {view.version.n}. Se ci sono caselle vuote nel testo puoi scriverle sopra prima di firmare.</p>
-      {missing > 0 && (
+      <p className="mt-0.5 text-sm text-[#5b6170]">Versione {view.version.n}. Firmi il testo e i tuoi dati come sono scritti qui sopra.</p>
+      {missing.length > 0 && (
         <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#fff4e0] px-3 py-2 text-sm text-[#7a4500]">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {missing === 1 ? 'C’è 1 casella vuota' : `Ci sono ${missing} caselle vuote`}: puoi firmare lo stesso, si compileranno a mano sul foglio.
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Per firmare scrivi: {missing.join(', ')}.
+        </p>
+      )}
+      {missing.length === 0 && empty > 0 && (
+        <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#f3f4f7] px-3 py-2 text-sm text-[#3d4352]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {empty === 1 ? 'C’è 1 casella facoltativa vuota' : `Ci sono ${empty} caselle facoltative vuote`}: puoi firmare lo stesso, restano righe da compilare a mano.
         </p>
       )}
       <div className="mt-3 space-y-2.5">

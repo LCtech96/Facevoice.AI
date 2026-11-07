@@ -8,6 +8,7 @@ import { useWorkspace } from '@/components/app/WorkspaceContext'
 import ContractBody, { type ViewDoc, type ViewField } from '@/components/contracts/ContractBody'
 import SignaturePad, { type SignatureValue } from '@/components/contracts/SignaturePad'
 import { STATUS_CHIPS, type ContractStatus } from '@/components/contracts/labels'
+import { identityWarning } from '@/lib/saas/parties-shared'
 
 // Pagina di un contratto nell'app (titolare e amministratori dello spazio): anteprima con gli
 // spazi da compilare, PDF, condivisione con link e PIN (nuovo link e nuovo PIN a ogni
@@ -15,6 +16,9 @@ import { STATUS_CHIPS, type ContractStatus } from '@/components/contracts/labels
 // applica e la proposta si vede prima di salvarla), «Modifica» (testo a mano o richiesta
 // riscritta) e «Rifiuta» (nota facoltativa per il destinatario), firma del titolare (tre
 // accettazioni, nome, firma col dito) e cronologia. Qui (e in chat) l'avviso "non sono un avvocato".
+// «Le parti»: i tuoi dati che mancano si scrivono qui (salvati mentre scrivi, fino alla tua firma);
+// i dati di chi riceve si vedono appena li scrive (la pagina si aggiorna da sola), altrimenti
+// "In attesa dei dati di …".
 
 type Change = {
   id: string
@@ -39,6 +43,10 @@ type Contract = {
   doc: ViewDoc
   content: { sections: { heading: string; paragraphs: string[]; bullets: string[] }[] }
   fields: ViewField[]
+  /** I tuoi dati: 'all' si salvano mentre scrivi, 'empty' solo i vuoti e con la tua firma, null chiusi. */
+  fill: 'all' | 'empty' | null
+  /** Dati obbligatori che chi riceve non ha ancora scritto. */
+  recipientMissing: string[]
   headings: string[]
   statements: [string, string, string]
   signatures: { creatore?: { name: string; at: string; device: string }; destinatario?: { name: string; at: string; device: string } }
@@ -58,6 +66,7 @@ const EVENT_LABELS: Record<string, string> = {
   link_rinnovato: 'Nuovo link e nuovo PIN',
   link_revocato: 'Link revocato',
   aperto: 'Aperto dal destinatario',
+  dati_destinatario: 'Il destinatario ha iniziato a scrivere i suoi dati',
   pin_errato: 'PIN sbagliato',
   modifica_richiesta: 'Modifica richiesta',
   modifica_accettata: 'Modifica accettata',
@@ -115,6 +124,24 @@ function ContractPage() {
   useEffect(() => {
     if (canManage) load()
   }, [load, canManage, workspace?.id])
+
+  // Dati di chi riceve "dal vivo": finche' non firma, la pagina si aggiorna ogni 15 secondi (solo se e' aperta).
+  const waiting = Boolean(contract && !contract.signatures.destinatario && contract.share && !contract.share.revokedAt && ['inviato', 'modifica_richiesta', 'in_firma'].includes(contract.status))
+  useEffect(() => {
+    if (!waiting || !canManage) return
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible') return
+      const res = await appFetch(`/api/app/contracts?id=${encodeURIComponent(id)}`).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      if (data?.contract) setContract(data.contract)
+    }
+    const timer = setInterval(refresh, 15_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [waiting, canManage, appFetch, id])
 
   /** Operazione sul contratto: la risposta e' sempre il contratto aggiornato. */
   const op = useCallback(
@@ -284,9 +311,9 @@ function ContractPage() {
         {c.final && <p className="mt-2 text-xs text-[var(--text-secondary)]">Firmato da entrambi il {when(c.final.at)}. Restano solo la versione firmata e il registro delle firme (nell’ultima pagina del PDF).</p>}
       </section>
 
-      <Preview contract={c} busy={busy} op={op} values={values} setValues={setValues} />
+      <Preview contract={c} values={values} setValues={setValues} onContract={setContract} />
 
-      {c.canSign && <SignPanel contract={c} busy={busy} op={op} values={values} onSigned={() => setValues({})} />}
+      {c.canSign && <SignPanel contract={c} busy={busy} op={op} values={Object.fromEntries(c.fields.filter((f) => f.editable).map((f) => [f.id, values[f.id] ?? f.own ?? '']))} onSigned={() => setValues({})} />}
 
       <section className="mt-6">
         <h2 className="flex items-center gap-1.5 text-lg font-bold">
@@ -492,34 +519,91 @@ function ChangeCard({ change, contract, focused, busy, op }: { change: Change; c
 }
 
 /**
- * Anteprima con gli spazi del titolare da compilare. Prima di ogni firma si salvano con «Salva i
- * dati»; dopo la firma del destinatario solo i tuoi ancora vuoti, e si salvano con la tua firma
- * (quelli di entrambi restano righe da compilare a mano: il testo firmato non cambia).
+ * Testo del contratto con «Le parti». I tuoi dati (campi tuoi, la tua parte di quelli di entrambi e
+ * i dati dello spazio che mancano) si salvano mentre scrivi finche' nessuno ha firmato; dopo la firma
+ * del destinatario solo quelli ancora vuoti, e si salvano con la tua firma. I dati di chi riceve si
+ * vedono qui appena li scrive (sola lettura).
  */
-function Preview({ contract, busy, op, values, setValues }: { contract: Contract; busy: string | null; op: Op; values: Record<string, string>; setValues: (fn: (old: Record<string, string>) => Record<string, string>) => void }) {
-  const closed = contract.status === 'firmato' || contract.status === 'annullato' || Boolean(contract.signatures.creatore)
-  const signed = Boolean(contract.signatures.destinatario)
-  const editable = useMemo(
-    () => new Set(closed ? [] : contract.fields.filter((f) => !f.value && (f.party === 'creatore' || (f.party === 'entrambi' && !signed))).map((f) => f.id)),
-    [contract, closed, signed]
-  )
-  const dirty = Object.values(values).some((v) => v.trim())
+function Preview({
+  contract,
+  values,
+  setValues,
+  onContract,
+}: {
+  contract: Contract
+  values: Record<string, string>
+  setValues: (fn: (old: Record<string, string>) => Record<string, string>) => void
+  onContract: (c: Contract) => void
+}) {
+  const { appFetch } = useWorkspace()
+  const editable = useMemo(() => new Set(contract.fill ? contract.fields.filter((f) => f.editable).map((f) => f.id) : []), [contract])
+  const pending = useRef<Record<string, string>>({})
+  const [tick, setTick] = useState(0)
+  const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const warnings = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const f of contract.fields) {
+      const w = editable.has(f.id) ? identityWarning(f.kind, values[f.id] ?? f.own) : null
+      if (w) out[f.id] = w
+    }
+    return out
+  }, [contract, editable, values])
+  const autosave = contract.fill === 'all'
+  const latest = useRef({ appFetch, onContract })
+  latest.current = { appFetch, onContract }
+
+  // Prima di ogni firma i tuoi dati si salvano da soli (dopo una breve pausa).
+  useEffect(() => {
+    if (!autosave || !Object.keys(pending.current).length) return
+    const timer = setTimeout(async () => {
+      const batch = pending.current
+      pending.current = {}
+      setSaving('saving')
+      const res = await latest.current.appFetch('/api/app/contracts', { method: 'POST', body: JSON.stringify({ op: 'fields', id: contract.id, values: batch }) }).catch(() => null)
+      const data = res ? await res.json().catch(() => null) : null
+      if (data?.contract) latest.current.onContract(data.contract as Contract)
+      if (res?.ok) {
+        setSaving('saved')
+        setSaveError(null)
+      } else {
+        setSaving('error')
+        setSaveError(data?.error || 'Dati non salvati: riprova.')
+      }
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [tick, autosave, contract.id])
+
+  const missing = contract.recipientMissing || []
   return (
     <section className="mt-6">
       <h2 className="text-lg font-bold">Testo del contratto</h2>
       {editable.size > 0 && (
         <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-          {signed ? 'Puoi scrivere i tuoi dati ancora vuoti: si salvano con la tua firma.' : 'Puoi scrivere i tuoi dati nelle caselle; quelli vuoti nel PDF restano righe da compilare a mano.'}
+          {autosave ? 'Scrivi i tuoi dati nelle caselle: si salvano mentre scrivi. Quelli vuoti nel PDF restano righe da compilare a mano.' : 'Puoi scrivere i tuoi dati ancora vuoti: si salvano con la tua firma.'}
+          {autosave && saving !== 'idle' && <span className="ml-1" aria-live="polite">{saving === 'saving' ? 'Salvataggio…' : saving === 'saved' ? 'Salvati.' : saveError}</span>}
         </p>
       )}
       <div className="mt-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
-        <ContractBody dark doc={contract.doc} fields={contract.fields} editable={editable} values={values} onValue={(id, v) => setValues((old) => ({ ...old, [id]: v }))} />
+        <ContractBody
+          dark
+          doc={contract.doc}
+          fields={contract.fields}
+          editable={editable}
+          values={values}
+          warnings={warnings}
+          otherName={contract.recipient.name || 'Destinatario'}
+          waitingFor={missing.length ? contract.recipient.name || 'chi riceve il contratto' : undefined}
+          onValue={(id, v) => {
+            setValues((old) => ({ ...old, [id]: v }))
+            if (autosave) {
+              pending.current = { ...pending.current, [id]: v }
+              setSaving('idle')
+              setTick((t) => t + 1)
+            }
+          }}
+        />
       </div>
-      {dirty && !signed && (
-        <button onClick={async () => (await op('fields', { values }, 'Dati salvati.')).ok && setValues(() => ({}))} disabled={busy !== null} className={`${primary} mt-2`}>
-          {busy === 'fields' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salva i dati
-        </button>
-      )}
     </section>
   )
 }
@@ -533,7 +617,7 @@ function SignPanel({ contract, busy, op, values, onSigned }: { contract: Contrac
   const ready = accept.every(Boolean) && name.trim().length >= 3 && signature !== null
   const sign = async () => {
     if (!ready) return
-    const fields = Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim()))
+    const fields = values
     const { ok, data } = await op('sign', { versionId: contract.version.id, name, accept, strokes: signature?.strokes, ratio: signature?.ratio, fields }, 'Firmato.')
     if (ok) {
       onSigned()
