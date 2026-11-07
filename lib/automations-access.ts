@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID } from '@/lib/workspace-db'
-import { requireWorkspace, type WorkspaceAccess, type WorkspaceRole } from '@/lib/workspace'
+import { requireWorkspace, workspaceOwnerId, type WorkspaceAccess, type WorkspaceRole } from '@/lib/workspace'
 import { accessFrom, facevoiceMember, flagEnabled, type AssistantAccess } from '@/lib/assistant-access'
 
 // Pagina Automazioni dell'area clienti (email programmate): si attiva PER PERSONA dal
@@ -14,6 +14,7 @@ import { accessFrom, facevoiceMember, flagEnabled, type AssistantAccess } from '
 export type AutomationsAccess = AssistantAccess
 
 export const AUTOMATIONS_DISABLED_MESSAGE = 'Le automazioni non sono attive per il tuo account.'
+export const OWNER_AUTOMATIONS_DISABLED_MESSAGE = 'Le automazioni non sono attive per il titolare di questo spazio: può chiedere a Facevoice di attivarle.'
 export const AUTOMATIONS_LOCKED_MESSAGE = 'Per questo account le automazioni sono sempre attive'
 
 export { AUTOMATIONS_DAILY_LIMIT } from '@/lib/automations-shared'
@@ -117,22 +118,36 @@ export async function automationsSentToday(): Promise<Map<string, number>> {
 /** Regola completa per il pannello (come l'Assistente). */
 export const automationsFrom = (workspaceIds: readonly string[], flag: boolean): boolean => accessFrom(workspaceIds, flag).enabled
 
-/** null se la persona puo' usare le automazioni, altrimenti la risposta da restituire. */
-export async function automationsDenied(userId: string): Promise<NextResponse | null> {
-  let access: AutomationsAccess
+/**
+ * Automazioni in uno spazio: attive per chi fa la richiesta E per il titolare dello spazio
+ * (il cron invia solo se il titolare le ha: stessa regola ovunque, cosi' pagina, API e
+ * Assistente le mostrano solo quando partono davvero). blocked: per chi sono spente.
+ */
+export async function workspaceAutomationsAccess(userId: string, workspaceId: string): Promise<{ enabled: boolean; blocked: 'user' | 'owner' | null }> {
+  if (!(await automationsAccess(userId)).enabled) return { enabled: false, blocked: 'user' }
+  const ownerId = await workspaceOwnerId(workspaceId)
+  if (ownerId === userId) return { enabled: true, blocked: null }
+  if (!ownerId || !(await automationsAccess(ownerId)).enabled) return { enabled: false, blocked: 'owner' }
+  return { enabled: true, blocked: null }
+}
+
+/** null se la persona puo' usare le automazioni (in quello spazio, se indicato), altrimenti la risposta da restituire. */
+export async function automationsDenied(userId: string, workspaceId?: string): Promise<NextResponse | null> {
+  let access: { enabled: boolean; blocked: 'user' | 'owner' | null }
   try {
-    access = await automationsAccess(userId)
+    access = workspaceId ? await workspaceAutomationsAccess(userId, workspaceId) : { ...(await automationsAccess(userId)), blocked: 'user' }
   } catch (error) {
     console.error('accesso automazioni:', error instanceof Error ? error.message : error)
     return NextResponse.json({ error: 'Automazioni non disponibili, riprova.' }, { status: 503 })
   }
   if (access.enabled) return null
+  if (access.blocked === 'owner') return NextResponse.json({ error: OWNER_AUTOMATIONS_DISABLED_MESSAGE, code: 'owner_automations_disabled' }, { status: 403 })
   return NextResponse.json({ error: AUTOMATIONS_DISABLED_MESSAGE, code: 'automations_disabled' }, { status: 403 })
 }
 
-/** Come requireWorkspace, in piu' le automazioni devono essere attive per chi fa la richiesta. */
+/** Come requireWorkspace, in piu' le automazioni devono essere attive per chi fa la richiesta e per il titolare dello spazio. */
 export async function requireAutomations(req: NextRequest, minRole: WorkspaceRole = 'member'): Promise<WorkspaceAccess | NextResponse> {
   const access = await requireWorkspace(req, minRole)
   if (access instanceof NextResponse) return access
-  return (await automationsDenied(access.userId)) ?? access
+  return (await automationsDenied(access.userId, access.workspace.id)) ?? access
 }

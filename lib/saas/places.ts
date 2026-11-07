@@ -34,7 +34,8 @@ export function placesAvailable(): boolean {
 export type Place = { id: string; name: string; address: string | null; phone: string | null; website: string | null; mapsUrl: string | null }
 
 export class PlacesError extends Error {
-  constructor(message: string, readonly fatal = false) {
+  /** fatal: chiave rifiutata o servizio spento (inutile riprovare). status: risposta di Google (0 = nessuna risposta). */
+  constructor(message: string, readonly fatal = false, readonly status = 0) {
     super(message)
     this.name = 'PlacesError'
   }
@@ -51,8 +52,11 @@ type PlacesResponse = {
     googleMapsUri?: string
     businessStatus?: string
   }>
-  error?: { message?: string; status?: string }
+  error?: { message?: string; status?: string; details?: unknown }
 }
+
+// Chiave non valida, bloccata o senza fatturazione: Google risponde anche con 400 (API_KEY_INVALID).
+const KEY_PROBLEM = /API_KEY_INVALID|API key not valid|API_KEY_SERVICE_BLOCKED|API_KEY_HTTP_REFERRER_BLOCKED|API_KEY_IP_ADDRESS_BLOCKED|BILLING_DISABLED|billing/i
 
 /** Costo di una richiesta a Google Maps nei consumi del cliente (non blocca e non fa fallire la ricerca). */
 export function recordPlacesFee(workspaceId: string): Promise<boolean> {
@@ -99,7 +103,8 @@ export async function searchPlacesPage(workspaceId: string, query: string, optio
   if (!response.ok) {
     // Mai la chiave nei messaggi (se Google la ripetesse).
     const reason = String(data.error?.message || `errore ${response.status}`).split(key).join('***').slice(0, 200)
-    throw new PlacesError(`Google Maps: ${reason}`, response.status === 401 || response.status === 403)
+    const keyProblem = response.status === 400 && KEY_PROBLEM.test(JSON.stringify(data.error || {}))
+    throw new PlacesError(`Google Maps: ${reason}`, response.status === 401 || response.status === 403 || keyProblem, response.status)
   }
   // Richiesta riuscita: costa anche se non trova niente.
   await recordPlacesFee(workspaceId)

@@ -1195,7 +1195,7 @@ function SentMessageCard({ action }: { action: SentAction }) {
 const PROSPECT_TITLES: Record<ProspectAction['op'], string> = {
   settings: 'Trova clienti salvato',
   search: 'Ricerca avviata',
-  approved: 'Email approvata, parte al prossimo invio',
+  approved: 'Email approvata',
   sent: 'Email inviata',
   discarded: 'Email scartata',
   blocked: 'Non contattare',

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Ban, Check, ChevronDown, Globe, Loader2, Mail, MessageCircle, Mic, PencilLine, Phone, RefreshCw, Search, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Ban, Check, ChevronDown, Globe, Loader2, Mail, MessageCircle, Mic, PencilLine, Phone, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { WEEKDAYS } from '@/lib/automations-shared'
@@ -25,7 +25,9 @@ type Prospect = {
   status: ProspectStatus
   draft: { subject: string; body: string; language: string } | null
   edited?: boolean
+  approvedAt?: string | null
   approvedBy?: 'user' | 'ai' | null
+  discarded?: boolean
   sentAt?: string | null
   repliedAt?: string | null
   error?: string | null
@@ -39,7 +41,7 @@ export type ProspectsData = {
   available: boolean
   mailbox: { email: string; status: string } | null
   today: { used: number; limit: number }
-  day: { sent: number; places: number; reads: number; drafts: number; manual: number }
+  day: { day: string; sent: number; places: number; reads: number; drafts: number; manual: number }
   caps: { places: number; reads: number; drafts: number; regen: number; manual: number }
   counts: { found: number; toApprove: number; queued: number; sent: number; sentToday: number; noEmail: number; skipped: number; blocked: number; replied: number }
   prospects: Prospect[]
@@ -48,11 +50,13 @@ export type ProspectsData = {
   nextRun: string | null
   blocked: string[]
   blockedByAI: boolean
+  memoryWarning?: string | null
   canManage?: boolean
   warning?: string | null
 }
 
 type Notice = { text: string; tone: 'ok' | 'warn' | 'error' }
+type ShowNotice = (notice: Notice | null) => void
 
 const ROME = 'Europe/Rome'
 const locale = (language: string) => (language === 'it' ? 'it-IT' : 'en-GB')
@@ -66,6 +70,27 @@ const domainOf = (url: string) => {
   }
 }
 const safeUrl = (url: string | null) => (url && /^https?:\/\//i.test(url) ? url : null)
+const romeDayOf = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: ROME })
+const byApproval = (a: Prospect, b: Prospect) => String(a.approvedAt || a.foundAt).localeCompare(String(b.approvedAt || b.foundAt))
+/** Email approvate in coda, nell'ordine in cui partono (la piu' vecchia prima, come il server). */
+const queueOf = (d: ProspectsData) => d.prospects.filter((p) => p.status === 'approvata').sort(byApproval)
+/** Quante ne partono al prossimo invio (numero al giorno, meno quelle gia' partite se e' oggi). */
+const roomAtNext = (d: ProspectsData) =>
+  Math.max(0, d.settings.emailsPerDay - (d.nextRun && romeDayOf(d.nextRun) === d.day.day ? d.day.sent : 0))
+/** Quando parte un'email approvata (position: posto in coda, 1 = la prima), in parole semplici. */
+function departure(d: ProspectsData, language: string, position: number, all = false): string {
+  if (!d.settings.active) return all ? 'partono quando attivi Trova clienti' : 'parte quando attivi Trova clienti'
+  const when = d.nextRun ? ` (${whenShort(d.nextRun, language)})` : ''
+  const room = roomAtNext(d)
+  if (all) return position > room ? `${room ? `le prime ${room} partono al prossimo invio${when}, le altre` : 'partono'} nei giorni dopo` : `partono al prossimo invio${when}`
+  return position > room ? `parte nei giorni dopo (al massimo ${d.settings.emailsPerDay} al giorno)` : `parte al prossimo invio${when}`
+}
+const positionOf = (d: ProspectsData, id: string) => {
+  const queue = queueOf(d)
+  const index = queue.findIndex((p) => p.id === id)
+  return index < 0 ? queue.length + 1 : index + 1
+}
+const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`
 
 const card = 'rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3'
 const input =
@@ -111,16 +136,30 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
     }
   }, [load, working])
 
-  /** Azione sul server: risponde con tutto il riepilogo aggiornato. */
-  const act = async (key: string, payload: Record<string, unknown>, ok?: string | ((body: ProspectsData & Record<string, unknown>) => string | null)): Promise<boolean> => {
+  // Esito riuscito: sparisce da solo dopo qualche secondo (gli errori restano finche' non si chiudono).
+  useEffect(() => {
+    if (notice?.tone !== 'ok') return
+    const timer = setTimeout(() => setNotice((n) => (n === notice ? null : n)), 6000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  /**
+   * Azione sul server: risponde con tutto il riepilogo aggiornato. L'esito compare in basso,
+   * sopra la barra (si vede anche toccando una scheda in fondo alla pagina sul telefono);
+   * show: gli errori anche dentro la scheda toccata (che resta dov'e').
+   */
+  const act: Act = async (key, payload, ok, show) => {
     if (busy) return false
     setBusy(key)
     setNotice(null)
+    show?.(null)
     const res = await appFetch('/api/app/automations/prospects', { method: 'POST', body: JSON.stringify(payload) }).catch(() => null)
     const body = res ? await res.json().catch(() => null) : null
     setBusy(null)
     if (!res?.ok || !body) {
-      setNotice({ text: body?.error || 'Non riuscito, riprova.', tone: 'error' })
+      const error: Notice = { text: body?.error || 'Non riuscito, riprova.', tone: 'error' }
+      if (show) show(error)
+      else setNotice(error)
       if (body?.settings) apply(body)
       return false
     }
@@ -146,10 +185,12 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
 
   const { counts, settings, today } = data
   const drafts = data.prospects.filter((p) => p.status === 'da_approvare')
-  const queued = data.prospects.filter((p) => p.status === 'approvata' || p.status === 'in_invio')
-  const failed = data.prospects.filter((p) => p.status === 'errore' && p.draft && p.email)
+  // Nell'ordine in cui partono (le approvate prima, la piu' vecchia prima).
+  const queued = [...data.prospects.filter((p) => p.status === 'in_invio'), ...queueOf(data)]
+  // Non partite o senza bozza (AI che non rispondeva): si possono riscrivere, inviare o scartare.
+  const failed = data.prospects.filter((p) => p.status === 'errore' && p.email)
   const sent = data.prospects.filter((p) => p.status === 'inviata')
-  const others = data.prospects.filter((p) => ['senza_email', 'saltata', 'non_contattare', 'nuova'].includes(p.status) || (p.status === 'errore' && !(p.draft && p.email)))
+  const others = data.prospects.filter((p) => ['senza_email', 'saltata', 'non_contattare', 'nuova'].includes(p.status) || (p.status === 'errore' && !p.email))
   const auto = settings.mode === 'auto'
   const nextLabel = data.nextRun ? whenShort(data.nextRun, language) : null
   const last = data.history[0]
@@ -161,6 +202,11 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {SEARCH_UNAVAILABLE}. Le email già approvate partono comunque all’orario.
         </p>
       )}
+      {data.memoryWarning && (
+        <p className="flex items-start gap-2 rounded-2xl border border-[#FF9500]/40 bg-[#FF9500]/10 p-3 text-sm text-[#FF9500]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {data.memoryWarning}
+        </p>
+      )}
       {data.blockedByAI && (
         <p className="flex items-start gap-2 rounded-2xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 p-3 text-sm text-[#ff6b6b]">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Hai finito l’AI inclusa nel tuo piano: niente nuove ricerche finché non si rinnova.
@@ -169,7 +215,7 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
 
       <div className="grid grid-cols-3 gap-2">
         <Counter label="Trovati" value={String(counts.found)} />
-        {auto ? (
+        {auto && !counts.toApprove ? (
           <Counter label="Pronte" value={String(counts.queued)} tone={counts.queued ? 'blue' : undefined} />
         ) : (
           <Counter label="Da approvare" value={String(counts.toApprove)} tone={counts.toApprove ? 'blue' : undefined} />
@@ -227,22 +273,29 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
       </div>
 
       {notice && (
-        <p className={`rounded-xl px-3 py-2 text-sm ${notice.tone === 'error' ? 'bg-[#FF3B30]/10 text-[#ff6b6b]' : notice.tone === 'warn' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}>
-          {notice.text}
-        </p>
+        <div className="fixed inset-x-0 bottom-20 z-40 flex justify-center px-4 md:bottom-6">
+          <div className="flex w-full max-w-md items-start gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-1 shadow-lg">
+            <div className="min-w-0 flex-1">
+              <NoticeLine notice={notice} />
+            </div>
+            <button onClick={() => setNotice(null)} aria-label="Chiudi" className="p-2 text-[var(--text-secondary)]">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
 
       <SettingsCard data={data} canManage={canManage} busy={busy} act={act} />
 
       <p className="text-xs text-[var(--text-secondary)]">{PROSPECTS_LEGAL}</p>
 
-      {!auto && (
+      {(!auto || drafts.length > 0) && (
         <section>
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-bold">Da approvare ({drafts.length})</h2>
             {canManage && drafts.length > 1 && (
               <button
-                onClick={() => act('all', { action: 'approve_all' }, (b) => `${b.approved} email approvate: partono al prossimo invio.`)}
+                onClick={() => act('all', { action: 'approve_all' }, (b) => `${b.approved} email approvate: ${departure(b, language, queueOf(b).length, true)}.`)}
                 disabled={Boolean(busy)}
                 className="flex items-center gap-1.5 rounded-full border border-[var(--accent-blue)] px-3 py-1.5 text-sm font-semibold text-[var(--accent-blue)] disabled:opacity-50"
               >
@@ -250,6 +303,7 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
               </button>
             )}
           </div>
+          {auto && drafts.length > 0 && <p className="text-xs text-[var(--text-secondary)]">Queste aspettano ancora la tua approvazione: da sole partono solo quelle pronte.</p>}
           {!drafts.length ? (
             <p className="mt-2 rounded-2xl border border-dashed border-[var(--border-color)] p-4 text-sm text-[var(--text-secondary)]">
               {settings.niche ? 'Nessuna email da approvare. Le nuove arrivano al prossimo giro, oppure tocca «Cerca ora».' : 'Scrivi a chi vuoi rivolgerti nelle impostazioni qui sopra, poi tocca «Cerca ora».'}
@@ -257,7 +311,7 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
           ) : (
             <div className="mt-2 space-y-3">
               {drafts.map((p) => (
-                <DraftCard key={p.id} p={p} canManage={canManage} busy={busy} act={act} nextLabel={nextLabel} />
+                <DraftCard key={p.id} p={p} data={data} language={language} canManage={canManage} busy={busy} act={act} />
               ))}
             </div>
           )}
@@ -268,7 +322,9 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
         <section>
           <h2 className="text-lg font-bold">{auto ? 'Pronte, partono da sole' : 'Approvate'} ({queued.length})</h2>
           <p className="text-xs text-[var(--text-secondary)]">
-            {nextLabel && settings.active ? `Partono al prossimo invio (${nextLabel}), le più vecchie prima.` : 'Partono al prossimo invio, quando Trova clienti è attivo.'}
+            {!settings.active
+              ? 'Partono quando attivi Trova clienti.'
+              : `${nextLabel ? `Al prossimo invio (${nextLabel})` : 'Al prossimo invio'} ne partono al massimo ${roomAtNext(data)}, le più vecchie prima.`}
           </p>
           {!queued.length ? (
             <p className="mt-2 rounded-2xl border border-dashed border-[var(--border-color)] p-4 text-sm text-[var(--text-secondary)]">
@@ -277,7 +333,7 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
           ) : (
             <div className="mt-2 space-y-3">
               {queued.map((p) => (
-                <DraftCard key={p.id} p={p} canManage={canManage} busy={busy} act={act} nextLabel={nextLabel} />
+                <DraftCard key={p.id} p={p} data={data} language={language} canManage={canManage} busy={busy} act={act} />
               ))}
             </div>
           )}
@@ -289,14 +345,14 @@ export default function TrovaClienti({ language, onToday }: { language: string; 
           <h2 className="text-lg font-bold">Non partite ({failed.length})</h2>
           <div className="mt-2 space-y-3">
             {failed.map((p) => (
-              <DraftCard key={p.id} p={p} canManage={canManage} busy={busy} act={act} nextLabel={nextLabel} />
+              <DraftCard key={p.id} p={p} data={data} language={language} canManage={canManage} busy={busy} act={act} />
             ))}
           </div>
         </section>
       )}
 
       <SentList sent={sent} language={language} />
-      <OthersList others={others} />
+      <OthersList others={others} canManage={canManage} busy={busy} act={act} />
       <BlockedList data={data} canManage={canManage} busy={busy} act={act} />
     </div>
   )
@@ -311,7 +367,7 @@ function Counter({ label, value, title, tone }: { label: string; value: string; 
   )
 }
 
-type Act = (key: string, payload: Record<string, unknown>, ok?: string | ((body: ProspectsData & Record<string, unknown>) => string | null)) => Promise<boolean>
+type Act = (key: string, payload: Record<string, unknown>, ok?: string | ((body: ProspectsData & Record<string, unknown>) => string | null), show?: ShowNotice) => Promise<boolean>
 
 function SettingsCard({ data, canManage, busy, act }: { data: ProspectsData; canManage: boolean; busy: string | null; act: Act }) {
   const s = data.settings
@@ -341,7 +397,11 @@ function SettingsCard({ data, canManage, busy, act }: { data: ProspectsData; can
     if (d.kind === 'days' && !d.days.length) return
     if (await act('save', payload(), 'Impostazioni salvate.')) setDirty(false)
   }
-  const toggle = () => act('active', s.active ? { action: 'settings', settings: { active: false } } : payload({ active: true }), s.active ? 'Trova clienti in pausa.' : 'Trova clienti attivo.').then((ok) => ok && setDirty(false))
+  // In pausa si salva solo la pausa: quello che stai scrivendo resta nei campi (lo salvi con «Salva»).
+  const toggle = () =>
+    s.active
+      ? act('active', { action: 'settings', settings: { active: false } }, 'Trova clienti in pausa.')
+      : act('active', payload({ active: true }), 'Trova clienti attivo.').then((ok) => ok && setDirty(false))
   const searchNow = async () => {
     // Prima si salvano le modifiche (la ricerca usa quelle salvate).
     if (dirty && !(await act('save', payload()))) return
@@ -537,11 +597,24 @@ function MicButton({ mic, label }: { mic: ReturnType<typeof useDictation>; label
   )
 }
 
-function DraftCard({ p, canManage, busy, act, nextLabel }: { p: Prospect; canManage: boolean; busy: string | null; act: Act; nextLabel: string | null }) {
+function NoticeLine({ notice }: { notice: Notice }) {
+  return (
+    <p
+      role={notice.tone === 'error' ? 'alert' : 'status'}
+      className={`rounded-xl px-3 py-2 text-sm ${notice.tone === 'error' ? 'bg-[#FF3B30]/10 text-[#ff6b6b]' : notice.tone === 'warn' ? 'bg-[#FF9500]/10 text-[#FF9500]' : 'bg-[#34C759]/10 text-[#34C759]'}`}
+    >
+      {notice.text}
+    </p>
+  )
+}
+
+function DraftCard({ p, data, language, canManage, busy, act }: { p: Prospect; data: ProspectsData; language: string; canManage: boolean; busy: string | null; act: Act }) {
   const [editing, setEditing] = useState(false)
   const [subject, setSubject] = useState(p.draft?.subject || '')
   const [body, setBody] = useState(p.draft?.body || '')
   const [expanded, setExpanded] = useState(false)
+  // Esito delle azioni su questa scheda (errori compresi): qui, non in cima alla pagina.
+  const [notice, setNotice] = useState<Notice | null>(null)
   const site = safeUrl(p.website)
   const k = (a: string) => `${a}:${p.id}`
   const queued = p.status === 'approvata'
@@ -549,8 +622,10 @@ function DraftCard({ p, canManage, busy, act, nextLabel }: { p: Prospect; canMan
   const startEdit = () => {
     setSubject(p.draft?.subject || '')
     setBody(p.draft?.body || '')
+    setNotice(null)
     setEditing(true)
   }
+  const approved = (b: ProspectsData) => `Approvata: ${departure(b, language, positionOf(b, p.id))}.`
   const btn = 'flex items-center gap-1 text-xs font-medium disabled:opacity-50'
 
   return (
@@ -577,7 +652,7 @@ function DraftCard({ p, canManage, busy, act, nextLabel }: { p: Prospect; canMan
         {sending && <span className="shrink-0 rounded-full bg-[var(--accent-blue)]/15 px-2 py-0.5 text-[11px] font-semibold text-[var(--accent-blue)]">Invio…</span>}
       </div>
 
-      {p.status === 'errore' && p.error && <p className="mt-2 text-xs text-[#ff6b6b]">Non partita: {p.error}</p>}
+      {p.status === 'errore' && p.error && <p className="mt-2 text-xs text-[#ff6b6b]">{p.draft ? 'Non partita' : 'Email non scritta'}: {p.error}</p>}
 
       {editing ? (
         <div className="mt-3 space-y-2">
@@ -590,9 +665,12 @@ function DraftCard({ p, canManage, busy, act, nextLabel }: { p: Prospect; canMan
             <textarea translate="no" value={body} maxLength={3400} onChange={(e) => setBody(e.target.value)} rows={10} className={`${input} leading-relaxed`} />
           </label>
           <p className="text-[11px] text-[var(--text-secondary)]">La riga per non ricevere altre email resta sempre in fondo.</p>
+          {notice && <NoticeLine notice={notice} />}
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => act(k('approve'), { action: 'approve', id: p.id, subject, body }, 'Email salvata e approvata: parte al prossimo invio.').then((ok) => ok && setEditing(false))}
+              onClick={() =>
+                act(k('approve'), { action: 'approve', id: p.id, subject, body }, (b) => `Email salvata e approvata: ${departure(b, language, positionOf(b, p.id))}.`, setNotice).then((ok) => ok && setEditing(false))
+              }
               disabled={Boolean(busy)}
               className="flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
             >
@@ -620,42 +698,66 @@ function DraftCard({ p, canManage, busy, act, nextLabel }: { p: Prospect; canMan
         )
       )}
 
+      {!editing && notice && (
+        <div className="mt-3">
+          <NoticeLine notice={notice} />
+        </div>
+      )}
+
       {canManage && !editing && !sending && (
         <>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {queued ? (
-              <span className="flex items-center justify-center rounded-full border border-[var(--border-color)] px-3 py-2 text-center text-xs text-[var(--text-secondary)]">
-                {nextLabel ? `Parte: ${nextLabel}` : 'Parte al prossimo invio'}
-              </span>
-            ) : (
+          {p.draft ? (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {queued ? (
+                <span className="flex items-center justify-center rounded-full border border-[var(--border-color)] px-3 py-2 text-center text-xs text-[var(--text-secondary)]">
+                  {sentence(departure(data, language, positionOf(data, p.id)))}
+                </span>
+              ) : (
+                <button
+                  onClick={() => act(k('approve'), { action: 'approve', id: p.id }, approved, setNotice)}
+                  disabled={Boolean(busy)}
+                  className="flex items-center justify-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                >
+                  {busy === k('approve') ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Invia così
+                </button>
+              )}
               <button
-                onClick={() => act(k('approve'), { action: 'approve', id: p.id }, 'Approvata: parte al prossimo invio.')}
+                onClick={() => act(k('send'), { action: 'send_now', id: p.id }, `Inviata a ${p.email}.`, setNotice)}
                 disabled={Boolean(busy)}
-                className="flex items-center justify-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded-full border border-[var(--accent-blue)] px-3 py-2 text-sm font-semibold text-[var(--accent-blue)] disabled:opacity-50"
               >
-                {busy === k('approve') ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Invia così
+                {busy === k('send') ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Invia ora
               </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => act(k('regen'), { action: 'regenerate', id: p.id }, 'Email scritta dall’AI: leggila e decidi.', setNotice)}
+              disabled={Boolean(busy)}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {busy === k('regen') ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Riscrivi con l’AI
+            </button>
+          )}
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+            {p.draft && (
+              <>
+                <button onClick={startEdit} disabled={Boolean(busy)} className={`${btn} text-[var(--accent-blue)]`}>
+                  <PencilLine className="h-3.5 w-3.5" /> Modifica
+                </button>
+                <button onClick={() => act(k('regen'), { action: 'regenerate', id: p.id }, 'Email riscritta dall’AI.', setNotice)} disabled={Boolean(busy)} className={`${btn} text-[#BF5AF2]`}>
+                  {busy === k('regen') ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Rigenera
+                </button>
+              </>
             )}
             <button
-              onClick={() => act(k('send'), { action: 'send_now', id: p.id }, `Inviata a ${p.email}.`)}
+              onClick={() => confirm(`Scartare l’email per ${p.name}? La ritrovi in «Altre aziende trovate», da dove puoi ripristinarla.`) && act(k('discard'), { action: 'discard', id: p.id }, 'Scartata: la ritrovi in «Altre aziende trovate».', setNotice)}
               disabled={Boolean(busy)}
-              className="flex items-center justify-center gap-1.5 rounded-full border border-[var(--accent-blue)] px-3 py-2 text-sm font-semibold text-[var(--accent-blue)] disabled:opacity-50"
+              className={`${btn} text-[var(--text-secondary)]`}
             >
-              {busy === k('send') ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Invia ora
-            </button>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
-            <button onClick={startEdit} disabled={Boolean(busy)} className={`${btn} text-[var(--accent-blue)]`}>
-              <PencilLine className="h-3.5 w-3.5" /> Modifica
-            </button>
-            <button onClick={() => act(k('regen'), { action: 'regenerate', id: p.id }, 'Email riscritta dall’AI.')} disabled={Boolean(busy)} className={`${btn} text-[#BF5AF2]`}>
-              {busy === k('regen') ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Rigenera
-            </button>
-            <button onClick={() => act(k('discard'), { action: 'discard', id: p.id }, 'Scartata.')} disabled={Boolean(busy)} className={`${btn} text-[var(--text-secondary)]`}>
               <Trash2 className="h-3.5 w-3.5" /> Scarta
             </button>
             <button
-              onClick={() => confirm(`Non contattare più ${p.email || p.name}?`) && act(k('block'), { action: 'do_not_contact', id: p.id }, 'Aggiunta alla lista Non contattare.')}
+              onClick={() => confirm(`Non contattare più ${p.email || p.name}?`) && act(k('block'), { action: 'do_not_contact', id: p.id }, 'Aggiunta alla lista Non contattare.', setNotice)}
               disabled={Boolean(busy)}
               className={`${btn} text-[#ff6b6b]`}
             >
@@ -712,7 +814,7 @@ function SentList({ sent, language }: { sent: Prospect[]; language: string }) {
 
 const OTHER_LABEL: Partial<Record<ProspectStatus, string>> = { senza_email: 'Senza email', saltata: 'Saltata', non_contattare: 'Non contattare', nuova: 'Sito da leggere', errore: 'Errore' }
 
-function OthersList({ others }: { others: Prospect[] }) {
+function OthersList({ others, canManage, busy, act }: { others: Prospect[]; canManage: boolean; busy: string | null; act: Act }) {
   const [open, setOpen] = useState(false)
   if (!others.length) return null
   return (
@@ -743,6 +845,15 @@ function OthersList({ others }: { others: Prospect[] }) {
                     <a href={`tel:${p.phone.replace(/[^\d+]/g, '')}`} className="flex items-center gap-1 text-[var(--accent-blue)]">
                       <Phone className="h-3 w-3" /> <span translate="no">{p.phone}</span>
                     </a>
+                  )}
+                  {canManage && p.status === 'saltata' && p.discarded && p.draft?.body && (
+                    <button
+                      onClick={() => act(`restore:${p.id}`, { action: 'restore', id: p.id }, 'Ripristinata: la trovi di nuovo tra le email da approvare.')}
+                      disabled={Boolean(busy)}
+                      className="flex items-center gap-1 font-medium text-[var(--accent-blue)] disabled:opacity-50"
+                    >
+                      {busy === `restore:${p.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Ripristina
+                    </button>
                   )}
                 </p>
               </li>

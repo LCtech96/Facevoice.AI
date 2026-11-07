@@ -54,7 +54,13 @@ const EXACT_NO = new Set([
 ])
 const STOP_PHRASES = [
   /non (mi|ci) interess/,
-  /non (sono|siamo) interessat/,
+  /\bnon (sono |siamo )?interessat/,
+  /\bnon interessa\b/,
+  /\bnon e'? di (nostro|mio) interesse\b/,
+  /\bnon (mi|ci) serv/,
+  /\bnon (vogli|desider)\w* (piu )?(ricevere|essere (piu )?contattat)/,
+  /\b(togli|toglie|elimina|rimuovi|rimuove|cancella)(te)?(mi|ci)\b/,
+  /\bplease stop\b/,
   /non (mi|ci) (scriv|contatt|mand|invi)/,
   /non (scrivete|scrivetemi|scriveteci|scrivermi|scriverci|contattatemi|contattateci|contattarmi|contattarci|inviate|mandate)/,
   /(cancellate|cancellami|cancellatemi|cancellateci|rimuovete|rimuovimi|rimuovetemi|toglietemi|toglieteci)/,
@@ -72,13 +78,22 @@ const STOP_PHRASES = [
   /\bnao (tenho|temos) interesse\b/,
 ]
 
+// Saluti in cima alla risposta ("Buongiorno,", "Gentile Pizzeria Gusto,"): si guarda la riga dopo.
+const GREETING = /^(buongiorno|buonasera|buon pomeriggio|salve|ciao|gentil\w*|egregi\w*|spett\w*|caro|cara|cari|hi|hello|hey|dear|good (morning|afternoon|evening)|hola|bonjour|hallo|guten tag|ola|bom dia)\b/
+// "No grazie", "No, grazie. Buona giornata", "No thanks, we are all set", "No." da solo (non "No, ci interessa").
+const LEADING_NO = /^(no|nein|non|nao)\s*[,.!]*\s*(grazie|thanks|thank you|merci|danke|gracias|obrigad[oa])\b|^(no|nein|nao)\s*[.!]*$/
+
 /** La risposta di un'azienda contattata chiede di non scriverle piu' ("no", "non mi interessa", "unsubscribe"…). */
 export function isOptOutReply(text: string): boolean {
-  const head = fold(String(text || '')).slice(0, 600)
+  let head = fold(String(text || '')).slice(0, 800)
+  // La nostra riga ("Se non vuoi ricevere altre email…") citata nella risposta non conta.
+  for (const line of Object.values(OPT_OUT_LINES)) head = head.split(fold(line)).join(' ')
+  head = head.slice(0, 600)
   const simple = (s: string) => s.replace(/[^a-z' ]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (EXACT_NO.has(simple(head))) return true
-  const firstLine = head.split('\n').map((l) => l.trim()).find(Boolean) || ''
-  if (EXACT_NO.has(simple(firstLine))) return true
+  const lines = head.split('\n').map((l) => l.trim()).filter(Boolean)
+  const firstLine = lines.find((l) => !(GREETING.test(l) && l.length < 60)) || ''
+  if (EXACT_NO.has(simple(firstLine)) || LEADING_NO.test(firstLine)) return true
   return STOP_PHRASES.some((re) => re.test(head))
 }
 

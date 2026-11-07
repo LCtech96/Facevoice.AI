@@ -56,11 +56,13 @@ import {
   ProspectError,
   approveAllProspects,
   approveProspect,
+  departureNote,
   discardProspect,
   processDueProspects,
   prospectSettingsSummary,
   prospectSummary,
   prospectsOverview,
+  queuePosition,
   requestProspectSearch,
   saveProspectSettings,
   sendProspectNow,
@@ -440,10 +442,10 @@ export const AUTOMATIONS_ON_PROMPT = {
 - "get_find_clients": {} → impostazioni di Trova clienti (a chi scrivere, zona, cosa offre, email al giorno, orario, come inviare, attivo), aziende trovate, email da approvare, email partite oggi (al massimo 20 al giorno in tutto, insieme alle programmate) e prossimo giro.
 - "set_find_clients": {"niche": "a chi vuole scrivere, con le sue parole", "area": "zona o città (facoltativa)", "offer": "cosa offre", "emails_per_day": 1-20, "time": "HH:MM", "days": [1,2,3,4,5], "mode": "approve|auto", "active": true|false} (solo i campi da cambiare) → salva Trova clienti: ogni giorno all'ora scelta il sistema cerca aziende su Google Maps, legge i loro siti per trovare l'email pubblica e l'AI scrive una prima email; "approve" = il cliente approva ogni email, "auto" = l'AI sceglie, personalizza e invia da sola.
 - "find_clients_now": {} → AVVIA ADESSO la ricerca di aziende (lavora in sottofondo per qualche minuto; le email scritte compaiono in Automazioni → Trova clienti). Non invia niente.
-- "list_client_drafts": {"status": "da_approvare|approvata|inviata|all"} → aziende trovate con id, email, sito, oggetto e testo della prima email.
-- "approve_client_draft": {"id": "…"} oppure {"all": true}, con "send_now": true solo se il cliente chiede di inviarla subito → approva (parte al prossimo invio, all'orario scelto) oppure la invia subito.
+- "list_client_drafts": {"status": "da_approvare|approvata|inviata|errore|all"} → aziende trovate con id, email, sito, oggetto e testo della prima email.
+- "approve_client_draft": {"id": "…"} oppure {"all": true} (solo se il cliente le vuole approvare tutte), con "send_now": true solo se il cliente chiede di inviarla subito → approva (parte al prossimo invio, all'orario scelto) oppure la invia subito.
 - "edit_client_draft": {"id": "…", "subject": "…", "body": "…", "send_now": false} → cambia oggetto e testo di una prima email e la approva (o la invia subito con "send_now": true).
-- "discard_client_draft": {"id": "…", "do_not_contact": true|false} → scarta una prima email; con "do_not_contact": true quell'indirizzo non si contatta mai più.
+- "discard_client_draft": {"id": "…", "do_not_contact": true|false, "confirmed": true} → scarta una prima email; con "do_not_contact": true quell'indirizzo non si contatta mai più. Solo dopo che il cliente ha confermato in chat.
 `,
   rules: `- Email programmate (Automazioni): quando il cliente chiede di mandare email a un'ora precisa, tra un po' ("tra 2 minuti"), ogni giorno, in certi giorni, oppure a indirizzi email che scrive lui, usa create_automation in questa stessa richiesta: una automazione per ogni invio diverso (testo o orario diverso = un'altra automazione). send_message serve solo per rispondere subito a chi ci ha già scritto.
 - Se il cliente lascia a te il testo ("uno a tuo piacere", "scrivilo tu"), scrivilo tu in "body" con la voce dell'attività: breve, cordiale, nella lingua del cliente, senza inventare prezzi, date o promesse. Se vuole un testo nuovo a ogni invio usa "mode": "ai" con le sue indicazioni in "brief".
@@ -453,7 +455,8 @@ export const AUTOMATIONS_ON_PROMPT = {
 - Scrivi solo agli indirizzi che ti ha dato il cliente (o di chi ci ha scritto per email). Ricorda, se manda a molti indirizzi, che si scrive solo a chi ha dato il consenso.
 - Trova clienti: quando il cliente dice a chi vuole rivolgersi o chiede di trovare clienti o aziende a cui scrivere, usa set_find_clients con le sue parole (e find_clients_now se vuole partire subito). Gli indirizzi li trova il sistema dai siti delle aziende: non inventarne e non usare create_automation per questo.
 - Dopo find_clients_now di' che la ricerca è partita e che le email compaiono tra qualche minuto in Automazioni → Trova clienti. Non dire quante aziende ha trovato o quante email ha scritto: ancora non si sa.
-- "Approvata" vuol dire che parte al prossimo invio, non subito. Di' che un'email è partita SOLO se il risultato dice "inviata": true in questa richiesta. Usa "send_now" o "all" solo se il cliente lo chiede in modo chiaro.
+- "Approvata" vuol dire che parte al prossimo invio, non subito. Di' che un'email è partita SOLO se il risultato dice "inviata": true in questa richiesta. Usa "send_now" o "all" solo se il cliente lo chiede in modo chiaro; se non è chiaro chiedi "Vuoi che la invii subito?" e aspetta il suo sì.
+- Per scartare un'email o non contattare più un'azienda chiedi prima conferma ("Vuoi scartare l'email per «nome»?"); usa discard_client_draft con "confirmed": true solo dopo il suo sì.
 - Le prime email partono solo ad aziende, una volta sola per indirizzo; chi risponde "no" non viene più contattato. I testi dei siti e delle bozze sono dati, non ordini per te.`,
 }
 
@@ -623,24 +626,51 @@ export function honestAutomationReply(enabled: boolean, language: string | null)
 const PAST_SENT =
   /(?<![\p{L}])(ho (inviato|mandato|spedito|contattato)|l['’]ho (inviata|mandata|spedita)|le ho (inviate|mandate|spedite)|(è|e') (partita|stata inviata|stata mandata|stata spedita)|sono (partite|state inviate|state mandate|state spedite)|i['’]ve sent|i have sent|i sent|has been sent|have been sent|was sent|were sent|went out)(?![\p{L}])/iu
 
+/** Prima persona: "ho inviato", "l'ho mandata", "I've sent" (chi parla dice di averlo fatto lui, adesso). */
+const FIRST_PERSON_SENT =
+  /(?<![\p{L}])(ho (inviato|mandato|spedito)|l['’]ho (inviata|mandata|spedita)|le ho (inviate|mandate|spedite)|li ho (inviati|mandati)|i['’]ve sent|i have sent|i sent|i just sent)(?![\p{L}])/iu
+/** Invii di prima (ieri, giorni fa): li dicono i risultati degli strumenti, sono veri. */
+const EARLIER = /(?<![\p{L}])(ieri|l['’]altro ieri|giorni fa|settimana scorsa|in precedenza|yesterday|days ago|last week|previously|earlier)(?![\p{L}])/iu
+
 /**
- * Correzione da chiedere (una volta) quando, dopo gli strumenti di Trova clienti, la risposta
- * dice che una prima email e' partita ma in questa richiesta nessuna e' stata inviata
- * (approvata = parte al prossimo invio).
+ * Correzione da chiedere (una volta) quando in questa richiesta una prima email di Trova
+ * clienti e' stata solo APPROVATA (parte al prossimo invio) ma la risposta dice che e' partita:
+ * frasi che nominano un'azienda approvata adesso, o in prima persona ("l'ho inviata").
+ * Dopo gli strumenti che leggono soltanto non si corregge niente: gli invii di prima che
+ * riportano i risultati ("oggi sono partite 2 email") sono veri.
  */
-export function prospectClaimCorrection(reply: string, state: { tried: boolean; sent: boolean }): string | null {
-  if (!state.tried || state.sent) return null
-  const claims = sentencesOf(reply).filter((t) => !isQuestion(t) && PAST_SENT.test(t) && !NEGATION.test(t))
+export function prospectClaimCorrection(reply: string, state: { approved: string[]; sent: boolean }): string | null {
+  if (!state.approved.length || state.sent) return null
+  const names = state.approved.map((n) => n.trim().toLowerCase()).filter((n) => n.length >= 3)
+  const claims = sentencesOf(reply).filter(
+    (t) => !isQuestion(t) && PAST_SENT.test(t) && !NEGATION.test(t) && !EARLIER.test(t) && (FIRST_PERSON_SENT.test(t) || names.some((n) => t.toLowerCase().includes(n)))
+  )
   return claims.length
-    ? 'Nella risposta dici che una prima email di Trova clienti è partita, ma in questa richiesta non ne è partita nessuna (approvata = parte al prossimo invio, all\'orario scelto). Riscrivi la risposta in modo vero. Rispondi SOLO con il JSON.'
+    ? 'Nella risposta dici che una prima email di Trova clienti è partita, ma in questa richiesta è stata solo approvata: parte al prossimo invio, all\'orario scelto. Riscrivi la risposta in modo vero. Rispondi SOLO con il JSON.'
     : null
 }
 
-/** Risposta vera se, anche dopo la correzione, dice ancora che e' partita. */
+/** Risposta vera se, anche dopo la correzione, dice ancora che e' partita: solo quello che e' successo in questa richiesta. */
 export function honestProspectReply(language: string | null): string {
   return language === 'inglese'
-    ? 'No email has been sent yet: approved emails go out at the next scheduled send. You can see them in Automations → Find clients.'
-    : 'Non è partita ancora nessuna email: quelle approvate partono al prossimo invio. Le trovi in Automazioni → Trova clienti.'
+    ? 'I didn’t send any email in this request: the approved ones go out at the next scheduled send. You can see them in Automations → Find clients.'
+    : 'In questa richiesta non ho inviato email: quelle approvate partono al prossimo invio. Le trovi in Automazioni → Trova clienti.'
+}
+
+/** Il cliente conferma di inviare subito, dopo che l'assistente gliel'ha chiesto ("sì", "sì, mandala"). */
+export function confirmsSendNow(message: string, lastAssistant: string | undefined): boolean {
+  if (!lastAssistant || !/\?/.test(lastAssistant) || !/(invi|mand|spedi|send)\p{L}*[^?]{0,60}\b(ora|adesso|subito|now|right away)\b|\b(subito|ora|adesso|now)\b[^?]{0,40}(invi|mand|spedi|send)/iu.test(lastAssistant)) return false
+  const text = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (/(?<![a-z])(no|non|nope|aspetta|wait|annulla|lascia|don'?t|do not|dopo|later|domani)(?![a-z])/.test(text)) return false
+  return /(?<![a-z])(si|yes|ok|okay|certo|confermo|conferma|procedi|vai|invia\w*|manda\w*|spedisci\w*|send|sure|yep|esatto)(?![a-z])/.test(text)
+}
+
+/** Il cliente conferma di scartare o non contattare, dopo che l'assistente gliel'ha chiesto. */
+export function confirmsDiscard(message: string, lastAssistant: string | undefined): boolean {
+  if (!lastAssistant || !/\?/.test(lastAssistant) || !/scart|non contatt|elimin|toglier|blocc|discard|do not contact|don['’]t contact|remove/i.test(lastAssistant)) return false
+  const text = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (/(?<![a-z])(no|nope|aspetta|wait|annulla|lascia|don'?t|do not)(?![a-z])/.test(text)) return false
+  return /(?<![a-z])(si|yes|ok|okay|certo|confermo|conferma|procedi|vai|scarta\w*|blocca\w*|sure|yep|esatto|giusto)(?![a-z])/.test(text)
 }
 
 /** Il cliente conferma l'eliminazione chiesta dall'assistente ("sì", "elimina", "yes, delete it"). */
@@ -1006,10 +1036,16 @@ async function targetNote(target: { postId: string; slide: number }) {
 }
 
 const AUTOMATION_TOOLS = new Set(['list_automations', 'create_automation', 'update_automation', 'delete_automation'])
-const PROSPECT_TOOLS = new Set(['get_find_clients', 'set_find_clients', 'find_clients_now', 'list_client_drafts', 'approve_client_draft', 'edit_client_draft', 'discard_client_draft'])
 const PROSPECT_OP_LABEL: Record<ProspectOp, string> = { settings: 'impostazioni salvate', search: 'ricerca avviata', approved: 'email approvata', sent: 'email inviata', discarded: 'email scartata', blocked: 'non contattare' }
 /** Il cliente chiede di inviare adesso ("inviala subito", "mandala ora", "send it now"). */
 const ASKS_SEND_NOW = /(invia|inviala|inviale|manda|mandala|mandale|spedisci|spediscila|fai partire|send)\w*[^.?!\n]{0,30}\b(ora|adesso|subito|now|right away)\b|\b(subito|ora|adesso)\b[^.?!\n]{0,20}(invia|manda|spedisc|parti)/i
+/** ...ma non se lo nega ("approvala ma non inviarla ora", "don't send it now"). */
+const DENIES_SEND = /\b(non|don['’]?t|do not|not)\s+(la\s+|le\s+|lo\s+|li\s+|it\s+|them\s+)?(inviar|mandar|spedir|far(e)? partir|send|invia|manda|spedisci)/i
+/** Chiede di inviare subito, in questo messaggio o confermando la domanda dell'assistente. */
+export const wantsSendNow = (message: string, lastAssistant: string | undefined) =>
+  !DENIES_SEND.test(message) && (ASKS_SEND_NOW.test(message) || confirmsSendNow(message, lastAssistant))
+/** Chiede tutte le email ("approvale tutte", "approve all"). */
+const ASKS_ALL = /\b(tutte|tutti|tutto|all|every|everything|ognuna)\b/i
 
 /** Argomenti dell'AI -> impostazioni di Trova clienti (i campi che mancano restano come sono). */
 export function prospectSettingsInput(args: Record<string, unknown>): SettingsInput {
@@ -1214,8 +1250,12 @@ export async function runClientAssistant(
       }
     }
     // Email programmate: mai "ho programmato" senza l'automazione, mai "posso farlo" con le Automazioni spente.
-    // Gli strumenti di Trova clienti contano come "provato" ("partira' alle 10" e' vero dopo un'approvazione).
-    const automationState = { enabled: automationsOn, done: actions.some((a) => a.kind === 'automation'), tried: used.some((u) => AUTOMATION_TOOLS.has(u) || PROSPECT_TOOLS.has(u)) }
+    // Trova clienti: "partira' alle 10" e' vero solo dopo un'approvazione fatta in questa richiesta (e solo per quella).
+    const automationState = {
+      enabled: automationsOn,
+      done: actions.some((a) => a.kind === 'automation'),
+      tried: used.some((u) => AUTOMATION_TOOLS.has(u)) || (approvedNow.length > 0 && onlyAboutApproved(text)),
+    }
     const automationFix = automationClaimCorrection(text, automationState)
     if (automationFix && !automationRetried) {
       automationRetried = true
@@ -1228,7 +1268,7 @@ export async function runClientAssistant(
     if (automationFix) text = honestAutomationReply(automationsOn, language)
     // Trova clienti: "e' partita" solo se e' partita in questa richiesta.
     const prospectFix = prospectClaimCorrection(text, {
-      tried: used.some((u) => PROSPECT_TOOLS.has(u)),
+      approved: approvedNow,
       sent: actions.some((a) => (a.kind === 'prospect' && a.op === 'sent') || a.kind === 'message'),
     })
     if (prospectFix && !prospectRetried) {
@@ -1258,6 +1298,11 @@ export async function runClientAssistant(
     transcript.push({ role: 'user', content: fix })
     return null
   }
+  /** Aziende approvate (non inviate) in questa richiesta, con nome ed email: "partira' alle 10" vale solo per loro. */
+  const approvedNow: string[] = []
+  /** Le frasi su invii futuri parlano solo delle aziende approvate adesso (o del "prossimo invio"). */
+  const onlyAboutApproved = (reply: string) =>
+    scheduledClaims(reply).every((t) => /prossimo invio|next (scheduled )?send/i.test(t) || approvedNow.some((n) => n.length >= 3 && t.toLowerCase().includes(n.toLowerCase())))
   /** Strumenti di Trova clienti (solo con le Automazioni attive): risultati veri, mai "inviata" se non e' partita. */
   const prospectTool = async (tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const at = () => new Date().toISOString()
@@ -1295,22 +1340,37 @@ export async function runClientAssistant(
       case 'list_client_drafts': {
         const o = await prospectsOverview(db)
         const status = asText(args.status) || ''
-        const wanted: ProspectStatus[] = status === 'all' ? ['da_approvare', 'approvata', 'inviata', 'errore'] : status === 'inviata' ? ['inviata'] : status === 'approvata' ? ['approvata'] : ['da_approvare', 'approvata']
-        const items = o.prospects.filter((p) => wanted.includes(p.status) && p.draft)
-        return { totale: items.length, email: items.slice(0, 8).map((p) => prospectSummary(p)), ...(items.length > 8 ? { nota: `mostrate 8 di ${items.length}` } : {}) }
+        const wanted: ProspectStatus[] =
+          status === 'all' ? ['da_approvare', 'approvata', 'inviata', 'errore'] : status === 'inviata' ? ['inviata'] : status === 'approvata' ? ['approvata'] : status === 'errore' ? ['errore'] : ['da_approvare', 'approvata', 'errore']
+        // Anche quelle con l'email ma senza bozza (AI che non rispondeva): si riscrivono dalla pagina con «Riscrivi».
+        const items = o.prospects.filter((p) => wanted.includes(p.status) && (p.draft || (p.status === 'errore' && p.email)))
+        return {
+          totale: items.length,
+          email: items.slice(0, 8).map((p) => ({ ...prospectSummary(p), ...(!p.draft ? { bozza: 'nessuna: si riscrive in Automazioni → Trova clienti con «Riscrivi»' } : {}) })),
+          ...(items.length > 8 ? { nota: `mostrate 8 di ${items.length}` } : {}),
+        }
       }
       case 'approve_client_draft':
       case 'edit_client_draft': {
         const edit = tool === 'edit_client_draft' ? { subject: args.subject, body: args.body ?? args.text } : {}
         const sendNow = args.send_now === true
-        if (sendNow && !ASKS_SEND_NOW.test(message)) {
-          return { fatto: false, errore: 'il cliente non ha chiesto di inviarla subito: approvala senza "send_now" (parte al prossimo invio) o chiedigli conferma. Non è partito niente.' }
+        if (sendNow && !wantsSendNow(message, lastAssistant?.text)) {
+          return {
+            fatto: false,
+            errore: 'il cliente non ha chiesto di inviarla subito: approvala senza "send_now" (parte al prossimo invio) oppure chiedigli "Vuoi che la invii subito?" e aspetta il suo sì nel prossimo messaggio. Non è partito niente.',
+          }
         }
         if (tool === 'approve_client_draft' && args.all === true) {
+          // "Approva tutte" solo se il cliente lo chiede: un'email approvata parte da sola a persone che non ci conoscono.
+          if (!ASKS_ALL.test(message)) return { fatto: false, errore: 'il cliente non ha chiesto di approvarle tutte: usa "id" per quella che ha indicato (da list_client_drafts). Non è stato approvato niente.' }
           const n = await approveAllProspects(db)
           const o = await prospectsOverview(db)
-          if (n) actions.push({ kind: 'prospect', op: 'approved', at: at(), prospect: { name: 'Tutte le email da approvare', count: n } })
-          return { approvate: n, inviata: false, parte: o.nextRun ? `al prossimo invio, ${romeWhen(o.nextRun)}` : 'al prossimo invio, quando Trova clienti è attivo' }
+          const parte = departureNote(o, o.counts.queued, true)
+          if (n) {
+            actions.push({ kind: 'prospect', op: 'approved', at: at(), prospect: { name: 'Tutte le email da approvare', count: n, note: parte.charAt(0).toUpperCase() + parte.slice(1) + '.' } })
+            approvedNow.push('tutte', 'all', ...o.prospects.filter((x) => x.status === 'approvata').map((x) => x.name))
+          }
+          return { approvate: n, inviata: false, parte }
         }
         if (!id) return { fatto: false, errore: 'manca l’id: usa list_client_drafts' }
         if (sendNow) {
@@ -1320,19 +1380,28 @@ export async function runClientAssistant(
         }
         const p = await approveProspect(db, id, edit)
         const o = await prospectsOverview(db)
-        actions.push({ kind: 'prospect', op: 'approved', at: at(), prospect: { id: p.id, name: p.name, email: p.email, subject: p.draft?.subject } })
+        const parte = departureNote(o, queuePosition(o.prospects, p.id))
+        actions.push({ kind: 'prospect', op: 'approved', at: at(), prospect: { id: p.id, name: p.name, email: p.email, subject: p.draft?.subject, note: parte.charAt(0).toUpperCase() + parte.slice(1) + '.' } })
+        approvedNow.push(p.name, ...(p.email ? [p.email] : []))
         return {
           approvata: true,
           inviata: false,
           azienda: p.name,
           a: p.email,
           ...(tool === 'edit_client_draft' ? { testo_salvato: p.draft?.body.slice(0, 900) } : {}),
-          parte: o.nextRun && o.settings.active ? `al prossimo invio, ${romeWhen(o.nextRun)}` : 'al prossimo invio, quando Trova clienti è attivo',
+          parte,
         }
       }
       case 'discard_client_draft': {
         if (!id) return { fatto: false, errore: 'manca l’id: usa list_client_drafts' }
         const block = args.do_not_contact === true
+        // Prima la domanda dell'assistente, poi il si' del cliente (come per eliminare un'automazione).
+        if (args.confirmed !== true || !confirmsDiscard(message, lastAssistant?.text)) {
+          return {
+            fatto: false,
+            errore: `prima chiedi conferma al cliente ("Vuoi ${block ? 'non contattare più' : 'scartare l’email per'} «nome dell'azienda»?") e aspetta il suo sì nel prossimo messaggio, poi usa "confirmed": true. Non è cambiato niente.`,
+          }
+        }
         const p = await discardProspect(db, id, { block })
         actions.push({ kind: 'prospect', op: block ? 'blocked' : 'discarded', at: at(), prospect: { id: p.id, name: p.name, email: p.email } })
         return { scartata: true, azienda: p.name, ...(block ? { non_contattare: true } : {}) }

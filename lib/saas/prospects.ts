@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { callAI } from '@/lib/ai'
 import { stripMarkdown } from '@/lib/tool-step'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -8,7 +8,7 @@ import { workspaceOwnerId } from '@/lib/workspace'
 import { isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { automationsAccess, romeDay } from '@/lib/automations-access'
 import { AUTOMATIONS_DAILY_LIMIT, isEmail } from '@/lib/automations-shared'
-import { baseDomain, emailsInText } from '@/lib/email-address'
+import { emailsInText } from '@/lib/email-address'
 import {
   PROSPECT_EMAILS_MAX,
   PROSPECT_EMAILS_MIN,
@@ -22,6 +22,7 @@ import {
 import {
   appendLog,
   capacityWarning,
+  surelyNotSent,
   describeSchedule,
   dueSlot,
   loadAutomations,
@@ -39,7 +40,7 @@ import type { Connection } from './connections'
 import { sendNewEmail } from './email'
 import { readInstructions, workspaceName } from './responder'
 import { PlacesError, placesAvailable, searchPlacesPage, type Place } from './places'
-import { isFreeMail, readBusinessSite, siteDomain } from './prospect-site'
+import { isFreeMail, isSharedHost, readBusinessSite, siteDomain } from './prospect-site'
 
 // Trova clienti (seconda sezione della pagina Automazioni): il cliente scrive a chi vuole
 // rivolgersi (nicchia o pubblico, zona, cosa offre); ogni giorno all'ora scelta (ora
@@ -58,7 +59,8 @@ import { isFreeMail, readBusinessSite, siteDomain } from './prospect-site'
 // In app_settings, per spazio (tutti con tetti e potatura):
 // - "prospects_settings:<spazio>" = ProspectSettings
 // - "prospects:<spazio>"          = Prospect[] (al massimo 300: si tolgono prima le chiuse piu' vecchie)
-// - "prospects_book:<spazio>"     = { contacted: email[] (5000), blocked: (email | @dominio)[] (2000) }
+// - "prospects_book:<spazio>"     = { sent: impronte (8 caratteri l'una, una stringa sola: 40000 indirizzi e domini contattati,
+//                                    ~320 KB, cioe' anni), blocked: (email | @dominio)[] (Non contattare: mai tolti da soli) }
 // - "prospects_memory:<spazio>"   = ricerche (rotazione, gia' fatte) e aziende gia' viste (3000)
 // - "prospects_day:<spazio>"      = contatori del giorno italiano (invii, ricerche, letture, bozze…)
 // - "prospects_run:<spazio>"      = giro in corso (presa a tempo, ripresa nei minuti dopo) e ultimi giri
@@ -68,13 +70,19 @@ import { isFreeMail, readBusinessSite, siteDomain } from './prospect-site'
 
 export const FEATURE = 'saas_trova_clienti'
 export const MAX_PROSPECTS = 300
-const MAX_CONTACTED = 5000
-const MAX_BLOCKED = 2000
+/** Impronte di indirizzi (e domini) gia' contattati: 20 al giorno sono anni prima di riempirsi. */
+const MAX_SENT_HASHES = 40_000
+const HASH_LEN = 8
+/** Voci scritte a mano nella lista Non contattare (le risposte "no" si aggiungono sempre). */
+export const MAX_BLOCKED = 10_000
+const HARD_MAX_BLOCKED = 50_000
 const MAX_PLACES_SEEN = 3000
 const MAX_USED_QUERIES = 150
 const MAX_HISTORY = 10
 /** Bodies tenuti per le email gia' inviate (le altre chiuse restano senza testo, per lo spazio). */
 const KEEP_SENT_BODIES = 40
+/** Bozze scartate dal cliente che tengono il testo (si possono ripristinare). */
+const KEEP_DISCARDED_BODIES = 40
 /** Tetti al giorno (costi): richieste a Google Maps, siti letti, bozze dell'AI, bozze rifatte, piani di ricerca, "Cerca ora". */
 export const DAILY_CAPS = { places: 6, reads: 40, drafts: 30, regen: 30, plans: 3, manual: 5 } as const
 /** Risultati per richiesta a Google Maps (una pagina piccola). */
@@ -142,6 +150,10 @@ export type Prospect = {
   /** Sito gia' letto (manca solo la bozza). */
   read?: boolean
   attempts?: number
+  /** Bozze non scritte perche' l'AI non rispondeva (dopo 3: errore, si riscrive dalla pagina). */
+  aiFailures?: number
+  /** Scartata dal cliente con «Scarta» (si puo' ripristinare finche' ha il testo). */
+  discarded?: boolean
   sendingUntil?: number
   updatedAt: string
 }
@@ -170,7 +182,8 @@ export type ProspectRun = {
 export type RunSummary = Pick<ProspectRun, 'id' | 'kind' | 'startedAt' | 'searches' | 'found' | 'reads' | 'drafted' | 'sent' | 'note'> & { finishedAt: string }
 
 type RunState = { lastSlot: string | null; run: ProspectRun | null; history: RunSummary[] }
-type Book = { contacted: string[]; blocked: string[] }
+/** sent: impronte di indirizzi e domini contattati, una dopo l'altra (HASH_LEN caratteri l'una). */
+type Book = { sent: string; blocked: string[] }
 type QueryUse = { q: string; at: string; found: number; added: number; error?: string }
 type Memory = { key: string; queries: string[]; used: QueryUse[]; places: string[] }
 export type DayCounters = { day: string; sent: number; places: number; reads: number; drafts: number; regen: number; plans: number; manual: number }
@@ -264,10 +277,37 @@ export const parseProspects = (raw: unknown): Prospect[] => {
   return Array.isArray(v) ? v.filter(isProspect).map((p) => ({ ...p, draft: p.draft ?? null, updatedAt: p.updatedAt || p.foundAt })) : []
 }
 const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(-max) : [])
-const parseBook = (raw: unknown): Book => {
-  const v = (parseJson(raw) || {}) as Partial<Book>
-  return { contacted: strings(v.contacted, MAX_CONTACTED), blocked: strings(v.blocked, MAX_BLOCKED) }
+/** Impronta breve di un indirizzo (o di "@dominio"): la lista dei contattati resta piccola anche dopo anni. */
+const hashOf = (value: string) => createHash('sha256').update(value.trim().toLowerCase()).digest('base64url').slice(0, HASH_LEN)
+const hashAt = (sent: string, h: string) => {
+  for (let i = sent.indexOf(h); i >= 0; i = sent.indexOf(h, i + 1)) if (i % HASH_LEN === 0) return i
+  return -1
 }
+const domainOfEmail = (email: string) => email.split('@')[1]?.toLowerCase() || ''
+const parseBook = (raw: unknown): Book => {
+  const v = (parseJson(raw) || {}) as Partial<Book> & { contacted?: unknown }
+  let sent = typeof v.sent === 'string' ? v.sent : ''
+  sent = sent.slice(0, sent.length - (sent.length % HASH_LEN))
+  // Prima versione: indirizzi in chiaro (contacted) -> impronte.
+  for (const email of strings(v.contacted, 100_000)) {
+    const h = hashOf(email)
+    if (hashAt(sent, h) < 0) sent += h
+  }
+  return { sent, blocked: strings(v.blocked, HARD_MAX_BLOCKED) }
+}
+/** Aggiunge impronte (le piu' vecchie escono solo oltre MAX_SENT_HASHES, con un avviso nei log). */
+const withHashes = (sent: string, hashes: string[]): string => {
+  let next = sent
+  for (const h of hashes) if (hashAt(next, h) < 0) next += h
+  if (next.length > MAX_SENT_HASHES * HASH_LEN) {
+    console.warn('trova clienti: memoria degli indirizzi contattati piena, si dimenticano i più vecchi')
+    next = next.slice(-MAX_SENT_HASHES * HASH_LEN)
+  }
+  return next
+}
+const isContacted = (book: Book, email: string) => hashAt(book.sent, hashOf(email)) >= 0
+/** Indirizzo gia' contattato (per le prove e i controlli): raw = valore salvato di prospects_book. */
+export const bookHas = (raw: unknown, email: string) => isContacted(parseBook(raw), email)
 const parseMemory = (raw: unknown): Memory => {
   const v = (parseJson(raw) || {}) as Partial<Memory>
   return {
@@ -331,13 +371,19 @@ export function pruneProspects(list: Prospect[]): Prospect[] {
     )
     out = out.filter((p) => !drop.has(p.id))
   }
-  const keepBodies = new Set(
-    out
+  const keepBodies = new Set([
+    ...out
       .filter((p) => p.status === 'inviata')
       .sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)))
       .slice(0, KEEP_SENT_BODIES)
-      .map((p) => p.id)
-  )
+      .map((p) => p.id),
+    // Scartate dal cliente: il testo resta (si possono ripristinare), le piu' recenti.
+    ...out
+      .filter((p) => p.status === 'saltata' && p.discarded)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, KEEP_DISCARDED_BODIES)
+      .map((p) => p.id),
+  ])
   return out.map((p) =>
     CLOSED.includes(p.status) && !keepBodies.has(p.id) && p.status !== 'errore' && (p.draft?.body || p.about)
       ? { ...p, about: null, draft: p.draft ? { ...p.draft, body: '' } : null }
@@ -379,26 +425,50 @@ async function bookAddress(ws: string, email: string): Promise<'ok' | 'contacted
       out.result = 'blocked'
       return false
     }
-    if (book.contacted.includes(email)) {
+    if (isContacted(book, email)) {
       out.result = 'contacted'
       return false
     }
     out.result = 'ok'
-    return { ...book, contacted: [...book.contacted, email].slice(-MAX_CONTACTED) }
+    return { ...book, sent: withHashes(book.sent, [hashOf(email)]) }
   })
   return out.result
 }
 async function unbookAddress(ws: string, email: string): Promise<void> {
-  await updateSetting<Book>(bookKey(ws), parseBook, (book) => (book.contacted.includes(email) ? { ...book, contacted: book.contacted.filter((e) => e !== email) } : false)).catch(
-    (error) => console.error('trova clienti: indirizzo non liberato:', error instanceof Error ? error.message : error)
+  const h = hashOf(email)
+  await updateSetting<Book>(bookKey(ws), parseBook, (book) => {
+    const i = hashAt(book.sent, h)
+    return i < 0 ? false : { ...book, sent: book.sent.slice(0, i) + book.sent.slice(i + HASH_LEN) }
+  }).catch((error) => console.error('trova clienti: indirizzo non liberato:', error instanceof Error ? error.message : error))
+}
+/** Dopo l'invio: anche il dominio dell'azienda (per riconoscere un "no" scritto da un'altra casella dello stesso dominio). */
+async function rememberDomain(ws: string, email: string): Promise<void> {
+  const domain = domainOfEmail(email)
+  if (!domain || isSharedHost(domain)) return
+  const h = hashOf(`@${domain}`)
+  await updateSetting<Book>(bookKey(ws), parseBook, (book) => (hashAt(book.sent, h) >= 0 ? false : { ...book, sent: withHashes(book.sent, [h]) })).catch((error) =>
+    console.warn('trova clienti: dominio non salvato:', error instanceof Error ? error.message : error)
   )
 }
 
-/** Aggiunge alla lista "Non contattare" (indirizzo o @dominio). */
-export async function blockAddress(ws: string, raw: string): Promise<string> {
+/**
+ * Aggiunge alla lista "Non contattare" (indirizzo o @dominio). Le voci non escono mai da
+ * sole; quelle scritte a mano oltre MAX_BLOCKED si rifiutano (manual).
+ */
+export async function blockAddress(ws: string, raw: string, options: { manual?: boolean } = {}): Promise<string> {
   const entry = cleanBlockEntry(raw)
   if (!entry) throw new ProspectError('Scrivi un indirizzo email o un dominio (es. @esempio.it).')
-  await updateSetting<Book>(bookKey(ws), parseBook, (book) => (book.blocked.includes(entry) ? false : { ...book, blocked: [...book.blocked, entry].slice(-MAX_BLOCKED) }))
+  const out = { full: false }
+  await updateSetting<Book>(bookKey(ws), parseBook, (book) => {
+    out.full = false
+    if (book.blocked.includes(entry)) return false
+    if (options.manual && book.blocked.length >= MAX_BLOCKED) {
+      out.full = true
+      return false
+    }
+    return { ...book, blocked: [...book.blocked, entry] }
+  })
+  if (out.full) throw new ProspectError(`La lista Non contattare ha già ${MAX_BLOCKED} voci: aggiungi un dominio intero (es. @esempio.it) o togline qualcuna.`, 409)
   // Le aziende ancora da contattare con quell'indirizzo non partono piu'.
   await updateSetting<Prospect[]>(listKey(ws), parseProspects, (list) => {
     let changed = false
@@ -419,18 +489,31 @@ export async function unblockAddress(ws: string, raw: string): Promise<void> {
 
 type OwnAddresses = { emails: Set<string>; domains: Set<string> }
 
+// Suffissi pubblici di secondo livello (gusto.co.uk: il dominio e' "gusto.co.uk", non "co.uk").
+const SECOND_LEVEL = /^(co|com|net|org|gov|edu|ac|ltd|plc|nom|or|ne|gob|gen|biz|info)$/
+
+/** Dominio registrato di un host ("www.shop.gusto.it" -> "gusto.it", "gusto.co.uk" -> "gusto.co.uk"). */
+export function registrableDomain(host: string): string {
+  const parts = host.toLowerCase().replace(/^www\./, '').replace(/\.$/, '').split('.').filter(Boolean)
+  if (parts.length < 2) return ''
+  const tld = parts[parts.length - 1]
+  const keep = parts.length >= 3 && tld.length === 2 && SECOND_LEVEL.test(parts[parts.length - 2]) ? 3 : 2
+  return parts.slice(-keep).join('.')
+}
+
 /** Indirizzi e domini del cliente (casella collegata, email e siti scritti nelle Istruzioni): a se stesso non si scrive mai. */
 async function ownAddresses(db: WorkspaceDb, mailbox: Connection | null): Promise<OwnAddresses> {
   const instructions = await readInstructions(db.workspaceId).catch(() => null)
   const text = [instructions?.general, instructions?.email].filter(Boolean).join('\n')
   const emails = new Set<string>([...(mailbox ? [mailbox.external_id.toLowerCase()] : []), ...emailsInText(text)])
   const domains = new Set<string>()
-  for (const e of emails) if (!isFreeMail(e)) domains.add(baseDomain(e) || '')
-  for (const m of text.matchAll(/\b(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})(?:\/[^\s]*)?/gi)) {
-    if (m[0].includes('@') || !/[./]/.test(m[0])) continue
+  for (const e of emails) if (!isFreeMail(e)) domains.add(registrableDomain(domainOfEmail(e)))
+  // Siti scritti nelle Istruzioni, con qualsiasi dominio (.it, .ai, .studio, .pizza…): non quelli di Gmail, social o piattaforme.
+  for (const m of text.matchAll(/(?<![@\w.-])(?:https?:\/\/)?(?:www\.)?((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w@-])/gi)) {
     const host = m[1].toLowerCase()
-    if (/^(gmail|libero|hotmail|outlook|yahoo|icloud|facebook|instagram|google|wa)\./.test(host)) continue
-    if (/\.(it|com|net|org|eu|info|biz|shop|store|online|site|me|io|co|uk|de|fr|es|ch)$/.test(host)) domains.add(host.split('.').slice(-2).join('.'))
+    const domain = registrableDomain(host)
+    if (!domain || /\d/.test(domain.split('.').pop() || '') || isSharedHost(domain) || /^(facebook|instagram|google|youtube|tiktok|linkedin|twitter|x|wa|whatsapp|linktr|bit|goo)\./.test(domain)) continue
+    domains.add(domain)
   }
   domains.delete('')
   return { emails, domains }
@@ -507,6 +590,18 @@ export async function saveProspectSettings(db: WorkspaceDb, userId: string, inpu
     if ((next.active && !c.active) || next.time !== c.time || JSON.stringify(next.days) !== JSON.stringify(c.days)) next.since = at
     return next
   })
+  // Da "Approvo io" a "L'AI invia da sola": le bozze in attesa le approva l'AI (partono all'orario).
+  if (current.mode === 'approve' && saved.mode === 'auto') {
+    await updateSetting<Prospect[]>(listKey(db.workspaceId), parseProspects, (list) => {
+      let changed = false
+      const next = list.map((p) => {
+        if (p.status !== 'da_approvare' || !p.draft || !p.email) return p
+        changed = true
+        return { ...p, status: 'approvata' as const, approvedAt: at, approvedBy: 'ai' as const, updatedAt: at }
+      })
+      return changed ? next : false
+    })
+  }
   // Da "L'AI invia da sola" ad "Approvo io": le bozze approvate dall'AI tornano da approvare.
   if (current.mode === 'auto' && saved.mode === 'approve') {
     await updateSetting<Prospect[]>(listKey(db.workspaceId), parseProspects, (list) => {
@@ -745,6 +840,8 @@ async function processWorkspace(ctx: Ctx): Promise<number> {
   }
 }
 
+const UNCONFIRMED = 'invio non confermato: controlla la cartella Inviata'
+
 /** Invii rimasti a meta' (server fermato durante l'invio): mai rimandati, il cliente controlla la cartella Inviata. */
 async function recoverStuck(ws: string, now: number): Promise<void> {
   await updateSetting<Prospect[]>(listKey(ws), parseProspects, (list) => {
@@ -752,7 +849,7 @@ async function recoverStuck(ws: string, now: number): Promise<void> {
     const next = list.map((p) => {
       if (p.status !== 'in_invio' || (p.sendingUntil || 0) > now) return p
       changed = true
-      return { ...p, status: 'errore' as const, error: 'invio non confermato: controlla la cartella Inviata', sendingUntil: 0, updatedAt: iso(now) }
+      return { ...p, status: 'errore' as const, error: UNCONFIRMED, sendingUntil: 0, updatedAt: iso(now) }
     })
     return changed ? next : false
   })
@@ -819,6 +916,7 @@ async function workRun(ctx: Ctx, token: string, env: Env): Promise<number> {
 const FIND_NOTES: Record<string, string> = {
   cap: 'raggiunto il numero di ricerche e di siti letti di oggi: si continua domani',
   maps_error: 'Google Maps non risponde: si riprova al prossimo giro',
+  ai_down: 'AI non disponibile: si riprova al prossimo giro',
   blocked: BLOCKED_NOTE,
   no_query: 'nessuna nuova ricerca da provare: prova a cambiare la zona o la descrizione',
   unavailable: SEARCH_UNAVAILABLE,
@@ -840,6 +938,8 @@ async function sendStep(ctx: Ctx, token: string, env: Env, settings: ProspectSet
   if (day.sent >= settings.emailsPerDay) return close(`partite le ${settings.emailsPerDay} email di oggi`)
   if (shared.used >= AUTOMATIONS_DAILY_LIMIT) return close(SHARED_LIMIT_NOTE)
   if (!env.mailbox) return close('nessuna email collegata: collegala in Canali → Email')
+  // Password non accettata (vista dalla lettura della casella): nessun accesso sbagliato in piu'.
+  if (env.mailbox.status === 'expired') return close('casella email da ricollegare (Canali → Email)')
   const ready = list.filter((p) => p.status === 'approvata' && p.draft?.subject && p.draft.body && p.email).sort(byApproval)
   if (!ready.length) return settings.mode === 'auto' ? 'more' : close(null)
   const result = await deliver(ctx.workspaceId, ctx.db, ready[0].id, { now: ctx.now, cap: settings.emailsPerDay, mailbox: env.mailbox, fromName: env.fromName, own: env.own, send: ctx.send })
@@ -849,7 +949,8 @@ async function sendStep(ctx: Ctx, token: string, env: Env, settings: ProspectSet
     await sleep(ctx.spacingMs ?? 3000 + Math.random() * 2000)
     return 'sent'
   }
-  if (result.status === 'limit' || result.status === 'retry') return close(result.message)
+  // Limite, casella da ricollegare o invio non confermato (server che non risponde): per oggi basta.
+  if (result.status === 'limit' || result.status === 'retry' || result.status === 'unconfirmed') return close(result.message)
   return 'again'
 }
 
@@ -859,10 +960,13 @@ const SHARED_LIMIT_NOTE = `oggi sono già partite ${AUTOMATIONS_DAILY_LIMIT} ema
 
 /**
  * sent: partita; limit: limite del giorno (resta approvata); retry: casella o database non
- * disponibili (resta approvata, si riprova piu' tardi); skipped: questa azienda non si puo'
- * contattare (gia' contattata, Non contattare, indirizzo rifiutato…); not_ready: non e' pronta.
+ * disponibili, email di sicuro non partita (torna com'era, si riprova piu' tardi); unconfirmed:
+ * non si sa se il server l'ha presa (resta prenotata, mai rimandata); skipped: questa azienda
+ * non si puo' contattare (gia' contattata, Non contattare, indirizzo rifiutato…); not_ready: non e' pronta.
  */
-export type DeliverResult = { status: 'sent'; prospect: Prospect } | { status: 'limit' | 'retry' | 'skipped' | 'not_ready'; message: string }
+export type DeliverResult =
+  | { status: 'sent'; prospect: Prospect }
+  | { status: 'limit' | 'retry' | 'skipped' | 'not_ready' | 'unconfirmed'; message: string; restored?: ProspectStatus }
 
 type DeliverOptions = {
   now: () => number
@@ -884,7 +988,9 @@ type DeliverOptions = {
  */
 async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOptions): Promise<DeliverResult> {
   const from: ProspectStatus[] = o.manual ? ['approvata', 'da_approvare', 'errore'] : ['approvata']
+  const before: { p: Prospect | null } = { p: null }
   const claimed = await mutateProspect(ws, id, (p) => {
+    before.p = p
     if (!from.includes(p.status) || !p.email || !p.draft?.subject || !(o.edit?.body || p.draft.body)) return false
     const draft = o.edit ? { ...p.draft, subject: o.edit.subject, body: o.edit.body } : p.draft
     // "Invia ora" vale anche come approvazione: se il limite del giorno e' pieno, resta approvata.
@@ -894,6 +1000,12 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
   if (!claimed?.email || !claimed.draft) return { status: 'not_ready', message: 'Questa email non è pronta da inviare.' }
   const email = claimed.email.toLowerCase()
   const back = (status: ProspectStatus, patch: Partial<Prospect> = {}) => setStatus(ws, id, ['in_invio'], status, { sendingUntil: 0, ...patch })
+  // Invio a mano non riuscito (email di sicuro non partita): torna com'era (una bozza da approvare resta da approvare).
+  const prev = before.p
+  const restore: { status: ProspectStatus; patch: Partial<Prospect> } =
+    o.manual && prev && prev.status !== 'approvata'
+      ? { status: prev.status, patch: { approvedAt: prev.approvedAt ?? null, approvedBy: prev.approvedBy ?? null } }
+      : { status: 'approvata', patch: {} }
   if (!isEmail(email)) {
     await back('errore', { error: 'indirizzo non valido' })
     return { status: 'skipped', message: 'Indirizzo non valido.' }
@@ -904,8 +1016,8 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
   }
   const booked = await bookAddress(ws, email).catch(() => null)
   if (booked === null) {
-    await back('approvata')
-    return { status: 'retry', message: 'errore temporaneo, si riprova più tardi' }
+    await back(restore.status, restore.patch)
+    return { status: 'retry', message: 'errore temporaneo, si riprova più tardi', restored: restore.status }
   }
   if (booked === 'blocked') {
     await back('non_contattare', { error: 'nella lista Non contattare' })
@@ -924,15 +1036,22 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
   }
   const tookDay = await takeDay(ws, 'sent', o.cap, now).catch(() => null)
   if (!tookDay) {
+    if (tookDay === null) {
+      await undo(restore.status, restore.patch, {})
+      return { status: 'retry', message: 'errore temporaneo, si riprova più tardi', restored: restore.status }
+    }
     await undo('approvata', {}, {})
-    return tookDay === null
-      ? { status: 'retry', message: 'errore temporaneo, si riprova più tardi' }
-      : { status: 'limit', message: `partite le ${o.cap} email di oggi scelte per Trova clienti` }
+    return { status: 'limit', message: `partite le ${o.cap} email di oggi scelte per Trova clienti` }
   }
   const tookShared = await reserveDaily(ws, now).catch(() => null)
   if (!tookShared) {
+    if (tookShared === null) {
+      await undo(restore.status, restore.patch, { day: true })
+      return { status: 'retry', message: 'errore temporaneo, si riprova più tardi', restored: restore.status }
+    }
+    // "Invia ora" oltre il limite vale come approvazione: parte al prossimo invio.
     await undo('approvata', {}, { day: true })
-    return tookShared === null ? { status: 'retry', message: 'errore temporaneo, si riprova più tardi' } : { status: 'limit', message: SHARED_LIMIT_NOTE }
+    return { status: 'limit', message: SHARED_LIMIT_NOTE }
   }
   const subject = claimed.draft.subject
   const text = withOptOut(claimed.draft.body, claimed.draft.language)
@@ -943,15 +1062,28 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
   } catch (error) {
     const reason = sendError(error)
     console.error('trova clienti invio:', error instanceof Error ? error.message : error)
-    // Casella da ricollegare o server che non risponde: l'email resta approvata e si riprova.
-    const mailboxProblem = !/indirizzo rifiutato/.test(reason)
-    await undo(mailboxProblem ? 'approvata' : 'errore', { error: reason }, { day: true, shared: true })
+    const message = /^invio non riuscito/.test(reason) ? reason : `invio non riuscito: ${reason}`
+    if (/indirizzo rifiutato/.test(reason)) {
+      await undo('errore', { error: reason }, { day: true, shared: true })
+      await appendLog(ws, [{ ...entry, at: iso(o.now()), status: 'failed', error: reason }])
+      return { status: 'skipped', message }
+    }
+    if (!surelyNotSent(error)) {
+      // Tempo scaduto o collegamento caduto durante l'invio: il server potrebbe averla presa. Mai
+      // rimandata (l'indirizzo resta prenotato, i contatori restano presi): il cliente controlla "Inviata".
+      await back('errore', { error: UNCONFIRMED })
+      await appendLog(ws, [{ ...entry, at: iso(o.now()), status: 'failed', error: UNCONFIRMED }])
+      return { status: 'unconfirmed', message: UNCONFIRMED }
+    }
+    // Di sicuro non partita (casella da ricollegare, server irraggiungibile, rifiuto prima dell'invio): si riprova piu' tardi.
+    await undo(restore.status, { ...restore.patch, error: restore.status === 'errore' ? reason : null }, { day: true, shared: true })
     await appendLog(ws, [{ ...entry, at: iso(o.now()), status: 'failed', error: reason }])
-    return { status: mailboxProblem ? 'retry' : 'skipped', message: `invio non riuscito: ${reason}` }
+    return { status: 'retry', message, restored: restore.status }
   }
   const sentAt = iso(o.now())
   const done = await back('inviata', { sentAt, draft: { ...claimed.draft, body: text }, error: null })
   await appendLog(ws, [{ ...entry, at: sentAt, status: 'sent' }])
+  await rememberDomain(ws, email)
   // Nell'Omnichat: la risposta dell'azienda si aggancia a questa conversazione (e l'AI sa che abbiamo scritto noi per primi).
   const { error } = await db.from('social_messages').insert({
     platform: 'email',
@@ -973,7 +1105,9 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
 
 // --- Lettura dei siti e bozze ------------------------------------------------------------
 
-type FindOutcome = 'ok' | 'cap' | 'blocked' | 'no_query' | 'unavailable' | 'fatal' | 'maps_error'
+type FindOutcome = 'ok' | 'cap' | 'blocked' | 'no_query' | 'unavailable' | 'fatal' | 'maps_error' | 'ai_down'
+/** Volte in cui l'AI non risponde per la stessa azienda prima di lasciarla in errore (si riscrive dalla pagina). */
+const AI_FAILURES_MAX = 3
 
 /** Testo breve su cosa fa l'azienda (dal sito): per scrivere e riscrivere la bozza. */
 function aboutOf(site: { title: string; description: string; text: string }): string {
@@ -1029,7 +1163,7 @@ async function readStep(ctx: Ctx, token: string, env: Env, settings: ProspectSet
     await setStatus(ws, id, ['nuova'], 'non_contattare', { error: 'nella lista Non contattare' })
     return 'ok'
   }
-  if (book.contacted.includes(email)) {
+  if (isContacted(book, email)) {
     await setStatus(ws, id, ['nuova'], 'saltata', { error: 'indirizzo già contattato' })
     return 'ok'
   }
@@ -1049,10 +1183,26 @@ async function readStep(ctx: Ctx, token: string, env: Env, settings: ProspectSet
   try {
     draft = await writeFirstEmail(ws, prospect, settings)
   } catch (error) {
-    if (isAIBlockedError(error)) return later('blocked')
+    if (isAIBlockedError(error)) {
+      await giveBackDay(ws, 'drafts', ctx.now())
+      return later('blocked')
+    }
     console.error('trova clienti bozza:', error instanceof Error ? error.message : error)
-    await setStatus(ws, id, ['nuova'], 'errore', { error: error instanceof DraftError ? `bozza non valida: ${error.message}` : 'bozza non scritta dall’AI' })
-    return 'ok'
+    if (error instanceof DraftError) {
+      // Due bozze di fila non valide: si vede nella pagina, con «Riscrivi».
+      await setStatus(ws, id, ['nuova'], 'errore', { error: `bozza non valida: ${error.message}` })
+      return 'ok'
+    }
+    // AI che non risponde (non il piano finito): l'azienda resta da scrivere e il giro si ferma
+    // (niente altre ricerche o siti letti per niente); dopo 3 volte si riscrive dalla pagina.
+    await giveBackDay(ws, 'drafts', ctx.now())
+    const failures = (prospect.aiFailures || 0) + 1
+    if (failures < AI_FAILURES_MAX) {
+      await mutateProspect(ws, id, (x) => (x.status === 'nuova' ? { ...x, aiFailures: failures, attempts: Math.max(0, (x.attempts || 1) - 1) } : false))
+    } else {
+      await setStatus(ws, id, ['nuova'], 'errore', { aiFailures: failures, error: 'bozza non scritta dall’AI: tocca «Riscrivi»' })
+    }
+    return 'ai_down'
   }
   if ('skip' in draft) {
     await setStatus(ws, id, ['nuova'], 'saltata', { error: `non adatta: ${draft.skip}` })
@@ -1060,7 +1210,7 @@ async function readStep(ctx: Ctx, token: string, env: Env, settings: ProspectSet
   }
   const auto = settings.mode === 'auto'
   const at = iso(ctx.now())
-  await setStatus(ws, id, ['nuova'], auto ? 'approvata' : 'da_approvare', { draft, edited: false, approvedAt: auto ? at : null, approvedBy: auto ? 'ai' : null, error: null })
+  await setStatus(ws, id, ['nuova'], auto ? 'approvata' : 'da_approvare', { draft, edited: false, approvedAt: auto ? at : null, approvedBy: auto ? 'ai' : null, error: null, aiFailures: 0 })
   await touchRun(ctx, token, (r) => void r.drafted++)
   return 'ok'
 }
@@ -1074,10 +1224,20 @@ const queryKey = (s: ProspectSettings) => `${fold(s.niche)}|${fold(s.area)}`
  * niente (dal sito principale). Si divide in "Ristoranti Palermo" e "Ristoranti Trapani".
  */
 export function expandQuery(query: string): string[] {
-  const m = query.trim().match(/^(.+?)\s+((?:[A-ZÀ-Ý][^\s,]*)(?:\s*(?:,|\be\b|\bo\b)\s*[A-ZÀ-Ý][^\s,]*)+)$/)
-  if (!m) return [query.trim()]
-  const places = m[2].split(/\s*(?:,|\be\b|\bo\b)\s*/).filter(Boolean)
-  return places.length > 1 ? places.map((place) => `${m[1]} ${place}`) : [query.trim()]
+  const text = query.trim().replace(/\s+/g, ' ')
+  const parts = text.split(/\s*,\s*|\s+(?:e|o)\s+/)
+  if (parts.length < 2) return [text]
+  // Prima parte: categoria + prima citta' (le parole finali con la maiuscola, anche "Reggio di Calabria").
+  const words = parts[0].split(' ')
+  const isCap = (w: string) => /^[A-ZÀ-Ý]/.test(w)
+  let i = words.length
+  while (i > 0 && (isCap(words[i - 1]) || (/^(di|del|della|dei|sul|sulla|al|in|d')$/i.test(words[i - 1]) && i - 2 >= 0 && isCap(words[i - 2])))) i--
+  // Tutto con la maiuscola ("Ristoranti Palermo"): la categoria e' la prima parola.
+  if (i === 0) i = 1
+  const category = words.slice(0, i).join(' ')
+  const cities = [words.slice(i).join(' '), ...parts.slice(1)].map((c) => c.trim())
+  if (!category || cities.some((c) => !c || !isCap(c))) return [text]
+  return cities.map((city) => `${category} ${city}`)
 }
 
 const cleanQueries = (raw: unknown[], used: Set<string>) => {
@@ -1163,10 +1323,22 @@ async function searchStep(ctx: Ctx, token: string, env: Env, s: ProspectSettings
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn(`trova clienti: ricerca "${query}" non riuscita: ${message}`)
+    const status = error instanceof PlacesError ? error.status : 0
+    if (error instanceof PlacesError && error.fatal) {
+      // Chiave rifiutata: ricerca spenta (la ricerca resta da fare, per quando la chiave torna buona).
+      await giveBackDay(ws, 'places', ctx.now())
+      return 'fatal'
+    }
+    if (!status || status >= 500 || status === 429) {
+      // Google che non risponde: ci si ferma e si riprova al prossimo giro, senza consumare le ricerche di oggi
+      // (la ricerca resta nella rotazione).
+      await giveBackDay(ws, 'places', ctx.now())
+      return 'maps_error'
+    }
+    // Ricerca rifiutata da Google (4xx): non si riprova, si passa alla prossima.
     await rememberQuery(ws, query, [], 0, message)
     await touchRun(ctx, token, (r) => void r.searches++)
-    // Chiave rifiutata: ricerca spenta. Google che non risponde: ci si ferma (si riprova al prossimo giro, senza consumare le ricerche di oggi).
-    return error instanceof PlacesError && error.fatal ? 'fatal' : 'maps_error'
+    return 'ok'
   }
   const memory = await loadMemory(ws)
   const seen = new Set(memory.places)
@@ -1374,10 +1546,25 @@ export async function discardProspect(db: WorkspaceDb, id: string, options: { bl
   }
   const saved = await mutateProspect(db.workspaceId, id, (p) => {
     if (p.status === 'in_invio') return false
-    if (options.block) return { ...p, status: p.status === 'inviata' ? 'inviata' : 'non_contattare', error: 'nella lista Non contattare' }
-    return p.status === 'inviata' ? false : { ...p, status: 'saltata', error: 'scartata da te' }
+    if (options.block) return { ...p, status: p.status === 'inviata' ? 'inviata' : 'non_contattare', error: 'nella lista Non contattare', discarded: false }
+    return p.status === 'inviata' ? false : { ...p, status: 'saltata', error: 'scartata da te', discarded: true }
   })
   if (!saved) throw new ProspectError('Non è cambiato niente, riprova.', 409)
+  return saved
+}
+
+/** "Ripristina": una bozza scartata dal cliente torna da approvare (con "L'AI invia da sola", pronta per l'invio). */
+export async function restoreProspect(db: WorkspaceDb, id: string, now = Date.now()): Promise<Prospect> {
+  const ws = db.workspaceId
+  const settings = await loadProspectSettings(ws)
+  const auto = settings.mode === 'auto'
+  const book = await loadBook(ws)
+  const saved = await mutateProspect(ws, id, (p) => {
+    if (p.status !== 'saltata' || !p.discarded || !p.draft?.body || !p.email) return false
+    if (blockMatch(book.blocked, p.email.toLowerCase()) || isContacted(book, p.email)) return false
+    return { ...p, status: auto ? 'approvata' : 'da_approvare', discarded: false, error: null, approvedAt: auto ? iso(now) : null, approvedBy: auto ? 'ai' : null }
+  })
+  if (!saved) throw new ProspectError('Questa email non si può più ripristinare.', 409)
   return saved
 }
 
@@ -1394,6 +1581,7 @@ export async function regenerateProspect(db: WorkspaceDb, id: string, now = Date
   try {
     draft = await writeFirstEmail(ws, current, settings, { previous: current.draft })
   } catch (error) {
+    if (!(error instanceof DraftError)) await giveBackDay(ws, 'regen', now)
     if (isAIBlockedError(error)) throw new ProspectError(error.message, 402, 'ai_blocked')
     throw new ProspectError('L’AI non è riuscita a riscrivere l’email, riprova.', 502)
   }
@@ -1431,41 +1619,71 @@ export async function sendProspectNow(
     // Resta approvata: parte al prossimo invio.
     throw new ProspectError(`Oggi sono già partite ${AUTOMATIONS_DAILY_LIMIT} email (programmate e Trova clienti): questa resta approvata e parte al prossimo invio.`, 429, 'limit')
   }
-  throw new ProspectError(result.message.charAt(0).toUpperCase() + result.message.slice(1), result.status === 'skipped' ? 409 : 502)
+  const tail =
+    result.status === 'retry'
+      ? result.restored === 'approvata'
+        ? ' Resta approvata e parte al prossimo invio.'
+        : result.restored === 'da_approvare'
+        ? ' Resta da approvare.'
+        : ''
+      : result.status === 'unconfirmed'
+      ? ' Non la rimando, per non mandarla due volte.'
+      : ''
+  const text = result.message.charAt(0).toUpperCase() + result.message.slice(1)
+  throw new ProspectError(`${text}${/[.!?]$/.test(text) ? '' : '.'}${tail}`, result.status === 'skipped' ? 409 : 502)
 }
 
 // --- Risposte delle aziende (dalla lettura della casella, lib/saas/sync.ts) ---------------
 
 /**
- * Email ricevute nuove: se arrivano da un'azienda contattata, la si segna come "ha risposto";
- * se chiede di non essere piu' contattata ("no", "non mi interessa"…) va nella lista Non
- * contattare. Restituisce gli id dei messaggi che chiedono di non scrivere piu' (niente
- * risposta automatica a quelli).
+ * Email ricevute nuove: se arrivano da un'azienda contattata (stesso indirizzo, o un'altra
+ * casella dello stesso dominio: scriviamo a info@, risponde mario@), la si segna come "ha
+ * risposto"; se chiede di non essere piu' contattata ("no", "non mi interessa"…) va nella lista
+ * Non contattare (l'indirizzo; per un'altra casella dello stesso dominio, il dominio intero).
+ * Restituisce gli id dei messaggi che chiedono di non scrivere piu' (niente risposta automatica a quelli).
  */
 export async function noteProspectReplies(db: WorkspaceDb, messageIds: string[], now = Date.now()): Promise<Set<string>> {
   const stop = new Set<string>()
   if (!messageIds.length) return stop
   const book = await loadBook(db.workspaceId)
-  if (!book.contacted.length) return stop
+  if (!book.sent) return stop
   const { data, error } = await db.from('social_messages').select('id, contact_id, body, direction, platform').in('id', messageIds.slice(0, 200))
   if (error) throw new Error(error.message)
-  const contacted = new Set(book.contacted)
-  const replies = (data || []).filter((m) => m.platform === 'email' && m.direction === 'in' && contacted.has(String(m.contact_id || '').toLowerCase()))
-  if (!replies.length) return stop
+  const sharedDomain = (domain: string) => !domain || isSharedHost(domain)
+  /** Come ha risposto: dallo stesso indirizzo, o da un'altra casella del dominio di un'azienda contattata. */
+  const matchOf = (email: string): 'address' | 'domain' | null => {
+    if (isContacted(book, email)) return 'address'
+    const domain = domainOfEmail(email)
+    return !sharedDomain(domain) && hashAt(book.sent, hashOf(`@${domain}`)) >= 0 ? 'domain' : null
+  }
   const optOut = new Set<string>()
-  const replied = new Set<string>()
-  for (const m of replies) {
-    const email = String(m.contact_id).toLowerCase()
-    replied.add(email)
+  const repliedAddresses = new Set<string>()
+  const repliedDomains = new Set<string>()
+  const optOutDomains = new Set<string>()
+  const blockEntries = new Set<string>()
+  for (const m of data || []) {
+    if (m.platform !== 'email' || m.direction !== 'in') continue
+    const email = String(m.contact_id || '').toLowerCase()
+    const match = email.includes('@') ? matchOf(email) : null
+    if (!match) continue
+    const domain = domainOfEmail(email)
+    repliedAddresses.add(email)
+    if (match === 'domain') repliedDomains.add(domain)
     if (isOptOutReply(String(m.body || ''))) {
-      optOut.add(email)
       stop.add(String(m.id))
+      optOut.add(email)
+      blockEntries.add(email)
+      if (match === 'domain') {
+        optOutDomains.add(domain)
+        blockEntries.add(`@${domain}`)
+      }
     }
   }
-  if (optOut.size) {
+  if (!repliedAddresses.size) return stop
+  if (blockEntries.size) {
     await updateSetting<Book>(bookKey(db.workspaceId), parseBook, (b) => {
-      const add = [...optOut].filter((e) => !b.blocked.includes(e))
-      return add.length ? { ...b, blocked: [...b.blocked, ...add].slice(-MAX_BLOCKED) } : false
+      const add = [...blockEntries].filter((e) => !b.blocked.includes(e))
+      return add.length ? { ...b, blocked: [...b.blocked, ...add] } : false
     })
   }
   await updateSetting<Prospect[]>(listKey(db.workspaceId), parseProspects, (list) => {
@@ -1473,10 +1691,23 @@ export async function noteProspectReplies(db: WorkspaceDb, messageIds: string[],
     const at = iso(now)
     const next = list.map((p) => {
       const email = p.email?.toLowerCase()
-      if (!email || !replied.has(email)) return p
+      if (!email) return p
+      const domain = domainOfEmail(email)
+      const replied = repliedAddresses.has(email) || (!sharedDomain(domain) && repliedDomains.has(domain))
+      if (!replied) return p
       changed = true
       const patch: Partial<Prospect> = { repliedAt: p.repliedAt || at, updatedAt: at }
-      if (optOut.has(email)) Object.assign(patch, p.status === 'inviata' ? { error: 'ha risposto «no»: non verrà più contattata' } : { status: 'non_contattare', error: 'ha chiesto di non essere contattata' })
+      const saidNo = optOut.has(email) || (!sharedDomain(domain) && optOutDomains.has(domain))
+      if (saidNo) {
+        Object.assign(
+          patch,
+          p.status === 'inviata'
+            ? { error: 'ha risposto «no»: non verrà più contattata' }
+            : ['nuova', 'da_approvare', 'approvata', 'errore'].includes(p.status)
+            ? { status: 'non_contattare', error: 'ha chiesto di non essere contattata' }
+            : {}
+        )
+      }
       return { ...p, ...patch }
     })
     return changed ? next : false
@@ -1486,7 +1717,7 @@ export async function noteProspectReplies(db: WorkspaceDb, messageIds: string[],
 
 // --- Riepilogo per la pagina e l'Assistente ----------------------------------------------
 
-export type ProspectView = Omit<Prospect, 'attempts' | 'sendingUntil' | 'read'>
+export type ProspectView = Omit<Prospect, 'attempts' | 'sendingUntil' | 'read' | 'aiFailures'>
 
 export type ProspectsOverview = {
   settings: ProspectSettings
@@ -1506,9 +1737,11 @@ export type ProspectsOverview = {
   nextRun: string | null
   blocked: string[]
   blockedByAI: boolean
+  /** Memoria degli indirizzi contattati quasi piena (dopo anni): i piu' vecchi si dimenticano. */
+  memoryWarning: string | null
 }
 
-const viewOf = ({ attempts: _a, sendingUntil: _s, read: _r, ...rest }: Prospect): ProspectView => rest
+const viewOf = ({ attempts: _a, sendingUntil: _s, read: _r, aiFailures: _f, ...rest }: Prospect): ProspectView => rest
 
 export async function prospectsOverview(db: WorkspaceDb, now = Date.now()): Promise<ProspectsOverview> {
   const ws = db.workspaceId
@@ -1555,6 +1788,10 @@ export async function prospectsOverview(db: WorkspaceDb, now = Date.now()): Prom
     nextRun: nextProspectRun(settings, state, now),
     blocked: [...book.blocked].reverse(),
     blockedByAI,
+    memoryWarning:
+      book.sent.length / HASH_LEN > MAX_SENT_HASHES * 0.9
+        ? 'La memoria degli indirizzi già contattati è quasi piena: i più vecchi verranno dimenticati. Scrivi a Facevoice.'
+        : null,
   }
 }
 
@@ -1573,6 +1810,29 @@ export function prospectSummary(p: Prospect | ProspectView, withBody = true): Re
     ...(p.repliedAt ? { ha_risposto: true } : {}),
     ...(p.error ? { nota: p.error } : {}),
   }
+}
+
+/**
+ * Quando parte un'email approvata, in parole semplici (pagina e Assistente): in pausa, al
+ * prossimo invio, o nei giorni dopo se in coda ce ne sono piu' del numero scelto al giorno.
+ * position: posto in coda (1 = la prima che parte), o il numero di email approvate (approva tutte).
+ */
+export function departureNote(o: Pick<ProspectsOverview, 'settings' | 'nextRun' | 'day'>, position = 1, all = false): string {
+  const { settings, nextRun } = o
+  if (!settings.active) return all ? 'partono quando attivi Trova clienti' : 'parte quando attivi Trova clienti'
+  if (!nextRun) return all ? 'partono al prossimo invio' : 'parte al prossimo invio'
+  const when = romeLabel(nextRun)
+  // Al prossimo invio partono al massimo le email scelte al giorno (meno quelle gia' partite, se e' oggi).
+  const room = Math.max(0, settings.emailsPerDay - (romeDay(Date.parse(nextRun)) === o.day.day ? o.day.sent : 0))
+  if (all) return position > room ? `${room ? `le prime ${room} partono al prossimo invio (${when}), le altre` : 'partono'} nei giorni dopo (al massimo ${settings.emailsPerDay} al giorno)` : `partono al prossimo invio, ${when}`
+  return position > room ? `parte nei giorni dopo (al massimo ${settings.emailsPerDay} al giorno, prima quelle approvate prima)` : `parte al prossimo invio, ${when}`
+}
+
+/** Posto in coda di un'email approvata (1 = la prima): le approvate partono dalla piu' vecchia. */
+export function queuePosition(list: Pick<Prospect, 'id' | 'status' | 'approvedAt' | 'updatedAt'>[], id: string): number {
+  const queue = list.filter((p) => p.status === 'approvata').sort((a, b) => String(a.approvedAt || a.updatedAt).localeCompare(String(b.approvedAt || b.updatedAt)))
+  const index = queue.findIndex((p) => p.id === id)
+  return index < 0 ? queue.length + 1 : index + 1
 }
 
 /** Impostazioni in breve (per l'Assistente). */

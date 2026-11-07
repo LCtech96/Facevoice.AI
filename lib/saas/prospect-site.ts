@@ -36,9 +36,18 @@ export const isFreeMail = (email: string) => FREE_MAIL.test(email)
 // Caselle di un ruolo (non di una persona).
 const ROLE_LOCAL =
   /(^|[._-])(info|informazioni|contatti|contatto|contact|contacts|hello|ciao|hola|booking|book|prenota|prenotazioni|reservations?|reserva|ordini|orders?|amministrazione|admin|segreteria|office|ufficio|sales|commerciale|vendite|shop|negozio|store|staff|reception|eventi|events|marketing|studio|direzione|clienti|customer|servizio|service|welcome|mail|email|team|bar|ristorante|hotel|pizzeria)([._-]|\d|$)/i
-const NAME_STOP = new Set(['della', 'dello', 'delle', 'degli', 'dalla', 'dal', 'del', 'srl', 'snc', 'sas', 'spa', 'srls', 'the', 'and', 'con', 'per', 'via', 'casa', 'studio', 'centro'])
+const NAME_STOP = new Set([
+  'della', 'dello', 'delle', 'degli', 'dalla', 'dal', 'del', 'srl', 'snc', 'sas', 'spa', 'srls', 'the', 'and', 'con', 'per', 'via', 'casa', 'studio', 'centro',
+  // Parole della categoria (stanno anche nei domini delle agenzie: "hotelwebdesign.it"): non bastano a riconoscere l'azienda.
+  'hotel', 'hotels', 'hostel', 'ostello', 'albergo', 'alberghi', 'residence', 'resort', 'villa', 'agriturismo', 'camping', 'campeggio', 'bed', 'breakfast',
+  'ristorante', 'ristoranti', 'restaurant', 'pizzeria', 'pizzerie', 'trattoria', 'osteria', 'locanda', 'taverna', 'bistrot', 'caffe', 'cafe', 'pasticceria', 'gelateria',
+  'panificio', 'enoteca', 'pub', 'bar', 'farmacia', 'palestra', 'fitness', 'salone', 'parrucchiere', 'parrucchieri', 'estetica', 'beauty', 'negozio', 'bottega',
+  'officina', 'autofficina', 'dentistico', 'dentista', 'medico', 'clinica', 'ambulatorio', 'agenzia', 'immobiliare', 'scuola', 'italia', 'italy', 'group', 'gruppo',
+])
+// Domini di chi fa i siti (agenzie, grafici, hosting): l'email nel fondo pagina e' la loro, non dell'azienda.
+const AGENCY_DOMAIN = /web|design|digital|agency|agenzia|media|marketing|grafic|comunicazione|informatica|software|solution|hosting|sistemi|consulting|seo|social|studiocreativo|creative/i
 
-/** Parole del nome dell'azienda (per riconoscere le sue caselle anche su Gmail). */
+/** Parole del nome dell'azienda che la distinguono (per riconoscere le sue caselle anche su Gmail). */
 export function nameTokens(name: string): string[] {
   return [
     ...new Set(
@@ -70,25 +79,36 @@ export function looksPersonal(email: string, tokens: string[]): boolean {
   return /^[a-z]{2,15}[._-][a-z]{2,20}\d{0,4}$/.test(local) || /^[a-z][._-][a-z]{3,20}\d{0,4}$/.test(local)
 }
 
+/** Dominio di un servizio di posta gratuito o di una piattaforma (Gmail, Booking, Wix…): non e' di un'azienda sola. */
+export const isSharedHost = (host: string) => FREE_MAIL.test(`x@${host}`) || PLATFORM_DOMAIN.test(`x@${host}`)
+
 /**
  * La migliore email pubblica dell'azienda tra quelle trovate, o null: prima quelle del dominio
- * del sito (meglio se di un ruolo, info@…), poi Gmail e simili solo se il nome della casella
- * richiama l'azienda o un ruolo. Mai caselle di persone, di sistema, PEC o di piattaforme.
+ * del sito (meglio se di un ruolo, info@…; un nome proprio da solo, giulia@, solo se non c'e'
+ * altro), poi Gmail e simili solo se il nome della casella richiama l'azienda (non basta un
+ * ruolo: info@gmail.com no), poi altri domini che richiamano l'azienda (mai quelli delle
+ * agenzie). Mai caselle di persone, di sistema, PEC o di piattaforme.
  */
 export function pickBusinessEmail(found: string[], options: { domain: string; name: string }): string | null {
   const tokens = nameTokens(options.name)
-  const clean = [...new Set(found.map((e) => cleanEmail(e)).filter((e): e is string => Boolean(e)))].filter(
-    (e) => !IGNORED_EMAIL.test(e) && !SYSTEM_EMAIL.test(e) && !PLATFORM_DOMAIN.test(e) && !isAutomaticEmail(e) && !looksPersonal(e, tokens)
-  )
+  const all = [...new Set(found.map((e) => cleanEmail(e)).filter((e): e is string => Boolean(e)))]
+  const clean = all.filter((e) => !IGNORED_EMAIL.test(e) && !SYSTEM_EMAIL.test(e) && !PLATFORM_DOMAIN.test(e) && !isAutomaticEmail(e) && !looksPersonal(e, tokens))
+  const local = (e: string) => e.split('@')[0]
+  const role = (e: string) => ROLE_LOCAL.test(local(e))
+  const named = (text: string) => tokens.some((t) => text.includes(t))
   const own = clean.filter((e) => sameSite(e, options.domain))
-  const role = (e: string) => ROLE_LOCAL.test(e.split('@')[0])
-  const named = (e: string) => tokens.some((t) => e.includes(t))
-  if (own.length) return own.find(role) || own[0]
+  if (own.length) {
+    // Un nome proprio da solo (giulia@) e' quasi sempre di una persona: solo se non c'e' altro,
+    // e mai se sulla pagina c'e' anche la sua casella con il cognome (giulia.bianchi@).
+    const personalFirst = new Set(all.filter((e) => looksPersonal(e, tokens)).map((e) => local(e).split(/[._-]/)[0]))
+    const bareName = (e: string) => /^[a-z]{2,15}$/.test(local(e)) && !role(e) && !named(local(e))
+    return own.find(role) || own.find((e) => named(local(e))) || own.find((e) => !bareName(e)) || own.find((e) => !personalFirst.has(local(e))) || null
+  }
   // Fuori dal dominio del sito: solo se il nome della casella o il dominio richiamano l'azienda
   // (le email di altri domini sono spesso dell'agenzia che ha fatto il sito).
-  const free = clean.filter((e) => FREE_MAIL.test(e) && (named(e) || role(e)))
-  if (free.length) return free.find(named) || free[0]
-  return clean.find((e) => !FREE_MAIL.test(e) && named(e.split('@')[1] || '')) || null
+  const free = clean.find((e) => FREE_MAIL.test(e) && named(local(e)))
+  if (free) return free
+  return clean.find((e) => !FREE_MAIL.test(e) && named(e.split('@')[1] || '') && !AGENCY_DOMAIN.test((e.split('@')[1] || '').replace(new RegExp(tokens.join('|') || '^$', 'g'), ''))) || null
 }
 
 export function visibleText(html: string): string {

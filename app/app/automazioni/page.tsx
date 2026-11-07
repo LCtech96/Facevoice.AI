@@ -187,7 +187,7 @@ function AutomationsBoard() {
     if (res?.ok && body) {
       setData(body as Overview)
       setLoadError(null)
-    } else if (res?.status !== 403) setLoadError(body?.error || 'Automazioni non disponibili, riprova.')
+    } else if (res?.status !== 403 || body?.code === 'owner_automations_disabled') setLoadError(body?.error || 'Automazioni non disponibili, riprova.')
   }, [appFetch])
 
   useEffect(() => {
@@ -461,7 +461,11 @@ function AutomationCard({
         {a.running ? (
           <span className="font-medium text-[var(--accent-blue)]">Invio in corso…</span>
         ) : a.done ? (
-          <span className="text-[var(--text-secondary)]">Inviata</span>
+          last && last.sent > 0 ? (
+            <span className="text-[var(--text-secondary)]">Inviata</span>
+          ) : (
+            <span className="font-medium text-[#FF9500]">Non inviata: tocca «Modifica» per scegliere un nuovo orario</span>
+          )
         ) : a.active && a.nextRun ? (
           <>
             <span className="text-[var(--text-secondary)]">Prossimo invio: </span>

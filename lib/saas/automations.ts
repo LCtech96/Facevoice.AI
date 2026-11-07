@@ -37,6 +37,9 @@ export const MAX_SUBJECT = 200
 export const CATCH_UP_MS = 10 * 60_000
 /** Un passaggio del cron che sta inviando tiene l'invio per questo tempo (rinnovato a ogni email). */
 const LEASE_MS = 90_000
+/** Tempo massimo per il testo scritto dall'AI (la presa si rinnova prima, per piu' di questo tempo). */
+const AI_TIMEOUT_MS = 60_000
+const AI_LEASE_MS = AI_TIMEOUT_MS + 60_000
 export const LIMIT_REACHED = `limite di ${AUTOMATIONS_DAILY_LIMIT} al giorno raggiunto`
 const FEATURE = channelFeature('saas_automazioni', 'email')
 
@@ -628,6 +631,56 @@ export function sendError(error: unknown): string {
   return explainMailError(error).replace(/^Collegamento non riuscito: controlla i dati e riprova\.$/, 'invio non riuscito, riprova più tardi')
 }
 
+type MailErrorFields = { code?: unknown; originalCode?: unknown; command?: unknown; responseCode?: unknown; timeoutType?: unknown; message?: unknown }
+const mailFields = (error: unknown) => {
+  const e = (error && typeof error === 'object' ? error : {}) as MailErrorFields
+  return {
+    code: String(e.code || ''),
+    original: String(e.originalCode || ''),
+    command: String(e.command || ''),
+    responseCode: Number(e.responseCode) || 0,
+    timeout: String(e.timeoutType || ''),
+    text: `${String(e.message || error || '')}`,
+  }
+}
+// Comandi SMTP prima del testo dell'email: un errore qui vuol dire che non e' partita.
+const BEFORE_DATA = /^(EHLO|HELO|LHLO|STARTTLS|AUTH\b|MAIL FROM|RCPT TO)/i
+const UNREACHABLE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH/
+
+/**
+ * L'email di sicuro NON e' stata consegnata al server (si puo' riprovare senza mandarla due
+ * volte): casella da ricollegare, accesso rifiutato, server irraggiungibile, rifiuto del server,
+ * errore prima del testo. false se non si sa (tempo scaduto o collegamento caduto durante l'invio).
+ */
+export function surelyNotSent(error: unknown): boolean {
+  const e = mailFields(error)
+  if (/credenziali del collegamento/i.test(e.text)) return true
+  // Il server ha risposto con un rifiuto (4xx/5xx): non l'ha presa.
+  if (e.responseCode >= 400) return true
+  if (['EAUTH', 'ENOAUTH', 'EDNS', 'ETLS', 'EENVELOPE', 'EREQUIRETLS'].includes(e.code)) return true
+  if (e.code === 'ETIMEDOUT' && /CONNECTION|GREETING|DNS/i.test(e.timeout)) return true
+  if (UNREACHABLE.test(`${e.code} ${e.original} ${e.text}`)) return true
+  if (BEFORE_DATA.test(e.command)) return true
+  // Senza codice di rete: errore del nostro lato prima dell'invio (dati della casella, composizione).
+  if (!e.code && !/time ?out|timed out|socket|reset|EPIPE|closed|hang ?up/i.test(e.text)) return true
+  return false
+}
+
+/**
+ * Problema della casella (non di un destinatario): password non accettata, server che non
+ * esiste o non risponde. Inutile provare gli altri destinatari dello stesso invio.
+ */
+export function mailboxDown(error: unknown): boolean {
+  const e = mailFields(error)
+  if (/credenziali del collegamento/i.test(e.text)) return true
+  // Accesso rifiutato (530/534/535, 454 temporaneo) o servizio chiuso (421): vale per tutti i destinatari.
+  if ([421, 454, 530, 534, 535].includes(e.responseCode) || /Invalid login|authentication failed|Username and Password not accepted/i.test(e.text)) return true
+  // Altre risposte del server (es. 550 su un destinatario): riguardano quell'email sola.
+  if (e.responseCode >= 400 && !/^(AUTH|CONN|EHLO|HELO|STARTTLS)/i.test(e.command)) return false
+  if (['EAUTH', 'ENOAUTH', 'ECONNECTION', 'EDNS', 'ETLS', 'ETIMEDOUT', 'ESOCKET'].includes(e.code)) return true
+  return /\b53[45]\b|Invalid login|authentication failed|Username and Password not accepted|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|timeout/i.test(`${e.code} ${e.original} ${e.text}`)
+}
+
 export type SendDeps = {
   /** Invio vero (dalla casella collegata): sostituibile nelle prove. */
   send?: typeof sendNewEmail
@@ -740,7 +793,7 @@ async function claimNext(ctx: Context, horizon: number): Promise<Claim | null> {
         ...a,
         lastSlot: pick.slot.key,
         lastRun: { slot: pick.slot.key, at: iso, sent: 0, failed: 0, skipped: a.recipients.length, note: 'orario saltato: più di 10 minuti di ritardo' },
-        ...(a.schedule.kind === 'once' ? { active: false, done: true } : {}),
+        ...(sameOnce(a, pick.slot.key) ? { active: false, done: true } : {}),
       }
     } else {
       next = {
@@ -792,7 +845,8 @@ async function step(
     const a = current[index]
     if (!a?.run || a.run.slot !== slot) return false
     const now = ctx.now()
-    const run: AutomationRun = { ...a.run, ...fields }
+    // Testo scritto dall'AI: si salva solo se nessun altro passaggio l'ha gia' salvato (allora vale il suo).
+    const run: AutomationRun = { ...a.run, ...(a.run.body ? {} : fields) }
     if (done) run[done.status]++
     const copy = [...current]
     if (release) {
@@ -818,21 +872,24 @@ async function step(
   return out.value
 }
 
+/** Una volta sola, con lo stesso orario dell'invio (se intanto e' stato cambiato, l'automazione resta attiva per il nuovo). */
+const sameOnce = (a: Automation, slot: string) => a.schedule.kind === 'once' && onceSlot(a.schedule)?.key === slot
+
 /** Invio finito: niente piu' presa, riepilogo e (una volta sola) automazione fatta. */
-function finished(a: Automation, now: number, extraSkipped: number, note?: string): Automation {
+function finished(a: Automation, now: number, extraSkipped: number, note?: string, extraFailed = 0): Automation {
   const run = a.run!
   const next: Automation = {
     ...a,
     run: null,
-    lastRun: { slot: run.slot, at: new Date(now).toISOString(), sent: run.sent, failed: run.failed, skipped: run.skipped + extraSkipped, ...(note ? { note } : {}) },
-    ...(a.schedule.kind === 'once' ? { active: false, done: true } : {}),
+    lastRun: { slot: run.slot, at: new Date(now).toISOString(), sent: run.sent, failed: run.failed + extraFailed, skipped: run.skipped + extraSkipped, ...(note ? { note } : {}) },
+    ...(sameOnce(a, run.slot) ? { active: false, done: true } : {}),
   }
   next.nextRun = nextRunAt(next, now)
   return next
 }
 
-/** Chiude l'invio saltando tutti i destinatari rimasti, con il motivo (un solo salvataggio del registro). */
-async function skipRest(ctx: Context, a: Automation, slot: string, reason: string): Promise<void> {
+/** Chiude l'invio saltando tutti i destinatari rimasti, con il motivo (un solo salvataggio del registro). failed: l'ultimo invio non riuscito, da contare. */
+async function skipRest(ctx: Context, a: Automation, slot: string, reason: string, failed = 0): Promise<void> {
   const out: { rest: string[]; subject: string } = { rest: [], subject: a.subject }
   await updateSetting<Automation[]>(listKey(ctx.workspaceId), parseList, (current) => {
     out.rest = []
@@ -842,7 +899,7 @@ async function skipRest(ctx: Context, a: Automation, slot: string, reason: strin
     out.rest = x.run.pending
     out.subject = x.run.subject || x.subject || x.name
     const copy = [...current]
-    copy[index] = finished({ ...x, run: { ...x.run, pending: [] } }, ctx.now(), out.rest.length, reason)
+    copy[index] = finished({ ...x, run: { ...x.run, pending: [] } }, ctx.now(), out.rest.length, reason, failed)
     return copy
   })
   const at = new Date(ctx.now()).toISOString()
@@ -850,6 +907,39 @@ async function skipRest(ctx: Context, a: Automation, slot: string, reason: strin
 }
 
 type Checks = { hidden: boolean; mailbox: Connection | null; fromName: string }
+
+const MAILBOX_RECONNECT = 'casella email da ricollegare'
+
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('tempo scaduto')), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+
+/** Allunga la presa dell'invio (false: l'invio non c'e' piu' o e' di un altro orario). */
+async function renewLease(ctx: Context, id: string, slot: string, ms: number): Promise<boolean> {
+  const out = { ok: false }
+  await updateSetting<Automation[]>(listKey(ctx.workspaceId), parseList, (current) => {
+    out.ok = false
+    const index = current.findIndex((a) => a.id === id)
+    const a = current[index]
+    if (!a?.run || a.run.slot !== slot) return false
+    out.ok = true
+    const copy = [...current]
+    copy[index] = { ...a, run: { ...a.run, lockUntil: Math.max(a.run.lockUntil, ctx.now() + ms) } }
+    return copy
+  })
+  return out.ok
+}
 
 async function processWorkspace(ctx: Context, horizon: number): Promise<number> {
   let sent = 0
@@ -895,6 +985,11 @@ async function executeRun(ctx: Context, a: Automation, slot: Slot, checks: Check
     await skipRest(ctx, a, slot.key, 'nessuna email collegata')
     return 0
   }
+  // Password non accettata (vista dalla lettura della casella): inutile provare, e tanti accessi sbagliati bloccano la casella.
+  if (mailbox.status === 'expired') {
+    await skipRest(ctx, a, slot.key, MAILBOX_RECONNECT)
+    return 0
+  }
   const fields: Partial<Pick<AutomationRun, 'subject' | 'body'>> = {}
   if (a.content.mode === 'ai' && !a.run?.body) {
     if (await workspaceAIBlocked(ctx.workspaceId)) {
@@ -902,7 +997,9 @@ async function executeRun(ctx: Context, a: Automation, slot: Slot, checks: Check
       return 0
     }
     try {
-      const mail = await writeAutomationEmail(ctx.workspaceId, { brief: a.content.brief, subject: a.subject, now: ctx.now() })
+      // La presa dura piu' del tempo massimo dell'AI: un altro passaggio non riscrive il testo nel frattempo.
+      if (!(await renewLease(ctx, a.id, slot.key, AI_LEASE_MS))) return 0
+      const mail = await withTimeout(writeAutomationEmail(ctx.workspaceId, { brief: a.content.brief, subject: a.subject, now: ctx.now() }), AI_TIMEOUT_MS)
       fields.subject = mail.subject
       fields.body = mail.body
     } catch (error) {
@@ -959,7 +1056,14 @@ async function executeRun(ctx: Context, a: Automation, slot: Slot, checks: Check
       await releaseDaily(ctx.workspaceId, ctx.now())
       console.error('automazioni invio:', error instanceof Error ? error.message : error)
       previous = { status: 'failed' }
-      await appendLog(ctx.workspaceId, [{ ...entry, at: at(), status: 'failed', error: sendError(error) }])
+      const reason = sendError(error)
+      await appendLog(ctx.workspaceId, [{ ...entry, at: at(), status: 'failed', error: reason }])
+      // Problema della casella (password, server che non risponde), non del destinatario: ci si ferma
+      // qui, senza un accesso per ogni destinatario rimasto.
+      if (mailboxDown(error)) {
+        await skipRest(ctx, a, slot.key, /password|ricollegare/i.test(reason) ? MAILBOX_RECONNECT : reason, 1)
+        break
+      }
     }
     // Un po' di pausa tra un'email e l'altra (solo se ne restano).
     if (run.pending.length) await sleep(spacing(ctx))
@@ -974,7 +1078,8 @@ export function automationSummary(a: AutomationView | Automation, now = Date.now
     id: a.id,
     nome: a.name,
     attiva: a.active,
-    ...(a.done ? { fatta: true } : {}),
+    // Una volta sola: "fatta" solo se e' partita almeno un'email, altrimenti "non inviata" con il motivo.
+    ...(a.done ? (a.lastRun?.sent ? { fatta: true } : { non_inviata: true, ...(a.lastRun?.note ? { motivo: a.lastRun.note } : {}) }) : {}),
     destinatari: a.recipients,
     oggetto: a.subject || (a.content.mode === 'ai' ? '(lo scrive l’AI)' : ''),
     testo: a.content.mode === 'fixed' ? { tipo: 'fisso', testo: a.content.body.slice(0, 600) } : { tipo: 'scritto dall’AI ogni volta', indicazioni: a.content.brief.slice(0, 600) },

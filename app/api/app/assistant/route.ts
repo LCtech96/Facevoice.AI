@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAssistant } from '@/lib/assistant-access'
-import { automationsAccess } from '@/lib/automations-access'
+import { workspaceAutomationsAccess } from '@/lib/automations-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
@@ -82,8 +82,9 @@ export async function POST(req: NextRequest) {
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < 4 * 60_000) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta un momento.' }, { status: 409 })
   }
-  // Automazioni (email programmate) per chi scrive: senza, l'assistente non ha gli strumenti e lo dice.
-  const automations = await automationsAccess(access.userId)
+  // Automazioni (email programmate, Trova clienti) per chi scrive e per il titolare dello spazio (il cron
+  // invia solo se il titolare le ha): senza, l'assistente non ha gli strumenti e lo dice.
+  const automations = await workspaceAutomationsAccess(access.userId, access.workspace.id)
     .then((a) => a.enabled)
     .catch(() => false)
   const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }

@@ -10,6 +10,7 @@ import {
   prospectsOverview,
   regenerateProspect,
   requestProspectSearch,
+  restoreProspect,
   saveProspectSettings,
   sendProspectNow,
   unblockAddress,
@@ -20,7 +21,7 @@ export const maxDuration = 120
 
 // Trova clienti (pagina Automazioni): GET impostazioni, aziende trovate, bozze e contatori;
 // POST { action } per salvare le impostazioni, "Cerca ora", approvare, modificare, inviare
-// subito, riscrivere, scartare e la lista "Non contattare". Solo per chi ha le automazioni
+// subito, riscrivere, scartare (e ripristinare) e la lista "Non contattare". Solo per chi ha le automazioni
 // attive (lib/automations-access.ts); per cambiare serve il ruolo di amministratore.
 
 const failure = (error: unknown, label: string) => {
@@ -88,8 +89,11 @@ export async function POST(req: NextRequest) {
       case 'discard':
         extra = { prospect: await discardProspect(db, needId()) }
         break
+      case 'restore':
+        extra = { prospect: await restoreProspect(db, needId()) }
+        break
       case 'do_not_contact':
-        extra = body.id ? { prospect: await discardProspect(db, needId(), { block: true }) } : { blocked: await blockAddress(db.workspaceId, String(body.entry ?? '')) }
+        extra = body.id ? { prospect: await discardProspect(db, needId(), { block: true }) } : { blocked: await blockAddress(db.workspaceId, String(body.entry ?? ''), { manual: true }) }
         break
       case 'unblock':
         await unblockAddress(db.workspaceId, String(body.entry ?? ''))
