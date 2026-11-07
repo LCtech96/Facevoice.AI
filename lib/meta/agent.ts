@@ -529,24 +529,32 @@ async function generateReply(
   ])
   const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
 
-  const system = [
-    base,
-    commentRules ? `\n\n${commentRules}` : '',
-    postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
-    outreach ? (outreachRules ? `\n\n${outreachRules}` : '') + outreachFacts(outreach) + strategy : '',
-    funnel ? `\n\n${funnel}` : '',
-    fromComment ? '' : appointmentRules(booked),
-    knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
-    styleExamples,
-    personal ? `\n\n${personal}` : '',
-    clientBlock(contactName, history.filter((m) => m.role === 'assistant').length),
-    instructions !== undefined
-      ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
-      : '',
-    `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
-    CLARITY_RULES,
-    languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
-  ].join('')
+  // Cache dei prompt: prima le istruzioni uguali per tutte le conversazioni (metodo, percorso,
+  // informazioni ufficiali, esempi di stile), poi quello che cambia (post commentato, contatto
+  // cercato, appuntamenti gia' presi, cliente, richiesta dalla Super chat, data e ora) e in fondo
+  // le regole sui messaggi poco chiari e la lingua, come prima.
+  const system = {
+    stable: [
+      base,
+      commentRules ? `\n\n${commentRules}` : '',
+      funnel ? `\n\n${funnel}` : '',
+      knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
+      styleExamples,
+      personal ? `\n\n${personal}` : '',
+    ].join(''),
+    volatile: [
+      postCaption ? `\n\n## Post commentato\n${postCaption}` : '',
+      outreach ? (outreachRules ? `\n\n${outreachRules}` : '') + outreachFacts(outreach) + strategy : '',
+      fromComment ? '' : appointmentRules(booked),
+      clientBlock(contactName, history.filter((m) => m.role === 'assistant').length),
+      instructions !== undefined
+        ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
+        : '',
+      `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+      CLARITY_RULES,
+      languageRule(fromComment ? publicComment! : [...history].reverse().find((m) => m.role === 'user')?.content),
+    ].join(''),
+  }
 
   try {
     const result = await callAI(history, system, {

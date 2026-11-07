@@ -192,16 +192,19 @@ export async function handleSiteMessage(
     : [...clientHistory.slice(-HISTORY_LIMIT), { role: 'user', content: text }]
 
   const knowledge = await loadKnowledge().catch(() => '')
-  const system = [
-    await sectionText(SITE_PROMPT),
-    knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
-    contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
-    language !== 'it'
-      ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
-      : '',
-    `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
-    CLARITY_RULES,
-  ].join('')
+  // Cache dei prompt: istruzioni e informazioni ufficiali (uguali per tutti i visitatori) in testa,
+  // poi quello che cambia (nome, lingua, data e ora) e le regole sui messaggi poco chiari, come prima.
+  const system = {
+    stable: [await sectionText(SITE_PROMPT), knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : ''].join(''),
+    volatile: [
+      contactName ? `\n\n## Utente\nSi chiama ${contactName}.` : '',
+      language !== 'it'
+        ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
+        : '',
+      `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
+      CLARITY_RULES,
+    ].join(''),
+  }
 
   let raw = ''
   try {

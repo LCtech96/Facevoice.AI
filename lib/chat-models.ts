@@ -50,11 +50,12 @@ export const CHAT_MODELS: ChatModel[] = [
     pricing: { input: 2, output: 10 },
   },
   {
-    id: 'claude-haiku-4-5',
-    name: 'Claude Haiku 4.5',
+    id: 'claude-haiku-5-5',
+    name: 'Claude Haiku 5.5',
     provider: 'anthropic',
     description: "Il più economico e rapido. Per domande brevi.",
-    pricing: { input: 1, output: 5 },
+    // Prompt fino a 100K token; oltre vale LONG_PROMPT_PRICING (vedi calculateCostUsd).
+    pricing: { input: 0.1, output: 0.5 },
   },
   {
     id: 'gemini-3.6-flash',
@@ -83,6 +84,23 @@ export function getChatModel(modelId: string): ChatModel | undefined {
   return CHAT_MODELS.find((m) => m.id === modelId)
 }
 
+/**
+ * Modelli tolti dal menu ma ancora da conteggiare: le righe di consumo vecchie e la riprova con
+ * Haiku 4.5 quando Haiku 5.5 rifiuta una richiesta (lib/claude.ts, refusalRetryModel).
+ */
+const RETIRED_MODELS: Record<string, { name: string; pricing: ModelPricing }> = {
+  'claude-haiku-4-5': { name: 'Claude Haiku 4.5', pricing: { input: 1, output: 5 } },
+}
+
+/** Haiku 5.5: con un prompt oltre 100K token (cache compresa) si paga la tariffa piu' alta su tutta la richiesta. */
+const LONG_PROMPT_PRICING: Record<string, { from: number; pricing: ModelPricing }> = {
+  'claude-haiku-5-5': { from: 100_000, pricing: { input: 0.5, output: 2.5 } },
+}
+
+/** Modello ritirato per id, anche con la data in fondo (es. "claude-haiku-4-5-20251001"). */
+const retiredModel = (modelId: string) =>
+  RETIRED_MODELS[Object.keys(RETIRED_MODELS).find((id) => modelId.startsWith(id)) || '']
+
 export function getModelProvider(modelId: string): ChatProvider {
   return getChatModel(modelId)?.provider ?? 'anthropic'
 }
@@ -103,10 +121,21 @@ const LEGACY_MODEL_MAP: Record<string, string> = {
   'gemini-flash-latest': 'gemini-3.6-flash',
   'llama-3.1-8b-instant': 'gemini-3.6-flash',
   'llama-3.3-70b-versatile': 'gemini-3.6-flash',
+  'claude-haiku-4-5': 'claude-haiku-5-5',
+}
+
+/**
+ * Id attuale di un modello salvato (es. tra i modelli disattivati per un utente): un Claude
+ * ritirato passa al successore, gli altri id restano come sono.
+ */
+export function currentChatModelId(modelId: string): string {
+  if (CHAT_MODELS.some((m) => m.id === modelId)) return modelId
+  const next = LEGACY_MODEL_MAP[modelId]
+  return next && next.startsWith('claude-') ? next : modelId
 }
 
 export function getChatModelName(modelId: string): string {
-  return CHAT_MODELS.find((m) => m.id === modelId)?.name ?? modelId
+  return CHAT_MODELS.find((m) => m.id === modelId)?.name ?? retiredModel(modelId)?.name ?? modelId
 }
 
 export function resolveChatModel(model?: string | null): string {
@@ -130,8 +159,12 @@ export function calculateCostUsd(
     cache_read_input_tokens?: number
   }
 ): number {
-  const pricing = getChatModel(model)?.pricing
-  if (!pricing) return 0
+  const base = getChatModel(model)?.pricing ?? retiredModel(model)?.pricing
+  if (!base) return 0
+  const prompt =
+    usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0)
+  const long = LONG_PROMPT_PRICING[model]
+  const pricing = long && prompt > long.from ? long.pricing : base
 
   const perToken = (millionPrice: number) => millionPrice / 1_000_000
 

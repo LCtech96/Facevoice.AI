@@ -787,6 +787,8 @@ export async function runAssistant(
       feature: 'assistente_clienti',
       temperature: 0.2,
       maxOutputTokens: 2000,
+      // Passi della stessa richiesta: istruzioni e passi gia' fatti si rileggono dalla cache (Claude).
+      cache: true,
     })
     const raw = response.message || ''
     const call = parseStep(raw)

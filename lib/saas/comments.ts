@@ -230,29 +230,38 @@ export async function respondToComment(db: WorkspaceDb, commentRowId: string, op
   const general = instructions.general.trim()
   const specific = (instructions[platform as InstructionChannel] || '').trim()
   const hasInstructions = campaign ? true : Boolean(general || specific)
-  const system = [
-    lang.source === 'dashboard'
-      ? `LINGUA DELLA RISPOSTA (regola principale): scrivi la risposta in ${lang.language}.`
-      : `LINGUA DELLA RISPOSTA (regola principale): il commento è in ${lang.language}. Scrivi TUTTA la risposta in ${lang.language}, anche se le istruzioni sono in un'altra lingua.`,
-    `Rispondi ai commenti dei post di "${name}" su ${platform === 'instagram' ? 'Instagram' : 'Facebook'}, come farebbe una persona dello staff.`,
-    COMMENT_STYLE,
-    comment.subject ? `## Il post commentato\nDidascalia: "${comment.subject}"` : '',
-    comment.contact_name ? `Ha commentato "${comment.contact_name}".` : '',
-    // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
-    ...(campaign
-      ? [campaignSection(campaign, platform, 'comment')]
-      : [
-          `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
-          specific ? `## Istruzioni per questo canale\n${specific}` : '',
-          hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
-        ]),
-    corrections,
-    salesRules(name),
-    buildRealtimeDateTimeInstructionsItalian(),
-    RULES,
-  ]
-    .filter(Boolean)
-    .join('\n\n')
+  // Cache dei prompt: prima la parte uguale per tutti i commenti dello spazio (lingua, istruzioni,
+  // metodo), poi quella che cambia a ogni commento (post, autore, regole vicine al commento, data
+  // e ora) e le regole fisse in fondo, come prima.
+  const system = {
+    stable: [
+      lang.source === 'dashboard'
+        ? `LINGUA DELLA RISPOSTA (regola principale): scrivi la risposta in ${lang.language}.`
+        : `LINGUA DELLA RISPOSTA (regola principale): il commento è in ${lang.language}. Scrivi TUTTA la risposta in ${lang.language}, anche se le istruzioni sono in un'altra lingua.`,
+      `Rispondi ai commenti dei post di "${name}" su ${platform === 'instagram' ? 'Instagram' : 'Facebook'}, come farebbe una persona dello staff.`,
+      COMMENT_STYLE,
+      // Campagna: al posto delle Istruzioni (generali e del canale), nello stesso punto.
+      ...(campaign
+        ? [campaignSection(campaign, platform, 'comment')]
+        : [
+            `## Istruzioni dell'attività\n${general || '(nessuna istruzione generale)'}`,
+            specific ? `## Istruzioni per questo canale\n${specific}` : '',
+            hasInstructions ? '' : 'Non hai istruzioni: resta generico e cordiale, senza dare informazioni che non conosci.',
+          ]),
+      salesRules(name),
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+    volatile: [
+      comment.subject ? `## Il post commentato\nDidascalia: "${comment.subject}"` : '',
+      comment.contact_name ? `Ha commentato "${comment.contact_name}".` : '',
+      corrections,
+      buildRealtimeDateTimeInstructionsItalian(),
+      RULES,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  }
 
   let draft: string
   try {
