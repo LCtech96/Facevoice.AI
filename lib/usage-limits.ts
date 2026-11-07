@@ -247,6 +247,8 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   // Trova clienti: ricerche pensate e prime email scritte dall'AI, richieste a Google Maps (lib/saas/prospects.ts, lib/saas/places.ts).
   saas_trova_clienti: 'prospecting',
   saas_trova_clienti_maps: 'prospecting',
+  // Documenti scritti dall'Assistente (contratti, preventivi, lettere: lib/saas/documents.ts).
+  saas_documenti: 'assistant',
   // Funzioni dello spazio Facevoice (se compaiono in uno spazio cliente).
   chat_sito: 'web',
   risposte_email: 'email',
@@ -810,6 +812,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   saas_automazioni: 'Automazioni',
   saas_trova_clienti: 'Trova clienti: ricerche e email',
   saas_trova_clienti_maps: 'Trova clienti: Google Maps',
+  saas_documenti: 'Documenti (Assistente)',
   chat_sito: 'Chat del sito',
   risposte_email: 'Risposte email',
   risposte_social: 'Risposte social',

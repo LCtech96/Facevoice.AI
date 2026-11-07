@@ -101,6 +101,18 @@ export function parseToolStep(raw: string): ToolStep | null {
   return null
 }
 
+/**
+ * Il primo oggetto JSON della risposta che passa il controllo (es. il documento dell'AI),
+ * anche con testo prima o dopo, blocchi ```json o virgole in piu'; altrimenti null.
+ */
+export function parseJsonObject(raw: string, accept: (value: Record<string, unknown>) => boolean = () => true): Record<string, unknown> | null {
+  for (const span of balancedSpans(raw || '', 40)) {
+    const value = parseLoose(span)
+    if (isObject(value) && accept(value)) return value
+  }
+  return null
+}
+
 /** La risposta sembra un tentativo di chiamare uno strumento (da non mostrare al cliente). */
 export function looksLikeToolCall(raw: string): boolean {
   return /<\/?(function_calls|function_call|tool_call|tool_use|invoke)\b|"tool"\s*:|"tool_name"\s*:|"arguments"\s*:/i.test(raw || '')

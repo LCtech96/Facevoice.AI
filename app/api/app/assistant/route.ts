@@ -4,6 +4,7 @@ import { workspaceAutomationsAccess } from '@/lib/automations-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
+import { refreshAssistantCards } from '@/lib/saas/assistant-actions'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +15,8 @@ export const maxDuration = 300
 // caricate (POST), nuova conversazione (DELETE: le altre restano salvate).
 // Solo per chi ha l'assistente attivo (lo accende Facevoice: lib/assistant-access.ts). Con le
 // Automazioni attive per la persona (lib/automations-access.ts) programma anche le email.
+// Le schede di conferma (azioni che escono dalla chat) e dei documenti si aggiornano a ogni
+// apertura: stato vero dell'azione (in attesa, inviata, scartata, scaduta) e versioni salvate.
 
 export async function GET(req: NextRequest) {
   const access = await requireAssistant(req)
@@ -53,7 +56,7 @@ export async function GET(req: NextRequest) {
   } else {
     chatId = (await loadChatIndex(ws, access.userId)).current
   }
-  const turns = await refreshPostActions(access.db, await loadChat(ws, access.userId, chatId))
+  const turns = await refreshPostActions(access.db, await refreshAssistantCards(ws, await loadChat(ws, access.userId, chatId)))
   return NextResponse.json({ turns, chatId })
 }
 
@@ -77,7 +80,8 @@ export async function POST(req: NextRequest) {
 
   // Chat aperta nella pagina: le risposte vanno li' anche se intanto se n'e' aperta un'altra.
   const chatId = typeof body.chatId === 'string' ? body.chatId : (await loadChatIndex(access.workspace.id, access.userId)).current
-  const history = await loadChat(access.workspace.id, access.userId, chatId)
+  // Schede con lo stato di adesso: l'AI sa cosa e' stato confermato, scartato o e' ancora in attesa.
+  const history = await refreshAssistantCards(access.workspace.id, await loadChat(access.workspace.id, access.userId, chatId))
   const last = history[history.length - 1]
   if (last?.role === 'user' && Date.now() - new Date(last.at).getTime() < 4 * 60_000) {
     return NextResponse.json({ error: 'Sto ancora lavorando alla richiesta precedente: aspetta un momento.' }, { status: 409 })
@@ -103,7 +107,7 @@ export async function POST(req: NextRequest) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
-      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions, { automations })
+      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions, { automations, chatId })
     })
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {
@@ -120,7 +124,7 @@ export async function POST(req: NextRequest) {
   }
   const turns = [...history, userTurn, reply]
   await saveChat(access.workspace.id, access.userId, turns, chatId)
-  return NextResponse.json({ turns: await refreshPostActions(access.db, turns), chatId, ...(blocked ? { blocked: true } : {}) })
+  return NextResponse.json({ turns: await refreshPostActions(access.db, await refreshAssistantCards(access.workspace.id, turns)), chatId, ...(blocked ? { blocked: true } : {}) })
 }
 
 export async function DELETE(req: NextRequest) {

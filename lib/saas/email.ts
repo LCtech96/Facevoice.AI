@@ -294,7 +294,7 @@ export async function syncMailbox(db: WorkspaceDb, connection: Connection): Prom
 /** Invia una risposta nello stesso filo della conversazione. */
 export async function sendEmailReply(
   connection: Connection,
-  input: { to: string; subject: string | null; inReplyTo: string | null; text: string; fromName: string | null }
+  input: { to: string; subject: string | null; inReplyTo: string | null; text: string; fromName: string | null; attachments?: MailAttachment[] }
 ): Promise<{ messageId: string }> {
   const base = (input.subject || '').trim()
   const subject = !base ? 'La nostra risposta' : /^re:/i.test(base) ? base : `Re: ${base}`
@@ -306,8 +306,12 @@ export async function sendEmailReply(
     fromName: input.fromName,
     inReplyTo: reference,
     references: reference ? [reference] : undefined,
+    attachments: input.attachments,
   })
 }
+
+/** File allegato (es. il PDF di un documento dell'Assistente, inviato dopo la conferma del titolare). */
+export type MailAttachment = { filename: string; content: Buffer; contentType: string }
 
 /**
  * Email nuova (non una risposta) dalla casella collegata dal cliente, a UN solo
@@ -325,7 +329,7 @@ export async function sendNewEmail(
 /** Compone e invia dalla casella collegata (un destinatario), poi salva la copia in "Inviata". */
 async function sendFromMailbox(
   connection: Connection,
-  input: { to: string; subject: string; text: string; fromName: string | null; inReplyTo?: string; references?: string[] }
+  input: { to: string; subject: string; text: string; fromName: string | null; inReplyTo?: string; references?: string[]; attachments?: MailAttachment[] }
 ): Promise<{ messageId: string }> {
   const secret = await readConnectionSecret<EmailSecret>(connection.id)
   const meta = (connection.meta || {}) as EmailMeta
@@ -336,6 +340,7 @@ async function sendFromMailbox(
     text: input.text,
     inReplyTo: input.inReplyTo,
     references: input.references,
+    ...(input.attachments?.length ? { attachments: input.attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })) } : {}),
   }
   const node = new MailComposer(mail).compile()
   const raw = await node.build()

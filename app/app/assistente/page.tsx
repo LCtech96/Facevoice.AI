@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Facebook, History, Lock, Mail, MessageCircle, Pause, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Search, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { AlertTriangle, ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Facebook, FileText, History, Lock, Mail, MessageCircle, Pause, Pencil, Scissors, ImagePlus, Instagram, Loader2, Mic, Plus, Search, Send, ShieldCheck, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
@@ -15,6 +15,10 @@ const MODEL_KEY = 'fv_app_assistant_model'
 // Assistente AI dell'area clienti: chat (anche a voce) con le foto allegate.
 // Crea i post, modifica le immagini, li programma a giorno e ora o li pubblica
 // subito su Instagram e Facebook, e risponde su messaggi e commenti ricevuti.
+// Scrive documenti (contratti, preventivi, lettere) dalla conversazione con una persona:
+// scheda con «Apri PDF» e «Scarica». Doppia autorizzazione: tutto quello che esce dalla
+// chat (messaggi, pubblicazioni, email programmate…) compare in una scheda e parte solo
+// con «Accetta e invia» (o «Conferma»); «Scarta» non manda niente.
 // Solo per chi ce l'ha attivo (lo accende Facevoice dal suo pannello): agli altri
 // la pagina dice come chiederlo, su WhatsApp.
 
@@ -62,7 +66,45 @@ type ProspectAction = {
   at: string
   prospect: { name: string; id?: string; email?: string | null; subject?: string | null; count?: number; note?: string }
 }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction
+/** Documento scritto dall'assistente (contratto, preventivo, lettera…): PDF da aprire o scaricare. */
+type DocumentAction = {
+  kind: 'document'
+  at: string
+  document: {
+    id: string
+    kind: 'contratto' | 'preventivo' | 'accordo' | 'lettera' | 'altro'
+    title: string
+    about: { platform: string; contactId: string; name: string } | null
+    version: number
+    pages: number
+    placeholders: string[]
+    versions?: { n: number; at: string; pages: number }[]
+    missing?: boolean
+  }
+}
+/** Azione preparata dall'assistente che parte solo con il clic (doppia autorizzazione). */
+type PendingAction = {
+  kind: 'pending'
+  at: string
+  pending: {
+    id: string
+    kind: string
+    title: string
+    lines: string[]
+    text?: string
+    subject?: string
+    editable?: boolean
+    confirmLabel: string
+    doneLabel: string
+    contact?: { platform: string; contactId: string; name: string }
+    document?: { id: string; version: number; title: string; pages: number }
+    status: 'pending' | 'running' | 'done' | 'failed' | 'discarded' | 'expired' | 'unconfirmed'
+    createdAt: string
+    expiresAt: string
+    outcome?: string
+  }
+}
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction | DocumentAction | PendingAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
 type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
@@ -73,6 +115,7 @@ const EXAMPLES = [
   'Rendi più luminosa questa foto e mettila in un post',
   'Programma il post per giovedì alle 18:30',
   'Che proposte di collaborazione abbiamo ricevuto oggi?',
+  'Preparami il contratto per la collaborazione di cui ho parlato con Giusy su Instagram',
 ]
 
 const STATUS: Record<Post['status'], string> = {
@@ -367,7 +410,11 @@ function AssistantChat() {
                 <div className="min-w-0 flex-1">
                   <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{turn.text}</p>
                   {turn.actions?.map((action, k) =>
-                    action.kind === 'message' ? (
+                    action.kind === 'pending' ? (
+                      <ConfirmCard key={`c${action.pending.id}`} action={action} canManage={canManage} chatBusy={busy} onTurns={setTurns} onReload={load} />
+                    ) : action.kind === 'document' ? (
+                      <DocumentCard key={`d${k}`} action={action} />
+                    ) : action.kind === 'message' ? (
                       <SentMessageCard key={`m${k}`} action={action} />
                     ) : action.kind === 'automation' ? (
                       <AutomationActionCard key={`a${k}`} action={action} />
@@ -1296,6 +1343,366 @@ function AutomationActionCard({ action }: { action: AutomationAction }) {
       <Link href="/app/automazioni" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-blue)]">
         <Zap className="h-4 w-4" /> Apri le Automazioni
       </Link>
+    </div>
+  )
+}
+
+const DOC_KIND_NAMES: Record<DocumentAction['document']['kind'], string> = { contratto: 'Contratto', preventivo: 'Preventivo', accordo: 'Accordo', lettera: 'Lettera', altro: 'Documento' }
+const DOC_DISCLAIMER = 'Non sono un avvocato e non posso garantire che il documento sia corretto o valido: fallo controllare da un professionista prima di firmarlo o inviarlo.'
+
+/** Nome del file dal server (Content-Disposition), altrimenti dal titolo. */
+function fileNameFrom(res: Response, title: string): string {
+  const match = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)
+  if (match) return match[1]
+  return `${title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'documento'}.pdf`
+}
+
+/**
+ * App aperta dalla schermata Home (iPhone «Aggiungi alla schermata Home»): le schede nuove si aprono
+ * fuori dall'app e non vedono i file creati qui (un blob: resterebbe una pagina bianca).
+ */
+function isStandalone(): boolean {
+  try {
+    return window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true
+  } catch {
+    return false
+  }
+}
+
+/** Salva il file con il nome giusto (link con download), senza lasciare la pagina. */
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
+}
+
+/**
+ * Foglio di condivisione con il PDF (su iPhone: anteprima, Stampa, Salva su File...). share() parte
+ * subito, nel tocco: "blocked" se il telefono vuole un tocco nuovo, "unsupported" se non si puo'.
+ */
+async function sharePdf(file: File, title: string): Promise<'shared' | 'cancelled' | 'blocked' | 'unsupported'> {
+  try {
+    if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function' || !navigator.canShare({ files: [file] })) return 'unsupported'
+    await navigator.share({ files: [file], title })
+    return 'shared'
+  } catch (error) {
+    const name = (error as Error)?.name
+    return name === 'AbortError' ? 'cancelled' : name === 'NotAllowedError' ? 'blocked' : 'unsupported'
+  }
+}
+
+/**
+ * Documento scritto dall'assistente: titolo, tipo, da quale conversazione viene, pagine, parti
+ * da completare, «Apri PDF» (nuova scheda: su iPhone il visore PDF con condividi, stampa e salva;
+ * nell'app aperta dalla schermata Home il foglio di condivisione con il PDF) e «Scarica».
+ * Il PDF arriva dalla rotta protetta (con il token): mai un link pubblico.
+ */
+function DocumentCard({ action }: { action: DocumentAction }) {
+  const { appFetch } = useWorkspace()
+  const d = action.document
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  /** PDF gia' scaricato che il telefono vuole aprire con un tocco nuovo (app dalla schermata Home). */
+  const [ready, setReady] = useState<File | null>(null)
+  const older = (d.versions || []).filter((v) => v.n !== d.version).sort((a, b) => b.n - a.n)
+  const latest = Math.max(d.version, ...(d.versions || []).map((v) => v.n))
+
+  /** Condivide il PDF; se non si puo' lo salva. Mai la pagina dell'app sostituita dal PDF. */
+  const shareOrSave = async (file: File) => {
+    const shared = await sharePdf(file, d.title)
+    if (shared === 'blocked') {
+      setReady(file)
+      return
+    }
+    setReady(null)
+    if (shared === 'unsupported') saveBlob(file, file.name)
+  }
+
+  const openPdf = async (version: number, download: boolean) => {
+    if (busy) return
+    setError(null)
+    setReady(null)
+    const standalone = isStandalone()
+    // La nuova scheda si apre subito (nel tocco), il PDF ci arriva appena pronto: cosi' il telefono non la blocca.
+    const win = download || standalone ? null : window.open('', '_blank')
+    setBusy(`${version}:${download ? 'd' : 'o'}`)
+    const res = await appFetch(`/api/app/assistant/documents?id=${encodeURIComponent(d.id)}&v=${version}${download ? '&download=1' : ''}`).catch(() => null)
+    if (!res?.ok) {
+      win?.close()
+      setBusy(null)
+      const data = res ? await res.json().catch(() => null) : null
+      setError(data?.error || 'PDF non disponibile, riprova.')
+      return
+    }
+    const name = fileNameFrom(res, d.title)
+    const blob = new Blob([await res.blob()], { type: 'application/pdf' })
+    if (standalone) {
+      // App dalla schermata Home: foglio di condivisione con il PDF (anteprima, stampa, salva), altrimenti si salva.
+      await shareOrSave(new File([blob], name, { type: 'application/pdf' }))
+    } else if (download || !win) {
+      // Scarica, oppure la nuova scheda e' stata bloccata: si salva il file (la chat resta aperta).
+      saveBlob(blob, name)
+    } else {
+      const url = URL.createObjectURL(blob)
+      win.location.href = url
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
+    }
+    setBusy(null)
+  }
+
+  const Icon = d.about ? CHANNEL_ICONS[d.about.platform] || MessageCircle : null
+  return (
+    <div className="mt-3 w-full max-w-md rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-blue)]/15">
+          <FileText className="h-5 w-5 text-[var(--accent-blue)]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p translate="no" className="break-words text-sm font-semibold">
+            {d.title}
+          </p>
+          <p className="text-xs text-[var(--text-secondary)]">
+            {DOC_KIND_NAMES[d.kind] || 'Documento'} · {d.pages} {d.pages === 1 ? 'pagina' : 'pagine'}
+            {latest > 1 ? ` · versione ${d.version}` : ''}
+          </p>
+        </div>
+      </div>
+      {d.missing ? (
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">Documento non più disponibile.</p>
+      ) : (
+        <>
+          {d.about && Icon ? (
+            <Link
+              href={`/app/omnichat?${new URLSearchParams({ platform: d.about.platform, contact: d.about.contactId })}`}
+              className="mt-2 inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--text-secondary)]"
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">
+                Dalla conversazione con <span translate="no" className="font-medium text-[var(--text-primary)]">{d.about.name}</span> su {CHANNEL_NAMES[d.about.platform] || d.about.platform}
+              </span>
+            </Link>
+          ) : null}
+          {d.version < latest ? <p className="mt-1 text-xs text-[#FF9500]">C’è una versione più nuova più sotto.</p> : null}
+          {d.placeholders.length > 0 && (
+            <div className="mt-2 rounded-xl bg-[#FF9500]/10 px-3 py-2 text-xs">
+              <p className="font-semibold text-[var(--text-primary)]">Da completare prima di firmare:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--text-secondary)]">
+                {d.placeholders.slice(0, 6).map((p) => (
+                  <li key={p} className="break-words">
+                    {p.replace(/^\[DA COMPLETARE:?\s*|\]$/g, '')}
+                  </li>
+                ))}
+                {d.placeholders.length > 6 ? <li>e altre {d.placeholders.length - 6}</li> : null}
+              </ul>
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => openPdf(d.version, false)}
+              disabled={busy !== null}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {busy === `${d.version}:o` ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />} Apri PDF
+            </button>
+            <button
+              onClick={() => openPdf(d.version, true)}
+              disabled={busy !== null}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--background)] px-4 py-2 text-sm disabled:opacity-50"
+            >
+              {busy === `${d.version}:d` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Scarica
+            </button>
+          </div>
+          {older.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+              <History className="h-3.5 w-3.5" /> Altre versioni:
+              {older.slice(0, 6).map((v) => (
+                <button
+                  key={v.n}
+                  onClick={() => openPdf(v.n, false)}
+                  disabled={busy !== null}
+                  className="rounded-full border border-[var(--border-color)] px-2 py-0.5 disabled:opacity-50"
+                >
+                  {busy === `${v.n}:o` ? <Loader2 className="inline h-3 w-3 animate-spin" /> : null} v{v.n}
+                </button>
+              ))}
+            </div>
+          )}
+          {ready ? (
+            <button
+              onClick={() => void shareOrSave(ready)}
+              className="mt-2 inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white"
+            >
+              <FileText className="h-4 w-4" /> PDF pronto: tocca per aprirlo
+            </button>
+          ) : null}
+          <p className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--text-secondary)]">
+            <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-[#FF9500]" /> {DOC_DISCLAIMER}
+          </p>
+          {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
+const PENDING_STATUS: Record<Exclude<PendingAction['pending']['status'], 'pending' | 'done'>, string> = {
+  running: 'In corso…',
+  failed: 'Non riuscito',
+  discarded: 'Scartato: non è partito niente',
+  expired: 'Scaduto: non è partito niente. Chiedimelo di nuovo se ti serve.',
+  unconfirmed: 'Esito non confermato: controlla prima di riprovare.',
+}
+
+/**
+ * Scheda di conferma: il contenuto esatto (per chi, canale, testo, orario) e due pulsanti.
+ * Solo «Accetta e invia» / «Conferma» fa partire l'azione (una volta sola); «Scarta» non
+ * manda niente e l'assistente chiede cosa serve invece. Il testo dei messaggi si può correggere.
+ */
+function ConfirmCard({
+  action,
+  canManage,
+  chatBusy,
+  onTurns,
+  onReload,
+}: {
+  action: PendingAction
+  canManage: boolean
+  chatBusy: boolean
+  onTurns: (turns: Turn[]) => void
+  onReload: () => Promise<Turn[]>
+}) {
+  const { appFetch } = useWorkspace()
+  const p = action.pending
+  const [text, setText] = useState(p.text || '')
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState<'confirm' | 'discard' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setText(p.text || '')
+  }, [p.text])
+  const open = p.status === 'pending'
+
+  const act = async (op: 'confirm' | 'discard') => {
+    if (busy || chatBusy) return
+    if (op === 'confirm' && p.editable && !text.trim()) {
+      setError('Il testo è vuoto.')
+      return
+    }
+    setBusy(op)
+    setError(null)
+    const res = await appFetch('/api/app/assistant/actions', {
+      method: 'POST',
+      body: JSON.stringify({ id: p.id, op, ...(op === 'confirm' && p.editable && text !== (p.text || '') ? { text } : {}) }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setBusy(null)
+    if (data?.turns) onTurns(data.turns)
+    if (!res) {
+      // Connessione caduta: il server puo' aver eseguito lo stesso (mai due volte). Si rilegge la chat.
+      setError('Connessione interrotta: controllo l’esito…')
+      await onReload()
+      setError(null)
+      return
+    }
+    if (!res.ok) setError(data?.error || 'Non riuscito, riprova.')
+    else setEditing(false)
+  }
+
+  const border = open ? 'border-[var(--accent-blue)]' : p.status === 'done' ? 'border-[#34C759]/50' : p.status === 'failed' ? 'border-[#FF3B30]/50' : 'border-[var(--border-color)]'
+  return (
+    <div className={`mt-3 w-full max-w-md rounded-2xl border ${border} bg-[var(--background-secondary)] p-3`}>
+      <p className="flex items-start gap-2 text-sm font-semibold">
+        {p.status === 'done' ? (
+          <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#34C759]" />
+        ) : p.status === 'failed' ? (
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#FF3B30]" />
+        ) : (
+          <ShieldCheck className={`mt-0.5 h-4 w-4 shrink-0 ${open ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'}`} />
+        )}
+        <span translate="no" className="min-w-0 break-words">
+          {p.title}
+        </span>
+      </p>
+      {open && <p className="mt-0.5 pl-6 text-xs text-[var(--text-secondary)]">Da confermare: non è ancora partito niente.</p>}
+      {p.lines.length > 0 && (
+        <div className="mt-2 space-y-0.5 text-xs text-[var(--text-secondary)]">
+          {p.lines.map((line, k) => (
+            <p key={k} className="break-words">
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
+      {p.subject ? (
+        <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
+          Oggetto: <span translate="no" className="text-[var(--text-primary)]">{p.subject}</span>
+        </p>
+      ) : null}
+      {p.text !== undefined &&
+        (editing && open ? (
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={Math.min(10, Math.max(3, text.split('\n').length + 1))}
+            className="mt-2 w-full rounded-xl border border-[var(--accent-blue)] bg-[var(--background)] px-3 py-2 text-sm"
+          />
+        ) : (
+          <p translate="no" className={`mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm ${p.kind === 'send_message' || p.kind === 'send_document' ? 'bg-[var(--accent-blue)] text-white' : 'bg-[var(--background)]'}`}>
+            {open ? text : p.text}
+          </p>
+        ))}
+      {p.document ? (
+        <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+          <FileText className="h-3.5 w-3.5" /> PDF allegato: <span translate="no">{p.document.title}</span> (v{p.document.version})
+        </p>
+      ) : null}
+      {open && canManage ? (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => act('confirm')}
+              disabled={busy !== null || chatBusy}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {busy === 'confirm' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {p.confirmLabel}
+            </button>
+            <button
+              onClick={() => act('discard')}
+              disabled={busy !== null || chatBusy}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--background)] px-4 py-2 text-sm disabled:opacity-50"
+            >
+              {busy === 'discard' ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Scarta
+            </button>
+            {p.editable && !editing && (
+              <button onClick={() => setEditing(true)} disabled={busy !== null} className="ml-auto inline-flex items-center gap-1 p-1 text-xs text-[var(--text-secondary)]">
+                <Pencil className="h-3.5 w-3.5" /> Modifica testo
+              </button>
+            )}
+          </div>
+          {chatBusy && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Aspetta la risposta in corso, poi conferma.</p>}
+          <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+            Valida fino a {new Date(p.expiresAt).toLocaleString('it-IT', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.
+          </p>
+        </>
+      ) : open ? (
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">Può confermarla solo chi l’ha chiesta.</p>
+      ) : p.status === 'done' ? (
+        <p className="mt-2 text-sm font-semibold text-[#34C759]">
+          {p.doneLabel} ✓{p.outcome ? <span className="block text-xs font-normal text-[var(--text-secondary)]">{p.outcome}</span> : null}
+        </p>
+      ) : (
+        <p className={`mt-2 text-xs ${p.status === 'failed' ? 'text-[#FF3B30]' : 'text-[var(--text-secondary)]'}`}>
+          {p.status === 'running' ? <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" /> : null}
+          {PENDING_STATUS[p.status as keyof typeof PENDING_STATUS]}
+          {p.status === 'failed' && p.outcome ? `: ${p.outcome.replace(/^Non è partito niente:\s*/, '')}` : ''}
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
     </div>
   )
 }

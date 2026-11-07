@@ -477,6 +477,32 @@ export async function createAutomation(
   options: { origin?: 'page' | 'assistant'; now?: number } = {}
 ): Promise<SavedAutomation> {
   const now = options.now ?? Date.now()
+  const { automation, mailbox } = await buildAutomation(db, userId, input, options.origin || 'page', now)
+  const out = { full: false }
+  const list = await updateSetting<Automation[]>(listKey(db.workspaceId), parseList, (current) => {
+    out.full = current.length >= MAX_AUTOMATIONS
+    return out.full ? false : [...current, automation]
+  })
+  if (out.full) throw new AutomationError(`Hai già ${MAX_AUTOMATIONS} automazioni: cancellane qualcuna prima.`)
+  const used = (await readDayCount(db.workspaceId, now).catch(() => ({ used: 0 }))).used
+  return { automation: viewOf(automation, now), warning: capacityWarning(list, now, used), mailbox: mailbox.external_id }
+}
+
+/**
+ * Stessi controlli di createAutomation, senza salvare niente: la scheda "Conferma"
+ * dell'Assistente mostra cosa verra' programmato (si salva solo dopo il clic).
+ */
+export async function previewAutomation(db: WorkspaceDb, userId: string, input: AutomationInput, options: { now?: number } = {}): Promise<SavedAutomation> {
+  const now = options.now ?? Date.now()
+  const { automation, mailbox } = await buildAutomation(db, userId, input, 'assistant', now)
+  const list = await loadAutomations(db.workspaceId)
+  if (list.length >= MAX_AUTOMATIONS) throw new AutomationError(`Hai già ${MAX_AUTOMATIONS} automazioni: cancellane qualcuna prima.`)
+  const used = (await readDayCount(db.workspaceId, now).catch(() => ({ used: 0 }))).used
+  return { automation: viewOf(automation, now), warning: capacityWarning([...list, automation], now, used), mailbox: mailbox.external_id }
+}
+
+/** Automazione nuova controllata (destinatari, testo, orario, casella), non ancora salvata. */
+async function buildAutomation(db: WorkspaceDb, userId: string, input: AutomationInput, origin: 'page' | 'assistant', now: number): Promise<{ automation: Automation; mailbox: Connection }> {
   const recipients = checkRecipients(input.recipients)
   const subject = oneLine(input.subject, MAX_SUBJECT)
   const content = checkContent(contentFrom(input), subject)
@@ -502,17 +528,10 @@ export async function createAutomation(
     lastRun: null,
     nextRun: null,
     run: null,
-    origin: options.origin || 'page',
+    origin,
   }
   automation.nextRun = nextRunAt(automation, now)
-  const out = { full: false }
-  const list = await updateSetting<Automation[]>(listKey(db.workspaceId), parseList, (current) => {
-    out.full = current.length >= MAX_AUTOMATIONS
-    return out.full ? false : [...current, automation]
-  })
-  if (out.full) throw new AutomationError(`Hai già ${MAX_AUTOMATIONS} automazioni: cancellane qualcuna prima.`)
-  const used = (await readDayCount(db.workspaceId, now).catch(() => ({ used: 0 }))).used
-  return { automation: viewOf(automation, now), warning: capacityWarning(list, now, used), mailbox: mailbox.external_id }
+  return { automation, mailbox }
 }
 
 /** Modifica, pausa o ripresa (solo i campi passati). */

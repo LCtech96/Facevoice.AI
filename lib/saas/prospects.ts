@@ -995,6 +995,8 @@ type DeliverOptions = {
   /** Invio a mano: vale anche una bozza non ancora approvata (e una non riuscita prima). */
   manual?: boolean
   edit?: { subject: string; body: string } | null
+  /** Impronta della bozza attesa (scheda dell'Assistente): se e' cambiata non si prende. */
+  expect?: string
 }
 
 /**
@@ -1008,12 +1010,16 @@ async function deliver(ws: string, db: WorkspaceDb, id: string, o: DeliverOption
   const claimed = await mutateProspect(ws, id, (p) => {
     before.p = p
     if (!from.includes(p.status) || !p.email || !p.draft?.subject || !(o.edit?.body || p.draft.body)) return false
+    if (o.expect && draftFingerprint(p.draft) !== o.expect) return false
     const draft = o.edit ? { ...p.draft, subject: o.edit.subject, body: o.edit.body } : p.draft
     // "Invia ora" vale anche come approvazione: se il limite del giorno e' pieno, resta approvata.
     const approval = o.manual ? { approvedAt: p.approvedAt || iso(o.now()), approvedBy: 'user' as const } : {}
     return { ...p, ...approval, draft, edited: o.edit ? true : p.edited, status: 'in_invio', sendingUntil: o.now() + SEND_LEASE_MS, error: null }
   })
-  if (!claimed?.email || !claimed.draft) return { status: 'not_ready', message: 'Questa email non è pronta da inviare.' }
+  if (!claimed?.email || !claimed.draft) {
+    const changed = Boolean(o.expect && before.p?.draft && draftFingerprint(before.p.draft) !== o.expect)
+    return { status: 'not_ready', message: changed ? DRAFT_CHANGED : 'Questa email non è pronta da inviare.' }
+  }
   const email = claimed.email.toLowerCase()
   const back = (status: ProspectStatus, patch: Partial<Prospect> = {}) => setStatus(ws, id, ['in_invio'], status, { sendingUntil: 0, ...patch })
   // Invio a mano non riuscito (email di sicuro non partita): torna com'era (una bozza da approvare resta da approvare).
@@ -1540,33 +1546,68 @@ function checkEdit(input: { subject?: unknown; body?: unknown }, current: Prospe
   return { subject, body: withOptOut(body, current.language) }
 }
 
-/** "Invia così" / "Modifica" e approva: l'email parte al prossimo invio (o subito con "Invia ora"). */
-export async function approveProspect(db: WorkspaceDb, id: string, input: { subject?: unknown; body?: unknown } = {}, now = Date.now()): Promise<Prospect> {
+/**
+ * Impronta di una bozza (oggetto e testo): la scheda di conferma dell'Assistente la salva, e al
+ * clic si approva o si invia solo se la bozza e' ancora quella mostrata (non riscritta nel frattempo).
+ */
+export function draftFingerprint(draft: { subject?: string; body?: string } | null | undefined): string {
+  return createHash('sha256').update(`${draft?.subject ?? ''}\n${draft?.body ?? ''}`).digest('hex').slice(0, 24)
+}
+
+export const DRAFT_CHANGED = 'L’email è cambiata dopo che te l’ho mostrata (per esempio riscritta nella pagina Trova clienti): non è partito niente. Chiedimela di nuovo per vedere il testo nuovo.'
+
+/**
+ * "Invia così" / "Modifica" e approva: l'email parte al prossimo invio (o subito con "Invia ora").
+ * expect: impronta della bozza mostrata nella scheda dell'Assistente (se e' cambiata, niente).
+ */
+export async function approveProspect(db: WorkspaceDb, id: string, input: { subject?: unknown; body?: unknown } = {}, now = Date.now(), expect?: string): Promise<Prospect> {
   const current = (await loadProspects(db.workspaceId)).find((p) => p.id === id)
   if (!current) throw new ProspectError('Azienda non trovata.', 404)
   if (!current.draft || !current.email || !ACTIVE_DRAFT.includes(current.status)) throw new ProspectError('Questa email non si può più approvare.', 409)
+  if (expect && draftFingerprint(current.draft) !== expect) throw new ProspectError(DRAFT_CHANGED, 409)
   const edit = checkEdit(input, current.draft)
+  const changed = { yes: false }
   const saved = await mutateProspect(db.workspaceId, id, (p) => {
     if (!p.draft || !ACTIVE_DRAFT.includes(p.status)) return false
+    changed.yes = Boolean(expect && draftFingerprint(p.draft) !== expect)
+    if (changed.yes) return false
     return { ...p, status: 'approvata', draft: edit ? { ...p.draft, ...edit } : p.draft, edited: edit ? true : p.edited, approvedAt: iso(now), approvedBy: 'user', error: null }
   })
-  if (!saved) throw new ProspectError('Questa email non si può più approvare.', 409)
+  if (!saved) throw new ProspectError(changed.yes ? DRAFT_CHANGED : 'Questa email non si può più approvare.', 409)
   return saved
 }
 
-/** "Approva tutte": tutte le bozze da approvare. */
-export async function approveAllProspects(db: WorkspaceDb, now = Date.now()): Promise<number> {
-  const out = { n: 0 }
+/**
+ * "Approva tutte": tutte le bozze da approvare. only: dalla scheda dell'Assistente, solo quelle
+ * mostrate (id e impronta della bozza), tutte o nessuna: se una non e' piu' da approvare o e'
+ * cambiata non si approva niente; le bozze arrivate dopo la scheda non si toccano.
+ */
+export async function approveAllProspects(db: WorkspaceDb, now = Date.now(), only?: { id: string; fp: string }[]): Promise<number> {
+  const out = { n: 0, changed: [] as string[] }
+  const wanted = only ? new Map(only.map((d) => [d.id, d.fp])) : null
   await updateSetting<Prospect[]>(listKey(db.workspaceId), parseProspects, (list) => {
     out.n = 0
+    out.changed = []
     const at = iso(now)
+    const ready = (p: Prospect) => p.status === 'da_approvare' && Boolean(p.draft) && Boolean(p.email)
+    if (wanted) {
+      for (const [id, fp] of wanted) {
+        const p = list.find((x) => x.id === id)
+        if (!p || !ready(p) || draftFingerprint(p.draft) !== fp) out.changed.push(p?.name || id)
+      }
+      if (out.changed.length) return false
+    }
     const next = list.map((p) => {
-      if (p.status !== 'da_approvare' || !p.draft || !p.email) return p
+      if (!ready(p) || (wanted && !wanted.has(p.id))) return p
       out.n++
       return { ...p, status: 'approvata' as const, approvedAt: at, approvedBy: 'user' as const, updatedAt: at }
     })
     return out.n ? next : false
   })
+  if (out.changed.length) {
+    const names = out.changed.slice(0, 3).join(', ') + (out.changed.length > 3 ? ` e altre ${out.changed.length - 3}` : '')
+    throw new ProspectError(`Nel frattempo alcune email sono cambiate o non sono più da approvare (${names}): non ho approvato niente. Chiedimelo di nuovo per vedere quelle di adesso.`, 409)
+  }
   return out.n
 }
 
@@ -1637,7 +1678,8 @@ export async function sendProspectNow(
   db: WorkspaceDb,
   id: string,
   input: { subject?: unknown; body?: unknown } = {},
-  options: { now?: () => number; send?: typeof sendNewEmail } = {}
+  /** expect: impronta della bozza mostrata nella scheda dell'Assistente (se e' cambiata, non parte). */
+  options: { now?: () => number; send?: typeof sendNewEmail; expect?: string } = {}
 ): Promise<Prospect> {
   const ws = db.workspaceId
   const now = options.now ?? Date.now
@@ -1645,11 +1687,12 @@ export async function sendProspectNow(
   if (!current) throw new ProspectError('Azienda non trovata.', 404)
   if (current.status === 'inviata') throw new ProspectError('Questa email è già partita.', 409)
   if (!current.draft || !current.email || !ACTIVE_DRAFT.includes(current.status)) throw new ProspectError('Questa email non è pronta da inviare.', 409)
+  if (options.expect && draftFingerprint(current.draft) !== options.expect) throw new ProspectError(DRAFT_CHANGED, 409)
   const edit = checkEdit(input, current.draft)
   const mailbox = await mailboxOf(db).catch(() => null)
   if (!mailbox) throw new ProspectError('Collega prima la tua email (Canali → Email): le email partono dalla tua casella.', 400, 'no_mailbox')
   const [fromName, own] = await Promise.all([workspaceName(ws), ownAddresses(db, mailbox)])
-  const result = await deliver(ws, db, id, { now, cap: null, mailbox, fromName, own, send: options.send ?? sendNewEmail, manual: true, edit })
+  const result = await deliver(ws, db, id, { now, cap: null, mailbox, fromName, own, send: options.send ?? sendNewEmail, manual: true, edit, expect: options.expect })
   if (result.status === 'sent') return result.prospect
   if (result.status === 'limit') {
     // Resta approvata: parte al prossimo invio.

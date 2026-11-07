@@ -3,7 +3,8 @@ import { assertAIAllowed } from '@/lib/usage-limits'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections, type ConnectionPlatform } from './connections'
 import { sendPrivateReply } from './comments'
-import { ASSISTANT_ORIGIN, deliverDraft } from './responder'
+import { sendEmailReply, type MailAttachment } from './email'
+import { ASSISTANT_ORIGIN, deliverDraft, workspaceName } from './responder'
 
 // Messaggi mandati dall'Assistente AI su richiesta del titolare ("scrivi a Monia su
 // Instagram…"). Solo a chi ci ha GIA' scritto su quel canale (messaggi, menzioni e
@@ -213,13 +214,25 @@ export function chatSendWindow(platform: string, lastIncomingAt: string | null |
   return { ok: false, reason: 'Da questo canale non si può ancora inviare da qui.' }
 }
 
-/** Invia il messaggio chiesto dal titolare, se la persona ci ha scritto prima e Meta lo permette. */
-export async function sendAssistantMessage(
+/** Come si inviera' il messaggio (deciso dai controlli, prima di inviare). */
+type SendRoute =
+  | { kind: 'deliver'; person: Candidate; last: Row; subject: string | null; via: 'dm' | 'email' }
+  | { kind: 'comment'; person: Candidate; comment: Row }
+
+type PlanResult =
+  | { ok: true; sent: SentMessage; duplicate?: boolean; route?: SendRoute; until?: string }
+  | { ok: false; error: string; candidates?: CandidateView[]; copyText?: string }
+
+/**
+ * Tutti i controlli prima dell'invio (persona che ci ha scritto, canale collegato, 24 ore
+ * di Meta o 7 giorni per la risposta privata a un commento, testo, doppioni): a chi, come
+ * e fino a quando si puo' scrivere. Non invia niente.
+ */
+async function planSend(
   db: WorkspaceDb,
-  /** again: il cliente ha confermato di voler mandare un altro messaggio a chi ha appena ricevuto quello dell'Assistente. */
   input: { platform?: unknown; to?: unknown; text?: unknown; subject?: unknown; again?: unknown },
-  now = Date.now()
-): Promise<SendResult> {
+  now: number
+): Promise<PlanResult> {
   const to = typeof input.to === 'string' ? input.to.trim() : ''
   // Il testo arriva dal modello: niente **grassetto** o # alla persona (@nomi e link restano).
   const text = typeof input.text === 'string' ? stripMarkdown(input.text).trim() : ''
@@ -300,7 +313,8 @@ export async function sendAssistantMessage(
     if (!last) return { ok: false, error: `${name} non ci ha mai scritto per email: si può rispondere solo a chi ci ha scritto prima`, copyText: text }
     if (!connections.length) return { ok: false, error: 'la casella email non è collegata', copyText: text }
     const subject = (typeof input.subject === 'string' && input.subject.trim()) || last.subject || null
-    return deliver(db, person, last, text, subject ? subject.slice(0, 200) : null, 'email', name)
+    const cut = subject ? subject.slice(0, 200) : null
+    return { ok: true, sent: { platform, contactId: person.contactId, name, text, ...(cut ? { subject: cut } : {}), via: 'email' }, route: { kind: 'deliver', person, last, subject: cut, via: 'email' } }
   }
 
   if (platform === 'whatsapp') {
@@ -311,7 +325,10 @@ export async function sendAssistantMessage(
   if (!connections.length) return { ok: false, error: `${platform === 'facebook' ? 'la Pagina Facebook' : 'Instagram'} non è collegato`, copyText: text }
 
   // Direct / Messenger: entro 24 ore dal suo ultimo messaggio (anche menzioni e risposte alle storie).
-  if (person.lastMessage && lastMessageAge < MESSAGING_WINDOW_MS) return deliver(db, person, person.lastMessage, text, null, 'dm', name)
+  if (person.lastMessage && lastMessageAge < MESSAGING_WINDOW_MS) {
+    const until = new Date(new Date(person.lastMessage.created_at).getTime() + MESSAGING_WINDOW_MS).toISOString()
+    return { ok: true, sent: { platform, contactId: person.contactId, name, text, via: 'dm' }, route: { kind: 'deliver', person, last: person.lastMessage, subject: null, via: 'dm' }, until }
+  }
 
   // Ha solo commentato (o il messaggio e' vecchio): una risposta privata al commento, entro 7 giorni.
   const comment = person.lastComment
@@ -324,13 +341,101 @@ export async function sendAssistantMessage(
       .eq('reply_to', comment.external_id)
       .eq('status', 'sent')
     if (!count) {
-      const sent = await sendPrivateReply(db, comment.id, text, ASSISTANT_ORIGIN)
-      if (!sent.ok) return { ok: false, error: `invio non riuscito: ${sent.error}`, copyText: text }
-      await rejectStaleDrafts(db, platform, person.contactId, new Date().toISOString())
-      return { ok: true, sent: { platform, contactId: person.contactId, name, text, via: 'comment' } }
+      const until = new Date(new Date(comment.created_at).getTime() + PRIVATE_REPLY_WINDOW_MS).toISOString()
+      return { ok: true, sent: { platform, contactId: person.contactId, name, text, via: 'comment' }, route: { kind: 'comment', person, comment }, until }
     }
   }
   return { ok: false, error: windowError(name, platform, person.lastMessage?.created_at ?? comment?.created_at), copyText: text }
+}
+
+export type PlannedMessage = SendResult & { until?: string }
+
+/**
+ * Prepara il messaggio senza inviarlo (scheda "Accetta e invia" dell'Assistente): stessi
+ * controlli dell'invio vero, con a chi, come e fino a quando si puo' ancora scrivere.
+ */
+export async function planAssistantMessage(
+  db: WorkspaceDb,
+  input: { platform?: unknown; to?: unknown; text?: unknown; subject?: unknown; again?: unknown },
+  now = Date.now()
+): Promise<PlannedMessage> {
+  const plan = await planSend(db, input, now)
+  if (!plan.ok) return plan
+  return { ok: true, sent: plan.sent, ...(plan.duplicate ? { duplicate: true } : {}), ...(plan.until ? { until: plan.until } : {}) }
+}
+
+/** Invia il messaggio chiesto dal titolare, se la persona ci ha scritto prima e Meta lo permette (i controlli si rifanno adesso). */
+export async function sendAssistantMessage(
+  db: WorkspaceDb,
+  /** again: il cliente ha confermato di voler mandare un altro messaggio a chi ha appena ricevuto quello dell'Assistente. */
+  input: { platform?: unknown; to?: unknown; text?: unknown; subject?: unknown; again?: unknown },
+  now = Date.now()
+): Promise<SendResult> {
+  const plan = await planSend(db, input, now)
+  if (!plan.ok) return plan
+  if (plan.duplicate || !plan.route) return { ok: true, sent: plan.sent, ...(plan.duplicate ? { duplicate: true } : {}) }
+  const { sent } = plan
+  const route = plan.route
+  if (route.kind === 'deliver') return deliver(db, route.person, route.last, sent.text, route.subject, route.via, sent.name)
+  const replied = await sendPrivateReply(db, route.comment.id, sent.text, ASSISTANT_ORIGIN)
+  if (!replied.ok) return { ok: false, error: `invio non riuscito: ${replied.error}`, copyText: sent.text }
+  await rejectStaleDrafts(db, sent.platform, sent.contactId, new Date().toISOString())
+  return { ok: true, sent }
+}
+
+/**
+ * Email con un file allegato (il PDF di un documento dell'Assistente) nel filo dell'ultima
+ * email della persona, dopo la conferma del titolare. Solo email: su Instagram e Facebook
+ * un file si manda solo con un link pubblico, che per un contratto non si fa.
+ */
+export async function sendAssistantEmailWithAttachment(
+  db: WorkspaceDb,
+  input: { to: string; text: string; subject?: string | null; attachment: MailAttachment },
+  now = Date.now()
+): Promise<SendResult> {
+  const plan = await planSend(db, { platform: 'email', to: input.to, text: input.text, subject: input.subject ?? undefined, again: true }, now)
+  if (!plan.ok) return plan
+  if (!plan.route || plan.route.kind !== 'deliver' || plan.sent.platform !== 'email') return { ok: false, error: 'i documenti si possono inviare da qui solo per email' }
+  const { person, last, subject } = plan.route
+  const note = `[Allegato: ${input.attachment.filename}]`
+  const { data: saved, error } = await db
+    .from('social_messages')
+    .insert({
+      platform: 'email',
+      kind: 'message',
+      direction: 'out',
+      contact_id: person.contactId,
+      contact_name: last.contact_name ?? (person.names[0] || null),
+      subject,
+      reply_to: last.external_id,
+      channel_account_id: last.channel_account_id,
+      body: `${plan.sent.text}\n\n${note}`,
+      status: 'sending',
+      origin: ASSISTANT_ORIGIN,
+    })
+    .select('id')
+    .single()
+  if (error || !saved) return { ok: false, error: 'messaggio non salvato, riprova' }
+  try {
+    const connections = (await listConnections(db, 'email')).filter((c) => c.status !== 'disconnected')
+    const connection = connections.find((c) => c.external_id === last.channel_account_id) || connections[0]
+    if (!connection) throw new Error('casella email non collegata')
+    const { messageId } = await sendEmailReply(connection, {
+      to: person.contactId,
+      subject,
+      inReplyTo: last.external_id,
+      text: plan.sent.text,
+      fromName: await workspaceName(db.workspaceId),
+      attachments: [input.attachment],
+    })
+    await db.from('social_messages').update({ status: 'sent', external_id: messageId, created_at: new Date().toISOString() }).eq('id', saved.id as string)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'invio non riuscito'
+    await db.from('social_messages').update({ status: 'failed', error_message: message.slice(0, 300) }).eq('id', saved.id as string)
+    return { ok: false, error: `invio non riuscito: ${message}` }
+  }
+  await rejectStaleDrafts(db, 'email', person.contactId, new Date().toISOString())
+  return { ok: true, sent: plan.sent }
 }
 
 function windowError(name: string, platform: SendPlatform, lastAt?: string): string {
