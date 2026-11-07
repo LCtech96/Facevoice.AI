@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { callAI } from '@/lib/ai'
+import { callAI, type AISystem } from '@/lib/ai'
 import { pdfFileName, pdfPageCount, renderPdf, type PdfDocument, type PdfSection, type PdfSignature } from '@/lib/pdf-doc'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -598,9 +598,7 @@ const KIND_HINTS: Record<DocKind, string> = {
   altro: 'Documento: struttura adatta a quello che chiede il cliente, con titoli chiari.',
 }
 
-const DOC_PROMPT = (name: string, kind: DocKind, today: string) => `Prepari bozze di documenti (contratti, preventivi, accordi, lettere) per "${name}", un'attività che usa Facevoice AI. Non sei un avvocato: prepari una bozza chiara e ordinata che il titolare farà controllare da un professionista.
-
-Oggi è ${today}.
+const DOC_PROMPT = (name: string, kind: DocKind) => `Prepari bozze di documenti (contratti, preventivi, accordi, lettere) per "${name}", un'attività che usa Facevoice AI. Non sei un avvocato: prepari una bozza chiara e ordinata che il titolare farà controllare da un professionista.
 
 Regole:
 - Usa SOLO i fatti della conversazione e delle informazioni sull'attività che ti do. Non inventare MAI dati personali o accordi: codici fiscali, partite IVA, indirizzi, IBAN, date, importi, prezzi, quantità, scadenze o nomi che non sono scritti o concordati.
@@ -615,10 +613,17 @@ Regole:
 Rispondi SOLO con un JSON, senza testo prima o dopo:
 {"title": "titolo del documento", "subtitle": "riga sotto il titolo (facoltativa)", "meta": ["[[data_firma]]", "Tra: …", "E: …"], "sections": [{"heading": "1. Oggetto", "paragraphs": ["…"], "bullets": ["…"]}], "signatures": [{"label": "Per ${name}", "name": "…"}, {"label": "…", "name": "…"}], "fields": [{"id": "data_firma", "label": "Data", "party": "entrambi"}], "approve": ["titolo esatto di una clausola"], "summary": "una o due frasi su cosa contiene"}`
 
+/**
+ * Istruzioni per scrivere un documento: la parte fissa (nome dell'attivita', tipo di documento,
+ * regole e formato) prima, rilette dalla cache tra un documento e l'altro (es. la modifica subito
+ * dopo); la data di oggi dopo, perche' cambia ogni giorno.
+ */
+const docSystem = (name: string, kind: DocKind): AISystem => ({ stable: DOC_PROMPT(name, kind), volatile: `Oggi è ${todayLabel()}.` })
+
 const looksLikeDoc = (v: Record<string, unknown>) => Array.isArray(v.sections) || Array.isArray(v.sezioni)
 
 /** Una chiamata all'AI (al massimo un secondo tentativo se il JSON non si legge). */
-async function askDocument(workspaceId: string, system: string, user: string, fallbackTitle: string): Promise<{ content: DocContent; summary: string }> {
+async function askDocument(workspaceId: string, system: AISystem, user: string, fallbackTitle: string): Promise<{ content: DocContent; summary: string }> {
   const transcript: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: user }]
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await callAI(transcript, system, { feature: 'saas_documenti', temperature: 0.2, maxOutputTokens: 9000, workspaceId })
@@ -674,7 +679,7 @@ export async function createDocument(db: WorkspaceDb, userId: string, input: Doc
   ]
     .filter(Boolean)
     .join('\n\n')
-  const { content, summary } = await askDocument(db.workspaceId, DOC_PROMPT(business.name, kind, todayLabel()), user, fallbackTitle)
+  const { content, summary } = await askDocument(db.workspaceId, docSystem(business.name, kind), user, fallbackTitle)
   const now = new Date().toISOString()
   const version: DocVersion = { n: 1, at: now, by: userId, content, pages: 0, note: instructions.slice(0, 500) }
   const doc: StoredDocument = { id: randomUUID(), kind, title: content.title, about, business: business.name, createdBy: userId, createdAt: now, updatedAt: now, versions: [version] }
@@ -708,7 +713,7 @@ export async function updateDocument(db: WorkspaceDb, userId: string, input: { i
   ]
     .filter(Boolean)
     .join('\n\n')
-  const asked = await askDocument(db.workspaceId, DOC_PROMPT(business.name, doc.kind, todayLabel()), user, doc.title)
+  const asked = await askDocument(db.workspaceId, docSystem(business.name, doc.kind), user, doc.title)
   const content = keepFieldValues(asked.content, current.content)
   const summary = asked.summary
   const now = new Date().toISOString()

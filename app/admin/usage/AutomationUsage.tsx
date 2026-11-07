@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { getAccessToken } from '@/lib/session-token'
 
 // Consumo delle AI che lavorano da sole: chat del sito, risposte email e social,
-// Ricerca clienti. Gemini (gratuito) fa il grosso, Claude subentra quando Gemini e' al limite.
+// Ricerca clienti. Gemini fa il grosso, Claude subentra quando Gemini e' al limite.
 
 type Totals = {
   geminiCalls: number
@@ -102,7 +102,7 @@ export default function AutomationUsage() {
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
             <Stat label="Richieste oggi" value={num(data.today.geminiCalls + data.today.claudeCalls)} hint={`Claude: ${num(data.today.claudeCalls)} · ${usd(data.today.costUsd)}`} />
-            <Stat label="Gemini questo mese" value={num(data.month.geminiCalls)} hint="Gratuito" />
+            <Stat label="Gemini questo mese" value={num(data.month.geminiCalls)} hint={`Oggi: ${num(data.today.geminiCalls)}`} />
             <Stat label="Claude questo mese" value={num(data.month.claudeCalls)} hint={`Spesa ${usd(data.month.costUsd)}`} />
             <Stat label="Limiti Gemini raggiunti" value={num(data.month.geminiLimits)} hint={data.lastLimitAt ? `Ultimo ${time(data.lastLimitAt)}` : 'Nessuno'} />
           </div>
@@ -142,12 +142,12 @@ export default function AutomationUsage() {
 }
 
 function StatusLine({ data }: { data: Data }) {
-  // Claude entra solo quando tutti i modelli Gemini gratuiti sono al limite.
+  // Claude entra solo quando tutti i modelli Gemini sono al limite.
   const limitedNow = data.lastClaudeAt && Date.now() - new Date(data.lastClaudeAt).getTime() < 2 * 60_000
   return (
     <p className="flex items-center gap-2 text-xs mb-3 text-[var(--text-secondary)]">
       <span className={`inline-block w-2 h-2 rounded-full ${limitedNow ? 'bg-[#FF9500]' : 'bg-[#34C759]'}`} />
-      {limitedNow ? 'Gemini è al limite: in questo momento risponde Claude.' : 'Gemini attivo: le risposte sono gratuite.'}
+      {limitedNow ? 'Gemini è al limite: in questo momento risponde Claude.' : 'In questo momento risponde Gemini.'}
       {data.lastCallAt && <span className="ml-auto">Ultima richiesta {time(data.lastCallAt)}</span>}
     </p>
   )

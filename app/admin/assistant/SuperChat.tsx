@@ -6,7 +6,7 @@ import { prepareImage, type PreparedImage } from '@/lib/client-image'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import { useDictation } from '@/components/useDictation'
-import { AI_MODEL_CHOICES, modelLabel } from '@/lib/ai-models'
+import { AI_MODEL_CHOICES, asModelChoice, modelLabel } from '@/lib/ai-models'
 
 const MODEL_KEY = 'fv_superchat_model'
 const fmtTokens = (n: number) => n.toLocaleString('it-IT')
@@ -49,7 +49,12 @@ export default function SuperChat() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(MODEL_KEY)
-      if (saved && AI_MODEL_CHOICES.some((m) => m.id === saved)) setModel(saved)
+      if (saved) {
+        // Scelta salvata con un modello che non c'e' piu' (es. Claude Haiku 4.5): quello che lo sostituisce.
+        const choice = asModelChoice(saved)
+        setModel(choice)
+        if (choice !== saved) localStorage.setItem(MODEL_KEY, choice)
+      }
     } catch {}
   }, [])
   const chooseModel = (id: string) => {

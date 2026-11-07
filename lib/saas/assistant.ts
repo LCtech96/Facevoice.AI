@@ -1,5 +1,5 @@
 import { after } from 'next/server'
-import { callAI, hasAIProvider, isWebSearchUnavailable } from '@/lib/ai'
+import { callAI, hasAIProvider, isWebSearchUnavailable, type AISystem } from '@/lib/ai'
 import { parseToolStep, looksLikeToolCall, cleanReplyText, stripMarkdown, FORMAT_RETRY } from '@/lib/tool-step'
 import { isAIBlockedError } from '@/lib/usage-limits'
 import { detectLanguage } from '@/lib/detect-language'
@@ -386,13 +386,15 @@ export async function logPostChange(
   return refreshPostActions(db, turns)
 }
 
-const PROMPT = (name: string, now: string, channels: string, recent: string, context: string, automations: { tools: string; rules: string } = AUTOMATIONS_OFF_PROMPT) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili per il lavoro interno (bozze, documenti, letture). Tutto quello che esce dalla chat lo prepari e basta: parte solo quando il cliente lo conferma con il pulsante sulla scheda (vedi "Doppia autorizzazione"). Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.
+/**
+ * Istruzioni fisse dell'Assistente (parte stable per la cache dei prompt): uguali per ore nello
+ * stesso spazio (nome, pagina Istruzioni, Automazioni accese o spente), quindi rilette dalla cache
+ * da un messaggio all'altro. Ora, account collegati e post recenti cambiano a ogni richiesta: vanno
+ * in assistantVolatile, dopo.
+ */
+const PROMPT = (name: string, context: string, automations: { tools: string; rules: string } = AUTOMATIONS_OFF_PROMPT) => `Sei l'assistente AI di "${name}" nella piattaforma Facevoice AI. Il titolare (o un collaboratore) ti scrive in linguaggio naturale, anche a voce, e allega foto. Tu fai le cose usando gli strumenti, anche in più passaggi, senza chiedere conferme inutili per il lavoro interno (bozze, documenti, letture). Tutto quello che esce dalla chat lo prepari e basta: parte solo quando il cliente lo conferma con il pulsante sulla scheda (vedi "Doppia autorizzazione"). Rispondi nella lingua di chi ti scrive, in modo breve e chiaro, senza markdown.
 
-${context ? `${context}Quando scrivi testi di slide o didascalie (anche in "slides" di create_post o in edit_carousel) usa queste informazioni.\n\n` : ''}Ora italiana: ${now}
-Account collegati: ${channels}
-Post recenti: ${recent}
-
-A ogni passo rispondi SOLO con un JSON (niente testo prima o dopo, niente tag come <function_calls>), in uno di questi due formati:
+${context ? `${context}Quando scrivi testi di slide o didascalie (anche in "slides" di create_post o in edit_carousel) usa queste informazioni.\n\n` : ''}A ogni passo rispondi SOLO con un JSON (niente testo prima o dopo, niente tag come <function_calls>), in uno di questi due formati:
 {"tool": "nome", "args": {...}}
 {"reply": "risposta finale"}
 
@@ -413,7 +415,7 @@ Se nella richiesta c'è "[Slide selezionata dal cliente…]", il cliente ha tocc
 - "edit_image": {"image": "url", "instruction": "cosa cambiare"} → modifica una foto con l'AI (luce, sfondo, colori, togliere oggetti, aggiungere una scritta…) e mostra il risultato. Per usarla in un post passala poi in "images" di create_post o update_post.
 - "generate_image": {"description": "cosa deve mostrare"} → crea un'immagine da zero.
 - "update_post": {"post_id": "…", "caption": "…", "facebook": "…", "platforms": ["instagram","facebook"], "images": ["url", ...]} → cambia testi, social o immagini di un post non ancora pubblicato.
-- "schedule_post": {"post_id": "…", "when": "AAAA-MM-GGTHH:MM" (ora italiana), "platforms": opzionale} → PREPARA la programmazione (scheda «Conferma»: parte solo dopo il clic). Calcola tu la data da "giovedì alle 18", "domani mattina alle 9" ecc. partendo dall'ora italiana qui sopra. Se manca l'ora chiedila.
+- "schedule_post": {"post_id": "…", "when": "AAAA-MM-GGTHH:MM" (ora italiana), "platforms": opzionale} → PREPARA la programmazione (scheda «Conferma»: parte solo dopo il clic). Calcola tu la data da "giovedì alle 18", "domani mattina alle 9" ecc. partendo dall'«Ora italiana» in fondo alle istruzioni. Se manca l'ora chiedila.
 - "publish_now": {"post_id": "…"} → PREPARA la pubblicazione immediata (scheda «Conferma e pubblica»). Usalo SOLO se lo chiede esplicitamente ("pubblicalo ora", "pubblica adesso").
 - "unschedule_post": {"post_id": "…"} → annulla la programmazione (il post torna in bozza).
 - "list_posts": {"status": "draft|scheduled|published|failed|all"} → elenco dei post con stato, data e id.
@@ -447,6 +449,11 @@ Regole:
 - Non dire MAI di aver fatto o di stare facendo qualcosa (inviato, scritto, contattato, pubblicato, programmato…) se non è successo davvero: le azioni che escono dalla chat succedono solo dopo il clic del cliente. Non dire mai che non puoi mandare messaggi: puoi, con le regole di send_message.
 - Dopo send_message la scheda con il messaggio compare da sola sotto la tua risposta: di' in una frase per chi è e su quale canale, e che parte se tocca «Accetta e invia».
 ${automations.rules}`
+
+/** Parte che cambia a ogni richiesta (volatile, dopo il breakpoint della cache): ora, account collegati, post recenti. */
+const assistantVolatile = (now: string, channels: string, recent: string) => `Ora italiana: ${now}
+Account collegati: ${channels}
+Post recenti: ${recent}`
 
 /** Automazioni attive per chi scrive: strumenti per comandare la pagina Automazioni (email programmate). */
 export const AUTOMATIONS_ON_PROMPT = {
@@ -1313,7 +1320,11 @@ export async function runClientAssistant(
   const lastUser = [...history].reverse().find((t) => t.role === 'user')
   const writeAsked = asksToWrite(message) || Boolean(lastAssistant?.text.includes('?') && lastUser && asksToWrite(lastUser.text))
   const transcript: { role: 'user' | 'assistant'; content: string }[] = [{ role: 'user', content: `${past ? `Conversazione recente:\n${past}\n\n` : ''}Richiesta: ${request}` }]
-  const system = PROMPT(name, now, channels, recentText, await businessContext(db.workspaceId), automationsOn ? AUTOMATIONS_ON_PROMPT : AUTOMATIONS_OFF_PROMPT)
+  // Cache dei prompt: prima le istruzioni fisse (stable, con il breakpoint), poi quello che cambia a ogni richiesta.
+  const system: AISystem = {
+    stable: PROMPT(name, await businessContext(db.workspaceId), automationsOn ? AUTOMATIONS_ON_PROMPT : AUTOMATIONS_OFF_PROMPT),
+    volatile: assistantVolatile(now, channels, recentText),
+  }
   const lastPost = () => [...actions].reverse().find((a) => a.kind === 'post') as { post: PostView } | undefined
   const showPost = (post: PostRow) => {
     const existing = actions.findIndex((a) => a.kind === 'post' && a.post.id === post.id)

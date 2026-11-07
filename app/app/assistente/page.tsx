@@ -7,7 +7,7 @@ import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
-import { AI_MODEL_CHOICES } from '@/lib/ai-models'
+import { AI_MODEL_CHOICES, asModelChoice } from '@/lib/ai-models'
 import { PHOTO_LAYOUTS, TEXT_LAYOUTS } from '@/lib/photo-layouts'
 
 const MODEL_KEY = 'fv_app_assistant_model'
@@ -197,7 +197,12 @@ function AssistantChat() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(MODEL_KEY)
-      if (saved && AI_MODEL_CHOICES.some((m) => m.id === saved)) setModel(saved)
+      if (saved) {
+        // Scelta salvata con un modello che non c'e' piu' (es. Claude Haiku 4.5): quello che lo sostituisce.
+        const choice = asModelChoice(saved)
+        setModel(choice)
+        if (choice !== saved) localStorage.setItem(MODEL_KEY, choice)
+      }
     } catch {}
   }, [])
   const chooseModel = (id: string) => {
