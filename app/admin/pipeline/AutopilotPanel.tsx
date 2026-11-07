@@ -19,6 +19,8 @@ type Settings = {
   next: number
   autoSearch: boolean
   autoNext: number
+  /** Ricerche senza attivita' nuove: volte di fila (da 3 in su sono in pausa). */
+  zeroRuns?: Record<string, number>
 }
 type Run = {
   date: string
@@ -28,7 +30,7 @@ type Run = {
   startedAt: string
   updatedAt: string
   manual?: boolean
-  searched: { query: string; found: number; added: number; error?: string; auto?: boolean }[]
+  searched: { query: string; found: number; added: number; error?: string; auto?: boolean; skipped?: boolean }[]
   analyzed: number
   withEmail: number
   sent: { id: string; name: string; email: string }[]
@@ -39,6 +41,9 @@ type State = { settings: Settings; run: Run | null; running: boolean; sentToday:
 const ACCENT = '#0A84FF'
 const DONE = '#34C759'
 const MAX_EMAILS = 30
+/** Volte di fila senza attivita' nuove dopo cui una ricerca va in pausa (come lib/autopilot.ts). */
+const PAUSE_AFTER = 3
+const isPaused = (settings: Settings, query: string) => (settings.zeroRuns?.[query] ?? 0) >= PAUSE_AFTER
 
 async function authFetch(url: string, init: RequestInit = {}) {
   const token = await getAccessToken()
@@ -102,6 +107,18 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
     }
   }
 
+  // Riattiva una ricerca in pausa: torna nella rotazione dal prossimo giro.
+  const resume = async (query: string) => {
+    setBusy(true)
+    setNotice(null)
+    const res = await authFetch('/api/admin/autopilot', { method: 'PUT', body: JSON.stringify({ resume: query }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setBusy(false)
+    if (!res?.ok) return setNotice(data.error || 'Non riattivata, riprova.')
+    setState((s) => (s ? { ...s, settings: data.settings } : s))
+    setNotice(`“${query}” riattivata.`)
+  }
+
   const runNow = async () => {
     if (!window.confirm('Avvio adesso l’automazione: cerca, legge i siti e invia le email (fino al numero scelto per oggi). Procedo?')) return
     setBusy(true)
@@ -116,9 +133,11 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
   if (!state) return null
   const { settings, run } = state
   const canEdit = staff.isAdmin
-  const nextSearches = settings.searches.length
-    ? Array.from({ length: Math.min(settings.searchesPerDay, settings.searches.length) }, (_, i) => settings.searches[(settings.next + i) % settings.searches.length])
-    : []
+  const paused = settings.searches.filter((q) => isPaused(settings, q))
+  // Le prossime ricerche della rotazione, senza quelle in pausa.
+  const nextSearches = Array.from({ length: settings.searches.length }, (_, i) => settings.searches[(settings.next + i) % settings.searches.length])
+    .filter((q) => !isPaused(settings, q))
+    .slice(0, settings.searchesPerDay)
   const added = run ? run.searched.reduce((n, s) => n + s.added, 0) : 0
   // Pronta a partire se ha ricerche sue o se puo' cercare da sola.
   const canSearch = settings.searches.length > 0 || settings.autoSearch !== false
@@ -192,7 +211,11 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
               Ricerche:{' '}
               {run.searched
-                .map((s) => `${s.auto ? 'automatica ' : ''}“${s.query}” (${s.error ? `errore: ${s.error}` : `${s.found} trovate, ${s.added} nuove`})`)
+                .map((s) =>
+                  s.skipped
+                    ? `“${s.query}” (in pausa, saltata)`
+                    : `${s.auto ? 'automatica ' : ''}“${s.query}” (${s.error ? `errore: ${s.error}` : `${s.found} trovate, ${s.added} nuove`})`
+                )
                 .join(' · ')}
             </p>
           )}
@@ -209,6 +232,33 @@ export default function AutopilotPanel({ onRunning }: { onRunning: (text: string
               </ul>
             </details>
           )}
+        </div>
+      )}
+
+      {paused.length > 0 && (
+        <div className="mt-3 rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2.5 text-sm">
+          <p className="font-medium text-[var(--text-primary)]">In pausa</p>
+          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+            Nessuna attività nuova nelle ultime {PAUSE_AFTER} volte: le salto e non uso Google Maps per loro.
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {paused.map((q) => (
+              <li key={q} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[var(--text-primary)]" title={q}>
+                  “{q}”
+                </span>
+                {canEdit && (
+                  <button
+                    onClick={() => resume(q)}
+                    disabled={busy}
+                    className="shrink-0 rounded-full border border-[var(--border-color)] px-3 py-1 text-xs text-[var(--text-primary)] disabled:opacity-40"
+                  >
+                    Riattiva
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

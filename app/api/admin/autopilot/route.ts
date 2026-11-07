@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guard } from '@/lib/staff-access'
-import { isActive, loadRun, loadSettings, saveSettings, startRun } from '@/lib/autopilot'
+import { isActive, loadRun, loadSettings, resumeSearch, saveSettings, startRun } from '@/lib/autopilot'
 import { sentToday } from '@/lib/lead-send'
 import { placesKey } from '@/lib/leads'
 
@@ -20,10 +20,16 @@ export async function PUT(req: NextRequest) {
   if (access instanceof NextResponse) return access
   if (!access.isAdmin) return NextResponse.json({ error: 'Solo l’amministratore può cambiare l’automazione' }, { status: 403 })
   const body = await req.json().catch(() => ({}))
-  // La posizione nella rotazione la gestisce l'automazione.
+  // { resume: "ricerca" }: riattiva una ricerca messa in pausa (nessuna attivita' nuova nelle ultime 3 volte).
+  if (body && typeof body.resume === 'string') {
+    const settings = await resumeSearch(body.resume.slice(0, 200))
+    return NextResponse.json({ settings })
+  }
+  // La posizione nella rotazione e le pause le gestisce l'automazione.
   const input = { ...(body || {}) }
   delete input.next
   delete input.autoNext
+  delete input.zeroRuns
   const settings = await saveSettings(input)
   return NextResponse.json({ settings })
 }

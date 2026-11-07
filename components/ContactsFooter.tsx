@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Mail, Phone, MessageSquare, Users } from 'lucide-react'
+import { Gauge, Mail, Phone, MessageSquare, Users, type LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { isAdminEmail } from '@/lib/admin-auth'
 
@@ -27,11 +27,11 @@ function useIsAdmin() {
   return isAdmin
 }
 
-/** Pulsante "Utenti" (iscritti alla beta e consumi AI): solo per l'admin. */
-function UsersButton({ active }: { active?: boolean }) {
+/** Pulsante del footer per l'admin. */
+function AdminButton({ href, label, Icon, active }: { href: string; label: string; Icon: LucideIcon; active?: boolean }) {
   return (
     <Link
-      href="/admin/utenti"
+      href={href}
       aria-current={active ? 'page' : undefined}
       className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
         active
@@ -39,9 +39,19 @@ function UsersButton({ active }: { active?: boolean }) {
           : 'border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]'
       }`}
     >
-      <Users className="w-4 h-4" />
-      Utenti
+      <Icon className="w-4 h-4" />
+      {label}
     </Link>
+  )
+}
+
+/** Pulsanti "Utenti" (iscritti alla beta) e "Consumi" (consumi reali): solo per l'admin. */
+function AdminButtons({ pathname }: { pathname?: string | null }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <AdminButton href="/admin/utenti" label="Utenti" Icon={Users} active={Boolean(pathname?.startsWith('/admin/utenti'))} />
+      <AdminButton href="/admin/consumi" label="Consumi" Icon={Gauge} active={Boolean(pathname?.startsWith('/admin/consumi'))} />
+    </div>
   )
 }
 
@@ -54,13 +64,13 @@ export default function ContactsFooter() {
   if (pathname?.startsWith('/ai-chat')) return null
 
   // Nell'area admin i contatti dell'azienda non servono: per l'admin resta
-  // solo una riga con il pulsante Utenti, per gli altri niente footer.
+  // solo una riga con i pulsanti Utenti e Consumi, per gli altri niente footer.
   if (pathname?.startsWith('/admin')) {
     if (!isAdmin || FULL_SCREEN_ADMIN.some((p) => pathname.startsWith(p))) return null
     return (
       <footer className="border-t border-[var(--border-color)] bg-[var(--background)]">
         <div className="container mx-auto max-w-6xl px-4 py-4 flex justify-center sm:justify-end">
-          <UsersButton active={pathname.startsWith('/admin/utenti')} />
+          <AdminButtons pathname={pathname} />
         </div>
         {/* Spacing per mobile navbar fissa in basso */}
         <div className="md:hidden h-20" />
@@ -147,7 +157,7 @@ export default function ContactsFooter() {
           </Link>
           {isAdmin && (
             <div className="mt-4">
-              <UsersButton />
+              <AdminButtons />
             </div>
           )}
         </div>

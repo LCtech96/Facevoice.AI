@@ -54,7 +54,15 @@ export type AutopilotSettings = {
   autoSearch: boolean
   /** Prossima ricerca automatica. */
   autoNext: number
+  /**
+   * Ricerche della lista che non hanno portato attivita' nuove: quante volte di fila.
+   * Da PAUSE_AFTER in su la ricerca e' in pausa (saltata) finche' l'admin non la riattiva.
+   */
+  zeroRuns: Record<string, number>
 }
+
+/** Volte di fila senza attivita' nuove dopo cui una ricerca della lista va in pausa. */
+export const PAUSE_AFTER = 3
 
 export type AutopilotRun = {
   /** Giorno italiano YYYY-MM-DD. */
@@ -70,7 +78,8 @@ export type AutopilotRun = {
   manual?: boolean
   /** Prima ricerca della lista usata in questa esecuzione. */
   searchStart: number
-  searched: { query: string; found: number; added: number; error?: string; auto?: boolean }[]
+  /** skipped: ricerca in pausa, non eseguita (nessuna chiamata a Google Maps). */
+  searched: { query: string; found: number; added: number; error?: string; auto?: boolean; skipped?: boolean }[]
   analyzed: number
   withEmail: number
   sent: { id: string; name: string; email: string }[]
@@ -89,12 +98,32 @@ export const DEFAULT_SETTINGS: AutopilotSettings = {
   next: 0,
   autoSearch: true,
   autoNext: 0,
+  zeroRuns: {},
 }
 
 const clamp = (value: unknown, min: number, max: number, fallback: number) => {
   const n = Math.round(Number(value))
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
 }
+
+/** Contatori validi, solo per le ricerche ancora nella lista. */
+function cleanZeroRuns(input: unknown, searches: string[]): Record<string, number> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const out: Record<string, number> = {}
+  for (const [query, value] of Object.entries(input as Record<string, unknown>)) {
+    const n = clamp(value, 0, 999, 0)
+    if (n > 0 && searches.includes(query)) out[query] = n
+  }
+  return out
+}
+
+/** Ricerca della lista in pausa: nessuna attivita' nuova nelle ultime PAUSE_AFTER volte. */
+export const isPaused = (settings: Pick<AutopilotSettings, 'zeroRuns'>, query: string) =>
+  (settings.zeroRuns?.[query] ?? 0) >= PAUSE_AFTER
+
+/** Ricerche della lista in pausa, nell'ordine della lista. */
+export const pausedSearches = (settings: Pick<AutopilotSettings, 'searches' | 'zeroRuns'>) =>
+  settings.searches.filter((q) => isPaused(settings, q))
 
 /** Impostazioni valide (valori fuori misura riportati nei limiti). */
 /**
@@ -123,6 +152,7 @@ export function cleanSettings(input: Partial<AutopilotSettings> | null | undefin
     next: clamp(input?.next ?? base.next, 0, 10_000, 0),
     autoSearch: typeof input?.autoSearch === 'boolean' ? input.autoSearch : base.autoSearch,
     autoNext: clamp(input?.autoNext ?? base.autoNext, 0, 1_000_000, 0),
+    zeroRuns: cleanZeroRuns(input?.zeroRuns ?? base.zeroRuns, searches),
   }
 }
 
@@ -146,6 +176,32 @@ export const loadRun = async () => parseRun((await readSetting(RUN_KEY)).value)
 
 export function saveSettings(input: Partial<AutopilotSettings>) {
   return updateSetting(SETTINGS_KEY, parseSettings, (current) => cleanSettings({ ...current, ...input }, current))
+}
+
+/**
+ * Esito di una ricerca della lista: con attivita' nuove il contatore torna a zero,
+ * senza aumenta di uno. Una ricerca in errore non cambia niente.
+ */
+export function recordSearchOutcome(query: string, added: number) {
+  return updateSetting(SETTINGS_KEY, parseSettings, (current) => {
+    if (!current.searches.includes(query)) return false
+    const zeroRuns = { ...current.zeroRuns }
+    if (added > 0) {
+      if (!zeroRuns[query]) return false
+      delete zeroRuns[query]
+    } else zeroRuns[query] = (zeroRuns[query] || 0) + 1
+    return cleanSettings({ ...current, zeroRuns }, current)
+  })
+}
+
+/** Riattiva una ricerca in pausa (dal pannello dell'automazione). */
+export function resumeSearch(query: string) {
+  return updateSetting(SETTINGS_KEY, parseSettings, (current) => {
+    if (!current.zeroRuns[query]) return false
+    const zeroRuns = { ...current.zeroRuns }
+    delete zeroRuns[query]
+    return cleanSettings({ ...current, zeroRuns }, current)
+  })
 }
 
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
@@ -316,12 +372,27 @@ export async function runRound(origin: string, runId: string) {
         console.log(`autopilot: ricerca${auto ? ' automatica' : ''} "${query}": ${entry.found} trovate, ${entry.added} nuove${entry.error ? `, errore: ${entry.error}` : ''}`)
         await patch(runId, (r) => void r.searched.push(entry))
         run.searched.push(entry)
+        // Ricerche della lista: si conta quante volte di fila non portano attivita' nuove.
+        if (!auto && !entry.error) {
+          await recordSearchOutcome(query, entry.added).catch((error) =>
+            console.error('autopilot: esito della ricerca non salvato:', error instanceof Error ? error.message : error)
+          )
+        }
         return entry
+      }
+      // Ricerca in pausa: si segna come saltata (conta per la rotazione) senza chiamare Google Maps.
+      const skip = async (query: string) => {
+        const entry: AutopilotRun['searched'][number] = { query, found: 0, added: 0, skipped: true }
+        console.log(`autopilot: ricerca saltata: nessuna attività nuova nelle ultime ${PAUSE_AFTER} volte ("${query}")`)
+        await patch(runId, (r) => void r.searched.push(entry))
+        run.searched.push(entry)
       }
       let i = run.searched.filter((x) => !x.auto).length
       for (; i < settings.searches.length && productive() < settings.searchesPerDay; i++) {
         if (timeLeft() < 40_000) return nextRound()
-        await search(settings.searches[(run.searchStart + i) % settings.searches.length], false)
+        const query = settings.searches[(run.searchStart + i) % settings.searches.length]
+        if (isPaused(settings, query)) await skip(query)
+        else await search(query, false)
       }
       // La rotazione riparte dalla ricerca successiva il giorno dopo.
       if (i && settings.searches.length) await saveSettings({ next: (run.searchStart + i) % settings.searches.length })

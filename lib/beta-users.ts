@@ -42,6 +42,30 @@ export type BetaAutomations = {
   sentToday: number
 }
 
+/** Chiamate AI reali di un fornitore: token letti dalla risposta dell'API. */
+export type AiCounts = { calls: number; input: number; output: number }
+
+/** Consumi reali di un periodo (oggi o mese): richieste Places con il loro esito e chiamate AI. */
+export type UsageCounts = {
+  places: { ok: number; error: number }
+  ai: { gemini: AiCounts; claude: AiCounts }
+}
+
+export type FeatureUsage = { feature: string; label: string; places: number; aiCalls: number; input: number; output: number }
+
+/**
+ * Campo "usage" della beta: solo righe registrate quando il fornitore ha risposto
+ * davvero (token dalla risposta dell'API, richieste Places con il loro esito HTTP),
+ * per gli spazi di cui l'utente e' proprietario (se non ne ha: quelli in cui lavora, vedi
+ * usageFromOthersSpaces). Nessun importo in euro.
+ */
+export type BetaUsage = {
+  periodStart: string
+  today: UsageCounts
+  month: UsageCounts
+  byFeature: FeatureUsage[]
+}
+
 export type BetaUser = {
   id: string
   email: string
@@ -71,6 +95,8 @@ export type BetaUser = {
   assistant?: BetaAssistant
   /** Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore. */
   automations?: BetaAutomations
+  /** Consumi reali (richieste e token). Assente: la beta (versione vecchia) non lo manda. */
+  usage?: BetaUsage
 }
 
 export type BetaUsersResponse = { updatedAt: string; users: BetaUser[] }
@@ -239,12 +265,81 @@ export function automationsSpaces(workspaces: readonly Pick<BetaWorkspace, 'role
   return Math.max(1, owned || workspaces.length)
 }
 
+/**
+ * Consumi ("usage") presi dagli spazi di un altro: la beta usa la regola di automationsSentToday,
+ * quindi chi non e' titolare di nessuno spazio riceve i consumi degli spazi in cui lavora, gli
+ * stessi gia' contati al titolare. Questi numeri non vanno sommati ai totali ne' ripartiti in euro.
+ */
+export const usageFromOthersSpaces = (workspaces: readonly Pick<BetaWorkspace, 'role'>[]) =>
+  workspaces.length > 0 && !workspaces.some((w) => w.role === 'owner')
+
 /** Il limite e' per spazio: "oggi 3/20" con uno spazio, "oggi 22 in 2 spazi" con piu' spazi (la beta manda la somma). */
 export const automationsTodayText = (sentToday: number, spaces = 1) =>
   spaces > 1 ? `oggi ${sentToday} in ${spaces} spazi` : `oggi ${sentToday}/${AUTOMATIONS_DAILY_LIMIT}`
 
 /** Limite di oggi finito in tutti gli spazi contati (la beta ne ferma ognuno a 20, quindi la somma basta). */
 export const automationsFull = (sentToday: number, spaces = 1) => sentToday >= AUTOMATIONS_DAILY_LIMIT * Math.max(1, spaces)
+
+const count = (v: unknown) => Math.max(0, Math.round(num(v)))
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+
+function aiCountsFrom(v: unknown): AiCounts {
+  const a = obj(v)
+  return { calls: count(a.calls), input: count(a.input), output: count(a.output) }
+}
+
+function usageCountsFrom(v: unknown): UsageCounts {
+  const c = obj(v)
+  const places = obj(c.places)
+  const ai = obj(c.ai)
+  return {
+    places: { ok: count(places.ok), error: count(places.error) },
+    ai: { gemini: aiCountsFrom(ai.gemini), claude: aiCountsFrom(ai.claude) },
+  }
+}
+
+export const emptyUsageCounts = (): UsageCounts => usageCountsFrom(null)
+
+/** Campo "usage" della beta in forma sicura; null se manca o non e' valido. */
+export function usageFrom(v: unknown): BetaUsage | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const u = v as Record<string, unknown>
+  if (!u.month || typeof u.month !== 'object') return null
+  const byFeature = (Array.isArray(u.byFeature) ? u.byFeature : [])
+    .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
+    .map((f) => ({
+      feature: str(f.feature).slice(0, 60) || 'altro',
+      label: str(f.label).slice(0, 80) || str(f.feature).slice(0, 60) || 'Altro',
+      places: count(f.places),
+      aiCalls: count(f.aiCalls),
+      input: count(f.input),
+      output: count(f.output),
+    }))
+    .filter((f) => f.places > 0 || f.aiCalls > 0 || f.input > 0 || f.output > 0)
+    .sort((a, b) => b.places + b.aiCalls - (a.places + a.aiCalls) || b.input + b.output - (a.input + a.output))
+    .slice(0, 30)
+  return {
+    periodStart: isoOrNull(u.periodStart) ?? '',
+    today: usageCountsFrom(u.today),
+    month: usageCountsFrom(u.month),
+    byFeature,
+  }
+}
+
+/** Richieste Places (riuscite + in errore). */
+export const placesCalls = (c: UsageCounts) => c.places.ok + c.places.error
+/** Chiamate AI (Gemini + Claude). */
+export const aiCallsOf = (c: UsageCounts) => c.ai.gemini.calls + c.ai.claude.calls
+/** Token AI (entrata + uscita, Gemini + Claude). */
+export const aiTokensOf = (c: UsageCounts) =>
+  c.ai.gemini.input + c.ai.gemini.output + c.ai.claude.input + c.ai.claude.output
+export const hasUsage = (c: UsageCounts) => placesCalls(c) > 0 || aiCallsOf(c) > 0
+
+const COMPACT = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 })
+/** 1234567 -> "1,2 Mln"; numeri piccoli interi. */
+export const formatCount = (value: number) =>
+  Number.isFinite(value) ? (Math.abs(value) < 10_000 ? Math.round(value).toLocaleString('it-IT') : COMPACT.format(value)) : '0'
 
 function thresholdsFrom(v: unknown): BetaThresholds | null {
   if (!v || typeof v !== 'object') return null
@@ -270,6 +365,7 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
       const plan = str(u.plan) || 'free'
       const assistant = assistantFrom(u.assistant)
       const automations = automationsFrom(u.automations, u.automationsSentToday)
+      const usage = usageFrom(u.usage)
       return {
         id: u.id,
         email: str(u.email),
@@ -307,6 +403,8 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
         ...(assistant ? { assistant } : {}),
         // Idem per le automazioni.
         ...(automations ? { automations } : {}),
+        // Idem per i consumi reali.
+        ...(usage ? { usage } : {}),
       }
     })
   return { updatedAt: str(raw.updatedAt) || new Date().toISOString(), users }

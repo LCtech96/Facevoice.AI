@@ -7,14 +7,17 @@ import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
 import {
+  aiCallsOf,
+  aiTokensOf,
   assistantFrom,
   automationsFull,
   automationsLocked,
   automationsSpaces,
   automationsTodayText,
   daysLeftText,
-  formatEur,
+  formatCount,
   formatEurRound,
+  hasUsage,
   planLabelFor,
   planPriceEur,
   shownFor,
@@ -22,6 +25,7 @@ import {
   subscriptionPlanLabel,
   subscriptionStatusLabel,
   subscriptionSummary,
+  usageFromOthersSpaces,
   type BetaAutomations,
   type BetaSubscription,
   type BetaUser,
@@ -29,10 +33,14 @@ import {
   type LightMode,
   type ShownLight,
   type SubscriptionTone,
+  type UsageCounts,
 } from '@/lib/beta-users'
+import { ATTRIBUTION_LABEL, ATTRIBUTION_RULE, formatMoney, userPlacesShare, type PlacesAttribution } from '@/lib/consumi'
 
-// Pagina "Utenti": chi e' iscritto alla beta, quanto ha speso di AI nel periodo
-// del suo abbonamento e quale gettone vede (verde, arancione, rosso).
+// Pagina "Utenti": chi e' iscritto alla beta, i suoi consumi reali (richieste
+// Places e chiamate AI con i token, registrati dalla beta quando il fornitore ha
+// risposto; in euro solo il costo Google reale ripartito sulle sue richieste) e
+// quale gettone vede (verde, arancione, rosso).
 // Dalla scheda l'admin accende o spegne anche la chat Assistente della beta
 // e mostra o nasconde la pagina Automazioni.
 // ?u=<id> apre subito la scheda di quell'utente (link delle notifiche).
@@ -325,6 +333,42 @@ const workspacesLine = (user: BetaUser) =>
     ? user.workspaces.map((w) => `${w.name} · ${planLabelFor(w.plan)}`).join(', ')
     : 'Nessuno spazio di lavoro'
 
+const int = (v: number) => Math.round(v).toLocaleString('it-IT')
+
+/** "120 Places · 45 AI" (consumi reali del mese, per la lista). */
+const usageLine = (c: UsageCounts) => `${int(c.places.ok + c.places.error)} Places · ${int(aiCallsOf(c))} AI`
+
+/**
+ * Costo Google Places reale ripartito sulle richieste del mese (null se non disponibile o se
+ * l'utente non e' titolare: i suoi numeri sono gia' contati al titolare).
+ * usersOk: richieste Places riuscite di tutti i titolari (la somma delle quote non supera il costo).
+ */
+function googleShare(user: Pick<BetaUser, 'usage' | 'workspaces'>, places: PlacesAttribution | null, usersOk: number) {
+  if (!places) return null
+  const value = userPlacesShare(user.usage, usageFromOthersSpaces(user.workspaces), places, usersOk)
+  return value === null ? null : formatMoney(value, places.currency)
+}
+
+/** Richieste Places riuscite del mese dei titolari (chi lavora negli spazi di altri e' gia' contato). */
+const ownersOk = (users: BetaUser[]) =>
+  users.reduce((n, u) => n + (u.usage && !usageFromOthersSpaces(u.workspaces) ? u.usage.month.places.ok : 0), 0)
+
+/** Riquadro "oggi" o "mese" dei consumi reali nella scheda. */
+function UsageBox({ title, c }: { title: string; c: UsageCounts }) {
+  return (
+    <div className="rounded-xl bg-[var(--background)] p-3">
+      <p className="text-xs text-[var(--text-secondary)]">{title}</p>
+      <p className="text-sm font-medium tabular-nums text-[var(--text-primary)]">
+        {int(c.places.ok)} Places{c.places.error ? <span className="font-normal text-[var(--text-secondary)]"> · {int(c.places.error)} errori</span> : null}
+      </p>
+      <p className="text-sm font-medium tabular-nums text-[var(--text-primary)]">{int(aiCallsOf(c))} chiamate AI</p>
+      <p className="text-[11px] tabular-nums text-[var(--text-secondary)]">
+        Gemini {int(c.ai.gemini.calls)} · Claude {int(c.ai.claude.calls)} · {formatCount(aiTokensOf(c))} token
+      </p>
+    </div>
+  )
+}
+
 export default function UtentiClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -334,6 +378,8 @@ export default function UtentiClient() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
+  // Dati reali di Google per ripartire il costo Places (null: non collegati).
+  const [places, setPlaces] = useState<PlacesAttribution | null>(null)
   // Per non ricaricare la lista quando siamo noi a cambiare ?u= aprendo una scheda.
   const selfNav = useRef<string | null>(null)
 
@@ -367,6 +413,16 @@ export default function UtentiClient() {
       setError(e instanceof Error ? e.message : 'Impossibile caricare gli utenti della beta.')
     } finally {
       setLoading(false)
+    }
+    // Costo Google reale da ripartire: se non e' collegato la pagina resta com'e'.
+    try {
+      const token = await getAccessToken()
+      if (!token) return
+      const res = await fetch('/api/admin/consumi?parte=ripartizione', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      const json = await res.json().catch(() => null)
+      setPlaces(res.ok && json?.places?.ok ? (json.places.value as PlacesAttribution) : null)
+    } catch {
+      setPlaces(null)
     }
   }, [])
 
@@ -405,7 +461,10 @@ export default function UtentiClient() {
 
   const selected = openId ? users.find((u) => u.id === openId) ?? null : null
   const notFound = Boolean(openId && data && !selected)
-  const using = users.filter((u) => u.eur > 0).length
+  // Con consumi: dai consumi reali se la beta li manda, altrimenti da quello che segna la beta.
+  // Chi non e' titolare di uno spazio no: i suoi numeri sono quelli del titolare.
+  const using = users.filter((u) => !usageFromOthersSpaces(u.workspaces) && (u.usage ? hasUsage(u.usage.month) : u.eur > 0)).length
+  const usersOk = useMemo(() => ownersOk(users), [users])
   const blocked = users.filter((u) => u.blocked).length
   const subs = useMemo(() => subscriptionSummary(users), [users])
   // Solo se la beta manda gia' lo stato dell'assistente.
@@ -433,7 +492,7 @@ export default function UtentiClient() {
             <Users className="h-6 w-6" /> Utenti
           </h1>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Iscritti alla beta e quanto hanno speso di AI nel mese del loro abbonamento.
+            Iscritti alla beta e i loro consumi reali del mese: richieste Places e chiamate AI con i token.
           </p>
           {data && (
             <p className="mt-1 text-xs text-[var(--text-secondary)]">
@@ -524,9 +583,19 @@ export default function UtentiClient() {
                   </div>
                 )}
                 <div className="mt-2 flex items-baseline justify-between gap-2">
-                  <span className="text-lg font-bold tabular-nums text-[var(--text-primary)]">{formatEur(user.eur)}</span>
+                  <span className="min-w-0 truncate text-sm font-semibold tabular-nums text-[var(--text-primary)]">
+                    {user.usage ? usageLine(user.usage.month) : 'Consumi non ancora inviati'}
+                  </span>
                   <span className="shrink-0 text-xs text-[var(--text-secondary)]">{daysLeftText(user.period.daysLeft)}</span>
                 </div>
+                {user.usage && usageFromOthersSpaces(user.workspaces) && (
+                  <p className="text-[11px] text-[var(--text-secondary)]">Spazi in cui lavora, già contati dal titolare</p>
+                )}
+                {googleShare(user, places, usersOk) && (
+                  <p className="text-[11px] text-[var(--text-secondary)]">
+                    {ATTRIBUTION_LABEL}: {googleShare(user, places, usersOk)}
+                  </p>
+                )}
                 <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]" title={workspacesLine(user)}>
                   <span className="font-medium text-[var(--text-primary)]">Piano {user.planLabel}</span> · {workspacesLine(user)}
                 </p>
@@ -542,7 +611,7 @@ export default function UtentiClient() {
       )}
 
       {selected && data && (
-        <UserSheet user={selected} onClose={close} onSaved={(patch) => updateUser(selected.id, patch)} />
+        <UserSheet user={selected} places={places} usersOk={usersOk} onClose={close} onSaved={(patch) => updateUser(selected.id, patch)} />
       )}
     </div>
   )
@@ -550,10 +619,15 @@ export default function UtentiClient() {
 
 function UserSheet({
   user,
+  places,
+  usersOk = 0,
   onClose,
   onSaved,
 }: {
   user: BetaUser
+  places: PlacesAttribution | null
+  /** Richieste Places riuscite del mese di tutti i titolari. */
+  usersOk?: number
   onClose: () => void
   onSaved: (patch: Partial<BetaUser>) => void
 }) {
@@ -661,13 +735,11 @@ function UserSheet({
     }
   }
 
-  const { thresholds, limitEur: limit } = user
-  // Barra della spesa solo per chi ha un limite (il proprietario di Facevoice no).
-  const hasLimit = !user.unlimited && limit > 0
-  const fill = hasLimit ? Math.min(100, (user.eur / limit) * 100) : 0
-  const fillColor =
-    user.blocked || user.level === 'red' ? '#FF3B30' : user.level === 'orange' ? '#FF9500' : '#34C759'
-  const left = Math.max(0, limit - user.eur)
+  // Il gettone lo calcola la beta: qui si mostra lo stato, senza importi stimati.
+  const hasLimit = !user.unlimited && user.limitEur > 0
+  const usage = user.usage
+  const shared = usageFromOthersSpaces(user.workspaces)
+  const share = googleShare(user, places, usersOk)
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={onClose}>
@@ -750,76 +822,63 @@ function UserSheet({
           />
         )}
 
-        <div className="mt-3 rounded-xl bg-[var(--background)] p-3">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-xs text-[var(--text-secondary)]">Spesa AI nel periodo</p>
-            <p className="text-xs text-[var(--text-secondary)]">
-              {user.unlimited
-                ? 'senza limite'
-                : user.blocked
-                  ? 'limite raggiunto'
-                  : hasLimit
-                    ? `restano ${formatEur(left)}`
-                    : ''}
-            </p>
-          </div>
-          <p className="mt-0.5 text-2xl font-bold tabular-nums text-[var(--text-primary)]">
-            {formatEur(user.eur)}{' '}
-            {hasLimit && <span className="text-sm font-normal text-[var(--text-secondary)]">su {formatEur(limit)}</span>}
+        <div className="mt-3 flex items-baseline justify-between gap-2">
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Consumi reali</h3>
+          <p className="text-xs text-[var(--text-secondary)]">
+            {user.unlimited ? 'senza limite' : user.blocked ? 'limite raggiunto' : LIGHT_NAME[user.shown].toLowerCase()}
           </p>
-          {hasLimit && (
-            <>
-              <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-[var(--border-color)]">
-                <div className="h-full rounded-full transition-all" style={{ width: `${fill}%`, background: fillColor }} />
-                {thresholds &&
-                  [thresholds.orange, thresholds.red]
-                    .filter((t) => t < limit)
-                    .map((t) => (
-                      <span
-                        key={t}
-                        className="absolute top-0 h-full w-px bg-[var(--background)]"
-                        style={{ left: `${(t / limit) * 100}%` }}
-                      />
-                    ))}
-              </div>
-              <div className="mt-1 flex justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
-                <span>0 €</span>
-                {thresholds && (
-                  <span className="text-center">
-                    arancione {formatEur(thresholds.orange)} · rosso {formatEur(thresholds.red)}
-                  </span>
-                )}
-                <span>{formatEur(limit)}</span>
-              </div>
-            </>
-          )}
         </div>
-
-        <h3 className="mt-5 text-sm font-semibold text-[var(--text-primary)]">Per collegamento</h3>
-        {user.byConnection.length ? (
-          <ul className="mt-2 space-y-2">
-            {user.byConnection.map((c) => (
-              <li key={c.key}>
-                <div className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="truncate text-[var(--text-primary)]">{c.label}</span>
-                  <span className="shrink-0 tabular-nums text-[var(--text-primary)]">
-                    {formatEur(c.eur)}
-                    <span className="ml-1.5 text-xs text-[var(--text-secondary)]">
+        {usage ? (
+          <>
+            {shared && (
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Non è titolare di uno spazio: questi sono i consumi degli spazi in cui lavora, già contati dal titolare.
+              </p>
+            )}
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <UsageBox title="Oggi" c={usage.today} />
+              <UsageBox title="Questo mese" c={usage.month} />
+            </div>
+            {share && (
+              <p className="mt-2 text-xs text-[var(--text-primary)]">
+                {ATTRIBUTION_LABEL}: <b className="tabular-nums">{share}</b>
+                <span className="block text-[11px] text-[var(--text-secondary)]">= {ATTRIBUTION_RULE}</span>
+              </p>
+            )}
+            <h3 className="mt-5 text-sm font-semibold text-[var(--text-primary)]">Per funzione</h3>
+            {usage.byFeature.length ? (
+              <ul className="mt-2 space-y-1.5">
+                {usage.byFeature.map((f) => (
+                  <li key={f.feature} className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate text-[var(--text-primary)]">{f.label}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-[var(--text-secondary)]">
+                      {[f.places ? `${int(f.places)} Places` : '', f.aiCalls ? `${int(f.aiCalls)} AI · ${formatCount(f.input + f.output)} token` : '']
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">Nessun consumo in questo periodo.</p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">La beta non manda ancora i consumi reali di questo utente.</p>
+            {user.byConnection.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {user.byConnection.map((c) => (
+                  <li key={c.key} className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate text-[var(--text-primary)]">{c.label}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-[var(--text-secondary)]">
                       {c.calls} {c.calls === 1 ? 'richiesta' : 'richieste'}
                     </span>
-                  </span>
-                </div>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border-color)]">
-                  <div
-                    className="h-full rounded-full bg-[var(--accent-blue)]"
-                    style={{ width: `${user.eur > 0 ? Math.max(2, (c.eur / user.eur) * 100) : 0}%` }}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">Nessun consumo in questo periodo.</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
 
         <h3 className="mt-5 text-sm font-semibold text-[var(--text-primary)]">Spazi di lavoro</h3>
@@ -837,7 +896,9 @@ function UserSheet({
         ) : (
           <p className="mt-1 text-sm text-[var(--text-secondary)]">Nessuno spazio di lavoro.</p>
         )}
-        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">La spesa conta solo gli spazi di cui è proprietario.</p>
+        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+          I consumi contano gli spazi di cui è proprietario; se non ne ha, quelli in cui lavora (già contati dal titolare).
+        </p>
 
         <h3 className="mt-5 text-sm font-semibold text-[var(--text-primary)]">Gettone che vede l’utente</h3>
         <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -864,12 +925,12 @@ function UserSheet({
           })}
         </div>
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
-          Ora vede: {LIGHT_NAME[user.shown].toLowerCase()}. Automatico segue la spesa: verde appena inizia
-          {thresholds ? `, arancione da ${formatEur(thresholds.orange)}, rosso da ${formatEur(thresholds.red)}` : ''}.
+          Ora vede: {LIGHT_NAME[user.shown].toLowerCase()}. Automatico segue i consumi del suo piano: verde appena inizia, poi arancione e rosso
+          vicino al limite.
           {user.unlimited
-            ? ' Questo utente non ha limite di spesa.'
+            ? ' Questo utente non ha limite.'
             : hasLimit
-              ? ` A ${formatEur(limit)} l’AI si blocca comunque, qualunque colore scegli.`
+              ? ' Al limite del piano l’AI si blocca comunque, qualunque colore scegli.'
               : ''}
         </p>
         {saveError && <p className="mt-2 text-xs text-[#FF3B30]">{saveError}</p>}
