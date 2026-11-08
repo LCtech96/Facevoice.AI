@@ -3,8 +3,12 @@ import { verifyMetaSignature } from '@/lib/meta/agent'
 import { handleWhatsAppWebhook, type WhatsAppPayload } from '@/lib/meta/whatsapp'
 import { handleMessagingWebhook, type MessagingPayload } from '@/lib/meta/messenger'
 import { facevoiceAccountIds } from '@/lib/meta/graph'
+import { waitForDmReplies } from '@/lib/meta/reply-queue'
 
 export const dynamic = 'force-dynamic'
+// Dopo il 200 a Meta (after) si aspettano anche le risposte ai messaggi privati in coda
+// (almeno 30 secondi dopo l'ultimo messaggio, fino a 45 secondi di attesa) e si scrivono.
+export const maxDuration = 120
 
 /** Verifica dell'URL richiesta da Meta quando si salva il webhook in console. */
 export async function GET(req: NextRequest) {
@@ -44,10 +48,10 @@ export async function POST(req: NextRequest) {
 
   // Meta vuole un 200 rapido; la risposta AI parte dopo, senza farlo aspettare.
   if (payload.object === 'whatsapp_business_account') {
-    after(() => handleWhatsAppWebhook(payload as WhatsAppPayload))
+    after(async () => waitForDmReplies(await handleWhatsAppWebhook(payload as WhatsAppPayload)))
   } else if (payload.object === 'page' || payload.object === 'instagram') {
     const signature = req.headers.get('x-hub-signature-256')
-    after(async () => {
+    const handleOwn = async (): Promise<string[]> => {
       const messaging = payload as MessagingPayload
       const own = await facevoiceAccountIds().catch(() => null)
       // Senza gli id di Facevoice (token non disponibile) si lavora come sempre.
@@ -69,8 +73,11 @@ export async function POST(req: NextRequest) {
           .then((res) => console.log(`meta webhook: ${clients} eventi di clienti girati alla beta (${res.status})`))
           .catch((error) => console.error('meta webhook: inoltro alla beta non riuscito', error instanceof Error ? error.message : error))
       }
-      if (ours.length) await handleMessagingWebhook({ ...messaging, entry: ours })
-    })
+      if (ours.length) return handleMessagingWebhook({ ...messaging, entry: ours })
+      return []
+    }
+    // Risposte messe in coda dai nostri messaggi privati: si aspettano qui, il resto lo manda il cron.
+    after(async () => waitForDmReplies(await handleOwn()))
   }
 
   return NextResponse.json({ received: true })

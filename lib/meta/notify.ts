@@ -25,6 +25,12 @@ export async function notifyNewMessage(input: {
   suspicious?: string | null
   /** Verifica dell'identita' (dice di conoscerci): a che punto e', in una riga. */
   identity?: string | null
+  /**
+   * Bozza pronta alla fine dell'attesa della risposta unica (invio automatico dei messaggi privati): l'avviso
+   * del messaggio e' gia' partito senza dire che c'e' una bozza da approvare, quindi l'email parte anche se
+   * ne e' partita una da poco.
+   */
+  draftReady?: boolean
 }) {
   const channel = input.outreachName
     ? 'ha risposto alla tua email'
@@ -69,11 +75,11 @@ export async function notifyNewMessage(input: {
     .gte('created_at', since)
 
   // Per le email niente avviso via email: arriverebbe nella stessa casella letta dall'agente.
-  if (!count && input.platform !== 'email') {
+  if ((input.draftReady || !count) && input.platform !== 'email') {
     tasks.push(
       sendEmail({
         to: [...ADMIN_EMAILS],
-        subject: `Nuovo messaggio ${channel} da ${who}`,
+        subject: input.draftReady ? `Risposta da approvare: ${channel} da ${who}` : `Nuovo messaggio ${channel} da ${who}`,
         text: `${who} ti ha scritto su ${channel}:\n\n${input.body}\n\n${action}\nApri la casella: ${url}`,
         html: emailLayout(`
 <p><strong>${escapeHtml(who)}</strong> ti ha scritto su <strong>${escapeHtml(channel)}</strong>:</p>

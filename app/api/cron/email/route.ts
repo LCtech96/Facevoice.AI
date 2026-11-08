@@ -7,6 +7,7 @@ import { autopilotTick } from '@/lib/autopilot'
 import { blogAutoTick } from '@/lib/blog-auto'
 import { sendDueOutreachReplies } from '@/lib/outreach-reply'
 import { autoLinkBackfillTick } from '@/lib/meta/auto-link'
+import { processDueDmReplies } from '@/lib/meta/reply-queue'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,6 +41,9 @@ export async function GET(req: NextRequest) {
   // Collegamento automatico delle conversazioni gia' esistenti: pochi secondi a ogni giro, riprende da dove
   // era rimasto. Va in parallelo e non ritarda la lettura delle email.
   const backfill = autoLinkBackfillTick().catch((error) => console.error('collegamento automatico:', error))
+  // Risposte ai messaggi privati in coda (almeno 30 secondi dopo l'ultimo messaggio) non inviate dal
+  // webhook: quelle gia' all'ora prevista e quelle dei prossimi 15 secondi. In parallelo, come sopra.
+  const dmReplies = processDueDmReplies({ horizonMs: 15_000 }).catch((error) => console.error('risposte in coda:', error))
   await Promise.all([
     autopilotTick(req.nextUrl.origin).catch((error) => console.error('autopilot:', error)),
     blogAutoTick(req.nextUrl.origin).catch((error) => console.error('blog auto:', error)),
@@ -48,6 +52,6 @@ export async function GET(req: NextRequest) {
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])
   const result = await pollGmail()
-  await backfill
+  await Promise.all([backfill, dmReplies])
   return NextResponse.json(result)
 }

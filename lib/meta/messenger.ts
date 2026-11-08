@@ -69,11 +69,15 @@ async function handleEcho(platform: Platform, accountId: string | undefined, eve
   console.log(`${platform} eco: ${what}`)
 }
 
-async function handleEvent(platform: Platform, accountId: string | undefined, event: MessagingEvent) {
+/** Chiave della risposta messa in coda (invio automatico dei messaggi privati), se c'e'. */
+async function handleEvent(platform: Platform, accountId: string | undefined, event: MessagingEvent): Promise<string | null> {
   const message = event.message
-  if (message?.is_echo) return handleEcho(platform, accountId, event)
+  if (message?.is_echo) {
+    await handleEcho(platform, accountId, event)
+    return null
+  }
   const senderId = event.sender?.id
-  if (!message?.mid || !senderId) return
+  if (!message?.mid || !senderId) return null
 
   // Post, reel, storie e foto: didascalia e cosa si vede diventano contesto per l'AI.
   const context = await describeAttachments(message.attachments, message.reply_to?.story).catch((error) => {
@@ -84,7 +88,7 @@ async function handleEvent(platform: Platform, accountId: string | undefined, ev
   const text = [userText, context].filter(Boolean).join('\n\n') || null
   const profile = await fetchContactProfile(platform, senderId)
 
-  await handleIncoming({
+  return handleIncoming({
     platform,
     kind: 'message',
     contactId: senderId,
@@ -147,7 +151,9 @@ async function handleComment(platform: Platform, accountId: string | undefined, 
   })
 }
 
-export async function handleMessagingWebhook(payload: MessagingPayload) {
+/** Restituisce le chiavi delle risposte messe in coda (invio automatico), da aspettare nel webhook. */
+export async function handleMessagingWebhook(payload: MessagingPayload): Promise<string[]> {
+  const queued: string[] = []
   const platform: Platform = payload.object === 'instagram' ? 'instagram' : 'facebook'
   // Una volta al giorno: la Pagina deve mandare anche le eco dei messaggi scritti a mano (in parallelo, mai bloccante).
   const echoCheck = ensureEchoSubscription()
@@ -157,7 +163,8 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
     const events = [...(entry.messaging || [])].sort((a, b) => Number(Boolean(b.message?.is_echo)) - Number(Boolean(a.message?.is_echo)))
     for (const event of events) {
       try {
-        await handleEvent(platform, entry.id, event)
+        const key = await handleEvent(platform, entry.id, event)
+        if (key) queued.push(key)
       } catch (error) {
         console.error(`${platform} webhook: errore sul messaggio`, event.message?.mid, error)
       }
@@ -167,12 +174,13 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
         if (change.field === 'messages') {
           const value = change.value
           if (value && typeof value.message === 'object') {
-            await handleEvent(platform, entry.id, {
+            const key = await handleEvent(platform, entry.id, {
               sender: value.sender,
               recipient: value.recipient,
               timestamp: value.timestamp,
               message: value.message,
             })
+            if (key) queued.push(key)
           }
           continue
         }
@@ -183,4 +191,5 @@ export async function handleMessagingWebhook(payload: MessagingPayload) {
     }
   }
   await echoCheck
+  return queued
 }

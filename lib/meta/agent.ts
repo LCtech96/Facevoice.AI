@@ -12,7 +12,8 @@ import {
 import { notifyNewMessage } from '@/lib/meta/notify'
 import { linkedMembers } from '@/lib/meta/identities'
 import { autoLink, autoLinkContact } from '@/lib/meta/auto-link'
-import { APP_ORIGIN, manualReplySince, noteApiSend } from '@/lib/meta/echoes'
+import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, manualReplySince, noteApiSend } from '@/lib/meta/echoes'
+import { BATCHED_PLATFORMS, enqueueDmReply, type DmPlatform, type QueueItem } from '@/lib/meta/reply-queue'
 import { syncConversationHistory } from '@/lib/meta/history-sync'
 import { sendThreadReply } from '@/lib/gmail'
 import { WHATSAPP_DISPLAY } from '@/lib/leads'
@@ -330,6 +331,10 @@ type LoadedHistory = {
   opener: { text: string; byHand: 'app' | 'inbox' | null } | null
   /** Nello storico c'e' almeno un messaggio scritto a mano dal team dall'app. */
   handWritten: boolean
+  /** Messaggi della persona dopo la nostra ultima risposta (per la risposta unica a piu' messaggi). */
+  pending: string[]
+  /** Ora dell'ultimo messaggio di questa persona su questo canale letto nello storico. */
+  lastInAt: string | null
 }
 
 /** Etichetta, nello storico dato all'AI, dei messaggi scritti a mano dal team dall'app. */
@@ -338,11 +343,18 @@ const HAND_LABEL = '[scritto a mano dal team]'
 const LEADING_HISTORY_LABELS = /^\s*(?:\[(?:scritto a mano dal team|su [^\]\n]{1,30})\]\s*)+/i
 
 /**
+ * Messaggio "dall'app" (ora di Meta at) entro pochi secondi da uno dei messaggi della serie (times, ore
+ * di Meta): e' la risposta automatica di Meta (risposta istantanea, messaggio di assenza), non il team.
+ */
+const metaAutoReplyTo = (at: number, times: number[]) => times.some((t) => at - t > -1_000 && at - t < AUTOMATIC_REPLY_GRACE_MS)
+
+/**
  * Messaggi privati gia' scambiati con questa persona, anche sugli altri canali
  * a cui e' stata collegata (es. Instagram + Messenger). Esclude bozze non inviate.
- * Con il primo messaggio della chat, se l'abbiamo scritto noi.
+ * Con il primo messaggio della chat, se l'abbiamo scritto noi. seriesTimes (risposta
+ * unica): ore dei messaggi della serie in coda, per l'elenco dei messaggi a cui rispondere.
  */
-async function loadHistory(platform: SocialPlatform, contactId: string): Promise<LoadedHistory> {
+async function loadHistory(platform: SocialPlatform, contactId: string, seriesTimes?: number[]): Promise<LoadedHistory> {
   const members = await linkedMembers(platform, contactId)
   const filter = members
     .map((m) => `and(platform.eq.${m.platform},contact_id.eq.${m.contactId})`)
@@ -365,13 +377,22 @@ async function loadHistory(platform: SocialPlatform, contactId: string): Promise
       .eq('kind', 'message')
       .order('created_at', { ascending: true })
       .limit(5)
-  type Row = { platform: string; direction: string; body: string | null; status: string | null; origin?: string | null; reply_to?: string | null }
+  type Row = {
+    platform: string
+    contact_id?: string
+    direction: string
+    body: string | null
+    status: string | null
+    origin?: string | null
+    reply_to?: string | null
+    created_at?: string
+  }
   let [{ data, error }, { data: start }] = await Promise.all([
-    recent('platform, direction, body, status, origin'),
+    recent('platform, contact_id, direction, body, status, origin, created_at'),
     first('direction, body, status, origin, reply_to'),
   ])
   // Senza la colonna origin (migrazione non eseguita) si legge lo storico come prima.
-  if (error) ({ data } = await recent('platform, direction, body, status'))
+  if (error) ({ data } = await recent('platform, contact_id, direction, body, status, created_at'))
   const rows = ((data || []) as unknown as Row[]).reverse().filter((m) => m.body && (m.direction === 'in' || m.status === 'sent'))
 
   const messages = rows.map((m): HistoryMessage => {
@@ -397,7 +418,23 @@ async function loadHistory(platform: SocialPlatform, contactId: string): Promise
         }
       : null
 
-  return { messages, opener, handWritten: rows.some((m) => m.direction === 'out' && m.origin === APP_ORIGIN) }
+  // Risposta unica: messaggi della persona dopo l'ultimo messaggio nostro, a cui si risponde tutti insieme.
+  // Si salta solo la risposta automatica di Meta a un messaggio della serie (pochi secondi dopo, ore di
+  // Meta); ogni altro messaggio nostro chiude l'elenco, anche una risposta scritta a mano dall'app (quello
+  // che c'e' prima l'ha gia' risposto Luca).
+  let from = rows.length
+  if (seriesTimes) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const m = rows[i]
+      if (m.direction === 'in') from = i
+      else if (!(m.origin === APP_ORIGIN && m.created_at && metaAutoReplyTo(Date.parse(m.created_at), seriesTimes))) break
+    }
+  }
+  const pending = messages.slice(from).filter((m) => m.role === 'user').map((m) => m.content)
+  const own = rows.filter((m) => m.direction === 'in' && m.platform === platform && m.contact_id === contactId && m.created_at)
+  const lastInAt = own.length ? (own[own.length - 1].created_at as string) : null
+
+  return { messages, opener, handWritten: rows.some((m) => m.direction === 'out' && m.origin === APP_ORIGIN), pending, lastInAt }
 }
 
 /**
@@ -437,6 +474,10 @@ type ReplyOptions = {
   instructions?: string
   // Verifica dell'identita' gia' aggiornata con l'ultimo messaggio (altrimenti si legge lo stato salvato).
   identity?: Verification | null
+  // Risposta unica a tutti i messaggi della persona dopo la nostra ultima risposta (invio automatico
+  // dei messaggi privati, lib/meta/reply-queue.ts): times = ore dei messaggi della serie. generateReply
+  // ci scrive cosa ha letto nello storico.
+  batch?: { times: number[]; lastInAt?: string | null; pending?: number }
 }
 
 /** Scheda della Ricerca clienti di chi sta rispondendo alla nostra email di primo contatto. */
@@ -578,16 +619,52 @@ const PRIVATE_FOLLOW_UP_RULES = defineSection({
  * esempi sono in italiano e senza questa riga l'AI tendeva a rispondere in italiano
  * anche a chi scrive in russo o in inglese.
  */
-function languageRule(lastText: string | undefined) {
-  const detected = replyLanguage(lastText)
+function languageRule(lastText: string | undefined, pending: string[] = []) {
+  // Risposta unica a piu' messaggi: se l'ultimo non dice la lingua (es. "Ah ok") valgono i messaggi a cui si risponde, letti insieme.
+  const together = pending.length > 1
+  const fromLast = replyLanguage(lastText)
+  const detected = fromLast ?? (together ? replyLanguage(pending.join('\n')) : null)
   const quoted = (lastText || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  const inLanguage = (language: string) => (language.includes('(') ? 'in quella stessa lingua' : `in ${language}`)
+  if (together) {
+    const all = pending.join(' · ').replace(/\s+/g, ' ').trim().slice(0, 400)
+    return `\n\n## LINGUA DELLA RISPOSTA (regola più importante)
+${
+  detected
+    ? fromLast
+      ? `L'ultimo messaggio è in ${detected}: scrivi TUTTA la risposta ${inLanguage(detected)}.`
+      : `I messaggi della persona a cui rispondi (quelli dopo la nostra ultima risposta, letti insieme) sono in ${detected}: scrivi TUTTA la risposta ${inLanguage(detected)}.`
+    : `Scrivi TUTTA la risposta nella lingua dei messaggi della persona a cui rispondi, letti insieme («${all}»), anche se prima la conversazione era in un'altra lingua. Solo se non contengono parole (solo emoji, adesivi o link) usa la lingua dei messaggi precedenti o, in mancanza, l'italiano.`
+}
+Contano i messaggi a cui rispondi, non quelli più vecchi: se l'ultimo è scritto chiaramente in un'altra lingua, vale quella. Le istruzioni e gli esempi qui sopra sono in italiano solo per comodità: traducine il senso, non copiarli. Nomi, numeri di telefono, link e firma restano uguali.`
+  }
   return `\n\n## LINGUA DELLA RISPOSTA (regola più importante)
 ${
   detected
-    ? `L'ultimo messaggio è in ${detected}: scrivi TUTTA la risposta ${detected.includes('(') ? 'in quella stessa lingua' : `in ${detected}`}.`
+    ? `L'ultimo messaggio è in ${detected}: scrivi TUTTA la risposta ${inLanguage(detected)}.`
     : `Scrivi TUTTA la risposta nella lingua dell'ULTIMO messaggio${quoted ? ` («${quoted}»)` : ''}, anche se prima la conversazione era in un'altra lingua: se la persona cambia lingua, cambi anche tu. Solo se l'ultimo messaggio non contiene parole (solo emoji, un adesivo o un link) usa la lingua dei messaggi precedenti o, in mancanza, l'italiano.`
 }
 Conta sempre l'ultimo messaggio, non quelli prima. Vale anche per il primo messaggio privato dopo un commento. Le istruzioni e gli esempi qui sopra sono in italiano solo per comodità: traducine il senso, non copiarli. Nomi, numeri di telefono, link e firma restano uguali.`
+}
+
+/**
+ * Risposta unica (invio automatico dei messaggi privati): la persona ha scritto piu' messaggi
+ * dopo la nostra ultima risposta, si risponde a tutti insieme; se in chat abbiamo gia' scritto,
+ * niente nuovo saluto.
+ */
+function pendingRule(history: LoadedHistory): string {
+  const lines: string[] = []
+  const count = history.pending.length
+  if (count > 1) {
+    const list = history.pending.map((text) => `«${text.replace(/\s+/g, ' ').trim().slice(0, 300)}»`).join(' · ')
+    lines.push(
+      `- Dopo la nostra ultima risposta la persona ha scritto ${count} messaggi di fila (molti scrivono a pezzi): leggili come un unico messaggio e rispondi a tutti insieme in UN solo messaggio, non uno per uno. Messaggi a cui rispondere: ${list}`
+    )
+  }
+  if (history.messages.some((m) => m.role === 'assistant')) {
+    lines.push('- In questa chat abbiamo già scritto: non salutare di nuovo e non ripresentarti, vai dritto al punto.')
+  }
+  return lines.length ? `\n\n## Messaggi a cui rispondi\n${lines.join('\n')}` : ''
 }
 
 async function generateReply(
@@ -624,8 +701,8 @@ async function generateReply(
   const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal] = await Promise.all([
     loadKnowledge(),
     fromComment
-      ? Promise.resolve<LoadedHistory>({ messages: [{ role: 'user', content: publicComment! }], opener: null, handWritten: false })
-      : loadHistory(platform, contactId),
+      ? Promise.resolve<LoadedHistory>({ messages: [{ role: 'user', content: publicComment! }], opener: null, handWritten: false, pending: [], lastInAt: null })
+      : loadHistory(platform, contactId, options.batch?.times),
     (fromComment && !privateFollowUp) || verifying ? Promise.resolve('') : loadStyleExamples(platform),
     outreach ? loadOutreachReplySettings().catch(() => null) : Promise.resolve(null),
     agentPrompt(platform, fromComment && !privateFollowUp),
@@ -637,6 +714,10 @@ async function generateReply(
     platform === 'email' ? Promise.resolve('') : sectionText(PERSONAL_REPLY),
   ])
   const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
+  if (options.batch) {
+    options.batch.lastInAt = history.lastInAt
+    options.batch.pending = history.pending.length
+  }
 
   const { system, stableTail, systemTail } = buildAgentSystem({
     base,
@@ -660,7 +741,11 @@ async function generateReply(
     identity: identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
     // Dopo le regole generali (pesa di piu'): la chat aperta da noi si continua, non si riparte da zero.
     context: outreach ? '' : conversationContext(history),
-    language: languageRule(fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content),
+    pending: options.batch ? pendingRule(history) : '',
+    language: languageRule(
+      fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content,
+      options.batch ? history.pending : []
+    ),
   })
 
   try {
@@ -698,6 +783,8 @@ export type AgentPromptParts = {
   dateTime: string
   identity: string
   context: string
+  /** Risposta unica a piu' messaggi (solo invio automatico dei messaggi privati). */
+  pending?: string
   language: string
 }
 
@@ -732,6 +819,7 @@ export function buildAgentSystem(p: AgentPromptParts): { system: string; stableT
     CLARITY_RULES,
     p.identity,
     p.context,
+    p.pending || '',
     p.language,
   ].join('')
   return { system, stableTail, systemTail }
@@ -793,12 +881,16 @@ export async function deliver(target: OutgoingTarget, text: string): Promise<Sen
   return sendMessengerText(target.contact_id, text)
 }
 
-/** Invia subito (modalita' automatica) o salva come bozza da approvare. Restituisce l'id della bozza creata, o false. */
+/**
+ * Invia subito (modalita' automatica) o salva come bozza da approvare. Restituisce l'id della bozza creata, o false.
+ * createdAt: ora con cui salvare la risposta inviata (risposta unica: subito dopo l'ultimo messaggio che ha letto).
+ */
 async function queueReply(
   target: OutgoingTarget,
   contactName: string | null,
   text: string,
-  autoSend: boolean
+  autoSend: boolean,
+  createdAt?: string
 ): Promise<string | false> {
   if (autoSend) {
     const sent = await deliver(target, text)
@@ -812,6 +904,7 @@ async function queueReply(
         body: text,
         status: sent.error ? 'failed' : 'sent',
         error_message: sent.error ?? null,
+        ...(createdAt ? { created_at: createdAt } : {}),
       })
       .select('id')
       .single()
@@ -1011,9 +1104,43 @@ export async function prepareInboxReply(
 }
 
 /**
+ * Righe dell'appuntamento nella risposta: si tolgono sempre; l'appuntamento si segna in calendario
+ * (con notifica) solo se il messaggio non e' sospetto. Anche durante una verifica: l'appuntamento e'
+ * legato a questo contatto, non all'identita' che dichiara, e la persona riceve comunque la conferma
+ * (altrimenti crederebbe di avere una chiamata che non c'e').
+ */
+async function applyAppointmentMarkers(
+  reply: string,
+  ctx: { platform: SocialPlatform; contactId: string; contactName: string | null; leadId: string | null; suspicious: string | null | undefined }
+): Promise<string> {
+  const parsed = parseAppointmentMarkers(reply)
+  if (!ctx.suspicious) try {
+    if (parsed.cancel) await cancelAppointmentsFor(ctx.platform, ctx.contactId)
+    for (const a of parsed.appointments) {
+      await createAppointment({
+        when: a.when.toISOString(),
+        kind: a.kind,
+        phone: a.phone,
+        note: a.note,
+        contactName: ctx.contactName,
+        platform: ctx.platform,
+        contactId: ctx.contactId,
+        leadId: ctx.leadId,
+      })
+      console.log(`${ctx.platform} message: appuntamento fissato`)
+    }
+  } catch (error) {
+    console.error('appuntamento non salvato:', error)
+  }
+  return parsed.text
+}
+
+/**
  * Punto d'ingresso per ogni messaggio o commento in arrivo: lo salva, avvisa
  * gli admin e, se il canale e' connesso, prepara la risposta AI (bozza da
- * approvare o invio diretto a seconda della modalita' del canale).
+ * approvare o invio diretto a seconda della modalita' del canale). Messaggi
+ * privati con l'invio automatico: la risposta va in coda (lib/meta/reply-queue.ts)
+ * e si restituisce la chiave della coda, da aspettare nel webhook; altrimenti null.
  */
 export async function handleIncoming(input: {
   platform: SocialPlatform
@@ -1037,7 +1164,7 @@ export async function handleIncoming(input: {
   emailAuthenticated?: boolean
   /** Messenger/Instagram: ora del messaggio data da Meta (ms), per confrontarla con le risposte scritte a mano dall'app. */
   sentAt?: number
-}) {
+}): Promise<string | null> {
   const body = input.text ? input.text.slice(0, input.platform === 'email' ? 12000 : 4000) : input.fallbackLabel
 
   // Meta ritenta i webhook: il vincolo UNIQUE su external_id evita doppie risposte.
@@ -1059,7 +1186,7 @@ export async function handleIncoming(input: {
   if (error || !inserted) {
     if (error?.code !== '23505') console.error(`${input.platform} insert error:`, error)
     else console.log(`${input.platform} ${input.kind}: già ricevuto (doppione di Meta), ignorato`)
-    return
+    return null
   }
 
   // Stessa persona su altri canali: collegamento automatico solo con dati certi (numero WhatsApp,
@@ -1092,10 +1219,12 @@ export async function handleIncoming(input: {
   // Chi dice di conoscerci gia' (altro canale, cliente, host, creator...): i dati li confronta
   // il codice con gli archivi e solo il codice inviato all'email registrata lo verifica.
   // Se lo stato non si legge, per prudenza la risposta resta in bozza. Solo dove l'AI risponde.
+  let identityFailed = false
   let identity: Verification | null =
     input.kind === 'message' && !input.silent && (outreach || settings.enabled)
       ? await processVerification({ platform: input.platform, contactId: input.contactId, text: input.text }).catch((error) => {
           console.error(`${input.platform} verifica identità:`, error)
+          identityFailed = true
           return { state: null, phase: 'none' as const, hold: true }
         })
       : null
@@ -1115,6 +1244,61 @@ export async function handleIncoming(input: {
     // Solo se poco prima e' arrivato un altro allegato senza testo (a quello si risponde gia').
     quiet = (recent || []).some((row) => row.created_at < inserted.created_at && /^\[(Ha inviato|Sta rispondendo)/.test(row.body || ''))
     if (quiet) console.log(`${input.platform} message: altro allegato di fila, nessuna nuova risposta`)
+  }
+
+  // Messaggi privati con l'invio automatico: niente risposta per ogni messaggio. La risposta va in
+  // coda e parte almeno 30 secondi dopo l'ULTIMO messaggio della persona, una sola per tutti
+  // (lib/meta/reply-queue.ts, poi sendSeriesReply). La verifica dell'identita' e' gia' stata fatta
+  // qui sopra su questo messaggio (ogni messaggio della serie si controlla all'arrivo): il suo esito
+  // va con la serie e all'invio lo stato si rilegge (verifica aperta = bozza, mai invio automatico).
+  if (
+    input.kind === 'message' &&
+    !input.silent &&
+    !outreach &&
+    settings.enabled &&
+    settings.autoSend &&
+    BATCHED_PLATFORMS.includes(input.platform)
+  ) {
+    // Ora di Meta del messaggio (stesso orologio delle eco), se credibile: da li' contano le risposte a mano.
+    const metaTime =
+      typeof input.sentAt === 'number' && Math.abs(Date.now() - input.sentAt) < 86_400_000 && input.sentAt < Date.parse(inserted.created_at)
+        ? input.sentAt
+        : null
+    let key: string | null = null
+    let queued = false
+    try {
+      key = await enqueueDmReply({
+        platform: input.platform as DmPlatform,
+        contactId: input.contactId,
+        messageId: inserted.id,
+        at: metaTime ?? Date.parse(inserted.created_at),
+        text: Boolean(input.text),
+        quiet,
+        identity: {
+          ...(identity?.phase && identity.phase !== 'none' ? { phase: identity.phase } : {}),
+          ...(identity?.linked === false ? { linked: false as const } : {}),
+          ...(identityFailed ? { hold: true as const } : {}),
+        },
+      })
+      queued = true
+    } catch (error) {
+      // Coda non disponibile: meglio rispondere subito, come prima, che non rispondere (nel log niente dettagli: la chiave ha l'id della persona).
+      console.error(`${input.platform} message: coda delle risposte non disponibile, risposta subito`, error instanceof Error ? error.name : '')
+    }
+    if (queued) {
+      if (key && !quiet) console.log(`${input.platform} message: risposta in coda (almeno 30 secondi dopo l’ultimo messaggio)`)
+      await notifyNewMessage({
+        platform: input.platform,
+        kind: input.kind,
+        contactId: input.contactId,
+        contactName: input.contactName,
+        body,
+        messageId: inserted.id,
+        hasPendingDraft: false,
+        identity: identity?.hold || identity?.phase === 'verified_now' ? identityNotice(identity) : null,
+      })
+      return key
+    }
   }
 
   // Testo grezzo della risposta AI (con i marcatori), con lo stato della verifica dato.
@@ -1205,28 +1389,13 @@ export async function handleIncoming(input: {
   // Appuntamento confermato nella conversazione: in calendario e notifica subito.
   // Se il messaggio e' sospetto il marcatore si toglie ma l'appuntamento non si segna.
   if (reply && input.kind === 'message') {
-    const parsed = parseAppointmentMarkers(reply)
-    reply = parsed.text
-    // Anche durante una verifica: l'appuntamento e' legato a questo contatto, non all'identita' che dichiara,
-    // e la persona riceve comunque la conferma (altrimenti crederebbe di avere una chiamata che non c'e').
-    if (!suspicious.reason) try {
-      if (parsed.cancel) await cancelAppointmentsFor(input.platform, input.contactId)
-      for (const a of parsed.appointments) {
-        await createAppointment({
-          when: a.when.toISOString(),
-          kind: a.kind,
-          phone: a.phone,
-          note: a.note,
-          contactName: outreach?.name || input.contactName,
-          platform: input.platform,
-          contactId: input.contactId,
-          leadId: outreach?.leadId ?? null,
-        })
-        console.log(`${input.platform} message: appuntamento fissato`)
-      }
-    } catch (error) {
-      console.error('appuntamento non salvato:', error)
-    }
+    reply = await applyAppointmentMarkers(reply, {
+      platform: input.platform,
+      contactId: input.contactId,
+      contactName: outreach?.name || input.contactName,
+      leadId: outreach?.leadId ?? null,
+      suspicious: suspicious.reason,
+    })
   }
 
   const target: OutgoingTarget = {
@@ -1293,4 +1462,203 @@ export async function handleIncoming(input: {
     suspicious: suspicious.reason,
     identity: reply || identity?.phase === 'verified_now' ? identityNote || identityNotice(identity) : null,
   })
+  return null
+}
+
+/** Meta permette di rispondere entro 24 ore dall'ultimo messaggio della persona (anche WhatsApp): 1 ora di margine. */
+const META_WINDOW_MS = 23 * 3600_000
+/** Nostri messaggi scritti o approvati da una persona del team (dall'app, dalla casella, bozze approvate). */
+const TEAM_REPLY_ORIGINS = [APP_ORIGIN, 'manual', 'ai_approved', 'ai_edited']
+
+/**
+ * Dopo il primo messaggio della serie il team ha risposto a mano: dall'app (eco), dalla casella o
+ * approvando una bozza (anche in invio adesso)? Allora la risposta automatica non parte. Non conta
+ * la risposta automatica di Meta: un messaggio "dall'app" entro pochi secondi da uno dei messaggi
+ * della serie (times: ore di Meta, stesso orologio delle eco). Come sulla beta non conta neanche una
+ * risposta a mano (dall'app o dalla casella) dopo la quale la persona ha scritto ancora in questa serie:
+ * si risponde ai messaggi dopo di lei (l'elenco dei messaggi a cui rispondere si ferma li', loadHistory).
+ * Una bozza approvata conta sempre: la sua ora e' quella della bozza, non dell'invio.
+ */
+async function teamRepliedSince(platform: string, contactId: string, series: { firstAt: number; times?: number[] }): Promise<boolean> {
+  const times = series.times?.length ? series.times : [series.firstAt]
+  const { data, error } = await supabaseAdmin
+    .from('social_messages')
+    .select('origin, status, created_at')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('direction', 'out')
+    .eq('kind', 'message')
+    .in('status', ['sent', 'sending'])
+    .gte('created_at', new Date(series.firstAt).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(20)
+  if (error) return false
+  return (data || []).some((row) => {
+    if (row.status !== 'sending' && !TEAM_REPLY_ORIGINS.includes(row.origin as string)) return false
+    const at = Date.parse(row.created_at as string)
+    if (row.origin === APP_ORIGIN && metaAutoReplyTo(at, times)) return false
+    const byHand = row.status === 'sent' && (row.origin === APP_ORIGIN || row.origin === 'manual')
+    return !(byHand && times.some((t) => t - at > 1_000))
+  })
+}
+
+/**
+ * Una nostra risposta automatica e' gia' partita dopo l'ultimo messaggio della persona (es. invio ripreso
+ * dopo un'interruzione). Le risposte della serie sono salvate subito dopo l'ultimo messaggio che hanno letto:
+ * una risposta partita mentre arrivava questo messaggio resta prima di lui e non lo copre.
+ */
+async function autoReplySince(platform: string, contactId: string, since: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('id')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('direction', 'out')
+    .eq('kind', 'message')
+    .eq('origin', 'ai_auto')
+    .eq('status', 'sent')
+    .gt('created_at', since)
+    .limit(1)
+  return Boolean(data?.length)
+}
+
+/** Testi dei messaggi della serie (dal primo, ora di salvataggio in ms), per la verifica aperta dalla risposta. */
+async function seriesTexts(platform: string, contactId: string, since: number): Promise<string[]> {
+  const { data } = await supabaseAdmin
+    .from('social_messages')
+    .select('body')
+    .eq('platform', platform)
+    .eq('contact_id', contactId)
+    .eq('direction', 'in')
+    .eq('kind', 'message')
+    .gte('created_at', new Date(since).toISOString())
+    .order('created_at', { ascending: true })
+    .limit(20)
+  return (data || []).map((row) => String(row.body || '')).filter(Boolean)
+}
+
+export type SeriesOutcome = { status: 'sent' | 'draft' | 'none' | 'cancelled' | 'failed'; coveredAt: string | null }
+
+/**
+ * Risposta unica alla serie di messaggi privati in coda (lib/meta/reply-queue.ts), all'ora
+ * prevista: una sola risposta a tutti i messaggi della persona dopo la nostra ultima risposta.
+ * Stesse protezioni della risposta a un messaggio: verifica dell'identita' (aperta = bozza),
+ * messaggio sospetto (bozza), risposta a mano del team (non parte), finestra di 24 ore di Meta,
+ * risposta fissa se la serie ha solo foto o vocali. coveredAt: ora dell'ultimo messaggio della
+ * persona letto dalla risposta (quelli arrivati dopo tornano in coda).
+ */
+export async function sendSeriesReply(
+  series: Pick<QueueItem, 'platform' | 'contactId' | 'firstAt' | 'times' | 'phase' | 'linked' | 'hold' | 'text'>
+): Promise<SeriesOutcome> {
+  const { platform, contactId } = series
+  const [{ data: latest }, settings] = await Promise.all([
+    supabaseAdmin
+      .from('social_messages')
+      .select('id, body, contact_name, channel_account_id, created_at')
+      .eq('platform', platform)
+      .eq('contact_id', contactId)
+      .eq('kind', 'message')
+      .eq('direction', 'in')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    getChannelSettings(platform),
+  ])
+  if (!latest) return { status: 'none', coveredAt: null }
+  let coveredAt = latest.created_at as string
+  const cancel = (why: string): SeriesOutcome => {
+    console.log(`${platform} message: risposta in coda annullata (${why})`)
+    return { status: 'cancelled', coveredAt }
+  }
+  if (!settings.enabled) return cancel('canale non collegato in Canali e AI')
+  if (Date.now() - Date.parse(coveredAt) > META_WINDOW_MS) return cancel('oltre le 24 ore dall’ultimo messaggio')
+  if (await autoReplySince(platform, contactId, coveredAt)) return cancel('risposta già inviata')
+  if (await teamRepliedSince(platform, contactId, series)) return cancel('hai già risposto tu a mano')
+
+  // Stato della verifica riletto adesso; cosa dire viene dai messaggi della serie (controllati all'arrivo).
+  const current = await currentVerification(platform, contactId).catch((): Verification => ({ state: null, phase: 'none', hold: true }))
+  let identity: Verification = {
+    state: current.state,
+    phase: series.phase ?? 'none',
+    hold: current.hold || Boolean(series.hold),
+    ...(series.phase === 'verified_now' && series.linked === false ? { linked: false } : {}),
+  }
+  const contactName = (latest.contact_name as string | null) ?? null
+  const batch: NonNullable<ReplyOptions['batch']> = { times: series.times?.length ? series.times : [series.firstAt] }
+  // Solo foto, vocali o allegati non letti: la risposta fissa, una volta sola.
+  const compose = async (id: Verification) => (series.text ? generateReply(platform, contactId, contactName, { identity: id, batch }) : NON_TEXT_REPLY)
+
+  // Come per un messaggio: l'AI puo' riconoscere una dichiarazione di identita' sfuggita al controllo sul testo.
+  let marker = parseIdentityMarker(await compose(identity))
+  let identityNote: string | null = null
+  let holdOnce = false
+  if (marker.claim && (!identity.state || identity.state.status === 'verified')) {
+    const text = (await seriesTexts(platform, contactId, series.firstAt)).join('\n')
+    const opened = await startVerification(platform, contactId, marker.claim, { text, allowVerified: true }).catch(
+      () => ({ state: null, phase: 'none' as const, hold: true }) as Verification
+    )
+    if (opened.skipped) {
+      holdOnce = true
+      identityNote = SKIPPED_CLAIM_NOTICE
+    } else {
+      identity = opened
+      if (opened.phase === 'data_received') marker = parseIdentityMarker(await compose(opened))
+    }
+  }
+  if (batch.lastInAt && Date.parse(batch.lastInAt) > Date.parse(coveredAt)) coveredAt = batch.lastInAt
+
+  let reply = marker.text
+  // Il team ha risposto a mano mentre l'AI scriveva: niente doppia risposta.
+  if (reply && (await teamRepliedSince(platform, contactId, series))) return cancel('hai già risposto tu a mano')
+
+  // Verifica in corso o non riuscita: mai invio automatico (lo stato si rilegge dopo la generazione).
+  let holdForIdentity = identity.hold || holdOnce
+  if (reply && !holdForIdentity) holdForIdentity = (await currentVerification(platform, contactId).catch(() => ({ hold: true }))).hold
+  if (holdForIdentity && reply) console.log(`${platform} message: verifica dell'identità in corso, risposta in bozza`)
+
+  const suspicious = parseSuspicious(reply)
+  reply = suspicious.text
+  if (suspicious.reason) console.log(`${platform} message: messaggio sospetto, risposta in bozza`)
+  if (reply) reply = await applyAppointmentMarkers(reply, { platform, contactId, contactName, leadId: null, suspicious: suspicious.reason })
+  if (!reply) {
+    console.log(`${platform} message: nessuna risposta (l'AI ha deciso che non serve (NESSUNA_RISPOSTA) o la generazione non è riuscita)`)
+    return { status: 'none', coveredAt }
+  }
+
+  const autoSend = settings.autoSend && !suspicious.reason && !holdForIdentity
+  // La risposta si salva sempre subito dopo l'ultimo messaggio della persona che ha letto (coveredAt + 1 ms),
+  // anche se parte dopo: un messaggio arrivato mentre si scriveva o mentre Meta la consegnava resta dopo di
+  // lei nello storico, cosi' torna in coda e ha la sua risposta (e la prossima risposta non ripete questa).
+  const createdAt = autoSend ? new Date(Date.parse(coveredAt) + 1).toISOString() : undefined
+  const target: OutgoingTarget = {
+    platform,
+    kind: 'message',
+    contact_id: contactId,
+    channel_account_id: (latest.channel_account_id as string | null) ?? null,
+    reply_to: null,
+  }
+  const together = (batch.pending ?? 0) > 1 ? ` (${batch.pending} messaggi insieme)` : ''
+  const draftId = await queueReply(target, contactName, reply, autoSend, createdAt)
+  // Dati corrispondenti a un archivio: il codice parte quando questa bozza viene approvata e inviata.
+  if (draftId && identity.state?.status === 'code_ready') await noteVerificationDraft(platform, contactId, draftId)
+  if (!draftId) {
+    if (together) console.log(`${platform} message: risposta unica${together}`)
+    return { status: 'sent', coveredAt }
+  }
+  console.log(`${platform} message: risposta in bozza da approvare in Messaggi${together}`)
+  // Bozza (verifica, messaggio sospetto o canale passato in bozza): gli avvisi dei messaggi sono partiti senza
+  // la bozza; ora push ed email dicono che c'e' una risposta da approvare.
+  await notifyNewMessage({
+    platform,
+    kind: 'message',
+    contactId,
+    contactName,
+    body: String(latest.body || ''),
+    messageId: latest.id as string,
+    hasPendingDraft: true,
+    suspicious: suspicious.reason,
+    identity: identityNote || identityNotice(identity),
+    draftReady: true,
+  })
+  return { status: 'draft', coveredAt }
 }

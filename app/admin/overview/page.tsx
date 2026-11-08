@@ -512,7 +512,9 @@ function ChannelsTab({
                       className="w-full px-3 py-2 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
                     >
                       <option value="approval">Risposte AI da approvare (le trovi nella casella Messaggi)</option>
-                      <option value="auto">Risposte AI inviate in automatico</option>
+                      <option value="auto">
+                        {channel.platform === 'email' ? 'Risposte AI inviate in automatico' : 'Risposte AI inviate in automatico (30 secondi dopo l’ultimo messaggio, una per tutti)'}
+                      </option>
                     </select>
                   )}
                   <input

@@ -18,14 +18,16 @@ export type WhatsAppPayload = {
   entry?: Array<{ changes?: Array<{ field?: string; value?: WhatsAppChangeValue }> }>
 }
 
-export async function handleWhatsAppWebhook(payload: WhatsAppPayload) {
+/** Restituisce le chiavi delle risposte messe in coda (invio automatico), da aspettare nel webhook. */
+export async function handleWhatsAppWebhook(payload: WhatsAppPayload): Promise<string[]> {
+  const queued: string[] = []
   for (const entry of payload.entry || []) {
     for (const change of entry.changes || []) {
       const value = change.value
       if (change.field !== 'messages' || !value?.messages) continue
       for (const message of value.messages) {
         try {
-          await handleIncoming({
+          const key = await handleIncoming({
             platform: 'whatsapp',
             kind: 'message',
             contactId: message.from,
@@ -35,10 +37,12 @@ export async function handleWhatsAppWebhook(payload: WhatsAppPayload) {
             text: message.type === 'text' ? message.text?.body || null : null,
             fallbackLabel: `[${message.type}]`,
           })
+          if (key) queued.push(key)
         } catch (error) {
           console.error('WhatsApp webhook: errore sul messaggio', message.id, error)
         }
       }
     }
   }
+  return queued
 }
