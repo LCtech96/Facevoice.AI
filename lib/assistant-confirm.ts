@@ -5,7 +5,7 @@ import { deliver, setOrigin } from '@/lib/meta/agent'
 import { sendFirstEmail, sendFollowupEmail } from '@/lib/lead-send'
 import { sendNewEmail, sendThreadReply } from '@/lib/gmail'
 import { DraftConflictError, loadPostDraft, publishPostDraft } from '@/lib/social-posts'
-import { requestBlogRun, saveBlogAutoSettings, type BlogAutoSettings } from '@/lib/blog-auto'
+import { BlogBusyError, BlogScheduleError, describeSlots, saveBlogAutoSettings, startBlogNow, type BlogSchedulePatch } from '@/lib/blog-auto'
 import { listPushDevices, removePushDevice } from '@/lib/push'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { findVersion, loadDocument, renderDocumentPdf } from '@/lib/assistant-documents'
@@ -41,8 +41,10 @@ export type ConfirmPayload =
   | { kind: 'social_message'; platform: 'instagram' | 'facebook'; contactId: string; name: string; text: string; lastIncomingAt: string | null }
   | { kind: 'send_emails'; drafts: DraftSnapshot[]; done?: Record<string, string> }
   | { kind: 'publish_carousel'; draftId: string; title: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
-  | { kind: 'publish_blog_now'; origin: string }
-  | { kind: 'blog_schedule'; patch: Partial<BlogAutoSettings> }
+  /** topic: argomento scelto (senza = quello della prima uscita). */
+  | { kind: 'publish_blog_now'; origin: string; topic?: string }
+  /** slots: le uscite come saranno dopo la modifica (per la scheda). */
+  | { kind: 'blog_schedule'; patch: BlogSchedulePatch; slots?: string }
   | { kind: 'remove_push_devices'; devices: { id: string; name: string }[] }
   | { kind: 'clear_content_directions' }
   /** Indicazioni nuove al posto di quelle salvate (previous: com'erano quando e' nata la scheda). */
@@ -238,12 +240,15 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
     case 'publish_blog_now':
       return {
         ...base,
-        lines: ['Scrivo e pubblico subito un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram (come il blog automatico).', 'Ci vogliono alcuni minuti: arriva una notifica con l’esito.'],
+        lines: [
+          `Scrivo e pubblico subito un articolo con le notizie più recenti${p.topic ? ` su «${p.topic}»` : ''}, poi il carosello su Facebook e Instagram (come il blog automatico).`,
+          'Ci vogliono alcuni minuti: arriva una notifica con l’esito.',
+        ],
         confirmLabel: 'Conferma',
         ...extra,
       }
     case 'blog_schedule':
-      return { ...base, lines: describeSchedule(p.patch), confirmLabel: 'Conferma', ...extra }
+      return { ...base, lines: describeSchedule(p.patch, p.slots), confirmLabel: 'Conferma', ...extra }
     case 'remove_push_devices':
       return { ...base, lines: p.devices.map((d) => `Non riceverà più le notifiche: ${d.name}`), confirmLabel: 'Conferma', ...extra }
     case 'clear_content_directions':
@@ -301,11 +306,16 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
 }
 
 const DAY_NAMES = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato']
-function describeSchedule(patch: Partial<BlogAutoSettings>): string[] {
+function describeSchedule(patch: BlogSchedulePatch, after?: string): string[] {
   const lines: string[] = []
+  const slotText = (list: { time?: string; topic?: string }[] | undefined) => (list || []).map((s) => `${s.time || '?'}${s.topic ? ` ${s.topic}` : ''}`).join(' · ')
   if (typeof patch.enabled === 'boolean') lines.push(`Blog automatico: ${patch.enabled ? 'acceso (pubblica da solo)' : 'spento'}`)
   if (patch.days) lines.push(`Giorni: ${patch.days.map((d) => DAY_NAMES[d] ?? d).join(', ') || 'nessuno'}`)
   if (patch.time) lines.push(`Ora: ${patch.time} (ora italiana)`)
+  if (patch.add?.length) lines.push(`Uscite da aggiungere: ${slotText(patch.add)}`)
+  if (patch.remove?.length) lines.push(`Uscite da togliere: ${patch.remove.join(', ')}`)
+  if (patch.slots?.length) lines.push(`Uscite nuove: ${slotText(patch.slots)}`)
+  if (after && (patch.add || patch.remove || patch.slots || patch.time)) lines.push(`Uscite dopo la modifica (ora italiana): ${after}`)
   if (typeof patch.shareFacebook === 'boolean') lines.push(`Condivisione su Facebook: ${patch.shareFacebook ? 'sì' : 'no'}`)
   if (typeof patch.shareInstagram === 'boolean') lines.push(`Condivisione su Instagram: ${patch.shareInstagram ? 'sì' : 'no'}`)
   return lines
@@ -502,12 +512,25 @@ async function execute(action: PendingAction, secret: { pin?: string; origin?: s
       return sendEmails(action, p)
     case 'publish_carousel':
       return publishCarousel(p)
-    case 'publish_blog_now':
-      await requestBlogRun(p.origin, true)
-      return { ok: true, outcome: 'articolo avviato: tra qualche minuto arriva la notifica con l’esito' }
+    case 'publish_blog_now': {
+      try {
+        const { topic } = await startBlogNow(p.origin, p.topic)
+        return { ok: true, outcome: `articolo su «${topic}» avviato: tra qualche minuto arriva la notifica con l’esito` }
+      } catch (error) {
+        if (error instanceof BlogBusyError) return fail(error.message, true)
+        if (error instanceof BlogScheduleError) return fail(error.message, false)
+        throw error
+      }
+    }
     case 'blog_schedule': {
-      const saved = await saveBlogAutoSettings(p.patch)
-      return { ok: true, outcome: `blog automatico ${saved.enabled ? 'acceso' : 'spento'}, ${saved.days.map((d) => DAY_NAMES[d]).join(', ')} alle ${saved.time}` }
+      try {
+        const saved = await saveBlogAutoSettings(p.patch)
+        return { ok: true, outcome: `blog automatico ${saved.enabled ? 'acceso' : 'spento'}, ${saved.days.map((d) => DAY_NAMES[d]).join(', ')}: ${describeSlots(saved.slots)}` }
+      } catch (error) {
+        // Le uscite sono cambiate dopo la scheda (es. dal pannello): la modifica non va piu' bene.
+        if (error instanceof BlogScheduleError) return fail(`${error.message} Chiedimi di nuovo la modifica.`, false)
+        throw error
+      }
     }
     case 'remove_push_devices': {
       const known = new Set((await listPushDevices()).map((d) => d.id))

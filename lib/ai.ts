@@ -76,6 +76,12 @@ type AIOptions = {
   cache?: boolean
   /** Risposta in JSON: con Gemini si chiede responseMimeType application/json. */
   json?: boolean
+  /**
+   * Gemini che non accetta thinkingConfig (ragiona sempre): token in piu' per il ragionamento,
+   * oltre a maxOutputTokens (default THINKING_ROOM_TOKENS). Per le risposte lunghe (es. un
+   * articolo intero) 2048 non bastano: il ragionamento li consuma e il testo si interrompe.
+   */
+  thinkingRoom?: number
 }
 
 /** Funzioni che rimandano la stessa conversazione allungata a ogni passo (loop degli strumenti). */
@@ -169,7 +175,13 @@ function recordUsage(row: {
     })
     .catch(() => undefined)
 }
-export type AIResult = { message: string; provider: 'gemini' | 'claude'; model: string }
+export type AIResult = {
+  message: string
+  provider: 'gemini' | 'claude'
+  model: string
+  /** Risposta interrotta dal limite di token (Gemini MAX_TOKENS, Claude max_tokens): il testo e' incompleto. */
+  truncated?: boolean
+}
 
 // Modello Gemini → istante fino a cui resta a riposo.
 const geminiCooling = new Map<string, number>()
@@ -400,7 +412,7 @@ async function claudeAnswer(model: string, input: ClaudeInput): Promise<AIResult
     console.warn(`Claude ${response.model || model} ha rifiutato la richiesta (categoria: ${category})`)
   }
   if (refused || !text) throw new Error('Claude non ha restituito una risposta')
-  return { message: text, provider: 'claude', model: response.model || model }
+  return { message: text, provider: 'claude', model: response.model || model, ...(response.stop_reason === 'max_tokens' ? { truncated: true } : {}) }
 }
 
 async function callClaudeText(
@@ -466,7 +478,7 @@ async function tryGemini(
       try {
         const result = await callGeminiAPI(messages, model, instructions, {
           temperature: options?.temperature,
-          maxOutputTokens: (options?.maxOutputTokens ?? 8192) + (withoutThinkingConfig ? THINKING_ROOM_TOKENS : 0),
+          maxOutputTokens: (options?.maxOutputTokens ?? 8192) + (withoutThinkingConfig ? (options?.thinkingRoom ?? THINKING_ROOM_TOKENS) : 0),
           withoutThinkingConfig,
           json: options?.json,
         })
@@ -494,7 +506,7 @@ async function tryGemini(
           input: result.usage?.prompt_tokens,
           output: result.usage?.completion_tokens,
         })
-        return { message: result.message || '', provider: 'gemini', model }
+        return { message: result.message || '', provider: 'gemini', model, ...(result.finishReason === 'MAX_TOKENS' ? { truncated: true } : {}) }
       } catch (error) {
         lastError = error
         const message = errorText(error)
