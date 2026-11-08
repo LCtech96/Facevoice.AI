@@ -9,6 +9,7 @@ import { sendDueOutreachReplies } from '@/lib/outreach-reply'
 import { autoLinkBackfillTick } from '@/lib/meta/auto-link'
 import { processDueDmReplies } from '@/lib/meta/reply-queue'
 import { videoPostsTick } from '@/lib/video-posts'
+import { todoRemindersTick } from '@/lib/todo-reminders'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -51,6 +52,8 @@ export async function GET(req: NextRequest) {
     sendDueOutreachReplies().catch((error) => console.error('outreach replies:', error)),
     // Video programmati (Reel e Facebook): un controllo per video, il Reel lento si finisce al giro dopo.
     videoPostsTick().catch((error) => console.error('video programmati:', error)),
+    // Solleciti via email delle todo list condivise (scadenze vicine).
+    todoRemindersTick(req.nextUrl.origin).catch((error) => console.error('todo solleciti:', error)),
     wakeSaasPreview().catch((error) => console.warn('saas cron:', error instanceof Error ? error.message : error)),
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])
