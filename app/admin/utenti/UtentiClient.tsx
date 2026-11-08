@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Clock, FileText, Printer, RefreshCw, Search, ShieldAlert, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
+import { Clapperboard, Clock, FileText, Printer, RefreshCw, Search, ShieldAlert, ShieldCheck, Sparkles, Users, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
@@ -31,6 +31,7 @@ import {
   termsStatus,
   termsTextFrom,
   usageFromOthersSpaces,
+  videoRepliesLocked,
   type BetaAutomations,
   type BetaSubscription,
   type BetaTerms,
@@ -49,7 +50,7 @@ import { ATTRIBUTION_LABEL, ATTRIBUTION_RULE, formatMoney, userPlacesShare, type
 // risposto; in euro solo il costo Google reale ripartito sulle sue richieste) e
 // quale gettone vede (verde, arancione, rosso).
 // Dalla scheda l'admin accende o spegne anche la chat Assistente della beta
-// e mostra o nasconde la pagina Automazioni.
+// e mostra o nasconde la pagina Automazioni e la Video automazione (scheda in Automazioni).
 // Termini e condizioni: nella lista un piccolo "Termini ✓ / ✗"; nella scheda quando, con quale
 // versione, da quale IP e dispositivo li ha accettati, e il testo esatto accettato (da stampare).
 // ?u=<id> apre subito la scheda di quell'utente (link delle notifiche).
@@ -273,6 +274,16 @@ function AutomationsChip({ automations, spaces }: { automations: BetaAutomations
   )
 }
 
+/** Nella lista: chi ha la Video automazione visibile. */
+function VideoRepliesChip() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--accent-blue)]/15 px-2 py-0.5 text-[11px] font-medium text-[var(--accent-blue)]">
+      <Clapperboard className="h-3 w-3" aria-hidden="true" />
+      Video automazione
+    </span>
+  )
+}
+
 /** Nella lista: termini e condizioni accettati (versione in vigore), di una versione precedente o mai. */
 function TermsChip({ terms, currentVersion }: { terms: BetaTerms | null | undefined; currentVersion?: string }) {
   const status = termsStatus(terms, currentVersion)
@@ -290,7 +301,7 @@ function TermsChip({ terms, currentVersion }: { terms: BetaTerms | null | undefi
   )
 }
 
-/** Riga con interruttore della scheda (Assistente AI, Automazioni): salva subito. */
+/** Riga con interruttore della scheda (Assistente AI, Automazioni, Video automazione): salva subito. */
 function SwitchRow({
   id,
   title,
@@ -498,6 +509,8 @@ export default function UtentiClient() {
   const withAssistant = users.filter((u) => u.assistant?.enabled).length
   const automationsKnown = users.some((u) => u.automations)
   const withAutomations = users.filter((u) => u.automations?.enabled).length
+  const videoRepliesKnown = users.some((u) => u.videoReplies !== undefined)
+  const withVideoReplies = users.filter((u) => u.videoReplies === true).length
   // Solo se la beta manda gia' le accettazioni dei termini.
   const termsKnown = users.some((u) => u.terms !== undefined)
   const withoutTerms = users.filter((u) => termsStatus(u.terms, data?.termsVersion) !== 'ok' && u.terms !== undefined).length
@@ -529,6 +542,7 @@ export default function UtentiClient() {
               {blocked === 1 ? 'bloccato' : 'bloccati'}
               {assistantKnown && ` · ${withAssistant} con l’assistente`}
               {automationsKnown && ` · ${withAutomations} con le automazioni`}
+              {videoRepliesKnown && ` · ${withVideoReplies} con la video automazione`}
               {termsKnown && ` · ${withoutTerms} senza i termini in vigore`} · aggiornato {dateTime(data.updatedAt)}
             </p>
           )}
@@ -605,12 +619,13 @@ export default function UtentiClient() {
                   <Badges user={user} />
                 </div>
                 <p className="truncate text-xs text-[var(--text-secondary)]">{user.email}</p>
-                {(user.subscription !== undefined || user.assistant?.enabled || user.automations?.enabled || user.terms !== undefined) && (
+                {(user.subscription !== undefined || user.assistant?.enabled || user.automations?.enabled || user.videoReplies === true || user.terms !== undefined) && (
                   <div className="mt-1 flex min-w-0 flex-wrap gap-1">
                     <SubscriptionBadge user={user} />
                     <TermsChip terms={user.terms} currentVersion={data?.termsVersion} />
                     {user.assistant?.enabled && <AssistantChip />}
                     {user.automations?.enabled && <AutomationsChip automations={user.automations} spaces={automationsSpaces(user.workspaces)} />}
+                    {user.videoReplies === true && <VideoRepliesChip />}
                   </div>
                 )}
                 <div className="mt-2 flex items-baseline justify-between gap-2">
@@ -678,6 +693,8 @@ function UserSheet({
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const [automationsSaving, setAutomationsSaving] = useState(false)
   const [automationsError, setAutomationsError] = useState<string | null>(null)
+  const [videoRepliesSaving, setVideoRepliesSaving] = useState(false)
+  const [videoRepliesError, setVideoRepliesError] = useState<string | null>(null)
   const [termsOpen, setTermsOpen] = useState(false)
   const mode: LightMode = user.override ?? 'auto'
 
@@ -696,6 +713,7 @@ function UserSheet({
     setSaveError(null)
     setAssistantError(null)
     setAutomationsError(null)
+    setVideoRepliesError(null)
     setTermsOpen(false)
   }, [user.id])
 
@@ -775,6 +793,34 @@ function UserSheet({
       setAutomationsError(rollbackMessage(error, `La pagina Automazioni resta ${prev.enabled ? 'visibile' : 'nascosta'}.`))
     } finally {
       setAutomationsSaving(false)
+    }
+  }
+
+  // Come le automazioni: si vede subito, se la beta non salva torna com'era.
+  const toggleVideoReplies = async () => {
+    const prev = user.videoReplies
+    if (prev === undefined || videoRepliesLocked(user) || videoRepliesSaving) return
+    const next = !prev
+    setVideoRepliesSaving(true)
+    setVideoRepliesError(null)
+    onSaved({ videoReplies: next })
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error('Sessione scaduta: accedi di nuovo.')
+      const res = await fetch('/api/admin/utenti', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId: user.id, videoReplies: next }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error || 'Salvataggio non riuscito.')
+      onSaved({ videoReplies: typeof json?.videoReplies === 'boolean' ? json.videoReplies : next })
+    } catch (e) {
+      onSaved({ videoReplies: prev })
+      const error = e instanceof TypeError ? new Error('Connessione non riuscita: riprova.') : e
+      setVideoRepliesError(rollbackMessage(error, `La video automazione resta ${prev ? 'visibile' : 'nascosta'}.`))
+    } finally {
+      setVideoRepliesSaving(false)
     }
   }
 
@@ -865,6 +911,25 @@ function UserSheet({
             saving={automationsSaving}
             error={automationsError}
             onToggle={toggleAutomations}
+          />
+        )}
+
+        {user.videoReplies !== undefined && (
+          <SwitchRow
+            id="video-automazione"
+            title="Video automazione"
+            description={
+              videoRepliesLocked(user)
+                ? 'Sempre visibile (Facevoice)'
+                : 'Video mandati dall’AI nei messaggi Instagram e Messenger (scheda in Automazioni, anche senza le email e senza l’Assistente)'
+            }
+            on={user.videoReplies}
+            locked={videoRepliesLocked(user)}
+            onLabel="Visibile"
+            offLabel="Nascosta"
+            saving={videoRepliesSaving}
+            error={videoRepliesError}
+            onToggle={toggleVideoReplies}
           />
         )}
 

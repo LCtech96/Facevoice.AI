@@ -95,6 +95,11 @@ export type BetaUser = {
   assistant?: BetaAssistant
   /** Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore. */
   automations?: BetaAutomations
+  /**
+   * "Video automazione" della beta (video risposte nei messaggi diretti, scheda in Automazioni):
+   * visibile si'/no. Assente: la beta (versione vecchia) non lo manda e la pagina non mostra l'interruttore.
+   */
+  videoReplies?: boolean
   /** Consumi reali (richieste e token). Assente: la beta (versione vecchia) non lo manda. */
   usage?: BetaUsage
   /**
@@ -295,6 +300,9 @@ export function automationsFrom(enabled: unknown, sentToday?: unknown): BetaAuto
 export const automationsLocked = (user: Pick<BetaUser, 'assistant' | 'automations'>) =>
   Boolean(user.assistant?.locked && user.automations?.enabled)
 
+/** Video automazione: stessa regola (sempre attiva per chi e' nello spazio Facevoice, la beta rifiuta di spegnerla). */
+export const videoRepliesLocked = (user: Pick<BetaUser, 'assistant' | 'videoReplies'>) => Boolean(user.assistant?.locked && user.videoReplies)
+
 /**
  * Spazi le cui email la beta somma in "automationsSentToday" (stessa regola della beta:
  * quelli di cui e' titolare; se non ne ha, tutti i suoi). Almeno 1.
@@ -443,6 +451,8 @@ export function normalizeBetaUsers(input: unknown): BetaUsersResponse {
         ...(assistant ? { assistant } : {}),
         // Idem per le automazioni.
         ...(automations ? { automations } : {}),
+        // Idem per la video automazione.
+        ...(typeof u.videoReplies === 'boolean' ? { videoReplies: u.videoReplies } : {}),
         // Idem per i consumi reali.
         ...(usage ? { usage } : {}),
         // Termini: null = mai accettati; senza il campo la pagina non mostra niente.

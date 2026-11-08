@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
  * Una scelta alla volta per un utente:
  * - { userId, mode: 'auto' | 'green' | 'orange' | 'red' }: il gettone che vede l'utente;
  * - { userId, assistant: true | false }: la chat Assistente della beta accesa o spenta;
- * - { userId, automations: true | false }: la pagina Automazioni della beta visibile o nascosta.
+ * - { userId, automations: true | false }: la pagina Automazioni della beta visibile o nascosta;
+ * - { userId, videoReplies: true | false }: la "Video automazione" della beta visibile o nascosta.
  */
 export async function POST(req: NextRequest) {
   if (!(await getAdminEmail(req))) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
@@ -35,8 +36,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Utente non valido.' }, { status: 400 })
   }
 
-  const choices = [body.mode, body.assistant, body.automations].filter((v) => v !== undefined).length
+  const choices = [body.mode, body.assistant, body.automations, body.videoReplies].filter((v) => v !== undefined).length
   if (choices > 1) return NextResponse.json({ error: 'Una scelta alla volta.' }, { status: 400 })
+
+  if (body.videoReplies !== undefined) {
+    if (typeof body.videoReplies !== 'boolean') {
+      return NextResponse.json({ error: 'Scelta non valida: Visibile o Nascosta.' }, { status: 400 })
+    }
+    return saveVideoReplies(userId, body.videoReplies)
+  }
 
   if (body.automations !== undefined) {
     if (typeof body.automations !== 'boolean') {
@@ -93,6 +101,20 @@ async function saveAutomations(userId: string, enabled: boolean) {
     // La beta ha salvato: se non rimanda lo stato vale quello chiesto.
     const automations = typeof data?.automations === 'boolean' ? data.automations : enabled
     return NextResponse.json({ ok: true, automations })
+  } catch (error) {
+    return bridgeErrorResponse(error)
+  }
+}
+
+/** La beta salva la scelta (video_replies_access:<userId>) e rifiuta di spegnerla ai membri di Facevoice. */
+async function saveVideoReplies(userId: string, enabled: boolean) {
+  try {
+    const data = (await callBeta('/api/bridge/users/video-replies', { method: 'POST', body: { userId, enabled } })) as {
+      videoReplies?: unknown
+    }
+    // La beta ha salvato: se non rimanda lo stato vale quello chiesto.
+    const videoReplies = typeof data?.videoReplies === 'boolean' ? data.videoReplies : enabled
+    return NextResponse.json({ ok: true, videoReplies })
   } catch (error) {
     return bridgeErrorResponse(error)
   }
