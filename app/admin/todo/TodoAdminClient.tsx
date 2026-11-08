@@ -1,70 +1,62 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Copy, Eye, EyeOff, KeyRound, ListTodo, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Copy, FolderPlus, ListTodo, Loader2, Plus, RefreshCw, UserCheck, Users, X } from 'lucide-react'
+import TodoHome from '@/components/todo/TodoHome'
+import type { TodoHomeData } from '@/lib/todo-shared'
 import { useAdminGate } from '../contratti/useAdminGate'
-import { adminTodoFetch, copyText } from './todo-admin-api'
+import AccessPanel, { Credentials, GrantDialog, PasswordField } from './AccessPanel'
+import { adminTodoFetch, copyText, type AdminAccess, type AdminBoard } from './todo-admin-api'
 
-// Pagina Todo (solo l'admin): crea una todo list con nome e password, copia il link
-// da mandare (la password si manda a parte), cambia password, rigenera il link,
-// rinomina, elimina, apri.
-
-type Board = { id: string; name: string; createdAt: string; updatedAt: string; link: string | null }
-
-const day = (iso: string) => new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+// Schermata generale dei progetti (solo l'admin): cartelle di tutti i progetti e
+// calendario delle scadenze; «Nuovo progetto»; selezione di piu' cartelle e «Dai
+// accesso» per farle vedere a una persona (nome + password scelti qui, mai per email);
+// pannello «Accessi» per vedere e cambiare chi vede cosa.
 
 const input =
   'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 text-base text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm'
 const pill = 'inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 py-1.5 text-xs text-[var(--text-primary)] disabled:opacity-50'
 
-function PasswordInput({ value, onChange, id, placeholder }: { value: string; onChange: (v: string) => void; id: string; placeholder?: string }) {
-  const [show, setShow] = useState(false)
-  return (
-    <div className="flex items-center gap-1 rounded-xl border border-[var(--border-color)] bg-[var(--background)] pr-1 focus-within:border-[var(--accent-blue)]">
-      <input
-        id={id}
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        autoComplete="new-password"
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        maxLength={128}
-        placeholder={placeholder}
-        className="min-h-[44px] w-full bg-transparent px-3 text-base text-[var(--text-primary)] outline-none md:text-sm"
-      />
-      <button type="button" onClick={() => setShow(!show)} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)]" aria-label={show ? 'Nascondi password' : 'Mostra password'}>
-        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-      </button>
-    </div>
-  )
-}
-
 export default function TodoAdminClient() {
   const allowed = useAdminGate()
-  const [boards, setBoards] = useState<Board[] | null>(null)
+  const router = useRouter()
+  const [boards, setBoards] = useState<AdminBoard[] | null>(null)
+  const [home, setHome] = useState<TodoHomeData>({ boards: [], tasks: [] })
+  const [accesses, setAccesses] = useState<AdminAccess[]>([])
+  const [portal, setPortal] = useState('https://www.facevoice.ai/todo')
   const [setup, setSetup] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showAccess, setShowAccess] = useState(false)
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [created, setCreated] = useState<Board | null>(null)
-  const [pwFor, setPwFor] = useState<string | null>(null)
-  const [newPw, setNewPw] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState<AdminBoard | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [granting, setGranting] = useState(false)
+  const [credentials, setCredentials] = useState<{ name: string; password: string } | null>(null)
 
   const load = useCallback(async () => {
+    setLoading(true)
     const r = await adminTodoFetch('/api/admin/todo')
+    setLoading(false)
     if (r.ok) {
       setSetup(false)
       setError(null)
-      setBoards(r.data.boards || [])
+      const list = (r.data.boards || []) as AdminBoard[]
+      setBoards(list)
+      setHome(r.data.home || { boards: [], tasks: [] })
+      setAccesses(r.data.accesses || [])
+      if (r.data.portal) setPortal(r.data.portal)
+      setSelected((s) => new Set([...s].filter((id) => list.some((b) => b.id === id))))
       return
     }
     if (r.data.setup) setSetup(true)
-    else setError(r.data.error || 'Non riesco a caricare le todo list.')
+    else setError(r.data.error || 'Non riesco a caricare i progetti.')
     setBoards((b) => b ?? [])
   }, [])
 
@@ -74,72 +66,38 @@ export default function TodoAdminClient() {
 
   useEffect(() => {
     if (!notice) return
-    const t = setTimeout(() => setNotice(null), 4000)
+    const t = setTimeout(() => setNotice(null), 5000)
     return () => clearTimeout(t)
   }, [notice])
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return setError('Dai un nome alla todo list.')
+    if (!name.trim()) return setError('Dai un nome al progetto (es. il nome del cliente).')
     if (password.length < 6) return setError('La password deve avere almeno 6 caratteri.')
-    setBusy('create')
+    setBusy(true)
     const r = await adminTodoFetch('/api/admin/todo', { method: 'POST', body: JSON.stringify({ name, password }) })
-    setBusy(null)
+    setBusy(false)
     if (!r.ok) {
       if (r.data.setup) setSetup(true)
-      return setError(r.data.error || 'Non riesco a creare la todo list.')
+      return setError(r.data.error || 'Non riesco a creare il progetto.')
     }
     setError(null)
     setName('')
     setPassword('')
+    setShowNew(false)
     setCreated(r.data.board)
     load()
   }
 
-  const patch = async (b: Board, body: Record<string, unknown>, done: string) => {
-    setBusy(`${body.action}:${b.id}`)
-    const r = await adminTodoFetch(`/api/admin/todo/${encodeURIComponent(b.id)}`, { method: 'PATCH', body: JSON.stringify(body) })
-    setBusy(null)
-    if (!r.ok) return setError(r.data.error || 'Operazione non riuscita.')
-    setError(null)
-    setNotice(done)
-    if (body.action === 'regenerate' && r.data.board) setCreated(r.data.board)
-    load()
-    return true
-  }
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
-  const copy = async (link: string | null) => {
-    if (!link) return setError('Link non leggibile: crea un link nuovo.')
-    if (await copyText(link)) setNotice('Link copiato. Ricordati di mandare la password a parte.')
-  }
-
-  const rename = (b: Board) => {
-    const next = window.prompt('Nuovo nome della todo list:', b.name)
-    if (next && next.trim() && next.trim() !== b.name) patch(b, { action: 'rename', name: next }, 'Nome cambiato.')
-  }
-
-  const regenerate = (b: Board) => {
-    if (!window.confirm(`Creare un link nuovo per «${b.name}»? Il link di prima smette di funzionare e chi era dentro dovrà usare quello nuovo.`)) return
-    patch(b, { action: 'regenerate' }, 'Link nuovo creato.')
-  }
-
-  const changePw = async (b: Board) => {
-    if (newPw.length < 6) return setError('La password deve avere almeno 6 caratteri.')
-    if (await patch(b, { action: 'password', password: newPw }, 'Password cambiata: chi era dentro deve mettere quella nuova.')) {
-      setPwFor(null)
-      setNewPw('')
-    }
-  }
-
-  const remove = async (b: Board) => {
-    if (!window.confirm(`Eliminare «${b.name}» con tutte le tabelle, le attività e le immagini? Non si può annullare.`)) return
-    setBusy(`del:${b.id}`)
-    const r = await adminTodoFetch(`/api/admin/todo/${encodeURIComponent(b.id)}`, { method: 'DELETE' })
-    setBusy(null)
-    if (!r.ok) return setError(r.data.error || 'Non riesco a eliminare.')
-    if (created?.id === b.id) setCreated(null)
-    load()
-  }
+  const open = (boardId: string, taskId?: string) => router.push(`/admin/todo/${encodeURIComponent(boardId)}${taskId ? `?t=${encodeURIComponent(taskId)}` : ''}`)
 
   if (!allowed) {
     return (
@@ -149,18 +107,35 @@ export default function TodoAdminClient() {
     )
   }
 
+  const viewers = (boardId: string) => {
+    const who = accesses.filter((a) => a.boardIds.includes(boardId)).map((a) => a.name)
+    return who.length ? (
+      <span className="mt-1 flex items-center gap-1 truncate text-[11px] text-[var(--text-secondary)]">
+        <UserCheck className="h-3 w-3 shrink-0" /> <span className="truncate">{who.join(', ')}</span>
+      </span>
+    ) : null
+  }
+
   return (
-    <div className="mx-auto max-w-4xl px-4 pb-28 pt-20 md:pb-16 md:pt-24">
-      <div className="flex items-start justify-between gap-3">
+    <div className="mx-auto max-w-6xl px-4 pb-32 pt-20 md:pt-24">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-2xl font-bold text-[var(--text-primary)]">
-            <ListTodo className="h-6 w-6" /> Todo
+            <ListTodo className="h-6 w-6" /> Progetti
           </h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">Todo list da condividere: crei la lista con una password, mandi il link e, a parte, la password. Chi la apre può leggere, scrivere, spostare e creare tabelle.</p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">Una cartella per cliente. Apri una cartella per le sue cose da fare; seleziona più cartelle per farle vedere a una persona.</p>
         </div>
-        <button type="button" onClick={load} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[var(--accent-blue)] px-3 py-2 text-sm text-white">
-          <RefreshCw className="h-4 w-4" /> Aggiorna
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setShowNew(!showNew)} className="inline-flex min-h-[40px] items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 text-sm font-semibold text-white">
+            <FolderPlus className="h-4 w-4" /> Nuovo progetto
+          </button>
+          <button type="button" onClick={() => setShowAccess(!showAccess)} className={`${pill} min-h-[40px] text-sm`}>
+            <Users className="h-4 w-4" /> Accessi ({accesses.length})
+          </button>
+          <button type="button" onClick={load} className={`${pill} min-h-[40px]`} aria-label="Aggiorna">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {setup && (
@@ -171,37 +146,47 @@ export default function TodoAdminClient() {
       )}
       {error && <p className="mt-4 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
       {notice && <p className="mt-4 rounded-xl border border-[#34C759]/40 bg-[#34C759]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{notice}</p>}
+      {credentials && (
+        <div className="mt-4">
+          <Credentials name={credentials.name} password={credentials.password} portal={portal} onClose={() => setCredentials(null)} />
+        </div>
+      )}
 
-      {!setup && (
-        <form onSubmit={create} className="mt-5 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">Nuova todo list</h2>
+      {showNew && !setup && (
+        <form onSubmit={create} className="mt-4 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">Nuovo progetto</h2>
+            <button type="button" onClick={() => setShowNew(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)]" aria-label="Chiudi">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs text-[var(--text-secondary)]" htmlFor="todo-name">
-                Nome
+                Nome (es. il cliente)
               </label>
-              <input id="todo-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Es. Lancio sito cliente" className={input} />
+              <input id="todo-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Es. Rossi Srl" className={input} autoFocus />
             </div>
             <div>
               <label className="mb-1 block text-xs text-[var(--text-secondary)]" htmlFor="todo-pw">
-                Password (almeno 6 caratteri)
+                Password del link del progetto (almeno 6 caratteri)
               </label>
-              <PasswordInput id="todo-pw" value={password} onChange={setPassword} />
+              <PasswordField id="todo-pw" value={password} onChange={setPassword} />
             </div>
           </div>
-          <button type="submit" disabled={busy === 'create'} className="mt-3 inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 text-sm font-semibold text-white disabled:opacity-50">
-            {busy === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Crea todo list
+          <button type="submit" disabled={busy} className="mt-3 inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 text-sm font-semibold text-white disabled:opacity-50">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Crea progetto
           </button>
         </form>
       )}
 
       {created?.link && (
         <div className="mt-4 rounded-2xl border border-[var(--accent-blue)]/50 bg-[var(--accent-blue)]/10 p-4">
-          <p className="text-sm font-semibold text-[var(--text-primary)]">Link di «{created.name}»</p>
+          <p className="text-sm font-semibold text-[var(--text-primary)]">Progetto «{created.name}» creato</p>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Per farlo vedere a una persona: selezionalo e premi «Dai accesso». Oppure manda il link del solo progetto e, a parte, la sua password:</p>
           <p className="mt-1 break-all rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs text-[var(--text-primary)]">{created.link}</p>
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">Manda il link alla persona e, in un messaggio separato, la password.</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" onClick={() => copy(created.link)} className="inline-flex min-h-[36px] items-center gap-1 rounded-full bg-[var(--accent-blue)] px-3 text-xs font-semibold text-white">
+            <button type="button" onClick={async () => (await copyText(created.link as string)) && setNotice('Link copiato. Ricordati di mandare la password a parte.')} className="inline-flex min-h-[36px] items-center gap-1 rounded-full bg-[var(--accent-blue)] px-3 text-xs font-semibold text-white">
               <Copy className="h-3.5 w-3.5" /> Copia link
             </button>
             <Link href={`/admin/todo/${encodeURIComponent(created.id)}`} className={pill}>
@@ -214,52 +199,56 @@ export default function TodoAdminClient() {
         </div>
       )}
 
-      <div className="mt-6 space-y-2">
+      {showAccess && boards && (
+        <div className="mt-4">
+          <AccessPanel boards={boards} accesses={accesses} portal={portal} reload={load} />
+        </div>
+      )}
+
+      <div className="mt-6">
         {boards === null ? (
           <p className="py-8 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>
-        ) : boards.length === 0 ? (
-          !setup && <p className="rounded-xl border border-dashed border-[var(--border-color)] p-6 text-center text-sm text-[var(--text-secondary)]">Ancora nessuna todo list.</p>
         ) : (
-          boards.map((b) => (
-            <div key={b.id} className="rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
-              <Link href={`/admin/todo/${encodeURIComponent(b.id)}`} className="block min-w-0">
-                <span className="block break-words text-sm font-semibold text-[var(--text-primary)]">{b.name}</span>
-                <span className="block text-xs text-[var(--text-secondary)]">Creata il {day(b.createdAt)}</span>
-              </Link>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Link href={`/admin/todo/${encodeURIComponent(b.id)}`} className="inline-flex min-h-[36px] items-center gap-1 rounded-full bg-[var(--accent-blue)] px-3 py-1.5 text-xs font-semibold text-white">
-                  Apri
-                </Link>
-                <button type="button" onClick={() => copy(b.link)} className={pill}>
-                  <Copy className="h-3.5 w-3.5" /> Copia link
-                </button>
-                <button type="button" onClick={() => (setPwFor(pwFor === b.id ? null : b.id), setNewPw(''))} className={pill}>
-                  <KeyRound className="h-3.5 w-3.5" /> Cambia password
-                </button>
-                <button type="button" onClick={() => regenerate(b)} disabled={busy === `regenerate:${b.id}`} className={pill}>
-                  {busy === `regenerate:${b.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Nuovo link
-                </button>
-                <button type="button" onClick={() => rename(b)} className={pill}>
-                  <Pencil className="h-3.5 w-3.5" /> Rinomina
-                </button>
-                <button type="button" onClick={() => remove(b)} disabled={busy === `del:${b.id}`} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[#FF3B30]/40 px-3 py-1.5 text-xs text-[#FF3B30] disabled:opacity-50">
-                  {busy === `del:${b.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Elimina
-                </button>
-              </div>
-              {pwFor === b.id && (
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <div className="flex-1">
-                    <PasswordInput id={`pw-${b.id}`} value={newPw} onChange={setNewPw} placeholder="Nuova password (almeno 6 caratteri)" />
-                  </div>
-                  <button type="button" onClick={() => changePw(b)} disabled={busy === `password:${b.id}`} className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-full bg-[var(--accent-blue)] px-4 text-sm font-semibold text-white disabled:opacity-50">
-                    {busy === `password:${b.id}` && <Loader2 className="h-4 w-4 animate-spin" />} Salva password
-                  </button>
-                </div>
-              )}
-            </div>
-          ))
+          !setup && <TodoHome data={home} onOpen={open} selected={selected} onToggleSelect={toggle} folderExtra={viewers} emptyText="Ancora nessun progetto: premi «Nuovo progetto»." />
         )}
       </div>
+
+      {selected.size > 0 && (
+        <div className="fixed inset-x-0 bottom-20 z-50 flex justify-center px-4 md:bottom-6">
+          <div className="flex w-full max-w-xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--accent-blue)]/50 bg-[var(--card-background)] px-3 py-2 shadow-2xl">
+            <span className="text-sm font-semibold text-[var(--text-primary)]">
+              {selected.size} {selected.size === 1 ? 'progetto selezionato' : 'progetti selezionati'}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setSelected(new Set(home.boards.map((b) => b.id)))} className={pill}>
+                Tutti
+              </button>
+              <button type="button" onClick={() => setSelected(new Set())} className={pill}>
+                Annulla
+              </button>
+              <button type="button" onClick={() => setGranting(true)} className="inline-flex min-h-[36px] items-center gap-1 rounded-full bg-[var(--accent-blue)] px-4 text-xs font-semibold text-white">
+                <UserCheck className="h-3.5 w-3.5" /> Dai accesso
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {granting && boards && (
+        <GrantDialog
+          boards={boards}
+          accesses={accesses}
+          selected={[...selected]}
+          onClose={() => setGranting(false)}
+          onDone={(message, creds) => {
+            setGranting(false)
+            setSelected(new Set())
+            setNotice(message)
+            if (creds) setCredentials(creds)
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }

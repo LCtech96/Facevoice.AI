@@ -29,6 +29,31 @@ export type TodoTask = {
 
 export type TodoBoardState = { board: { name: string }; lists: TodoList[]; tasks: TodoTask[] }
 
+/** Un progetto nella schermata generale (cartella): conteggi e prossima scadenza. */
+export type TodoHomeBoard = { id: string; name: string; todo: number; late: number; done: number; next: string | null }
+/** Un'attivita' con scadenza, per il calendario. */
+export type TodoCalendarTask = { id: string; board_id: string; title: string; deadline: string; done: boolean; priority: number }
+export type TodoHomeData = { boards: TodoHomeBoard[]; tasks: TodoCalendarTask[] }
+
+/** Colori dei progetti nel calendario (uno per cartella, in ordine). */
+export const PROJECT_COLORS = ['#007AFF', '#AF52DE', '#FF9500', '#34C759', '#FF2D55', '#5AC8FA', '#A2845E', '#FFCC00', '#5856D6', '#30B0C7']
+export const projectColor = (index: number) => PROJECT_COLORS[((index % PROJECT_COLORS.length) + PROJECT_COLORS.length) % PROJECT_COLORS.length]
+
+/** Nome confrontabile: minuscole, senza accenti, spazi semplici («Mònia » = «monia»). */
+export function nameKey(name: string): string {
+  return (name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Tabella delle cose finite («Fatto», «Fatte», «Completato», «Done»...). */
+export function isDoneListTitle(title: string): boolean {
+  return /^(fatt[oaie]|completat[oaie]|done)$/.test(nameKey(title).replace(/[^a-z ]/g, '').trim())
+}
+
 export const PRIORITIES = [
   { value: 0, label: 'Nessuna', chip: 'border border-[var(--border-color)] text-[var(--text-secondary)]', bar: 'transparent' },
   { value: 1, label: 'Bassa', chip: 'bg-[#34C759]/15 text-[#34C759]', bar: '#34C759' },
@@ -51,6 +76,7 @@ export const LIMITS = {
   imagesPerTask: 20,
   imageBytes: 10 * 1024 * 1024,
   linksPerTask: 5,
+  personName: 60,
   passwordMin: 6,
   passwordMax: 128,
 }

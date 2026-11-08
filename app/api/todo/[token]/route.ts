@@ -30,7 +30,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     if (!body) return json({ error: 'Dati non validi.' }, 400)
     const access = await guestBoard(req, token)
     if ('res' in access) return access.res
-    return json({ ok: true, ...(await applyOp(access.board, body)) })
+    return json({ ok: true, ...(await applyOp(req, access.board, access.viewer, body)) })
   } catch (error) {
     return errorResponse(error)
   }

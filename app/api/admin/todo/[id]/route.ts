@@ -1,15 +1,15 @@
 import { NextRequest } from 'next/server'
 import { getAdminEmail } from '@/lib/admin-request'
-import { openToken } from '@/lib/todo-auth'
-import { errorResponse, json, readBody, setSessionCookie } from '@/lib/todo-http'
+import { forgetBoard } from '@/lib/todo-access'
+import { errorResponse, json, readBody } from '@/lib/todo-http'
 import { adminView, boardById, boardLink, boardLinkOf, changePassword, deleteBoard, regenerateLink, renameBoard, todoOrigin } from '@/lib/todo-store'
 
 export const dynamic = 'force-dynamic'
 
-// Una todo list (solo l'admin): nome, password nuova, link nuovo, apertura, eliminazione.
-// Password nuova o link nuovo: chi era dentro deve rientrare con il link e la password nuovi.
-// «Apri»: l'admin riceve lo stesso cookie di chi ha il link (senza password) e la pagina
-// usa le stesse route della todo list condivisa.
+// Un progetto (solo l'admin): nome, password nuova, link nuovo, dati per la pagina, eliminazione.
+// Password nuova o link nuovo: chi era dentro con il link deve rientrare con link e password
+// nuovi (gli accessi delle persone non cambiano). La pagina del progetto dell'admin usa le
+// route per id con il cookie dell'admin (vedi /api/admin/todo/session).
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -35,12 +35,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       }
       case 'open': {
         const board = await boardById(id)
-        if (!board) return json({ error: 'Todo list non trovata.' }, 404)
-        const token = openToken(board.token_enc)
-        if (!token) return json({ error: 'Link non leggibile: crea un link nuovo.' }, 409)
-        const res = json({ token, name: board.name, link: boardLink(origin, token) })
-        if (!setSessionCookie(res, req, board)) return json({ error: 'Pagina non disponibile in questo momento.' }, 503)
-        return res
+        if (!board) return json({ error: 'Progetto non trovato.' }, 404)
+        return json({ board: adminView(board, boardLinkOf(board, origin)) })
       }
       default:
         return json({ error: 'Azione non valida.' }, 400)
@@ -55,6 +51,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
     const { id } = await params
     await deleteBoard(id)
+    await forgetBoard(id).catch(() => undefined)
     return json({ ok: true })
   } catch (error) {
     return errorResponse(error)

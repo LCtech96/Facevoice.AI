@@ -2,13 +2,14 @@
 
 import { IMAGE_TYPES, LIMITS, positionAt, type TodoBoardState, type TodoTask } from '@/lib/todo-shared'
 
-// Chiamate della pagina della todo list verso le sue route (/api/todo/<link>).
+// Chiamate della pagina di un progetto verso le sue route: /api/todo/<link> (chi ha il
+// link del progetto) o /api/todo/p/<id> (admin e persone dalla schermata generale).
 // Il cookie di accesso viaggia da solo (HttpOnly): qui non c'e' nessun segreto.
 
 export type OpResult = { ok: true; data: Record<string, unknown> } | { ok: false; error: string; status: number; needPassword?: boolean }
 
-export async function boardOp(token: string, body: Record<string, unknown>): Promise<OpResult> {
-  const res = await fetch(`/api/todo/${encodeURIComponent(token)}`, {
+export async function boardOp(api: string, body: Record<string, unknown>): Promise<OpResult> {
+  const res = await fetch(api, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -21,18 +22,18 @@ export async function boardOp(token: string, body: Record<string, unknown>): Pro
 
 export type LoadResult = { ok: true; state: TodoBoardState } | { ok: false; error: string; status: number; needPassword?: boolean }
 
-export async function loadBoard(token: string): Promise<LoadResult> {
-  const res = await fetch(`/api/todo/${encodeURIComponent(token)}`, { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+export async function loadBoard(api: string): Promise<LoadResult> {
+  const res = await fetch(api, { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
   const data = res ? await res.json().catch(() => null) : null
   if (res?.ok && data?.lists) return { ok: true, state: data as TodoBoardState }
   return { ok: false, error: data?.error || 'Connessione assente: riprova.', status: res?.status || 0, needPassword: Boolean(data?.needPassword) }
 }
 
 /** Carica una foto: link a tempo dal server, invio diretto allo spazio privato, poi conferma. */
-export async function uploadImage(token: string, taskId: string, file: File): Promise<string | null> {
+export async function uploadImage(api: string, taskId: string, file: File): Promise<string | null> {
   if (!IMAGE_TYPES[file.type]) return `«${file.name}»: si possono caricare solo immagini JPG, PNG, WEBP o GIF.`
   if (file.size > LIMITS.imageBytes) return `«${file.name}» è troppo grande (massimo 10 MB).`
-  const ticket = await boardOp(token, { op: 'uploadUrl', taskId, contentType: file.type, size: file.size })
+  const ticket = await boardOp(api, { op: 'uploadUrl', taskId, contentType: file.type, size: file.size })
   if (!ticket.ok) return ticket.error
   const { signedUrl, path } = ticket.data as { signedUrl: string; path: string }
   const form = new FormData()
@@ -41,7 +42,7 @@ export async function uploadImage(token: string, taskId: string, file: File): Pr
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   const put = await fetch(signedUrl, { method: 'PUT', body: form, headers: { 'x-upsert': 'false', ...(anon ? { apikey: anon } : {}) } }).catch(() => null)
   if (!put?.ok) return `«${file.name}»: caricamento non riuscito, riprova.`
-  const done = await boardOp(token, { op: 'addImage', taskId, path, name: file.name })
+  const done = await boardOp(api, { op: 'addImage', taskId, path, name: file.name })
   return done.ok ? null : done.error
 }
 
@@ -59,3 +60,7 @@ export function patchLocally(state: TodoBoardState, taskId: string, fields: Part
 }
 
 export const tasksOf = (state: TodoBoardState, listId: string) => state.tasks.filter((t) => t.list_id === listId).sort((a, b) => a.position - b.position)
+
+/** Indirizzo delle route di un progetto. */
+export const linkApi = (token: string) => `/api/todo/${encodeURIComponent(token)}`
+export const projectApi = (id: string) => `/api/todo/p/${encodeURIComponent(id)}`

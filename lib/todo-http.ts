@@ -1,6 +1,8 @@
 import { after, NextRequest, NextResponse } from 'next/server'
-import { sessionCookieName, SESSION_TTL_S, signSession, verifySession } from '@/lib/todo-auth'
-import { TodoError, addImage, addList, addTask, boardByToken, deleteList, deleteTask, imageUploadUrl, moveList, moveTask, refreshLinks, removeImage, renameList, sortListByPriority, updateTask, type BoardRow } from '@/lib/todo-store'
+import { ACCESS_COOKIE, ADMIN_COOKIE, ADMIN_SESSION_TTL_S, readAccessSession, readAdminSession, sessionCookieName, SESSION_TTL_S, signAccessSession, signAdminSession, signSession, verifySession } from '@/lib/todo-auth'
+import { accessForSession, type AccessRow } from '@/lib/todo-access'
+import { LINK_GUEST_NAME, notifyTaskDone } from '@/lib/todo-notify'
+import { TodoError, addImage, addList, addTask, boardById, boardByToken, deleteList, deleteTask, imageUploadUrl, moveList, moveTask, refreshLinks, removeImage, renameList, sortListByPriority, todoOrigin, updateTask, type BoardRow } from '@/lib/todo-store'
 
 // Pezzi comuni delle route della todo list: mai in cache, mai indicizzate, solo
 // dalla stessa origine per le modifiche, e la todo list verificata dal link + cookie.
@@ -64,14 +66,66 @@ export function setSessionCookie(res: NextResponse, req: NextRequest, board: Boa
   return true
 }
 
-/** Todo list del link, solo se chi chiede ha il cookie giusto per QUESTA todo list. */
-export async function guestBoard(req: NextRequest, token: string): Promise<{ board: BoardRow } | { res: NextResponse }> {
+/** Chi sta lavorando: l'admin, una persona entrata con nome e password, o chi ha il link del progetto. */
+export type Viewer = { kind: 'admin' } | { kind: 'link' } | { kind: 'person'; access: AccessRow }
+
+const cookieOptions = (req: NextRequest, maxAge: number) => ({ httpOnly: true, secure: req.nextUrl.protocol === 'https:', sameSite: 'lax' as const, path: '/', maxAge })
+
+/** Cookie della persona (dopo nome e password giusti). */
+export function setAccessCookie(res: NextResponse, req: NextRequest, access: AccessRow): boolean {
+  const value = signAccessSession(access)
+  if (!value) return false
+  res.cookies.set(ACCESS_COOKIE, value, cookieOptions(req, SESSION_TTL_S))
+  return true
+}
+
+export const clearAccessCookie = (res: NextResponse, req: NextRequest) => res.cookies.set(ACCESS_COOKIE, '', cookieOptions(req, 0))
+
+/** Cookie dell'admin per i progetti (si chiede con il suo accesso al pannello). */
+export function setAdminCookie(res: NextResponse, req: NextRequest, email: string): boolean {
+  const value = signAdminSession(email)
+  if (!value) return false
+  res.cookies.set(ADMIN_COOKIE, value, cookieOptions(req, ADMIN_SESSION_TTL_S))
+  return true
+}
+
+export const isAdminCookie = (req: NextRequest) => readAdminSession(req.cookies.get(ADMIN_COOKIE)?.value) !== null
+
+/** La persona del cookie, verificata ora (password cambiata o accesso eliminato: null). */
+export async function personFromCookie(req: NextRequest): Promise<AccessRow | null> {
+  return accessForSession(readAccessSession(req.cookies.get(ACCESS_COOKIE)?.value))
+}
+
+/** Admin (cookie) o persona; null se nessuno dei due. */
+export async function viewerFromCookies(req: NextRequest): Promise<Viewer | null> {
+  if (isAdminCookie(req)) return { kind: 'admin' }
+  const access = await personFromCookie(req)
+  return access ? { kind: 'person', access } : null
+}
+
+export const NEED_LOGIN = { error: 'Entra con il tuo nome e la tua password.', needPassword: true }
+export const NOT_FOUND = { error: 'Progetto non trovato o non più condiviso con te.' }
+
+/**
+ * Progetto aperto dalla pagina generale (per id): l'admin li apre tutti, una persona
+ * solo quelli del suo accesso. Per gli altri lo stesso «non trovato» (non si scopre
+ * nemmeno se esiste).
+ */
+export async function projectAccess(req: NextRequest, id: string): Promise<{ board: BoardRow; viewer: Viewer } | { res: NextResponse }> {
+  const viewer = await viewerFromCookies(req)
+  if (!viewer) return { res: json(NEED_LOGIN, 401) }
+  if (viewer.kind === 'person' && !viewer.access.board_ids.includes(String(id).toLowerCase())) return { res: json(NOT_FOUND, 404) }
+  const board = await boardById(id)
+  if (!board) return { res: json(NOT_FOUND, 404) }
+  return { board, viewer }
+}
+
+/** Todo list del link, solo se chi chiede ha il cookie giusto per QUESTA todo list (o e' l'admin). */
+export async function guestBoard(req: NextRequest, token: string): Promise<{ board: BoardRow; viewer: Viewer } | { res: NextResponse }> {
   const board = await boardByToken(token)
   if (!board) return { res: json(INVALID_LINK, 404) }
-  if (!verifySession(req.cookies.get(sessionCookieName(board.id))?.value, board)) {
-    return { res: json({ error: 'Serve la password per aprire questa todo list.', needPassword: true }, 401) }
-  }
-  return { board }
+  if (verifySession(req.cookies.get(sessionCookieName(board.id))?.value, board)) return { board, viewer: isAdminCookie(req) ? { kind: 'admin' } : { kind: 'link' } }
+  return { res: json({ error: 'Serve la password per aprire questa todo list.', needPassword: true }, 401) }
 }
 
 /** Lavoro da fare dopo la risposta (anteprime dei link). */
@@ -84,8 +138,16 @@ export function runAfter(task: () => Promise<unknown>) {
   }
 }
 
-/** Le operazioni sulla todo list (uguali per l'admin e per chi ha il link). */
-export async function applyOp(board: BoardRow, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+/** Fatta (o spostata in «Fatto») da chi non e' l'admin: email all'admin dopo la risposta. */
+function noticeDone(req: NextRequest, board: BoardRow, viewer: Viewer, taskId: string, fromListId: string, toListId: string) {
+  if (viewer.kind === 'admin') return
+  const who = viewer.kind === 'person' ? viewer.access.name : LINK_GUEST_NAME
+  const origin = todoOrigin(req.nextUrl.origin)
+  runAfter(() => notifyTaskDone({ board, who, taskId, fromListId, toListId, origin }))
+}
+
+/** Le operazioni sulla todo list (uguali per l'admin, per le persone e per chi ha il link). */
+export async function applyOp(req: NextRequest, board: BoardRow, viewer: Viewer, body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const op = body.op
   switch (op) {
     case 'addList':
@@ -110,11 +172,14 @@ export async function applyOp(board: BoardRow, body: Record<string, unknown>): P
     case 'updateTask': {
       const r = await updateTask(board, body.taskId, body.fields)
       if (r.linksChanged) runAfter(() => refreshLinks(board.id, body.taskId as string))
+      if (r.becameDone) noticeDone(req, board, viewer, body.taskId as string, r.listId, r.listId)
       return {}
     }
-    case 'moveTask':
-      await moveTask(board, body.taskId, body.listId, body.index)
+    case 'moveTask': {
+      const m = await moveTask(board, body.taskId, body.listId, body.index)
+      if (m.intoDoneList) noticeDone(req, board, viewer, body.taskId as string, m.fromListId, m.toListId)
       return {}
+    }
     case 'deleteTask':
       await deleteTask(board, body.taskId)
       return {}

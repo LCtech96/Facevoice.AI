@@ -46,7 +46,7 @@ const input =
 const label = 'mb-1 block text-xs font-medium text-[var(--text-secondary)]'
 
 export default function TaskModal({
-  token,
+  api,
   task,
   lists,
   listTasks,
@@ -55,7 +55,7 @@ export default function TaskModal({
   onMessage,
   refresh,
 }: {
-  token: string
+  api: string
   task: TodoTask
   lists: TodoList[]
   listTasks: TodoTask[]
@@ -145,7 +145,7 @@ export default function TaskModal({
     if (!list.length) return
     setUploading((n) => n + list.length)
     for (const file of list) {
-      const problem = await uploadImage(token, task.id, file)
+      const problem = await uploadImage(api, task.id, file)
       if (problem) onMessage(problem)
       setUploading((n) => n - 1)
     }

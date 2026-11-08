@@ -3,6 +3,7 @@
 import { useCallback } from 'react'
 import { ListTodo, LogOut } from 'lucide-react'
 import TodoBoard from '@/components/todo/TodoBoard'
+import { linkApi } from '@/components/todo/todo-api'
 
 // Todo list per chi ha il link: solo il nome e la bacheca, nessun altro collegamento.
 
@@ -29,7 +30,7 @@ export default function GuestBoard({ token, name }: { token: string; name: strin
         </div>
       </header>
       <div className="pt-4">
-        <TodoBoard token={token} onLocked={onLocked} />
+        <TodoBoard api={linkApi(token)} onLocked={onLocked} />
       </div>
     </>
   )

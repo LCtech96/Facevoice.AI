@@ -3,7 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SITE_URL } from '@/lib/seo/site'
 import { hashPassword, newToken, openToken, passwordProblem, sealToken, tokenHashOf, TOKEN_RE } from '@/lib/todo-auth'
 import { fetchLinkPreview } from '@/lib/todo-preview'
-import { EMAIL_RE, IMAGE_TYPES, LIMITS, extractLinks, positionAt, type TodoBoardState, type TodoLinkPreview, type TodoTask } from '@/lib/todo-shared'
+import { updateSetting } from '@/lib/settings-store'
+import { EMAIL_RE, IMAGE_TYPES, LIMITS, extractLinks, isDoneListTitle, positionAt, type TodoBoardState, type TodoCalendarTask, type TodoHomeBoard, type TodoHomeData, type TodoLinkPreview, type TodoTask } from '@/lib/todo-shared'
 
 // Dati delle todo list condivise. Ogni funzione che tocca liste, attivita' o foto
 // riceve la todo list gia' verificata (dal link + cookie, o dall'admin) e filtra
@@ -410,9 +411,11 @@ export async function addTask(board: BoardRow, listId: unknown, fields: unknown)
   return { id: row.id, linksChanged: extractLinks(`${row.title}\n${row.notes || ''}`).length > 0 }
 }
 
-export async function updateTask(board: BoardRow, taskId: unknown, fields: unknown): Promise<{ linksChanged: boolean }> {
+export type TaskChange = { linksChanged: boolean; becameDone: boolean; listId: string }
+
+export async function updateTask(board: BoardRow, taskId: unknown, fields: unknown): Promise<TaskChange> {
   const clean = cleanTaskFields(fields)
-  if (!Object.keys(clean).length) return { linksChanged: false }
+  if (!Object.keys(clean).length) return { linksChanged: false, becameDone: false, listId: '' }
   const before = await taskOf(board.id, taskId)
   const { error } = await supabaseAdmin
     .from('todo_tasks')
@@ -422,12 +425,14 @@ export async function updateTask(board: BoardRow, taskId: unknown, fields: unkno
   check(error, 'modifica attività')
   const text = (t: { title: string; notes: string }) => extractLinks(`${t.title}\n${t.notes || ''}`).join(' ')
   const after = { title: (clean.title as string) ?? before.title, notes: (clean.notes as string) ?? before.notes }
-  return { linksChanged: text(after) !== text(before) }
+  return { linksChanged: text(after) !== text(before), becameDone: clean.done === true && !before.done, listId: before.list_id }
 }
 
-export async function moveTask(board: BoardRow, taskId: unknown, listId: unknown, index: unknown) {
-  await taskOf(board.id, taskId)
-  await listOf(board.id, listId)
+export type TaskMove = { fromListId: string; toListId: string; intoDoneList: boolean }
+
+export async function moveTask(board: BoardRow, taskId: unknown, listId: unknown, index: unknown): Promise<TaskMove> {
+  const task = await taskOf(board.id, taskId)
+  const target = await listOf(board.id, listId)
   const position = await placeAt('todo_tasks', board.id, listId as string, taskId as string, Number(index) || 0)
   const { error } = await supabaseAdmin
     .from('todo_tasks')
@@ -435,6 +440,13 @@ export async function moveTask(board: BoardRow, taskId: unknown, listId: unknown
     .eq('id', taskId as string)
     .eq('board_id', board.id)
   check(error, 'spostamento attività')
+  let intoDoneList = false
+  if (task.list_id !== target.id && isDoneListTitle(target.title)) {
+    // Da «Fatto» a «Fatte» non e' una cosa finita adesso.
+    const { data: from } = await supabaseAdmin.from('todo_lists').select('title').eq('id', task.list_id).eq('board_id', board.id).maybeSingle()
+    intoDoneList = !(from && isDoneListTitle((from as { title: string }).title))
+  }
+  return { fromListId: task.list_id, toListId: target.id, intoDoneList }
 }
 
 export async function deleteTask(board: BoardRow, taskId: unknown) {
@@ -442,6 +454,106 @@ export async function deleteTask(board: BoardRow, taskId: unknown) {
   const { error } = await supabaseAdmin.from('todo_tasks').delete().eq('id', task.id).eq('board_id', board.id)
   check(error, 'eliminazione attività')
   await removeObjects(pathsOf([task]))
+}
+
+// ---------------------------------------------------------------------
+// Schermata generale: cartelle dei progetti e calendario delle scadenze
+// ---------------------------------------------------------------------
+
+/** Tutte le righe, a pagine di 1000 (il database non ne da' di piu' per volta). */
+async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown; error: DbError }>): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; from < 100_000; from += 1000) {
+    const { data, error } = await page(from, from + 999)
+    check(error, 'schermata generale')
+    const rows = (data || []) as T[]
+    out.push(...rows)
+    if (rows.length < 1000) break
+  }
+  return out
+}
+
+/** Conteggi e scadenze SOLO dei progetti dati (gia' verificati da chi chiama). */
+export async function homeData(boards: BoardRow[], at = Date.now()): Promise<TodoHomeData> {
+  if (!boards.length) return { boards: [], tasks: [] }
+  const ids = boards.map((b) => b.id)
+  type ListRow = { id: string; board_id: string; title: string }
+  type Row = { id: string; board_id: string; list_id: string; title: string; deadline: string | null; done: boolean; priority: number }
+  const [lists, tasks] = await Promise.all([
+    allRows<ListRow>((from, to) => supabaseAdmin.from('todo_lists').select('id, board_id, title').in('board_id', ids).order('id', { ascending: true }).range(from, to)),
+    allRows<Row>((from, to) => supabaseAdmin.from('todo_tasks').select('id, board_id, list_id, title, deadline, done, priority').in('board_id', ids).order('id', { ascending: true }).range(from, to)),
+  ])
+  const allowed = new Set(ids)
+  const doneLists = new Set(lists.filter((l) => allowed.has(l.board_id) && isDoneListTitle(l.title)).map((l) => l.id))
+  const rows = tasks.filter((t) => allowed.has(t.board_id))
+  const stats = new Map<string, TodoHomeBoard>(boards.map((b) => [b.id, { id: b.id, name: b.name, todo: 0, late: 0, done: 0, next: null }]))
+  const calendar: TodoCalendarTask[] = []
+  for (const t of rows) {
+    const st = stats.get(t.board_id) as TodoHomeBoard
+    const finished = t.done || doneLists.has(t.list_id)
+    const due = t.deadline ? Date.parse(t.deadline) : NaN
+    if (finished) st.done++
+    else {
+      st.todo++
+      if (Number.isFinite(due) && due < at) st.late++
+      if (Number.isFinite(due) && due >= at && (!st.next || due < Date.parse(st.next))) st.next = t.deadline
+    }
+    if (t.deadline && Number.isFinite(due)) calendar.push({ id: t.id, board_id: t.board_id, title: t.title, deadline: t.deadline, done: finished, priority: t.priority })
+  }
+  calendar.sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline) || a.title.localeCompare(b.title, 'it'))
+  return { boards: boards.map((b) => stats.get(b.id) as TodoHomeBoard), tasks: calendar }
+}
+
+// ---------------------------------------------------------------------
+// Avviso «fatta» all'admin: al massimo uno ogni 2 minuti per attivita'
+// ---------------------------------------------------------------------
+
+export const DONE_NOTICE_WINDOW_MS = 2 * 60_000
+const DONE_NOTICES_KEY = 'todo_done_notices'
+
+const missingColumn = (error: DbError) => Boolean(error) && (['42703', 'PGRST204'].includes(error?.code || '') || /done_notified_at/.test(error?.message || ''))
+
+/** true se tocca a questa richiesta mandare l'avviso (prenotazione sulla riga, o in app_settings se manca la colonna). */
+export async function claimDoneNotice(boardId: string, taskId: string, at = Date.now()): Promise<boolean> {
+  const now = new Date(at).toISOString()
+  const first = await supabaseAdmin.from('todo_tasks').update({ done_notified_at: now }).eq('id', taskId).eq('board_id', boardId).is('done_notified_at', null).select('id')
+  if (!first.error) {
+    if (first.data && first.data.length) return true
+    const again = await supabaseAdmin
+      .from('todo_tasks')
+      .update({ done_notified_at: now })
+      .eq('id', taskId)
+      .eq('board_id', boardId)
+      .lt('done_notified_at', new Date(at - DONE_NOTICE_WINDOW_MS).toISOString())
+      .select('id')
+    return !again.error && Boolean(again.data && again.data.length)
+  }
+  if (!missingColumn(first.error)) return false
+  // Colonna non ancora creata: segno in app_settings (solo gli ultimi minuti).
+  let mine = false
+  const parse = (raw: string | null): Record<string, number> => {
+    try {
+      const v = raw ? JSON.parse(raw) : {}
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+    } catch {
+      return {}
+    }
+  }
+  try {
+    await updateSetting(DONE_NOTICES_KEY, parse, (cur) => {
+      mine = false
+      const last = Number(cur[taskId]) || 0
+      if (at - last < DONE_NOTICE_WINDOW_MS) return false
+      const next: Record<string, number> = {}
+      for (const [k, v] of Object.entries(cur)) if (at - Number(v) < DONE_NOTICE_WINDOW_MS) next[k] = Number(v)
+      next[taskId] = at
+      mine = true
+      return next
+    })
+  } catch {
+    return false
+  }
+  return mine
 }
 
 // ---------------------------------------------------------------------

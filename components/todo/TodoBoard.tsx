@@ -25,11 +25,22 @@ function deadlineTone(task: TodoTask, now: number) {
   return 'border border-[var(--border-color)] text-[var(--text-secondary)]'
 }
 
-export default function TodoBoard({ token, onLocked }: { token: string; onLocked: () => void }) {
+export default function TodoBoard({
+  api,
+  onLocked,
+  initialTask = null,
+  notFoundText = 'Il link non è più valido. Chiedi un link nuovo a chi te l’ha mandato.',
+}: {
+  api: string
+  onLocked: () => void
+  /** Attivita' da aprire subito (dal calendario). */
+  initialTask?: string | null
+  notFoundText?: string
+}) {
   const [state, setState] = useState<TodoBoardState | null>(null)
   const [fatal, setFatal] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [openTask, setOpenTask] = useState<string | null>(null)
+  const [openTask, setOpenTask] = useState<string | null>(initialTask)
   const [newList, setNewList] = useState('')
   const [adding, setAdding] = useState<Record<string, string>>({})
   const [editingList, setEditingList] = useState<string | null>(null)
@@ -49,7 +60,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
   const refresh = useCallback(async () => {
     const seq = ++loadSeq.current
     setSyncing(true)
-    const r = await loadBoard(token)
+    const r = await loadBoard(api)
     setSyncing(false)
     // Risposta vecchia (nel frattempo e' partita un'altra lettura o una modifica): si scarta.
     if (seq !== loadSeq.current || pending.current > 0 || dragRef.current) return
@@ -60,10 +71,10 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
       return
     }
     if (r.needPassword) return onLocked()
-    if (r.status === 404) setFatal('Il link non è più valido. Chiedi un link nuovo a chi te l’ha mandato.')
+    if (r.status === 404) setFatal(notFoundText)
     else if (r.status === 503 && /SQL/.test(r.error)) setFatal(r.error)
     else setMessage(r.error)
-  }, [token, onLocked])
+  }, [api, onLocked, notFoundText])
 
   useEffect(() => {
     refresh()
@@ -90,7 +101,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
       if (local) setState((s) => (s ? local(s) : s))
       pending.current++
       loadSeq.current++
-      const r = await boardOp(token, body)
+      const r = await boardOp(api, body)
       pending.current--
       if (!r.ok) {
         if (r.needPassword) {
@@ -102,7 +113,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
       if (pending.current === 0) refresh()
       return r
     },
-    [token, onLocked, refresh]
+    [api, onLocked, refresh]
   )
 
   // ------------------------------------------------------------------
@@ -389,7 +400,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
 
       {current && (
         <TaskModal
-          token={token}
+          api={api}
           task={current}
           lists={lists}
           listTasks={tasksOf(state, current.list_id)}
