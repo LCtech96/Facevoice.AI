@@ -23,7 +23,7 @@ import { noteLeadFields } from '@/lib/lead-origin'
 import { inspectWebsite, platformOf } from '@/lib/site-inspect'
 import { fetchInstagramProfile } from '@/lib/meta/graph'
 import { listPushDevices, sendPushToAdmins, updateDeviceInfo } from '@/lib/push'
-import { loadBlogAutoSettings, loadBlogAutoState, type BlogAutoSettings } from '@/lib/blog-auto'
+import { BLOG_TOPICS, BlogScheduleError, applySchedulePatch, describeSlots, loadBlogAutoSettings, loadBlogAutoState, strictTopic, type BlogSchedulePatch } from '@/lib/blog-auto'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
 import { SITE_URL } from '@/lib/seo/site'
 import { createPostDraft, DraftConflictError, loadPostDraft, recentPostDrafts, type PostDraft } from '@/lib/social-posts'
@@ -725,10 +725,10 @@ Strumenti per le notifiche push (i dispositivi su cui arrivano gli avvisi di Mes
 Nella risposta descrivi i dispositivi in modo semplice (nome, tipo, da quando, ultima notifica ricevuta), con date e ore in italiano; non mostrare gli id se non servono.
 
 Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Facebook):
-- "content_settings": {} → come funziona ora: blog automatico acceso o spento, giorni e ora di pubblicazione, condivisione su Facebook e Instagram, ultimo articolo e com'è andato, e le INDICAZIONI di Luca salvate per i contenuti.
+- "content_settings": {} → come funziona ora: blog automatico acceso o spento, giorni, uscite (fino a 4 al giorno, ognuna con ora e argomento) e com'è andata ognuna, condivisione su Facebook e Instagram, ultimo articolo e com'è andato, e le INDICAZIONI di Luca salvate per i contenuti.
 - "set_content_directions": {"text": "indicazioni", "mode": "append|replace|clear"} → salva le indicazioni di Luca per i prossimi contenuti (argomenti, taglio, tono, gancio della copertina, stile e colori delle immagini, cosa evitare). Le seguono la scrittura degli articoli, le slide, il gancio della prima slide e le immagini generate, finché Luca non le cambia. "append" aggiunge alle indicazioni esistenti (predefinito), "replace" prepara la sostituzione (scheda di conferma con le vecchie e le nuove: si sostituiscono solo con «Conferma»; se non ce n'erano si salvano subito), "clear" prepara la cancellazione (scheda di conferma: si cancellano solo con «Conferma»). Riscrivi le parole di Luca come indicazioni chiare e brevi, senza perdere nulla. Usalo quando Luca dice cosa fare con i prossimi post, blog o caroselli.
-- "update_blog_schedule": {"enabled": true, "days": [2, 5], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → prepara la modifica del blog automatico (days: 0 = domenica … 6 = sabato; ora italiana): compare la scheda di conferma, cambia solo quando Luca preme «Conferma». Metti solo i campi da cambiare.
-- "publish_blog_now": {} → prepara la pubblicazione SUBITO di un articolo con le notizie più recenti, poi il carosello su Facebook e Instagram: compare la scheda di conferma, parte solo con «Conferma». Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Dopo la conferma ci vogliono alcuni minuti: arriva una notifica con l'esito.
+- "update_blog_schedule": {"enabled": true, "days": [2, 5], "add": [{"time": "18:00", "topic": "Marketing digitale"}], "remove": ["11:40"], "slots": [{"time": "09:40", "topic": "Novità sull’AI"}], "time": "09:40", "shareFacebook": true, "shareInstagram": true} → prepara la modifica del blog automatico: compare la scheda di conferma, cambia solo quando Luca preme «Conferma». Metti solo i campi da cambiare. days: 0 = domenica … 6 = sabato, valgono per tutte le uscite. Uscite (ora italiana "HH:MM" + argomento; da 1 a 4 al giorno, almeno 30 minuti tra due uscite): "add" aggiunge uscite (es. «aggiungi un'uscita alle 18 su marketing» → add [{"time": "18:00", "topic": "Marketing digitale"}]), "remove" toglie le uscite a quelle ore, "slots" le sostituisce tutte, "time" cambia l'ora solo se c'è una sola uscita. Per cambiare l'argomento di un'uscita: remove della sua ora + add alla stessa ora con il nuovo argomento. Argomenti pronti: ${BLOG_TOPICS.map((t) => t.label).join(', ')}; oppure un argomento scritto da Luca (massimo 80 caratteri: le notizie arrivano da Google News).
+- "publish_blog_now": {"topic": "opzionale"} → prepara la pubblicazione SUBITO di un articolo con le notizie più recenti sull'argomento (se Luca non lo dice, quello della prima uscita), poi il carosello su Facebook e Instagram: compare la scheda di conferma, parte solo con «Conferma». Usalo SOLO se Luca chiede esplicitamente di pubblicare adesso. Dopo la conferma ci vogliono alcuni minuti: arriva una notifica con l'esito.
 - "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "slide_count": 3, "from_draft": "opzionale", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. "slide_count": numero TOTALE di immagini chiesto da Luca, copertina e slide finale comprese ("tre slide" → 3, da 2 a 10); ometti se Luca non dice un numero. "slides" sono solo le slide di contenuto, senza copertina e senza slide finale (con slide_count 3 c'è 1 sola slide di contenuto). Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi. Con "from_draft": "draftId" rifà un carosello già creato con gli stessi testi, gancio, foto e numero di slide (es. un carosello di prima che non si può correggere slide per slide): gli altri campi solo se Luca chiede cambiamenti.
 - "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → prepara la pubblicazione di un carosello creato prima (anche quelli del blog), solo dove non è già uscito: compare la scheda di conferma con slide e didascalia, esce solo quando Luca preme «Pubblica». Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
 - "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
@@ -1446,9 +1446,17 @@ export async function runAssistant(
           result = {
             blog_automatico: settings.enabled ? 'acceso' : 'spento',
             giorni: settings.days.map((d) => dayNames[d]),
-            ora: settings.time,
+            uscite: settings.slots.map((slot) => {
+              const last = state.slots[slot.id]
+              return {
+                ora: slot.time,
+                argomento: slot.topic,
+                ...(last?.lastDate ? { ultima: { giorno: last.lastDate, stato: last.lastStatus, nota: last.lastNote, articolo: last.lastPost } } : {}),
+              }
+            }),
+            argomenti_pronti: BLOG_TOPICS.map((t) => t.label),
             condivisione: { facebook: settings.shareFacebook, instagram: settings.shareInstagram, copertina: settings.coverImage },
-            ultimo: { stato: state.lastStatus, nota: state.lastNote, articolo: state.lastPost, social: state.lastFacebook, aggiornato: state.updatedAt },
+            ultimo: { stato: state.lastStatus, nota: state.lastNote, argomento: state.lastTopic ?? null, articolo: state.lastPost, social: state.lastFacebook, aggiornato: state.updatedAt },
             indicazioni: directions.text || '(nessuna)',
             indicazioni_aggiornate: directions.updatedAt,
           }
@@ -1479,18 +1487,36 @@ export async function runAssistant(
           break
         }
         case 'update_blog_schedule': {
-          const patch: Partial<BlogAutoSettings> = {}
+          const patch: BlogSchedulePatch = {}
           if (typeof args.enabled === 'boolean') patch.enabled = args.enabled
           if (Array.isArray(args.days)) patch.days = [...new Set(args.days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
-          if (typeof args.time === 'string' && /^\d{1,2}:\d{2}$/.test(args.time.trim())) patch.time = args.time.trim().padStart(5, '0')
           if (typeof args.shareFacebook === 'boolean') patch.shareFacebook = args.shareFacebook
           if (typeof args.shareInstagram === 'boolean') patch.shareInstagram = args.shareInstagram
+          if (typeof args.coverImage === 'boolean') patch.coverImage = args.coverImage
+          // Uscite: i valori si controllano sotto (applySchedulePatch), qui si prende solo la forma.
+          const slotList = (value: unknown) =>
+            (Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : [])
+              .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
+              .map((x) => ({ time: asText(x.time) ?? '', topic: asText(x.topic) }))
+          if (args.slots !== undefined) patch.slots = slotList(args.slots)
+          if (args.add !== undefined) patch.add = slotList(args.add)
+          if (args.remove !== undefined) patch.remove = (Array.isArray(args.remove) ? args.remove : [args.remove]).map((x) => String(x ?? ''))
+          if (typeof args.time === 'string' && args.time.trim()) patch.time = args.time.trim()
           if (!Object.keys(patch).length) {
-            result = { errore: 'nessun campo valido da cambiare (days: numeri da 0 a 6, time: "HH:MM")' }
+            result = { errore: 'nessun campo valido da cambiare (days: numeri da 0 a 6; add/remove/slots per le uscite con time "HH:MM" e topic)' }
+            break
+          }
+          // Controllo subito (orari, argomenti, al massimo 4 uscite a 30 minuti): la scheda mostra il risultato.
+          let after: ReturnType<typeof applySchedulePatch>
+          try {
+            after = applySchedulePatch(await loadBlogAutoSettings(), patch)
+          } catch (error) {
+            if (!(error instanceof BlogScheduleError)) throw error
+            result = { errore: error.message }
             break
           }
           // Il blog automatico pubblica da solo sui social: ogni cambio passa dalla scheda di conferma.
-          result = await queue('Cambiare il blog automatico', { kind: 'blog_schedule', patch })
+          result = await queue('Cambiare il blog automatico', { kind: 'blog_schedule', patch, slots: describeSlots(after.slots) })
           break
         }
         case 'create_carousel': {
@@ -1635,7 +1661,21 @@ export async function runAssistant(
         case 'publish_blog_now': {
           // Sul sito vero si chiama sempre il dominio; nelle anteprime la versione stessa.
           const origin = process.env.VERCEL_ENV === 'production' ? SITE_URL : process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'
-          result = await queue('Pubblicare subito un articolo del blog', { kind: 'publish_blog_now', origin })
+          let topic: string | undefined
+          if (asText(args.topic)?.trim()) {
+            try {
+              topic = strictTopic(args.topic)
+            } catch (error) {
+              if (!(error instanceof BlogScheduleError)) throw error
+              result = { errore: error.message }
+              break
+            }
+          }
+          result = await queue(topic ? `Pubblicare subito un articolo del blog: ${topic}`.slice(0, 150) : 'Pubblicare subito un articolo del blog', {
+            kind: 'publish_blog_now',
+            origin,
+            ...(topic ? { topic } : {}),
+          })
           break
         }
         case 'create_document': {

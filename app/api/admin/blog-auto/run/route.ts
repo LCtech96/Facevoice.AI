@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
   const key = (process.env.CRON_SECRET || '').trim()
   if (!key || req.headers.get('x-internal-key') !== key) return NextResponse.json({ error: 'Non autorizzato' }, { status: 403 })
   const body = await req.json().catch(() => ({}))
-  after(() => runBlogAuto(body?.manual === true))
+  // Uscita programmata (slot) o "Genera ora" (argomento scelto): runBlogAuto controlla entrambi.
+  after(() => runBlogAuto(body?.manual === true, { slot: body?.slot ?? null, topic: body?.topic ?? null }))
   return NextResponse.json({ ok: true })
 }
