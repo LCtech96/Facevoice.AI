@@ -9,6 +9,7 @@ import { useDictation } from '@/components/useDictation'
 import { prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES, asModelChoice } from '@/lib/ai-models'
 import { PHOTO_LAYOUTS, TEXT_LAYOUTS } from '@/lib/photo-layouts'
+import { looksLikeVideo } from '@/lib/saas/video-shared'
 
 const MODEL_KEY = 'fv_app_assistant_model'
 
@@ -780,18 +781,22 @@ function PostCard({
                 else thumbs.current.delete(i)
               }}
               type="button"
-              onClick={() => !done && canManage && !working && toggleSlide(i)}
+              onClick={() => !done && canManage && !working && !looksLikeVideo(url) && toggleSlide(i)}
               aria-label={`Slide ${n + 1}${on ? ' (selezionata)' : ''}`}
               aria-pressed={on}
               className="relative shrink-0 snap-start"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {looksLikeVideo(url) ? (
+                <video src={url} muted loop autoPlay playsInline preload="metadata" className="h-52 w-[166px] rounded-lg border border-[var(--border-color)] bg-black object-cover" />
+              ) : (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={url}
                 alt={`Immagine ${n + 1}`}
                 loading="lazy"
                 className={`h-52 w-[166px] rounded-lg object-cover ${on ? 'ring-4 ring-[var(--accent-blue)]' : 'border border-[var(--border-color)]'} ${busy === 'arrange' || (busy === 'edit_slides' && on) ? 'opacity-50' : ''}`}
               />
+              )}
               <span className={`absolute left-1.5 top-1.5 rounded-full px-1.5 text-[11px] font-semibold ${on ? 'bg-[var(--accent-blue)] text-white' : 'bg-black/55 text-white'}`}>{n + 1}</span>
               {on && <Check className="absolute right-1.5 top-1.5 h-5 w-5 rounded-full bg-[var(--accent-blue)] p-0.5 text-white" />}
             </button>

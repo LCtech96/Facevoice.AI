@@ -11,6 +11,8 @@ import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections, type Connection } from './connections'
 import { canPublish, publishFacebook, publishInstagram } from './publish'
 import { readInstructions, workspaceName } from './responder'
+import { limitHashtags } from './hashtags'
+import { checkUploadedVideo, deleteVideoFile, isVideoPost, publishVideoStep, type VideoState } from './video'
 
 // Post dei clienti: foto caricate (anche modificate con l'AI) o caroselli
 // grafici con i loro colori, testi scritti dall'AI con il tono delle loro
@@ -32,7 +34,7 @@ export type PostRow = {
   media: string[]
   platforms: PostPlatform[]
   publish_at: string | null
-  results: { instagram?: string; facebook?: string; errors?: string[] }
+  results: { instagram?: string; facebook?: string; errors?: string[]; video?: VideoState }
   error_message: string | null
   created_at: string
   updated_at: string
@@ -347,12 +349,7 @@ export async function businessContext(workspaceId: string, max = 12000): Promise
     : ''
 }
 
-/** Instagram accetta al massimo 5 hashtag per post: si tengono i primi 5, gli altri si tolgono. */
-export function limitHashtags(text: string, max = 5): string {
-  let seen = 0
-  const out = text.replace(/(^|\s)#[\p{L}\p{N}_]+/gu, (match) => (++seen <= max ? match : ''))
-  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim()
-}
+export { limitHashtags }
 
 /**
  * Didascalia cambiata con l'AI dall'anteprima (es. "traduci in inglese", "piu' corta"):
@@ -378,6 +375,60 @@ Rispondi SOLO con JSON: {"didascalia": "", "facebook": ""}`,
   if (!caption) throw new Error('l’AI non ha riscritto la didascalia, riprova')
   const facebook = typeof data.facebook === 'string' && data.facebook.trim() ? data.facebook.trim() : caption
   return { post: await updatePost(db, id, { caption, facebook }), done: ['didascalia cambiata (Instagram e Facebook)'] }
+}
+
+/**
+ * Didascalia di un post video scritta o cambiata con l'AI (prima o dopo aver creato il post):
+ * senza didascalia la scrive da "di cosa parla il video", altrimenti la cambia come chiesto
+ * (es. "piu' corta", "aggiungi hashtag"). Una chiamata breve, al massimo 5 hashtag.
+ */
+export async function writeVideoCaption(workspaceId: string, input: { caption?: string; instruction?: string }): Promise<string> {
+  const current = (input.caption || '').trim().slice(0, 2200)
+  const request = (input.instruction || '').trim().slice(0, 600)
+  if (!current && !request) throw new Error('scrivi di cosa parla il video, così l’AI prepara la didascalia')
+  if (current && !request) throw new Error('scrivi cosa cambiare nella didascalia (es. «più corta», «aggiungi hashtag»)')
+  const [name, context] = await Promise.all([workspaceName(workspaceId), businessContext(workspaceId)])
+  const task = current
+    ? `Didascalia attuale:\n${current}\n\nRichiesta: ${request}`
+    : `Di cosa parla il video (dal titolare): ${request}`
+  const result = await callAI(
+    [{ role: 'user', content: task }],
+    `Sei il social media manager di "${name}". ${current ? 'Cambi SOLO la didascalia di un video (Reel Instagram e video Facebook) seguendo la richiesta: mantieni senso, emoji e link salvo che la richiesta dica altro.' : 'Scrivi la didascalia di un video (Reel Instagram e video Facebook) dalle indicazioni del titolare: prima riga che aggancia, 1-3 paragrafi brevi, invito all\'azione.'}
+${context}
+Regole: usa solo le informazioni del titolare e delle sue istruzioni (niente prezzi, date, offerte o promesse inventate). Scrivi nella lingua del titolare (di solito italiano). Max 1500 caratteri. AL MASSIMO 5 hashtag pertinenti, in fondo (Instagram non ne accetta di piu'). Niente markdown.
+Rispondi SOLO con JSON: {"didascalia": ""}`,
+    { feature: 'saas_didascalia', temperature: current ? 0.3 : 0.6, maxOutputTokens: 1500, workspaceId }
+  )
+  let data: { didascalia?: unknown } = {}
+  try {
+    data = JSON.parse((result.message || '').match(/\{[\s\S]*\}/)?.[0] || '{}')
+  } catch {}
+  const caption = typeof data.didascalia === 'string' ? limitHashtags(data.didascalia.trim()).slice(0, 2200) : ''
+  if (!caption) throw new Error('l’AI non ha scritto la didascalia, riprova')
+  return caption
+}
+
+/**
+ * Nuovo post video (bozza) dal video caricato dal browser nell'archivio dello spazio.
+ * Il tipo resta "photos" (la tabella non ne ha altri): e' video perche' media ha un solo
+ * indirizzo del bucket dei video (vedi isVideoPost).
+ */
+export async function createVideoPost(
+  db: WorkspaceDb,
+  input: { url: string; caption?: string; title?: string; platforms?: PostPlatform[]; userId?: string }
+): Promise<PostRow> {
+  await checkUploadedVideo(db.workspaceId, input.url)
+  const platforms = (input.platforms || []).filter((p) => p === 'instagram' || p === 'facebook')
+  if (!platforms.length) throw new Error('scegli almeno Instagram o Facebook')
+  const caption = limitHashtags((input.caption || '').trim()).slice(0, 2200)
+  const title = (input.title || '').replace(/\s+/g, ' ').trim().slice(0, 120) || caption.split('\n')[0].slice(0, 80) || 'Video'
+  const { data, error } = await db
+    .from('workspace_posts')
+    .insert({ status: 'draft', kind: 'photos', title, caption, facebook_text: null, media: [input.url], platforms, results: {}, created_by: input.userId || null })
+    .select(POST_COLUMNS)
+    .single()
+  if (error || !data) throw new Error(`video non salvato: ${error?.message}`)
+  return data as PostRow
 }
 
 type Texts = { title: string; caption: string; facebook: string; hook: string; label: string; slides: Slide[]; cta: Cta }
@@ -1619,7 +1670,15 @@ export async function schedulePost(db: WorkspaceDb, id: string, publishAt: Date,
   await assertPublishable(db, platforms?.length ? platforms : post.platforms)
   const { data, error } = await db
     .from('workspace_posts')
-    .update({ status: 'scheduled', publish_at: publishAt.toISOString(), error_message: null, ...(platforms?.length ? { platforms } : {}), updated_at: new Date().toISOString() })
+    .update({
+      status: 'scheduled',
+      publish_at: publishAt.toISOString(),
+      error_message: null,
+      ...(platforms?.length ? { platforms } : {}),
+      // Video riprogrammato: il Reel lasciato a meta' su Instagram non vale piu' (se ne crea uno nuovo all'ora scelta).
+      ...(post.results?.video?.container ? { results: { ...post.results, video: {} } } : {}),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id)
     .select(POST_COLUMNS)
     .single()
@@ -1636,7 +1695,14 @@ export async function cancelPost(db: WorkspaceDb, id: string): Promise<PostRow> 
     .select(POST_COLUMNS)
     .maybeSingle()
   if (error || !data) throw new Error('post non trovato o non programmato')
-  return data as PostRow
+  const row = data as PostRow
+  // Video: il Reel lasciato a meta' su Instagram non si riprende (alla prossima uscita se ne crea uno nuovo).
+  if (row.results?.video?.container) {
+    const results = { ...row.results, video: {} }
+    await db.from('workspace_posts').update({ results }).eq('id', id)
+    return { ...row, results }
+  }
+  return row
 }
 
 export async function deletePost(db: WorkspaceDb, id: string) {
@@ -1644,6 +1710,8 @@ export async function deletePost(db: WorkspaceDb, id: string) {
   if (post?.status === 'published') throw new Error('il post è già uscito su Instagram: per toglierlo eliminalo dall’app di Instagram')
   const { error } = await db.from('workspace_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id).neq('status', 'publishing')
   if (error) throw new Error(`post non eliminato: ${error.message}`)
+  // Video mai uscito: il file (anche 200 MB) si toglie dall'archivio.
+  if (post && post.status !== 'publishing' && isVideoPost(post) && !post.results?.instagram && !post.results?.facebook) await deleteVideoFile(post.media[0])
 }
 
 async function accountFor(db: WorkspaceDb, platform: PostPlatform): Promise<Connection | null> {
@@ -1661,8 +1729,12 @@ async function assertPublishable(db: WorkspaceDb, platforms: PostPlatform[]) {
   }
 }
 
-/** Pubblica adesso (o quando arriva l'ora, dal cron). Si pubblica solo dove non e' gia' uscito. */
-export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow> {
+/**
+ * Pubblica adesso (o quando arriva l'ora, dal cron). Si pubblica solo dove non e' gia' uscito.
+ * Video: waitSeconds e' quanto si aspetta l'elaborazione di Instagram in questa chiamata
+ * (poi il post torna "programmato" e il cron lo finisce ai giri successivi).
+ */
+export async function publishPost(db: WorkspaceDb, id: string, options: { waitSeconds?: number } = {}): Promise<PostRow> {
   const { data: claimed } = await db
     .from('workspace_posts')
     .update({ status: 'publishing', updated_at: new Date().toISOString() })
@@ -1677,6 +1749,7 @@ export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow>
     if (current.status === 'published') return current
     throw new Error('il post è già in pubblicazione')
   }
+  if (isVideoPost(post)) return finishVideoStep(db, post, options.waitSeconds ?? 45)
   const results: PostRow['results'] = { instagram: post.results?.instagram, facebook: post.results?.facebook, errors: [] }
   for (const platform of post.platforms) {
     if (results[platform]) continue
@@ -1700,6 +1773,32 @@ export async function publishPost(db: WorkspaceDb, id: string): Promise<PostRow>
   return (data as PostRow) || { ...post, status: ok ? 'published' : 'failed', results }
 }
 
+/** Un passo della pubblicazione di un video, salvato: uscito, non riuscito o ancora in elaborazione. */
+async function finishVideoStep(db: WorkspaceDb, post: PostRow, waitSeconds: number): Promise<PostRow> {
+  const id = post.id
+  const outcome = await publishVideoStep(post, { waitSeconds, account: (platform) => accountFor(db, platform) })
+  const nowIso = new Date().toISOString()
+  // In elaborazione: torna "programmato" con l'ora gia' passata, cosi' il cron lo riprende al minuto dopo.
+  // publish_at sempre valorizzato: anche un video non riuscito resta in Contenuti programmati.
+  const status: PostStatus = outcome.pending ? 'scheduled' : outcome.ok ? 'published' : 'failed'
+  const { data } = await db
+    .from('workspace_posts')
+    .update({
+      status,
+      publish_at: post.publish_at || nowIso,
+      results: outcome.results,
+      error_message: outcome.errors.length ? outcome.errors.join(' · ').slice(0, 1000) : null,
+      updated_at: nowIso,
+    })
+    .eq('id', id)
+    .select(POST_COLUMNS)
+    .single()
+  console.log(
+    `saas video ${id.slice(0, 8)} (spazio ${db.workspaceId.slice(0, 8)}): ${outcome.pending ? 'in elaborazione su Instagram' : outcome.ok ? 'pubblicato' : `non riuscito: ${outcome.errors.join(' | ')}`}`
+  )
+  return (data as PostRow) || { ...post, status, results: outcome.results }
+}
+
 /** Dal cron (ogni minuto): post programmati arrivati all'ora, pochi per volta. */
 export async function publishDuePosts(max = 4): Promise<number> {
   const { data, error } = await supabaseAdmin
@@ -1715,7 +1814,8 @@ export async function publishDuePosts(max = 4): Promise<number> {
   }
   let done = 0
   for (const row of data || []) {
-    await publishPost(workspaceDb(row.workspace_id as string), row.id as string).catch((e) => console.error('saas post programmato:', e instanceof Error ? e.message : e))
+    // Video: al massimo 10 secondi di attesa per giro (Instagram puo' metterci minuti: si finisce al giro dopo).
+    await publishPost(workspaceDb(row.workspace_id as string), row.id as string, { waitSeconds: 10 }).catch((e) => console.error('saas post programmato:', e instanceof Error ? e.message : e))
     done++
   }
   return done

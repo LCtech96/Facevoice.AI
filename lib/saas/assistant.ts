@@ -7,6 +7,7 @@ import { replyLanguage as messageLanguage } from '@/lib/reply-language'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { WorkspaceDb } from '@/lib/workspace-db'
 import { listConnections } from './connections'
+import { isVideoPost } from './video'
 import { asksToWrite, planAssistantMessage, writableNote, CHANNEL_LABELS, MESSAGING_WINDOW_MS, type SentMessage } from './assistant-send'
 import {
   automationCard,
@@ -1267,7 +1268,7 @@ export async function runClientAssistant(
   const recentText = recent.length
     ? recent
         .filter((p) => p.status !== 'cancelled')
-        .map((p) => `${p.id} · ${p.title || 'post'} · ${p.status}${p.publish_at ? ` · ${romeLabel(p.publish_at)}` : ''}`)
+        .map((p) => `${p.id} · ${p.title || 'post'}${isVideoPost(p) ? ' (video)' : ''} · ${p.status}${p.publish_at ? ` · ${romeLabel(p.publish_at)}` : ''}`)
         .join('\n')
     : 'nessuno'
   const now = new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -1978,7 +1979,7 @@ export async function runClientAssistant(
         case 'list_posts': {
           const status = asText(args.status)
           const list = await listPosts(db, { status: status && status !== 'all' ? [status as PostRow['status']] : undefined, limit: 20 })
-          result = { post: list.filter((p) => p.status !== 'cancelled').map((p) => ({ post_id: p.id, titolo: p.title, stato: p.status, quando: p.publish_at ? romeLabel(p.publish_at) : null, social: p.platforms, errori: p.error_message })) }
+          result = { post: list.filter((p) => p.status !== 'cancelled').map((p) => ({ post_id: p.id, titolo: p.title, ...(isVideoPost(p) ? { video: true } : {}), stato: p.status, quando: p.publish_at ? romeLabel(p.publish_at) : null, social: p.platforms, errori: p.error_message })) }
           break
         }
         case 'show_post': {

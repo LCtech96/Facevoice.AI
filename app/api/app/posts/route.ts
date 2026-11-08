@@ -4,6 +4,7 @@ import { assistantDenied } from '@/lib/assistant-access'
 import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { assertAIAllowed, isAIBlockedError } from '@/lib/usage-limits'
 import { loadChat, logPostChange, postView, withArrange, type ChatTurn } from '@/lib/saas/assistant'
+import { isVideoPost } from '@/lib/saas/video'
 import { arrangeSlides, cancelPost, deletePost, editCaption, editSlides, extractPhotos, setDesign, getPost, restoreVersion, restyleSlides, listPosts, publishPost, schedulePost, updatePost, type PostPlatform, type PostRow } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
@@ -29,6 +30,9 @@ export async function GET(req: NextRequest) {
 // Azioni che servono dell'AI: al limite del piano non partono. (Riprendere una versione
 // funziona anche senza: la rilettura dei testi delle slide si salta.)
 const USES_AI = new Set(['edit_slides', 'edit_caption', 'extract'])
+
+// Azioni sulle slide: per i post video non valgono.
+const SLIDE_ACTIONS = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'design', 'restore'])
 
 // Azioni che devono riguardare esattamente la versione che il cliente vede.
 const NEEDS_BASE = new Set(['arrange', 'edit_slides', 'extract', 'restyle', 'design', 'schedule', 'publish'])
@@ -65,6 +69,11 @@ export async function PATCH(req: NextRequest) {
   const withModel = <T,>(fn: () => Promise<T>) => runWithStatus({ status: () => {}, model: asModelChoice(body.model), workspaceId: access.workspace.id }, fn)
   const platforms = Array.isArray(body.platforms) ? (body.platforms.filter((p: unknown) => p === 'instagram' || p === 'facebook') as PostPlatform[]) : undefined
   try {
+    // Post video: niente slide da toccare (si cambiano didascalia, social e orario).
+    if (SLIDE_ACTIONS.has(action)) {
+      const target = await getPost(access.db, id)
+      if (target && isVideoPost(target)) return NextResponse.json({ error: 'È un video: si possono cambiare solo didascalia, social e orario.', post: await view(target) }, { status: 400 })
+    }
     if (USES_AI.has(action)) await assertAIAllowed(access.workspace.id)
     // base: le slide che vedeva la pagina. Se nel frattempo sono cambiate (es. salvataggio
     // finito dopo una connessione caduta) non si tocca niente: si rimanda l'ultima versione,
@@ -191,6 +200,8 @@ export async function PATCH(req: NextRequest) {
         break
       case 'publish':
         post = await publishPost(access.db, id)
+        // Video ancora in elaborazione su Instagram: non e' un errore, esce da solo al prossimo giro.
+        if (post.status === 'scheduled' && post.results?.video?.container) return NextResponse.json({ post: await view(post), done: ['Instagram sta ancora elaborando il video: esce da solo entro pochi minuti'] })
         if (post.status !== 'published') return NextResponse.json({ error: post.error_message || 'Pubblicazione non riuscita', post: await view(post) }, { status: 502 })
         break
       case 'delete':

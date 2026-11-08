@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { CalendarClock, Check, Facebook, Instagram, Loader2, MessageSquareText, PencilLine, X } from 'lucide-react'
+import { CalendarClock, Check, Facebook, Film, Instagram, Loader2, MessageSquareText, PencilLine, X } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
+import { isProcessing, isVideoPost, VideoComposer, VideoPostDetails, toLocalInput } from './video'
 
 // Contenuti programmati: i post in uscita (si cambia SOLO giorno e ora; per modificare il
 // contenuto si toglie la programmazione e si riapre la chat in cui si era lavorato al post)
 // e, nella scheda "Pubblicati", quelli gia' usciti, con la loro chat da riaprire.
 // Senza l'Assistente attivo niente chat: si cambia l'orario o si toglie la programmazione.
+// Video: si caricano da qui ("Carica video") e si gestiscono tutti da qui (anche le bozze).
 
 type Post = {
   id: string
@@ -19,13 +21,7 @@ type Post = {
   platforms: ('instagram' | 'facebook')[]
   publish_at: string | null
   error_message: string | null
-}
-
-/** "2026-11-07T18:30" nell'ora del telefono, per il campo data e ora. */
-const toLocalInput = (iso: string | null) => {
-  const d = iso ? new Date(iso) : new Date(Date.now() + 60 * 60_000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  results?: { instagram?: string; facebook?: string; video?: { container?: string; since?: string } }
 }
 const whenLabel = (iso: string) => new Date(iso).toLocaleString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 
@@ -35,6 +31,8 @@ export default function ScheduledPage() {
   const [posts, setPosts] = useState<Post[] | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [tab, setTab] = useState<'upcoming' | 'published'>('upcoming')
+  const [composing, setComposing] = useState(false)
+  const [banner, setBanner] = useState<{ text: string; error: boolean } | null>(null)
   const canManage = workspace?.role !== 'member'
 
   const load = useCallback(async () => {
@@ -48,7 +46,7 @@ export default function ScheduledPage() {
   }, [load])
 
   const upcoming = (posts || [])
-    .filter((p) => p.status === 'scheduled' || p.status === 'publishing' || (p.status === 'failed' && p.publish_at))
+    .filter((p) => p.status === 'scheduled' || p.status === 'publishing' || (p.status === 'failed' && p.publish_at) || (p.status === 'draft' && isVideoPost(p)))
     .sort((a, b) => (a.publish_at || '').localeCompare(b.publish_at || ''))
   // Pubblicati: i piu' recenti prima (l'elenco arriva gia' dal piu' nuovo).
   const published = (posts || []).filter((p) => p.status === 'published')
@@ -56,18 +54,44 @@ export default function ScheduledPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-3xl font-extrabold">Contenuti programmati</h1>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          {tab === 'upcoming'
-            ? withChat
-              ? 'I post in uscita. Tocca un post per cambiare giorno e ora, o per modificarlo.'
-              : 'I post in uscita. Tocca un post per cambiare giorno e ora.'
-            : withChat
-            ? 'I post già usciti. Tocca un post per riaprire la sua chat.'
-            : 'I post già usciti.'}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-extrabold">Contenuti programmati</h1>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            {tab === 'upcoming'
+              ? withChat
+                ? 'I post in uscita. Tocca un post per cambiare giorno e ora, o per modificarlo.'
+                : 'I post in uscita. Tocca un post per cambiare giorno e ora.'
+              : withChat
+              ? 'I post già usciti. Tocca un post per riaprire la sua chat.'
+              : 'I post già usciti.'}
+          </p>
+        </div>
+        {canManage && !composing && (
+          <button
+            onClick={() => {
+              setComposing(true)
+              setBanner(null)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-blue)] px-4 py-2 text-sm font-semibold text-white"
+          >
+            <Film className="h-4 w-4" /> Carica video
+          </button>
+        )}
       </div>
+      {composing && (
+        <VideoComposer
+          onClose={() => setComposing(false)}
+          onCreated={(post, text) => {
+            setPosts((list) => [post as Post, ...(list || []).filter((p) => p.id !== post.id)])
+            setComposing(false)
+            setTab(post.status === 'published' ? 'published' : 'upcoming')
+            setOpen(post.status === 'failed' ? post.id : null)
+            setBanner({ text, error: post.status === 'failed' })
+          }}
+        />
+      )}
+      {banner && <p className={`text-sm ${banner.error ? 'text-[#FF3B30]' : 'text-[#34C759]'}`}>{banner.text}</p>}
       <div className="inline-flex rounded-full border border-[var(--border-color)] p-1 text-sm">
         {(
           [
@@ -94,8 +118,8 @@ export default function ScheduledPage() {
         <p className="text-sm text-[var(--text-secondary)]">
           {tab === 'upcoming'
             ? withChat
-              ? 'Nessun contenuto programmato. Li programmi dall’Assistente, sotto l’anteprima del post.'
-              : 'Nessun contenuto programmato.'
+              ? 'Nessun contenuto programmato. I post li programmi dall’Assistente, sotto l’anteprima; i video con «Carica video».'
+              : 'Nessun contenuto programmato. Per un video usa «Carica video».'
             : 'Nessun post pubblicato per ora.'}
         </p>
       ) : (
@@ -108,6 +132,7 @@ export default function ScheduledPage() {
             withChat={withChat}
             onToggle={() => setOpen((o) => (o === post.id ? null : post.id))}
             onChange={(next) => setPosts((list) => (list || []).map((p) => (p.id === next.id ? next : p)))}
+            onRemoved={() => setPosts((list) => (list || []).filter((p) => p.id !== post.id))}
           />
         ))
       )}
@@ -122,6 +147,7 @@ function ScheduledCard({
   withChat,
   onToggle,
   onChange,
+  onRemoved,
 }: {
   post: Post
   open: boolean
@@ -130,6 +156,7 @@ function ScheduledCard({
   withChat: boolean
   onToggle: () => void
   onChange: (post: Post) => void
+  onRemoved: () => void
 }) {
   const { appFetch, refreshAssistant } = useWorkspace()
   const router = useRouter()
@@ -139,6 +166,8 @@ function ScheduledCard({
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => setWhen(toLocalInput(post.publish_at)), [post.publish_at])
+  const video = isVideoPost(post)
+  const processing = isProcessing(post)
 
   const patch = async (action: string, extra: Record<string, unknown> = {}) => {
     setBusy(action)
@@ -182,25 +211,42 @@ function ScheduledCard({
   return (
     <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
       <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 text-left">
-        {post.media[0] ? (
+        {video ? (
+          <video src={`${post.media[0]}#t=0.5`} muted playsInline preload="metadata" className="h-20 w-16 shrink-0 rounded-lg bg-black object-cover" />
+        ) : post.media[0] ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={post.media[0]} alt="" className="h-20 w-16 shrink-0 rounded-lg object-cover" />
         ) : null}
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold">{post.title || 'Post'}</p>
-          <p className={`mt-0.5 text-sm ${post.status === 'failed' ? 'text-[#FF3B30]' : post.status === 'published' ? 'text-[#34C759]' : 'text-[var(--accent-blue)]'}`}>
-            {post.status === 'failed' ? 'Non pubblicato' : post.status === 'publishing' ? 'In pubblicazione…' : post.status === 'published' ? 'Pubblicato' : 'Programmato'}
-            {post.publish_at ? ` · ${whenLabel(post.publish_at)}` : ''}
+          <p className="truncate font-semibold">{post.title || (video ? 'Video' : 'Post')}</p>
+          <p
+            className={`mt-0.5 text-sm ${
+              post.status === 'failed' ? 'text-[#FF3B30]' : post.status === 'published' ? 'text-[#34C759]' : post.status === 'draft' ? 'text-[var(--text-secondary)]' : 'text-[var(--accent-blue)]'
+            }`}
+          >
+            {post.status === 'failed'
+              ? 'Non pubblicato'
+              : post.status === 'publishing'
+              ? 'In pubblicazione…'
+              : processing
+              ? 'In elaborazione su Instagram…'
+              : post.status === 'published'
+              ? 'Pubblicato'
+              : post.status === 'draft'
+              ? 'Bozza, non programmato'
+              : 'Programmato'}
+            {post.publish_at && !processing && post.status !== 'draft' ? ` · ${whenLabel(post.publish_at)}` : ''}
           </p>
           <p className="mt-1 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
             {post.platforms.includes('instagram') && <Instagram className="h-3.5 w-3.5" />}
             {post.platforms.includes('facebook') && <Facebook className="h-3.5 w-3.5" />}
-            {post.media.length} {post.media.length === 1 ? 'immagine' : 'slide'}
+            {video ? 'Video' : `${post.media.length} ${post.media.length === 1 ? 'immagine' : 'slide'}`}
           </p>
         </div>
       </button>
 
-      {open && (
+      {open && video && <VideoPostDetails post={post} canManage={canManage} onChange={onChange} onRemoved={onRemoved} />}
+      {open && !video && (
         <div className="mt-3 border-t border-[var(--border-color)] pt-3">
           <div className="flex snap-x gap-2 overflow-x-auto pb-1">
             {post.media.map((url, n) => (

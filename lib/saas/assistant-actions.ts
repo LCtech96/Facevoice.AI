@@ -451,6 +451,10 @@ async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: 
       if (!['draft', 'scheduled', 'failed'].includes(current.status)) return { ok: false, message: current.status === 'published' ? 'Il post è già pubblicato.' : 'Il post è già in pubblicazione o eliminato.', cards: [] }
       const post = await publishPost(db, current.id)
       const where = [post.results?.instagram && 'Instagram', post.results?.facebook && 'Facebook'].filter(Boolean).join(' e ')
+      // Video: Instagram lo sta ancora elaborando, esce da solo con il prossimo giro.
+      if (post.status === 'scheduled' && post.results?.video?.container) {
+        return { ok: true, message: `Instagram sta ancora elaborando il video «${post.title || 'video'}»: esce da solo entro pochi minuti${where ? ` (su ${where} è già uscito)` : ''}.`, cards: [{ kind: 'post', post: postView(post) }] }
+      }
       if (post.status !== 'published') return { ok: false, message: `Pubblicazione non riuscita${post.results?.errors?.length ? `: ${post.results.errors.join(' · ')}` : '.'}`, cards: [{ kind: 'post', post: postView(post) }] }
       return { ok: true, message: `Fatto: «${post.title || 'post'}» pubblicato${where ? ` su ${where}` : ''}.`, cards: [{ kind: 'post', post: postView(post) }] }
     }

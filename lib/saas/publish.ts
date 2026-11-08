@@ -103,3 +103,49 @@ export async function publishFacebook(connection: Connection, urls: string[], te
   const done = await post<{ id: string }>(access, `/${pageId}/feed`, { message: text.slice(0, 5000), attached_media: ids.map((id) => ({ media_fbid: id })) }, 'post su Facebook')
   return done.id
 }
+
+// --- Video: Reel su Instagram e video sulla Pagina Facebook ---------------------
+// Il video e' un indirizzo pubblico (bucket workspace-videos) che Instagram e
+// Facebook scaricano da soli. Instagram lo elabora per qualche minuto: si crea il
+// contenuto, si controlla lo stato (anche ai giri successivi del cron) e solo
+// quando e' pronto si pubblica.
+
+/** Crea il Reel su Instagram (da pubblicare quando e' pronto). Restituisce l'id del contenuto. */
+export async function startInstagramReel(connection: Connection, videoUrl: string, caption: string): Promise<string> {
+  if (!canPublish(connection)) throw new Error('manca il permesso di pubblicazione: ricollega Instagram e consenti la pubblicazione dei contenuti')
+  const access = await accessFor(connection)
+  const item = await post<{ id: string }>(
+    access,
+    `/${connection.external_id}/media`,
+    { media_type: 'REELS', video_url: videoUrl, caption: caption.slice(0, 2200), share_to_feed: true },
+    'reel'
+  )
+  if (!item?.id) throw new Error('Instagram non ha accettato il video')
+  return item.id
+}
+
+/** Stato del Reel su Instagram: IN_PROGRESS, FINISHED, ERROR, EXPIRED o PUBLISHED. */
+export async function instagramReelStatus(connection: Connection, id: string): Promise<{ code: string; detail: string }> {
+  const access = await accessFor(connection)
+  const data = await igFetch<{ status_code?: string; status?: string }>(
+    `${access.base}/${id}?fields=status_code,status&access_token=${encodeURIComponent(access.token)}`,
+    undefined,
+    'stato del video'
+  )
+  return { code: data.status_code || '', detail: data.status || '' }
+}
+
+/** Pubblica il Reel gia' elaborato. Restituisce l'id del post. */
+export async function finishInstagramReel(connection: Connection, id: string): Promise<string> {
+  const access = await accessFor(connection)
+  const done = await post<{ id: string }>(access, `/${connection.external_id}/media_publish`, { creation_id: id }, 'pubblicazione del reel')
+  return done.id
+}
+
+/** Video sulla Pagina Facebook con il testo: Facebook lo scarica dall'indirizzo. Serve pages_manage_posts. */
+export async function publishFacebookVideo(connection: Connection, videoUrl: string, text: string): Promise<string> {
+  const secret = await readConnectionSecret<MetaSecret>(connection.id)
+  const access: Access = { base: GRAPH, token: secret.pageToken }
+  const video = await post<{ id?: string; post_id?: string }>(access, `/${connection.external_id}/videos`, { file_url: videoUrl, description: text.slice(0, 5000), published: true }, 'video su Facebook')
+  return video.post_id || video.id || 'ok'
+}
