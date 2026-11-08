@@ -6,13 +6,14 @@ import { publishDuePosts } from '@/lib/saas/posts'
 import { processDueReplies } from '@/lib/saas/reply-queue'
 import { processDueAutomations } from '@/lib/saas/automations'
 import { processDueProspects } from '@/lib/saas/prospects'
+import { processDuePhotoAutopilot } from '@/lib/saas/photo-autopilot'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Lavori periodici della piattaforma clienti: post programmati, caselle email,
 // rinnovo degli accessi Instagram, risposte automatiche col ritardo, email delle
-// Automazioni (all'ora prevista, dalla casella del cliente), Trova clienti. Le anteprime non hanno il cron di Vercel:
+// Automazioni (all'ora prevista, dalla casella del cliente), Trova clienti, Autopilota foto. Le anteprime non hanno il cron di Vercel:
 // il sito vero, a ogni minuto, chiama questo indirizzo con una firma fatta con
 // la chiave dell'app Meta (uguale nei due ambienti), valida 5 minuti.
 
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   // Risposta subito (chi chiama non aspetta): il lavoro prosegue dopo.
   after(async () => {
-    const [posts, mail, renewed, replies, automations, prospects] = await Promise.all([
+    const [posts, mail, renewed, replies, automations, prospects, carousels] = await Promise.all([
       publishDuePosts().catch((error) => (console.error('saas cron post:', error), 0)),
       syncAllWorkspaces(4).catch((error) => (console.error('saas cron email:', error), null)),
       renewInstagramTokens().catch((error) => (console.error('saas cron instagram:', error), 0)),
@@ -41,10 +42,12 @@ export async function GET(req: NextRequest) {
       processDueAutomations({ horizonMs: 55_000, budgetMs: 200_000 }).catch((error) => (console.error('saas cron automazioni:', error), 0)),
       // Trova clienti: giri all'orario scelto (ricerche, siti, bozze, invii), a piccoli passi che si riprendono al minuto dopo.
       processDueProspects({ budgetMs: 200_000 }).catch((error) => (console.error('saas cron trova clienti:', error), 0)),
+      // Autopilota foto: caroselli preparati fino a 10 minuti prima dell'orario e programmati (li pubblica publishDuePosts).
+      processDuePhotoAutopilot({ budgetMs: 200_000 }).catch((error) => (console.error('saas cron autopilota foto:', error), 0)),
     ])
-    if (posts || renewed || mail?.inserted || replies || automations || prospects) {
+    if (posts || renewed || mail?.inserted || replies || automations || prospects || carousels) {
       console.log(
-        `saas cron: ${posts} post, ${mail?.inserted ?? 0} email nuove, ${renewed} accessi rinnovati, ${replies} risposte in coda inviate, ${automations} email delle automazioni, ${prospects} email di Trova clienti`
+        `saas cron: ${posts} post, ${mail?.inserted ?? 0} email nuove, ${renewed} accessi rinnovati, ${replies} risposte in coda inviate, ${automations} email delle automazioni, ${prospects} email di Trova clienti, ${carousels} caroselli dell'autopilota foto`
       )
     }
   })

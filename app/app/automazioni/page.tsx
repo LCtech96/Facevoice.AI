@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Check, Clock, Loader2, Lock, Mail, MessageCircle, Mic, PencilLine, Plus, Search, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { AlertTriangle, Check, Clock, Images, Loader2, Lock, Mail, MessageCircle, Mic, PencilLine, Plus, Search, Send, Sparkles, Trash2, X, Zap } from 'lucide-react'
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
 import { AUTOMATIONS_DAILY_LIMIT, MAX_RECIPIENTS, WEEKDAYS, parseRecipients } from '@/lib/automations-shared'
 import TrovaClienti from './TrovaClienti'
+import FotoAutopilota from './FotoAutopilota'
 
 // Automazioni: email programmate (un orario ogni giorno, nei giorni scelti o una volta
 // sola) che partono dalla casella email collegata dal cliente, una per destinatario, e
@@ -164,18 +165,19 @@ function AutomationsBoard() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'warn' | 'error' } | null>(null)
   const [showAll, setShowAll] = useState(false)
-  // Sezione aperta: email programmate o Trova clienti (#trova-clienti nell'indirizzo).
-  const [tab, setTab] = useState<'email' | 'clienti'>('email')
+  // Sezione aperta: email programmate, Trova clienti (#trova-clienti nell'indirizzo) o Autopilota foto (#autopilota-foto).
+  const [tab, setTab] = useState<'email' | 'clienti' | 'foto'>('email')
   const canManage = data?.canManage ?? workspace?.role !== 'member'
 
   useEffect(() => {
     if (window.location.hash === '#trova-clienti') setTab('clienti')
+    if (window.location.hash === '#autopilota-foto') setTab('foto')
   }, [])
-  const openTab = (next: 'email' | 'clienti') => {
+  const openTab = (next: 'email' | 'clienti' | 'foto') => {
     setTab(next)
     setNotice(null)
     try {
-      window.history.replaceState(null, '', next === 'clienti' ? '#trova-clienti' : window.location.pathname + window.location.search)
+      window.history.replaceState(null, '', next === 'clienti' ? '#trova-clienti' : next === 'foto' ? '#autopilota-foto' : window.location.pathname + window.location.search)
     } catch {}
   }
   // Le email di Trova clienti contano nello stesso limite: il contatore in alto resta giusto.
@@ -261,9 +263,11 @@ function AutomationsBoard() {
           <h1 className="flex items-center gap-2 text-3xl font-extrabold">
             <Zap className="h-6 w-6 text-[var(--accent-blue)]" /> Automazioni
           </h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">{tab === 'clienti' ? 'Trova aziende a cui scrivere e manda la prima email.' : 'Email che partono da sole, all’ora che scegli.'}</p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">{tab === 'clienti' ? 'Trova aziende a cui scrivere e manda la prima email.' : tab === 'foto' ? 'Caroselli con le tue foto, pubblicati da soli.' : 'Email che partono da sole, all’ora che scegli.'}</p>
         </div>
         <span
+          // Contatore delle email: non riguarda l'Autopilota foto.
+          hidden={tab === 'foto'}
           className={`mt-1 shrink-0 rounded-full border px-3 py-1 text-sm font-semibold ${
             full ? 'border-[#FF3B30] text-[#FF3B30]' : used >= limit - 5 ? 'border-[#FF9500] text-[#FF9500]' : 'border-[var(--border-color)] text-[var(--text-primary)]'
           }`}
@@ -273,11 +277,12 @@ function AutomationsBoard() {
         </span>
       </div>
 
-      <div role="tablist" aria-label="Sezioni delle automazioni" className="grid grid-cols-2 gap-1 rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] p-1">
+      <div role="tablist" aria-label="Sezioni delle automazioni" className="grid grid-cols-3 gap-1 rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] p-1">
         {(
           [
             ['email', 'Email programmate', Clock],
             ['clienti', 'Trova clienti', Search],
+            ['foto', 'Autopilota foto', Images],
           ] as const
         ).map(([key, label, Icon]) => (
           <button
@@ -285,14 +290,16 @@ function AutomationsBoard() {
             role="tab"
             aria-selected={tab === key}
             onClick={() => openTab(key)}
-            className={`flex items-center justify-center gap-1.5 rounded-full px-2 py-2 text-sm font-semibold ${tab === key ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
+            className={`flex min-w-0 items-center justify-center gap-1.5 rounded-full px-1.5 py-2 text-xs font-semibold sm:px-2 sm:text-sm ${tab === key ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
           >
-            <Icon className="hidden h-4 w-4 shrink-0 sm:block" /> <span className="whitespace-nowrap">{label}</span>
+            <Icon className="hidden h-4 w-4 shrink-0 sm:block" /> <span className="truncate">{label}</span>
           </button>
         ))}
       </div>
 
-      {tab === 'clienti' ? (
+      {tab === 'foto' ? (
+        <FotoAutopilota />
+      ) : tab === 'clienti' ? (
         <TrovaClienti language={language} onToday={onToday} />
       ) : (
         <>

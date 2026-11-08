@@ -242,6 +242,8 @@ const FEATURE_CONNECTIONS: Record<string, ConnectionKey> = {
   saas_immagini: 'content',
   // Ricerca sul web (eventi e immagini per i caroselli): senza questa riga "web" la metterebbe in "Chat del sito".
   saas_ricerca_web: 'content',
+  // Autopilota foto: scelta delle foto della libreria per i caroselli di ogni giorno (lib/saas/photo-autopilot.ts).
+  saas_autopilota_foto: 'content',
   // Automazioni: email scritte dall'AI a ogni invio (lib/saas/automations.ts).
   saas_automazioni: 'email',
   // Trova clienti: ricerche pensate e prime email scritte dall'AI, richieste a Google Maps (lib/saas/prospects.ts, lib/saas/places.ts).
@@ -811,6 +813,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   saas_immagini: 'Foto create o modificate',
   saas_ricerca_web: 'Ricerca sul web',
   saas_automazioni: 'Automazioni',
+  saas_autopilota_foto: 'Autopilota foto',
   saas_trova_clienti: 'Trova clienti: ricerche e email',
   saas_trova_clienti_maps: 'Trova clienti: Google Maps',
   saas_documenti: 'Documenti (Assistente)',

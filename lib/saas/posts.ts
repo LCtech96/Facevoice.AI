@@ -55,6 +55,16 @@ function isOurMedia(url: string): boolean {
   }
 }
 
+/** Immagine dell'archivio di QUESTO spazio (cartella = id dello spazio): mai quelle di un altro cliente. */
+export function isWorkspaceMedia(workspaceId: string, url: string): boolean {
+  if (!isOurMedia(url)) return false
+  try {
+    return new URL(url).pathname.startsWith(`/storage/v1/object/public/${MEDIA_BUCKET}/${workspaceId}/`)
+  } catch {
+    return false
+  }
+}
+
 async function download(url: string): Promise<Buffer> {
   if (!isOurMedia(url)) throw new Error('immagine non valida: usa le foto caricate qui')
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
@@ -660,7 +670,7 @@ export async function createPost(
 ): Promise<PostRow> {
   if (!hasAIProvider()) throw new Error('AI non configurata')
   const total = slideTotal(input.total)
-  const allImages = (input.images || []).filter(isOurMedia).slice(0, 10)
+  const allImages = (input.images || []).filter((url) => isWorkspaceMedia(db.workspaceId, url)).slice(0, 10)
   const kind = input.kind || (allImages.length ? 'photos' : 'carousel')
   if (kind === 'photos' && !allImages.length) throw new Error('per un post con foto carica almeno una foto (o chiedi un carosello grafico)')
   const mode = kind === 'carousel' && allImages.length ? 'photo_carousel' : kind
@@ -1648,7 +1658,7 @@ export async function updatePost(db: WorkspaceDb, id: string, patch: { caption?:
     update.platforms = list
   }
   if (patch.media) {
-    const list = patch.media.filter(isOurMedia).slice(0, 10)
+    const list = patch.media.filter((url) => isWorkspaceMedia(db.workspaceId, url)).slice(0, 10)
     if (!list.length) throw new Error('serve almeno un’immagine')
     update.media = list
   }

@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowUp, CalendarClock, Check, ChevronLeft, ChevronRight
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { UsageTokens, refreshUsage } from '@/components/app/UsageLights'
 import { useDictation } from '@/components/useDictation'
-import { prepareImage } from '@/lib/client-image'
+import { looksLikeImage, prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES, asModelChoice } from '@/lib/ai-models'
 import { PHOTO_LAYOUTS, TEXT_LAYOUTS } from '@/lib/photo-layouts'
 import { looksLikeVideo } from '@/lib/saas/video-shared'
@@ -276,14 +276,17 @@ function AssistantChat() {
     return () => clearTimeout(timer)
   }, [turns, busy, load])
 
-  const addFiles = async (files: FileList | null) => {
-    if (!files?.length) return
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/')).slice(0, 10 - attachments.length)
+  // Foto allegate con il pulsante, incollate (Ctrl+V) o trascinate nella chat: al massimo 10.
+  const addFiles = async (files: FileList | File[] | null) => {
+    if (!files || !files.length) return
+    const list = Array.from(files).filter(looksLikeImage).slice(0, Math.max(0, 10 - attachments.length))
     for (const file of list) {
       let prepared
       try {
         prepared = await prepareImage(file)
-      } catch {
+      } catch (e) {
+        // Foto che il browser non apre (es. HEIC fuori da Safari): si dice perche', invece di ignorarla.
+        setError(e instanceof Error ? e.message : 'Immagine non leggibile')
         continue
       }
       const item: Attachment = { id: prepared.id, thumb: prepared.thumb, url: null }
@@ -294,6 +297,7 @@ function AssistantChat() {
     }
     if (fileRef.current) fileRef.current.value = ''
   }
+  const [dragging, setDragging] = useState(false)
 
   const uploading = attachments.some((a) => !a.url && !a.error)
   const ready = attachments.filter((a) => a.url).map((a) => a.url!)
@@ -350,7 +354,23 @@ function AssistantChat() {
   const needsPublish = instagram && !instagram.canPublish
 
   return (
-    <div className="-mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col md:-mx-8 md:-my-10 md:min-h-[100dvh]">
+    <div
+      className={`-mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col md:-mx-8 md:-my-10 md:min-h-[100dvh] ${dragging ? 'outline-dashed outline-2 -outline-offset-8 outline-[var(--accent-blue)]' : ''}`}
+      onDragOver={(e) => {
+        if (!canManage || !Array.from(e.dataTransfer.types).includes('Files')) return
+        e.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragging(false)
+      }}
+      onDrop={(e) => {
+        if (!canManage || !e.dataTransfer.files.length) return
+        e.preventDefault()
+        setDragging(false)
+        addFiles(e.dataTransfer.files)
+      }}
+    >
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3 md:px-8">
         <div className="flex min-w-0 items-center gap-2">
           <h1 translate="no" className="flex items-center gap-2 text-2xl font-extrabold">
@@ -507,13 +527,19 @@ function AssistantChat() {
             <span className="pointer-events-none absolute right-1" aria-hidden="true">▾</span>
           </label>
           <div className="flex items-end gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-2">
-            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
+            <input ref={fileRef} type="file" accept="image/*,.heic,.heif" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
             <button onClick={() => fileRef.current?.click()} disabled={attachments.length >= 10} aria-label="Allega foto" className="p-2 text-[var(--text-secondary)] disabled:opacity-40">
               <ImagePlus className="h-5 w-5" />
             </button>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                const pasted = Array.from(e.clipboardData.files || []).filter(looksLikeImage)
+                if (!pasted.length) return
+                e.preventDefault()
+                addFiles(pasted)
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 768px)').matches) {
                   e.preventDefault()

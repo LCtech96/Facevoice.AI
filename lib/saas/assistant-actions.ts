@@ -18,6 +18,7 @@ import {
 } from './automations'
 import { currentDocumentPdf, documentCard, loadDocument, type DocumentCard, type StoredDocument } from './documents'
 import { getPost, publishPost, romeLabel, schedulePost, type PostPlatform, type PostRow } from './posts'
+import { describeAutopilot, saveAutopilot, type AutopilotInput } from './photo-autopilot'
 import {
   ProspectError,
   approveAllProspects,
@@ -67,6 +68,7 @@ export type PendingKind =
   | 'discard_client_draft'
   | 'set_find_clients'
   | 'share_contract'
+  | 'set_photo_autopilot'
 
 export type PendingStatus = 'pending' | 'running' | 'done' | 'failed' | 'discarded'
 
@@ -114,7 +116,7 @@ export type PendingView = PendingSummary & {
 }
 
 /** Tipi di azione che richiedono le Automazioni attive (anche al momento del clic). */
-const NEEDS_AUTOMATIONS = new Set<PendingKind>(['create_automation', 'update_automation', 'delete_automation', 'approve_client_draft', 'approve_all_client_drafts', 'discard_client_draft', 'set_find_clients'])
+const NEEDS_AUTOMATIONS = new Set<PendingKind>(['create_automation', 'update_automation', 'delete_automation', 'approve_client_draft', 'approve_all_client_drafts', 'discard_client_draft', 'set_find_clients', 'set_photo_autopilot'])
 
 const storeKey = (workspaceId: string) => `ws_pending:${workspaceId}`
 
@@ -529,6 +531,15 @@ async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: 
         ok: true,
         message: block ? `Fatto: ${done.name} non verrà più contattata.` : `Fatto: email per ${done.name} scartata.`,
         cards: [{ kind: 'prospect', op: block ? 'blocked' : 'discarded', at, prospect: { id: done.id, name: done.name, email: done.email } }],
+      }
+    }
+    case 'set_photo_autopilot': {
+      const saved = await saveAutopilot(db, userId, p.input as AutopilotInput, now)
+      const s = saved.state.settings
+      return {
+        ok: true,
+        message: `Fatto: Autopilota foto ${s.active ? 'attivo' : 'salvato (spento)'}: ${describeAutopilot(s)}${saved.nextRun ? `, il prossimo carosello ${romeLabel(saved.nextRun)}` : ''}.`,
+        cards: [],
       }
     }
     case 'set_find_clients': {
