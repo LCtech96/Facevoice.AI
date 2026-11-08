@@ -1,22 +1,43 @@
-import { randomUUID } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SITE_URL } from '@/lib/seo/site'
-import { hashPassword, newToken, openToken, passwordProblem, sealToken, tokenHashOf, TOKEN_RE } from '@/lib/todo-auth'
+import { hashPassword, newToken, openToken, passwordProblem, sealToken, tokenHashOf, TOKEN_RE, type SessionInfo } from '@/lib/todo-auth'
 import { fetchLinkPreview } from '@/lib/todo-preview'
-import { EMAIL_RE, IMAGE_TYPES, LIMITS, extractLinks, positionAt, type TodoBoardState, type TodoLinkPreview, type TodoTask } from '@/lib/todo-shared'
+import {
+  ADMIN_NAME,
+  EMAIL_RE,
+  IMAGE_TYPES,
+  LIMITS,
+  extractLinks,
+  nameKey,
+  positionAt,
+  taskVisibleTo,
+  type TodoBoardState,
+  type TodoLinkPreview,
+  type TodoList,
+  type TodoTask,
+} from '@/lib/todo-shared'
 
 // Dati delle todo list condivise. Ogni funzione che tocca liste, attivita' o foto
 // riceve la todo list gia' verificata (dal link + cookie, o dall'admin) e filtra
 // SEMPRE per il suo id: da una todo list non si raggiunge mai un'altra, ne' altri
 // dati del sito. Solo il server (service role) legge e scrive queste tabelle.
+//
+// Dentro una todo list conta anche CHI chiede (Viewer): l'admin vede e modifica tutto;
+// una persona vede solo le attivita' assegnate a lei, quelle che ha creato e quelle
+// generali dell'admin (senza persona). Modifica solo le sue; quelle degli altri che
+// vede puo' solo spostarle e segnarle come fatte. Le attivita' che non vede, per lei,
+// non esistono (sempre "non trovata"). Tabelle: quelle dell'admin le vedono tutti ma
+// le gestisce solo l'admin; quelle di una persona le vedono solo lei e l'admin.
 
 export class TodoError extends Error {
-  constructor(message: string, public status = 400, public setup = false) {
+  constructor(message: string, public status = 400, public setup = false, public update = false) {
     super(message)
   }
 }
 
 export const SETUP_MESSAGE = 'Esegui prima lo SQL della todo list.'
+export const PEOPLE_SETUP_MESSAGE = 'Esegui lo SQL aggiornato della todo list.'
 export const BUCKET = 'todo-images'
 
 type DbError = { code?: string; message?: string } | null | undefined
@@ -29,8 +50,18 @@ export function isMissingSetup(error: DbError): boolean {
   return /todo_(boards|lists|tasks|reminders_sent|login_attempts|task_add_image|task_remove_image)/.test(msg) && /does not exist|schema cache|could not find/i.test(msg)
 }
 
+/** Manca lo SQL delle persone (tabella todo_members o le colonne nuove). */
+export function isMissingPeople(error: DbError): boolean {
+  if (!error) return false
+  const code = error.code || ''
+  const msg = error.message || ''
+  if (/todo_members|created_by_member|assignee_member|done_notified_at/.test(msg)) return ['42P01', 'PGRST205', '42703', 'PGRST204'].includes(code) || /does not exist|schema cache|could not find/i.test(msg)
+  return code === '42703' || code === 'PGRST204'
+}
+
 function check(error: DbError, what: string) {
   if (!error) return
+  if (isMissingPeople(error)) throw new TodoError(PEOPLE_SETUP_MESSAGE, 503, true, true)
   if (isMissingSetup(error)) throw new TodoError(SETUP_MESSAGE, 503, true)
   console.error(`todo: ${what}:`, error.code || '', (error.message || '').slice(0, 200))
   throw new TodoError('Qualcosa non è andato: riprova.', 500)
@@ -98,17 +129,16 @@ export async function boardByToken(token: string): Promise<BoardRow | null> {
 
 const DEFAULT_LISTS = ['Da fare', 'In corso', 'Fatto']
 
-export async function createBoard(name: unknown, password: unknown, by: string | null): Promise<{ board: BoardRow; token: string }> {
+export async function createBoard(name: unknown, by: string | null): Promise<{ board: BoardRow; token: string }> {
   const title = oneLine(name, LIMITS.boardName)
   if (!title) throw new TodoError('Dai un nome alla todo list.')
-  const problem = passwordProblem(password)
-  if (problem) throw new TodoError(problem)
   const token = newToken()
   const row = {
     name: title,
     token_hash: tokenHashOf(token),
     token_enc: sealToken(token),
-    password_hash: await hashPassword(password as string),
+    // La password unica della todo list non si usa piu' (ognuno ha la sua): qui una casuale che nessuno conosce.
+    password_hash: await hashPassword(randomBytes(24).toString('base64url')),
     session_version: 1,
     created_by: by,
   }
@@ -146,16 +176,6 @@ export async function renameBoard(id: string, name: unknown): Promise<BoardRow> 
   check(error, 'nome todo list')
   if (!data || !data.length) throw new TodoError('Todo list non trovata.', 404)
   return data[0] as BoardRow
-}
-
-/** Password nuova: chi era dentro con la vecchia deve rimetterla. */
-export async function changePassword(id: string, password: unknown): Promise<BoardRow> {
-  const problem = passwordProblem(password)
-  if (problem) throw new TodoError(problem)
-  const password_hash = await hashPassword(password as string)
-  const board = await bumpBoard(id, () => ({ password_hash }))
-  await supabaseAdmin.from('todo_login_attempts').delete().eq('board_id', id)
-  return board
 }
 
 /** Link nuovo: quello di prima smette di funzionare e chi era dentro esce. */
@@ -217,30 +237,245 @@ export async function clearAttempts(boardId: string, ipHash: string): Promise<vo
 }
 
 // ---------------------------------------------------------------------
+// Persone (ognuna con il suo nome e la sua password)
+// ---------------------------------------------------------------------
+
+export type MemberRow = {
+  id: string
+  board_id: string
+  name: string
+  name_key: string
+  email: string | null
+  password_hash: string
+  session_version: number
+  created_at: string
+}
+
+const MEMBER_COLS = 'id, board_id, name, name_key, email, password_hash, session_version, created_at'
+
+/** Chi chiede: l'admin, oppure una persona della todo list. */
+export type Viewer = { admin: true; member: null } | { admin: false; member: MemberRow }
+export const ADMIN_VIEWER: Viewer = { admin: true, member: null }
+
+/** Cosa vede l'admin di una persona (mai l'hash della password). */
+export const memberView = (m: MemberRow) => ({ id: m.id, name: m.name, email: m.email, createdAt: m.created_at })
+
+/** Lo SQL delle persone c'e'? (altrimenti TodoError con «Esegui lo SQL aggiornato»). */
+export async function probePeople(): Promise<void> {
+  const { error } = await supabaseAdmin.from('todo_members').select('id').limit(1)
+  check(error, 'persone')
+  const cols = await supabaseAdmin.from('todo_tasks').select('id, created_by_member, assignee_member, done_notified_at').limit(1)
+  check(cols.error, 'colonne persone')
+}
+
+export async function listMembers(boardId: string): Promise<MemberRow[]> {
+  const { data, error } = await supabaseAdmin.from('todo_members').select(MEMBER_COLS).eq('board_id', boardId).order('created_at', { ascending: true })
+  check(error, 'persone')
+  return (data || []) as MemberRow[]
+}
+
+export async function memberById(boardId: string, id: unknown): Promise<MemberRow | null> {
+  if (!isId(id)) return null
+  const { data, error } = await supabaseAdmin.from('todo_members').select(MEMBER_COLS).eq('id', id).eq('board_id', boardId).maybeSingle()
+  check(error, 'persona')
+  return (data as MemberRow) || null
+}
+
+/** Persona dal nome scritto nel modulo (senza badare a maiuscole e accenti). */
+export async function memberForLogin(boardId: string, name: unknown): Promise<MemberRow | null> {
+  const key = nameKey(oneLine(name, LIMITS.memberName))
+  if (!key) return null
+  const { data, error } = await supabaseAdmin.from('todo_members').select(MEMBER_COLS).eq('board_id', boardId).eq('name_key', key).maybeSingle()
+  check(error, 'persona')
+  return (data as MemberRow) || null
+}
+
+/** Chi e' davvero il cookie: l'admin, o una persona che c'e' ancora con la stessa password. */
+export async function viewerFor(board: BoardRow, session: SessionInfo | null): Promise<Viewer | null> {
+  if (!session) return null
+  if (session.memberId === null) return ADMIN_VIEWER
+  const member = await memberById(board.id, session.memberId)
+  if (!member || member.session_version !== session.memberVersion) return null
+  return { admin: false, member }
+}
+
+function cleanEmail(value: unknown): string | null {
+  const e = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (e && (e.length > LIMITS.email || !EMAIL_RE.test(e))) throw new TodoError('Indirizzo email non valido.')
+  return e || null
+}
+
+export async function addMember(board: BoardRow, input: { name?: unknown; email?: unknown; password?: unknown }): Promise<MemberRow> {
+  const name = oneLine(input.name, LIMITS.memberName)
+  const key = nameKey(name)
+  if (!key) throw new TodoError('Scrivi il nome della persona.')
+  const email = cleanEmail(input.email)
+  const problem = passwordProblem(input.password)
+  if (problem) throw new TodoError(problem)
+  const members = await listMembers(board.id)
+  if (members.length >= LIMITS.membersPerBoard) throw new TodoError(`Al massimo ${LIMITS.membersPerBoard} persone per todo list.`)
+  if (members.some((m) => m.name_key === key)) throw new TodoError('C’è già una persona con questo nome in questa todo list.')
+  const { data, error } = await supabaseAdmin
+    .from('todo_members')
+    .insert({ board_id: board.id, name, name_key: key, email, password_hash: await hashPassword(input.password as string), session_version: 1 })
+    .select(MEMBER_COLS)
+    .single()
+  if (error?.code === '23505') throw new TodoError('C’è già una persona con questo nome in questa todo list.')
+  check(error, 'nuova persona')
+  const member = data as MemberRow
+  // Attivita' di prima assegnate a questo nome (testo libero): ora sono sue.
+  const { data: old } = await supabaseAdmin.from('todo_tasks').select('id, assignee').eq('board_id', board.id).is('assignee_member', null).not('assignee', 'is', null)
+  const ids = ((old || []) as { id: string; assignee: string | null }[]).filter((t) => nameKey(t.assignee || '') === key).map((t) => t.id)
+  if (ids.length) await supabaseAdmin.from('todo_tasks').update({ assignee_member: member.id }).eq('board_id', board.id).in('id', ids)
+  return member
+}
+
+async function memberOf(board: BoardRow, memberId: unknown): Promise<MemberRow> {
+  const m = await memberById(board.id, memberId)
+  if (!m) throw new TodoError('Persona non trovata.', 404)
+  return m
+}
+
+/** Password nuova: esce solo questa persona (deve rientrare con la password nuova). */
+export async function setMemberPassword(board: BoardRow, memberId: unknown, password: unknown): Promise<MemberRow> {
+  const problem = passwordProblem(password)
+  if (problem) throw new TodoError(problem)
+  const password_hash = await hashPassword(password as string)
+  for (let i = 0; i < 3; i++) {
+    const m = await memberOf(board, memberId)
+    const { data, error } = await supabaseAdmin
+      .from('todo_members')
+      .update({ password_hash, session_version: m.session_version + 1, updated_at: nowIso() })
+      .eq('id', m.id)
+      .eq('board_id', board.id)
+      .eq('session_version', m.session_version)
+      .select(MEMBER_COLS)
+    check(error, 'password persona')
+    if (data && data.length) {
+      await supabaseAdmin.from('todo_login_attempts').delete().eq('board_id', board.id)
+      return data[0] as MemberRow
+    }
+  }
+  throw new TodoError('Modifica in corso da un’altra parte: riprova.', 409)
+}
+
+export async function setMemberEmail(board: BoardRow, memberId: unknown, email: unknown): Promise<MemberRow> {
+  const m = await memberOf(board, memberId)
+  const { data, error } = await supabaseAdmin.from('todo_members').update({ email: cleanEmail(email), updated_at: nowIso() }).eq('id', m.id).eq('board_id', board.id).select(MEMBER_COLS)
+  check(error, 'email persona')
+  return (data as MemberRow[])[0]
+}
+
+/**
+ * Persona tolta: non entra piu' (il cookie non trova piu' la persona). Le sue attivita'
+ * e tabelle restano, visibili solo all'admin (e a chi sono assegnate).
+ */
+export async function removeMember(board: BoardRow, memberId: unknown): Promise<void> {
+  const m = await memberOf(board, memberId)
+  const { error } = await supabaseAdmin.from('todo_members').delete().eq('id', m.id).eq('board_id', board.id)
+  check(error, 'rimozione persona')
+}
+
+// ---------------------------------------------------------------------
 // Contenuto della todo list
 // ---------------------------------------------------------------------
 
 type StoredImage = { id: string; path: string; name: string }
-type TaskRow = Omit<TodoTask, 'images'> & { board_id: string; images: StoredImage[] }
+type TaskRow = {
+  id: string
+  board_id: string
+  list_id: string
+  title: string
+  notes: string
+  done: boolean
+  priority: number
+  position: number
+  deadline: string | null
+  assignee: string | null
+  assignee_member: string | null
+  created_by_member: string | null
+  notify_email: string | null
+  reminders_per_day: number
+  remind_hours_before: number
+  links: TodoLinkPreview[]
+  images: StoredImage[]
+  updated_at: string
+}
+type ListRow = { id: string; title: string; position: number; created_by_member: string | null }
 
 const TASK_COLS =
-  'id, board_id, list_id, title, notes, done, priority, position, deadline, assignee, notify_email, reminders_per_day, remind_hours_before, links, images, updated_at'
+  'id, board_id, list_id, title, notes, done, priority, position, deadline, assignee, assignee_member, created_by_member, notify_email, reminders_per_day, remind_hours_before, links, images, updated_at'
+const LIST_COLS = 'id, title, position, created_by_member'
 
-/** Tutto il contenuto: tabelle e attivita' in ordine. imageSrc trasforma il percorso in un indirizzo. */
-export async function loadState(board: BoardRow, imageSrc: (path: string) => string): Promise<TodoBoardState> {
-  const [lists, tasks] = await Promise.all([
-    supabaseAdmin.from('todo_lists').select('id, title, position').eq('board_id', board.id).order('position', { ascending: true }).order('created_at', { ascending: true }),
+const me = (v: Viewer) => (v.admin ? null : v.member.id)
+const canSeeTask = (v: Viewer, t: Pick<TaskRow, 'assignee_member' | 'created_by_member'>) => v.admin || taskVisibleTo(t, v.member.id)
+const canEditTask = (v: Viewer, t: Pick<TaskRow, 'created_by_member'>) => v.admin || t.created_by_member === v.member.id
+/** Tabelle dove si possono creare attivita': quelle dell'admin e le proprie. */
+const canAddTo = (v: Viewer, l: Pick<ListRow, 'created_by_member'>) => v.admin || l.created_by_member === null || l.created_by_member === v.member.id
+const canManage = (v: Viewer, l: Pick<ListRow, 'created_by_member'>) => v.admin || l.created_by_member === v.member.id
+
+/** Tabelle che vede: dell'admin, sue, e quelle dove c'e' un'attivita' che vede. */
+function visibleListIds(v: Viewer, lists: Pick<ListRow, 'id' | 'created_by_member'>[], tasks: Pick<TaskRow, 'list_id' | 'assignee_member' | 'created_by_member'>[]): Set<string> {
+  if (v.admin) return new Set(lists.map((l) => l.id))
+  const ids = new Set(lists.filter((l) => l.created_by_member === null || l.created_by_member === v.member.id).map((l) => l.id))
+  for (const t of tasks) if (canSeeTask(v, t)) ids.add(t.list_id)
+  return ids
+}
+
+const readOnlyMessage = (t: Pick<TaskRow, 'created_by_member'>) =>
+  t.created_by_member === null ? `Creata da ${ADMIN_NAME}: puoi solo spostarla.` : 'Creata da un’altra persona: puoi solo spostarla.'
+
+/** Tutto il contenuto che CHI CHIEDE puo' vedere. imageSrc trasforma il percorso in un indirizzo. */
+export async function loadState(board: BoardRow, viewer: Viewer, imageSrc: (path: string) => string): Promise<TodoBoardState> {
+  const [lists, tasks, members] = await Promise.all([
+    supabaseAdmin.from('todo_lists').select(LIST_COLS).eq('board_id', board.id).order('position', { ascending: true }).order('created_at', { ascending: true }),
     supabaseAdmin.from('todo_tasks').select(TASK_COLS).eq('board_id', board.id).order('position', { ascending: true }).order('created_at', { ascending: true }),
+    listMembers(board.id),
   ])
   check(lists.error || tasks.error, 'contenuto todo list')
+  const names = new Map(members.map((m) => [m.id, m.name]))
+  const nameOf = (id: string | null) => (id === null ? ADMIN_NAME : names.get(id) || 'Persona rimossa')
+  const allTasks = (tasks.data || []) as TaskRow[]
+  const allLists = (lists.data || []) as ListRow[]
+  const shownTasks = allTasks.filter((t) => canSeeTask(viewer, t))
+  const listIds = visibleListIds(viewer, allLists, allTasks)
+  const shownLists = allLists.filter((l) => listIds.has(l.id))
+  // Per le persone le posizioni diventano 1, 2, 3...: dai numeri non si capisce se in mezzo c'e' altro.
+  const rank = new Map<string, number>()
+  if (!viewer.admin) {
+    shownLists.forEach((l, i) => rank.set(l.id, (i + 1) * 1024))
+    const perList = new Map<string, number>()
+    for (const t of shownTasks) {
+      const n = (perList.get(t.list_id) || 0) + 1
+      perList.set(t.list_id, n)
+      rank.set(t.id, n * 1024)
+    }
+  }
+  const outLists: TodoList[] = shownLists.map((l) => ({
+    id: l.id,
+    title: l.title,
+    position: rank.get(l.id) ?? l.position,
+    created_by_member: l.created_by_member,
+    owner_name: nameOf(l.created_by_member),
+    can_manage: canManage(viewer, l),
+    can_add: canAddTo(viewer, l),
+  }))
+  const outTasks: TodoTask[] = shownTasks.map(({ board_id: _b, images, links, position, ...t }) => ({
+    ...t,
+    position: rank.get(t.id) ?? position,
+    assignee_name: t.assignee_member ? names.get(t.assignee_member) || t.assignee || 'Persona rimossa' : t.assignee,
+    creator_name: nameOf(t.created_by_member),
+    can_edit: canEditTask(viewer, t),
+    can_move: true,
+    links: Array.isArray(links) ? links : [],
+    images: (Array.isArray(images) ? images : []).map((img) => ({ id: img.id, name: img.name, src: imageSrc(img.path) })),
+  }))
   return {
     board: { name: board.name },
-    lists: ((lists.data || []) as TodoBoardState['lists']).map(({ id, title, position }) => ({ id, title, position })),
-    tasks: ((tasks.data || []) as TaskRow[]).map(({ board_id: _b, images, links, ...t }) => ({
-      ...t,
-      links: Array.isArray(links) ? links : [],
-      images: (Array.isArray(images) ? images : []).map((img) => ({ id: img.id, name: img.name, src: imageSrc(img.path) })),
-    })),
+    me: viewer.admin ? { id: null, name: ADMIN_NAME, admin: true } : { id: viewer.member.id, name: viewer.member.name, admin: false },
+    members: members.map((m) => ({ id: m.id, name: m.name })),
+    lists: outLists,
+    tasks: outTasks,
   }
 }
 
@@ -248,37 +483,57 @@ async function renumber(table: 'todo_lists' | 'todo_tasks', boardId: string, row
   await Promise.all(rows.map((r, i) => supabaseAdmin.from(table).update({ position: (i + 1) * 1024 }).eq('id', r.id).eq('board_id', boardId)))
 }
 
-async function listOf(boardId: string, listId: unknown) {
+/**
+ * Tabella per un'operazione. Le tabelle di altre persone, per chi non le possiede, non esistono.
+ * need 'add': ci si possono creare attivita'; 'manage': rinominare, spostare, ordinare, eliminare.
+ */
+async function listOf(boardId: string, viewer: Viewer, listId: unknown, need: 'add' | 'manage' | 'any' = 'add'): Promise<ListRow> {
   if (!isId(listId)) throw new TodoError('Tabella non trovata.', 404)
-  const { data, error } = await supabaseAdmin.from('todo_lists').select('id, title').eq('id', listId).eq('board_id', boardId).maybeSingle()
+  const { data, error } = await supabaseAdmin.from('todo_lists').select(LIST_COLS).eq('id', listId).eq('board_id', boardId).maybeSingle()
   check(error, 'tabella')
-  if (!data) throw new TodoError('Tabella non trovata: forse l’ha cancellata qualcun altro.', 404)
-  return data as { id: string; title: string }
+  const list = data as ListRow | null
+  if (!list) throw new TodoError('Tabella non trovata: forse l’ha cancellata qualcun altro.', 404)
+  if (need === 'any') return list
+  if (!canAddTo(viewer, list)) throw new TodoError('Tabella non trovata.', 404)
+  if (need === 'manage' && !canManage(viewer, list)) throw new TodoError(`Questa tabella è di ${ADMIN_NAME}: non puoi modificarla.`, 403)
+  return list
 }
 
-async function taskOf(boardId: string, taskId: unknown): Promise<TaskRow> {
+/**
+ * Attivita' per un'operazione. Se chi chiede non la vede: "non trovata" (come se non ci fosse).
+ * need 'move': spostare o segnare fatta (chi la vede); 'edit': tutto il resto (chi l'ha creata e l'admin).
+ */
+async function taskOf(boardId: string, viewer: Viewer, taskId: unknown, need: 'see' | 'move' | 'edit'): Promise<TaskRow> {
   if (!isId(taskId)) throw new TodoError('Attività non trovata.', 404)
   const { data, error } = await supabaseAdmin.from('todo_tasks').select(TASK_COLS).eq('id', taskId).eq('board_id', boardId).maybeSingle()
   check(error, 'attività')
-  if (!data) throw new TodoError('Attività non trovata: forse l’ha cancellata qualcun altro.', 404)
-  return data as TaskRow
+  const task = data as TaskRow | null
+  if (!task || !canSeeTask(viewer, task)) throw new TodoError('Attività non trovata: forse l’ha cancellata qualcun altro.', 404)
+  if (need === 'edit' && !canEditTask(viewer, task)) throw new TodoError(readOnlyMessage(task), 403)
+  return task
 }
 
-async function siblings(table: 'todo_lists' | 'todo_tasks', boardId: string, listId: string | null, excludeId: string | null) {
-  let q = supabaseAdmin.from(table).select('id, position').eq('board_id', boardId)
+type Sibling = { id: string; position: number; created_by_member: string | null; assignee_member?: string | null; list_id?: string }
+
+async function siblings(table: 'todo_lists' | 'todo_tasks', boardId: string, listId: string | null, excludeId: string | null): Promise<Sibling[]> {
+  let q = supabaseAdmin.from(table).select(table === 'todo_tasks' ? 'id, position, created_by_member, assignee_member, list_id' : 'id, position, created_by_member').eq('board_id', boardId)
   if (listId) q = q.eq('list_id', listId)
   const { data, error } = await q.order('position', { ascending: true }).order('created_at', { ascending: true })
   check(error, 'ordine')
-  return ((data || []) as { id: string; position: number }[]).filter((r) => r.id !== excludeId)
+  return ((data || []) as unknown as Sibling[]).filter((r) => r.id !== excludeId)
 }
 
-async function placeAt(table: 'todo_lists' | 'todo_tasks', boardId: string, listId: string | null, id: string, index: number): Promise<number> {
-  let others = await siblings(table, boardId, listId, id)
-  let pos = positionAt(others.map((o) => o.position), index)
+/**
+ * Posizione per mettere un elemento all'indice `index` tra quelli che chi chiede VEDE.
+ * Se lo spazio e' finito si rinumerano tutti (l'ordine resta uguale per tutti).
+ */
+async function placeAt(table: 'todo_lists' | 'todo_tasks', boardId: string, listId: string | null, id: string, index: number, shown: (row: Sibling) => boolean = () => true): Promise<number> {
+  let all = await siblings(table, boardId, listId, id)
+  let pos = positionAt(all.filter(shown).map((o) => o.position), index)
   if (pos === null) {
-    await renumber(table, boardId, others)
-    others = others.map((o, i) => ({ ...o, position: (i + 1) * 1024 }))
-    pos = positionAt(others.map((o) => o.position), index) as number
+    await renumber(table, boardId, all)
+    all = all.map((o, i) => ({ ...o, position: (i + 1) * 1024 }))
+    pos = positionAt(all.filter(shown).map((o) => o.position), index) as number
   }
   return pos
 }
@@ -294,42 +549,66 @@ const lastPosition = async (table: 'todo_lists' | 'todo_tasks', boardId: string,
   return rows.length ? rows[rows.length - 1].position + 1024 : 1024
 }
 
-export async function addList(board: BoardRow, title: unknown) {
+export async function addList(board: BoardRow, viewer: Viewer, title: unknown) {
   const t = oneLine(title, LIMITS.listTitle)
   if (!t) throw new TodoError('Dai un nome alla tabella.')
   if ((await countRows('todo_lists', board.id)) >= LIMITS.listsPerBoard) throw new TodoError(`Al massimo ${LIMITS.listsPerBoard} tabelle per todo list.`)
   const position = await lastPosition('todo_lists', board.id, null)
-  const { data, error } = await supabaseAdmin.from('todo_lists').insert({ board_id: board.id, title: t, position }).select('id, title, position').single()
+  const { data, error } = await supabaseAdmin.from('todo_lists').insert({ board_id: board.id, title: t, position, created_by_member: me(viewer) }).select('id, title, position').single()
   check(error, 'nuova tabella')
   return data
 }
 
-export async function renameList(board: BoardRow, listId: unknown, title: unknown) {
+export async function renameList(board: BoardRow, viewer: Viewer, listId: unknown, title: unknown) {
   const t = oneLine(title, LIMITS.listTitle)
   if (!t) throw new TodoError('Dai un nome alla tabella.')
-  await listOf(board.id, listId)
+  await listOf(board.id, viewer, listId, 'manage')
   const { error } = await supabaseAdmin.from('todo_lists').update({ title: t, updated_at: nowIso() }).eq('id', listId as string).eq('board_id', board.id)
   check(error, 'nome tabella')
 }
 
-export async function moveList(board: BoardRow, listId: unknown, index: unknown) {
-  await listOf(board.id, listId)
-  const position = await placeAt('todo_lists', board.id, null, listId as string, Number(index) || 0)
+export async function moveList(board: BoardRow, viewer: Viewer, listId: unknown, index: unknown) {
+  await listOf(board.id, viewer, listId, 'manage')
+  let shown: (row: Sibling) => boolean = () => true
+  if (!viewer.admin) {
+    // L'indice arriva dalla pagina della persona: conta solo le tabelle che vede.
+    const [lists, tasks] = await Promise.all([siblings('todo_lists', board.id, null, null), siblings('todo_tasks', board.id, null, null)])
+    const ids = visibleListIds(viewer, lists, tasks as Required<Sibling>[])
+    shown = (row) => ids.has(row.id)
+  }
+  const position = await placeAt('todo_lists', board.id, null, listId as string, Number(index) || 0, shown)
   const { error } = await supabaseAdmin.from('todo_lists').update({ position, updated_at: nowIso() }).eq('id', listId as string).eq('board_id', board.id)
   check(error, 'spostamento tabella')
 }
 
-export async function deleteList(board: BoardRow, listId: unknown) {
-  await listOf(board.id, listId)
-  const { data } = await supabaseAdmin.from('todo_tasks').select('images').eq('board_id', board.id).eq('list_id', listId as string)
+export async function deleteList(board: BoardRow, viewer: Viewer, listId: unknown) {
+  await listOf(board.id, viewer, listId, 'manage')
+  const { data } = await supabaseAdmin.from('todo_tasks').select('id, images, created_by_member').eq('board_id', board.id).eq('list_id', listId as string)
+  let rows = (data || []) as { id: string; images: unknown; created_by_member: string | null }[]
+  if (!viewer.admin) {
+    // Una persona elimina la sua tabella: le sue attivita' se ne vanno, quelle degli altri
+    // (messe li' dall'admin) finiscono in fondo alla prima tabella dell'admin.
+    const others = rows.filter((r) => r.created_by_member !== viewer.member.id)
+    if (others.length) {
+      const target = (await siblings('todo_lists', board.id, null, null)).find((l) => l.created_by_member === null)
+      if (!target) throw new TodoError('Non puoi eliminare questa tabella adesso.', 409)
+      let position = await lastPosition('todo_tasks', board.id, target.id)
+      for (const o of others) {
+        const { error } = await supabaseAdmin.from('todo_tasks').update({ list_id: target.id, position, updated_at: nowIso() }).eq('id', o.id).eq('board_id', board.id)
+        check(error, 'spostamento attività')
+        position += 1024
+      }
+      rows = rows.filter((r) => r.created_by_member === viewer.member.id)
+    }
+  }
   const { error } = await supabaseAdmin.from('todo_lists').delete().eq('id', listId as string).eq('board_id', board.id)
   check(error, 'eliminazione tabella')
-  await removeObjects(pathsOf((data || []) as { images: unknown }[]))
+  await removeObjects(pathsOf(rows))
 }
 
 /** Ordina una tabella per importanza (prima le urgenti, le fatte in fondo). */
-export async function sortListByPriority(board: BoardRow, listId: unknown) {
-  await listOf(board.id, listId)
+export async function sortListByPriority(board: BoardRow, viewer: Viewer, listId: unknown) {
+  await listOf(board.id, viewer, listId, 'manage')
   const { data, error } = await supabaseAdmin
     .from('todo_tasks')
     .select('id, priority, done, position')
@@ -375,12 +654,13 @@ export function cleanTaskFields(input: unknown): Record<string, unknown> {
       out.deadline = new Date(ms).toISOString()
     }
   }
-  if ('assignee' in f) out.assignee = oneLine(f.assignee, LIMITS.assignee) || null
-  if ('notify_email' in f) {
-    const e = typeof f.notify_email === 'string' ? f.notify_email.trim().toLowerCase() : ''
-    if (e && (e.length > LIMITS.email || !EMAIL_RE.test(e))) throw new TodoError('Indirizzo email non valido.')
-    out.notify_email = e || null
+  // A chi e' assegnata: una persona della todo list (o nessuno). Il vecchio testo libero non si scrive piu'.
+  if ('assignee_member' in f) {
+    if (f.assignee_member === null || f.assignee_member === '') out.assignee_member = null
+    else if (isId(f.assignee_member)) out.assignee_member = f.assignee_member.toLowerCase()
+    else throw new TodoError('Persona non trovata.')
   }
+  if ('notify_email' in f) out.notify_email = cleanEmail(f.notify_email)
   if ('reminders_per_day' in f) {
     const n = Number(f.reminders_per_day)
     if (!Number.isInteger(n) || n < 1 || n > 6) throw new TodoError('I solleciti al giorno vanno da 1 a 6.')
@@ -394,15 +674,29 @@ export function cleanTaskFields(input: unknown): Record<string, unknown> {
   return out
 }
 
-export async function addTask(board: BoardRow, listId: unknown, fields: unknown) {
-  await listOf(board.id, listId)
+/** La persona assegnata deve essere di questa todo list; il suo nome resta anche nel vecchio campo. */
+async function resolveAssignee(boardId: string, clean: Record<string, unknown>) {
+  if (!('assignee_member' in clean)) return
+  if (clean.assignee_member === null) {
+    clean.assignee = null
+    return
+  }
+  const m = await memberById(boardId, clean.assignee_member)
+  if (!m) throw new TodoError('Persona non trovata.', 400)
+  clean.assignee_member = m.id
+  clean.assignee = m.name
+}
+
+export async function addTask(board: BoardRow, viewer: Viewer, listId: unknown, fields: unknown) {
+  await listOf(board.id, viewer, listId, 'add')
   const clean = cleanTaskFields(fields)
   if (!clean.title) throw new TodoError('Scrivi il titolo dell’attività.')
+  await resolveAssignee(board.id, clean)
   if ((await countRows('todo_tasks', board.id)) >= LIMITS.tasksPerBoard) throw new TodoError(`Al massimo ${LIMITS.tasksPerBoard} attività per todo list.`)
   const position = await lastPosition('todo_tasks', board.id, listId as string)
   const { data, error } = await supabaseAdmin
     .from('todo_tasks')
-    .insert({ ...clean, board_id: board.id, list_id: listId, position })
+    .insert({ ...clean, board_id: board.id, list_id: listId, position, created_by_member: me(viewer) })
     .select('id, title, notes')
     .single()
   check(error, 'nuova attività')
@@ -410,38 +704,80 @@ export async function addTask(board: BoardRow, listId: unknown, fields: unknown)
   return { id: row.id, linksChanged: extractLinks(`${row.title}\n${row.notes || ''}`).length > 0 }
 }
 
-export async function updateTask(board: BoardRow, taskId: unknown, fields: unknown): Promise<{ linksChanged: boolean }> {
+/**
+ * Modifica campo per campo. Chi vede un'attivita' non sua puo' solo segnarla fatta/da fare.
+ * completed: e' appena diventata fatta (per l'avviso all'admin).
+ */
+export async function updateTask(board: BoardRow, viewer: Viewer, taskId: unknown, fields: unknown): Promise<{ linksChanged: boolean; completed: boolean; listId: string }> {
   const clean = cleanTaskFields(fields)
-  if (!Object.keys(clean).length) return { linksChanged: false }
-  const before = await taskOf(board.id, taskId)
+  const before = await taskOf(board.id, viewer, taskId, Object.keys(clean).every((k) => k === 'done' || k === 'done_at') ? 'move' : 'edit')
+  if (!Object.keys(clean).length) return { linksChanged: false, completed: false, listId: before.list_id }
+  await resolveAssignee(board.id, clean)
   const { error } = await supabaseAdmin
     .from('todo_tasks')
     .update({ ...clean, updated_at: nowIso() })
-    .eq('id', taskId as string)
+    .eq('id', before.id)
     .eq('board_id', board.id)
   check(error, 'modifica attività')
   const text = (t: { title: string; notes: string }) => extractLinks(`${t.title}\n${t.notes || ''}`).join(' ')
   const after = { title: (clean.title as string) ?? before.title, notes: (clean.notes as string) ?? before.notes }
-  return { linksChanged: text(after) !== text(before) }
+  return { linksChanged: text(after) !== text(before), completed: clean.done === true && !before.done, listId: before.list_id }
 }
 
-export async function moveTask(board: BoardRow, taskId: unknown, listId: unknown, index: unknown) {
-  await taskOf(board.id, taskId)
-  await listOf(board.id, listId)
-  const position = await placeAt('todo_tasks', board.id, listId as string, taskId as string, Number(index) || 0)
+/**
+ * Sposta un'attivita' (tabella e ordine). Chi la vede puo' spostarla; nelle tabelle di una
+ * persona entrano solo le sue attivita'. Cambiano solo tabella e posizione di questa attivita'.
+ */
+export async function moveTask(board: BoardRow, viewer: Viewer, taskId: unknown, listId: unknown, index: unknown): Promise<{ fromListId: string; toListId: string }> {
+  const task = await taskOf(board.id, viewer, taskId, 'move')
+  const list = await listOf(board.id, viewer, listId, list_id_is(task, listId) ? 'any' : 'add')
+  if (!viewer.admin && list.id !== task.list_id && list.created_by_member !== null && task.created_by_member !== viewer.member.id) {
+    throw new TodoError(`Questa attività si può spostare solo nelle tabelle di ${ADMIN_NAME}.`, 403)
+  }
+  const shown = viewer.admin ? undefined : (row: Sibling) => taskVisibleTo({ assignee_member: row.assignee_member ?? null, created_by_member: row.created_by_member }, viewer.member.id)
+  const position = await placeAt('todo_tasks', board.id, list.id, task.id, Number(index) || 0, shown)
   const { error } = await supabaseAdmin
     .from('todo_tasks')
-    .update({ list_id: listId, position, updated_at: nowIso() })
-    .eq('id', taskId as string)
+    .update({ list_id: list.id, position, updated_at: nowIso() })
+    .eq('id', task.id)
     .eq('board_id', board.id)
   check(error, 'spostamento attività')
+  return { fromListId: task.list_id, toListId: list.id }
 }
 
-export async function deleteTask(board: BoardRow, taskId: unknown) {
-  const task = await taskOf(board.id, taskId)
+const list_id_is = (task: TaskRow, listId: unknown) => typeof listId === 'string' && listId.toLowerCase() === task.list_id
+
+export async function deleteTask(board: BoardRow, viewer: Viewer, taskId: unknown) {
+  const task = await taskOf(board.id, viewer, taskId, 'edit')
   const { error } = await supabaseAdmin.from('todo_tasks').delete().eq('id', task.id).eq('board_id', board.id)
   check(error, 'eliminazione attività')
   await removeObjects(pathsOf([task]))
+}
+
+// ---------------------------------------------------------------------
+// Avviso all'admin quando una persona finisce un'attivita'
+// ---------------------------------------------------------------------
+
+/** Spostata avanti e indietro in pochi minuti: un solo avviso. */
+export const DONE_NOTICE_WINDOW_MS = 2 * 60_000
+
+/**
+ * Prenota l'avviso "fatta" per questa attivita' (una volta sola anche con richieste insieme).
+ * false: avviso gia' mandato da meno di 2 minuti (o SQL non aggiornato).
+ */
+export async function claimDoneNotice(boardId: string, taskId: string, at = Date.now()): Promise<boolean> {
+  const now = new Date(at).toISOString()
+  const first = await supabaseAdmin.from('todo_tasks').update({ done_notified_at: now }).eq('id', taskId).eq('board_id', boardId).is('done_notified_at', null).select('id')
+  if (first.error) return false
+  if (first.data && first.data.length) return true
+  const again = await supabaseAdmin
+    .from('todo_tasks')
+    .update({ done_notified_at: now })
+    .eq('id', taskId)
+    .eq('board_id', boardId)
+    .lt('done_notified_at', new Date(at - DONE_NOTICE_WINDOW_MS).toISOString())
+    .select('id')
+  return !again.error && Boolean(again.data && again.data.length)
 }
 
 // ---------------------------------------------------------------------
@@ -493,8 +829,8 @@ async function removeObjects(paths: string[]) {
   }
 }
 
-export async function imageUploadUrl(board: BoardRow, taskId: unknown, contentType: unknown, size: unknown) {
-  const task = await taskOf(board.id, taskId)
+export async function imageUploadUrl(board: BoardRow, viewer: Viewer, taskId: unknown, contentType: unknown, size: unknown) {
+  const task = await taskOf(board.id, viewer, taskId, 'edit')
   const ext = typeof contentType === 'string' ? IMAGE_TYPES[contentType] : undefined
   if (!ext) throw new TodoError('Si possono caricare solo immagini JPG, PNG, WEBP o GIF.')
   const bytes = Number(size)
@@ -511,8 +847,8 @@ export async function imageUploadUrl(board: BoardRow, taskId: unknown, contentTy
   return { signedUrl: data.signedUrl, path }
 }
 
-export async function addImage(board: BoardRow, taskId: unknown, path: unknown, name: unknown) {
-  const task = await taskOf(board.id, taskId)
+export async function addImage(board: BoardRow, viewer: Viewer, taskId: unknown, path: unknown, name: unknown) {
+  const task = await taskOf(board.id, viewer, taskId, 'edit')
   const re = new RegExp(`^${board.id}/${task.id}/[0-9a-f-]{36}\\.(jpg|png|webp|gif)$`)
   if (typeof path !== 'string' || !re.test(path)) throw new TodoError('Immagine non valida.')
   const folder = `${board.id}/${task.id}`
@@ -536,8 +872,8 @@ export async function addImage(board: BoardRow, taskId: unknown, path: unknown, 
   return { id: image.id }
 }
 
-export async function removeImage(board: BoardRow, taskId: unknown, imageId: unknown) {
-  const task = await taskOf(board.id, taskId)
+export async function removeImage(board: BoardRow, viewer: Viewer, taskId: unknown, imageId: unknown) {
+  const task = await taskOf(board.id, viewer, taskId, 'edit')
   if (!isId(imageId)) throw new TodoError('Immagine non trovata.', 404)
   const { data, error } = await supabaseAdmin.rpc('todo_task_remove_image', { p_task: task.id, p_board: board.id, p_image_id: imageId })
   check(error, 'rimozione immagine')
@@ -545,9 +881,16 @@ export async function removeImage(board: BoardRow, taskId: unknown, imageId: unk
   if (removed?.path) await removeObjects([removed.path])
 }
 
-/** Link a tempo per vedere una foto di questa todo list (null se il percorso non e' suo). */
-export async function imageViewUrl(board: BoardRow, path: string): Promise<string | null> {
+/** Link a tempo per vedere una foto (null se il percorso non e' di un'attivita' che chi chiede vede). */
+export async function imageViewUrl(board: BoardRow, viewer: Viewer, path: string): Promise<string | null> {
   if (typeof path !== 'string' || !new RegExp(`^${board.id}/[0-9a-f-]{36}/[0-9a-f-]{36}\\.(jpg|png|webp|gif)$`).test(path)) return null
-  const { data } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(path, 3600)
-  return data?.signedUrl || null
+  const taskId = path.split('/')[1]
+  if (!isId(taskId)) return null
+  const { data, error } = await supabaseAdmin.from('todo_tasks').select('id, images, assignee_member, created_by_member').eq('id', taskId).eq('board_id', board.id).maybeSingle()
+  check(error, 'foto')
+  const task = data as Pick<TaskRow, 'id' | 'images' | 'assignee_member' | 'created_by_member'> | null
+  if (!task || !canSeeTask(viewer, task)) return null
+  if (!(Array.isArray(task.images) ? task.images : []).some((img) => img?.path === path)) return null
+  const { data: signed } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(path, 3600)
+  return signed?.signedUrl || null
 }

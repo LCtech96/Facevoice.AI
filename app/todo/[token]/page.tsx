@@ -1,17 +1,18 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import { sessionCookieName, verifySession } from '@/lib/todo-auth'
-import { TodoError, boardByToken, type BoardRow } from '@/lib/todo-store'
-import PasswordForm from './PasswordForm'
+import { readSession, sessionCookieName } from '@/lib/todo-auth'
+import { TodoError, boardByToken, viewerFor, type BoardRow } from '@/lib/todo-store'
+import LoginForm from './LoginForm'
 import GuestBoard from './GuestBoard'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-// Todo list condivisa (senza login): si apre solo con il link e la password scelta
-// dall'admin. Pagina a sé: nessun menu del sito, nessun collegamento ad altre pagine.
-// Prima della password non si mostra nemmeno il nome della todo list. Link sconosciuto
-// o rigenerato: sempre lo stesso "Link non valido". Mai indicizzata, mai in cache.
+// Todo list condivisa (senza account del sito): si apre solo con il link, il proprio
+// nome e la password personale data dall'admin. Pagina a sé: nessun menu del sito,
+// nessun collegamento ad altre pagine. Prima di entrare non si mostrano né il nome
+// della todo list né chi ne fa parte. Link sconosciuto o rigenerato: sempre lo stesso
+// "Link non valido". Mai indicizzata, mai in cache.
 
 export const metadata: Metadata = {
   title: 'Todo list',
@@ -40,10 +41,16 @@ export default async function TodoLinkPage({ params }: { params: Promise<{ token
     return <Notice title="Pagina non disponibile" text="Qualcosa non è andato: riprova tra poco." />
   }
   if (!board) return <Notice title="Link non valido" text="Il link non esiste o non è più attivo. Chiedi un link nuovo a chi te l’ha mandato." />
-  const unlocked = verifySession((await cookies()).get(sessionCookieName(board.id))?.value, board)
+  let unlocked = false
+  try {
+    unlocked = Boolean(await viewerFor(board, readSession((await cookies()).get(sessionCookieName(board.id))?.value, board)))
+  } catch {
+    // Persone non ancora pronte (o database lento): si mostra il modulo, che risponde in modo neutro.
+    unlocked = false
+  }
   return (
     <main className="min-h-[100dvh] bg-[var(--background)]" translate="no">
-      {unlocked ? <GuestBoard token={token} name={board.name} /> : <PasswordForm token={token} />}
+      {unlocked ? <GuestBoard token={token} name={board.name} /> : <LoginForm token={token} />}
     </main>
   )
 }

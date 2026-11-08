@@ -1,11 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual, type ScryptOptions } from 'crypto'
 import { LIMITS } from '@/lib/todo-shared'
 
-// Accesso alle todo list condivise: link segreto (32 byte casuali), password scelta
-// dall'admin (salvata solo come hash scrypt con sale) e, dopo la password giusta,
-// un cookie firmato valido solo per quella todo list. Nel cookie c'e' la "versione
-// di accesso" della todo list: cambiare password o rigenerare il link la aumenta e
-// tutti i cookie di prima smettono di valere.
+// Accesso alle todo list condivise: link segreto (32 byte casuali), una persona per
+// ognuno con nome e password personale (salvata solo come hash scrypt con sale) e,
+// dopo nome e password giusti, un cookie firmato valido solo per quella todo list e
+// quella persona. Nel cookie ci sono la "versione" della todo list (link nuovo: escono
+// tutti) e quella della persona (password cambiata o persona tolta: esce solo lei).
 
 export const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
 export const SESSION_TTL_S = 14 * 24 * 3600
@@ -81,31 +81,52 @@ export function openToken(sealed: string): string | null {
 // ---------------------------------------------------------------------
 
 export type SessionBoard = { id: string; session_version: number }
+export type SessionMember = { id: string; session_version: number }
+/** Cosa dice un cookie valido: chi e' (memberId null = admin) e con quale versione della sua password. */
+export type SessionInfo = { memberId: string | null; memberVersion: number }
+
+/** L'admin entra con «Apri» senza password: il suo cookie dura meno. */
+export const ADMIN_SESSION_TTL_S = 12 * 3600
+const MEMBER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Nome del cookie: diverso per ogni todo list, cosi' due liste aperte non si pestano i piedi. */
 export const sessionCookieName = (boardId: string) => `fv_todo_${boardId.replace(/[^a-f0-9]/gi, '').slice(0, 16)}`
 
-const sessionSig = (key: Buffer, boardId: string, version: number, exp: number) =>
-  createHmac('sha256', key).update(`${boardId}.${version}.${exp}`).digest('base64url')
+const sessionSig = (key: Buffer, boardId: string, boardVersion: number, who: string, memberVersion: number, exp: number) =>
+  createHmac('sha256', key).update(`${boardId}.${boardVersion}.${who}.${memberVersion}.${exp}`).digest('base64url')
 
-export function signSession(board: SessionBoard, at = Date.now()): string | null {
+/**
+ * Cookie firmato: todo list + sua versione (link nuovo: escono tutti) + persona + versione
+ * della sua password (password cambiata o persona tolta: esce solo lei). member null = admin.
+ */
+export function signSession(board: SessionBoard, member: SessionMember | null, at = Date.now()): string | null {
   const key = serverKey('todo-session')
   if (!key) return null
-  const exp = Math.floor(at / 1000) + SESSION_TTL_S
-  return `${board.session_version}.${exp}.${sessionSig(key, board.id, board.session_version, exp)}`
+  const who = member ? member.id : 'admin'
+  const memberVersion = member ? member.session_version : 0
+  const exp = Math.floor(at / 1000) + (member ? SESSION_TTL_S : ADMIN_SESSION_TTL_S)
+  return `${board.session_version}.${who}.${memberVersion}.${exp}.${sessionSig(key, board.id, board.session_version, who, memberVersion, exp)}`
 }
 
-export function verifySession(value: string | undefined | null, board: SessionBoard, at = Date.now()): boolean {
+/** Legge il cookie (firma, todo list, versione, scadenza). La persona va poi controllata nel database. */
+export function readSession(value: string | undefined | null, board: SessionBoard, at = Date.now()): SessionInfo | null {
   const key = serverKey('todo-session')
-  if (!key || !value || typeof value !== 'string') return false
-  const [versionText, expText, sig] = value.split('.')
-  const version = Number(versionText)
+  if (!key || !value || typeof value !== 'string') return null
+  const parts = value.split('.')
+  if (parts.length !== 5) return null
+  const [boardText, who, memberText, expText, sig] = parts
+  const boardVersion = Number(boardText)
+  const memberVersion = Number(memberText)
   const exp = Number(expText)
-  if (!sig || !Number.isInteger(version) || version !== board.session_version) return false
-  if (!Number.isFinite(exp) || exp * 1000 < at || exp * 1000 > at + SESSION_TTL_S * 1000 + 60_000) return false
-  const expected = Buffer.from(sessionSig(key, board.id, version, exp))
+  if (!sig || !Number.isInteger(boardVersion) || boardVersion !== board.session_version || !Number.isInteger(memberVersion)) return null
+  const admin = who === 'admin'
+  if (!admin && !MEMBER_ID_RE.test(who)) return null
+  const ttl = admin ? ADMIN_SESSION_TTL_S : SESSION_TTL_S
+  if (!Number.isFinite(exp) || exp * 1000 < at || exp * 1000 > at + ttl * 1000 + 60_000) return null
+  const expected = Buffer.from(sessionSig(key, board.id, boardVersion, who, memberVersion, exp))
   const given = Buffer.from(sig)
-  return expected.length === given.length && timingSafeEqual(expected, given)
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null
+  return { memberId: admin ? null : who.toLowerCase(), memberVersion }
 }
 
 /** Impronta dell'IP per il limite dei tentativi (l'IP in chiaro non si salva). */

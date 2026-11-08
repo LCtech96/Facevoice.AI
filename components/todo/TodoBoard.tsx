@@ -1,14 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDownWideNarrow, Bell, CalendarClock, ChevronLeft, ChevronRight, GripVertical, ImageIcon, Link2, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, User } from 'lucide-react'
-import { PRIORITIES, formatRome, type TodoBoardState, type TodoList, type TodoTask } from '@/lib/todo-shared'
+import { ArrowDownWideNarrow, Bell, CalendarClock, ChevronLeft, ChevronRight, GripVertical, ImageIcon, Link2, Loader2, Lock, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, User, PenLine } from 'lucide-react'
+import { PRIORITIES, formatRome, taskVisibleTo, type TodoBoardState, type TodoList, type TodoTask } from '@/lib/todo-shared'
 import { boardOp, loadBoard, moveLocally, patchLocally, tasksOf } from './todo-api'
 import TaskModal from './TaskModal'
 import LinkText from './LinkText'
 
 // Bacheca della todo list: tabelle (colonne) con le attivita'. Uguale per l'admin
-// e per chi ha il link. Si aggiorna da sola ogni pochi secondi; ogni modifica manda
+// e per chi ha il link, ma ognuno riceve dal server solo quello che puo' vedere e i
+// permessi (can_edit, can_add...): qui si nascondono solo i comandi, il server ricontrolla. Si aggiorna da sola ogni pochi secondi; ogni modifica manda
 // solo il campo cambiato (l'ultima modifica di un campo vince) e gli spostamenti
 // usano posizioni, cosi' due persone insieme non perdono attivita'.
 // Spostare: trascina la maniglia (anche con il dito) oppure usa "Sposta" nella scheda.
@@ -16,6 +17,13 @@ import LinkText from './LinkText'
 const POLL_MS = 6000
 
 type Drop = { listId: string; index: number }
+
+/** Dove si puo' lasciare un'attivita': stessa tabella, o una tabella dove si puo' aggiungere (le tabelle di una persona solo per le sue). */
+export function canDropIn(list: TodoList, task: TodoTask): boolean {
+  if (list.id === task.list_id) return true
+  if (!list.can_add) return false
+  return list.created_by_member === null || task.can_edit
+}
 
 function deadlineTone(task: TodoTask, now: number) {
   if (!task.deadline || task.done) return 'border border-[var(--border-color)] text-[var(--text-secondary)]'
@@ -37,6 +45,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
   const [syncing, setSyncing] = useState(false)
   const [drag, setDrag] = useState<{ taskId: string; drop: Drop | null } | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  const [person, setPerson] = useState('')
 
   const pending = useRef(0)
   const dragRef = useRef<{ taskId: string; drop: Drop | null; x: number; y: number; x0: number; y0: number; dx: number; dy: number; w: number; moved: boolean } | null>(null)
@@ -114,6 +123,10 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
     const col = el?.closest('[data-list-id]') as HTMLElement | null
     if (!col) return null
     const listId = col.dataset.listId as string
+    const s = stateRef.current
+    const list = s?.lists.find((l) => l.id === listId)
+    const task = s?.tasks.find((t) => t.id === taskId)
+    if (!list || !task || !canDropIn(list, task)) return null
     const cards = Array.from(col.querySelectorAll<HTMLElement>('[data-task-id]')).filter((c) => c.dataset.taskId !== taskId)
     let index = cards.length
     for (let i = 0; i < cards.length; i++) {
@@ -187,6 +200,9 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
 
   const startDrag = (e: React.PointerEvent, task: TodoTask) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return
+    if (!task.can_move) return
+    // Con il filtro «Persona» le posizioni sullo schermo non sono tutte: si sposta dalla scheda.
+    if (person) return
     e.preventDefault()
     e.stopPropagation()
     const card = (e.currentTarget as HTMLElement).closest('[data-task-id]') as HTMLElement | null
@@ -216,6 +232,8 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
   }
 
   const lists = [...state.lists].sort((a, b) => a.position - b.position)
+  // Filtro «Persona» (solo admin): quello che vede quella persona.
+  const shown = state.me.admin && person ? { ...state, tasks: state.tasks.filter((t) => taskVisibleTo(t, person)) } : state
   const dragged = drag ? state.tasks.find((t) => t.id === drag.taskId) : null
   const current = openTask ? state.tasks.find((t) => t.id === openTask) : null
 
@@ -249,8 +267,26 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
 
   return (
     <div className="pb-24" style={drag ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}>
-      <div className="mb-3 flex items-center justify-between gap-2 px-4">
+      {!state.me.admin && (
+        <p className="mb-2 px-4 text-sm text-[var(--text-secondary)]">
+          Ciao <strong className="text-[var(--text-primary)]">{state.me.name}</strong>: qui vedi le attività assegnate a te, quelle che hai creato tu e quelle per tutti.
+        </p>
+      )}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-4">
         <p className="text-xs text-[var(--text-secondary)]">Trascina con la maniglia <GripVertical className="inline h-3.5 w-3.5" /> oppure apri un’attività per spostarla.</p>
+        {state.me.admin && state.members.length > 0 && (
+          <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+            Persona
+            <select value={person} onChange={(e) => setPerson(e.target.value)} className="min-h-[36px] rounded-full border border-[var(--border-color)] bg-[var(--background)] px-3 text-xs text-[var(--text-primary)]">
+              <option value="">Tutte le attività</option>
+              {state.members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  Quello che vede {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button type="button" onClick={refresh} className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)]" aria-label="Aggiorna">
           <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} /> Aggiorna
         </button>
@@ -258,7 +294,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
 
       <div ref={scrollerRef} className={`flex items-start gap-3 overflow-x-auto px-4 pb-4 ${drag ? '' : 'snap-x snap-mandatory md:snap-none'}`}>
         {lists.map((list, li) => {
-          const tasks = tasksOf(state, list.id)
+          const tasks = tasksOf(shown, list.id)
           const others = drag ? tasks.filter((t) => t.id !== drag.taskId) : tasks
           let oi = 0
           const dropHere = drag?.drop?.listId === list.id ? drag.drop.index : -1
@@ -289,14 +325,23 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
                       className="w-full rounded-lg border border-[var(--accent-blue)] bg-[var(--background)] px-2 py-1.5 text-base font-semibold text-[var(--text-primary)] outline-none md:text-sm"
                     />
                   </form>
-                ) : (
+                ) : list.can_manage ? (
                   <button type="button" onClick={() => setEditingList(list.id)} className="min-w-0 flex-1 truncate text-left text-sm font-semibold text-[var(--text-primary)]" title="Rinomina">
                     {list.title} <span className="font-normal text-[var(--text-secondary)]">· {tasks.length - doneCount}{doneCount ? ` (+${doneCount} fatte)` : ''}</span>
+                    {state.me.admin && list.created_by_member && <span className="ml-1 font-normal text-[var(--text-secondary)]">· di {list.owner_name}</span>}
+                    {!state.me.admin && list.created_by_member && <span className="ml-1 font-normal text-[var(--text-secondary)]">· la vedi solo tu</span>}
+                  </button>
+                ) : (
+                  <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text-primary)]" title={`Tabella di ${list.owner_name}`}>
+                    <Lock className="mr-1 inline h-3.5 w-3.5 text-[var(--text-secondary)]" aria-label={`Tabella di ${list.owner_name}`} />
+                    {list.title} <span className="font-normal text-[var(--text-secondary)]">· {tasks.length - doneCount}{doneCount ? ` (+${doneCount} fatte)` : ''}</span>
+                  </p>
+                )}
+                {list.can_manage && (
+                  <button type="button" onClick={() => setListMenu(listMenu === list.id ? null : list.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--background)]" aria-label="Azioni della tabella">
+                    <MoreHorizontal className="h-5 w-5" />
                   </button>
                 )}
-                <button type="button" onClick={() => setListMenu(listMenu === list.id ? null : list.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--background)]" aria-label="Azioni della tabella">
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
                 {listMenu === list.id && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setListMenu(null)} />
@@ -328,13 +373,14 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
                   return (
                     <div key={task.id} className={isDragged ? 'opacity-30' : undefined}>
                       {line && <div className="mb-2 h-1 rounded-full bg-[var(--accent-blue)]" />}
-                      <TaskCard task={task} now={now} onOpen={() => setOpenTask(task.id)} onToggle={() => run({ op: 'updateTask', taskId: task.id, fields: { done: !task.done } }, (s) => patchLocally(s, task.id, { done: !task.done }))} onGrip={(e) => startDrag(e, task)} />
+                      <TaskCard task={task} now={now} admin={state.me.admin} onOpen={() => setOpenTask(task.id)} onToggle={() => run({ op: 'updateTask', taskId: task.id, fields: { done: !task.done } }, (s) => patchLocally(s, task.id, { done: !task.done }))} onGrip={(e) => startDrag(e, task)} />
                     </div>
                   )
                 })}
                 {dropHere >= 0 && dropHere === others.length && <div className="h-1 rounded-full bg-[var(--accent-blue)]" />}
               </div>
 
+              {list.can_add && (
               <form
                 className="mt-2 flex items-center gap-1"
                 onSubmit={(e) => {
@@ -353,6 +399,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
                   <Plus className="h-5 w-5" />
                 </button>
               </form>
+              )}
             </section>
           )
         })}
@@ -383,7 +430,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
           className="pointer-events-none fixed left-0 top-0 z-50 opacity-90"
           style={dragRef.current ? { width: dragRef.current.w, transform: `translate(${dragRef.current.x - dragRef.current.dx}px, ${dragRef.current.y - dragRef.current.dy}px)` } : { width: 280 }}
         >
-          <TaskCard task={dragged} now={now} onOpen={() => undefined} onToggle={() => undefined} onGrip={() => undefined} lifted />
+          <TaskCard task={dragged} now={now} admin={state.me.admin} onOpen={() => undefined} onToggle={() => undefined} onGrip={() => undefined} lifted />
         </div>
       )}
 
@@ -391,8 +438,10 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
         <TaskModal
           token={token}
           task={current}
-          lists={lists}
+          lists={lists.filter((l) => canDropIn(l, current))}
           listTasks={tasksOf(state, current.list_id)}
+          members={state.members}
+          admin={state.me.admin}
           run={run}
           onClose={() => setOpenTask(null)}
           onMessage={setMessage}
@@ -419,7 +468,7 @@ function swapLists(lists: TodoList[], id: string, dir: -1 | 1): TodoList[] {
   return lists.map((l) => (l.id === a.id ? { ...l, position: b.position } : l.id === b.id ? { ...l, position: a.position } : l))
 }
 
-function TaskCard({ task, now, onOpen, onToggle, onGrip, lifted }: { task: TodoTask; now: number; onOpen: () => void; onToggle: () => void; onGrip: (e: React.PointerEvent) => void; lifted?: boolean }) {
+function TaskCard({ task, now, admin, onOpen, onToggle, onGrip, lifted }: { task: TodoTask; now: number; admin: boolean; onOpen: () => void; onToggle: () => void; onGrip: (e: React.PointerEvent) => void; lifted?: boolean }) {
   const pr = PRIORITIES.find((p) => p.value === task.priority) || PRIORITIES[0]
   const preview = task.links.find((l) => l.title || l.image)
   return (
@@ -450,9 +499,14 @@ function TaskCard({ task, now, onOpen, onToggle, onGrip, lifted }: { task: TodoT
                 <CalendarClock className="h-3 w-3" /> {formatRome(task.deadline)}
               </span>
             )}
-            {task.assignee && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-0.5 text-[var(--text-secondary)]">
-                <User className="h-3 w-3" /> {task.assignee}
+            {task.assignee_name && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-0.5 text-[var(--text-secondary)]" title="Assegnata a">
+                <User className="h-3 w-3" /> {task.assignee_name}
+              </span>
+            )}
+            {admin && task.created_by_member && (
+              <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]" title="Creata da">
+                <PenLine className="h-3 w-3" /> {task.creator_name}
               </span>
             )}
             {task.notify_email && task.deadline && !task.done && <Bell className="h-3.5 w-3.5 text-[var(--text-secondary)]" aria-label="Solleciti attivi" />}
@@ -464,6 +518,11 @@ function TaskCard({ task, now, onOpen, onToggle, onGrip, lifted }: { task: TodoT
               </span>
             )}
           </div>
+          {!task.can_edit && (
+            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--text-secondary)]">
+              <Lock className="h-3 w-3 shrink-0" /> Creata da {task.creator_name}: puoi solo spostarla
+            </p>
+          )}
           {task.images.length > 0 && (
             <div className="mt-2 flex gap-1.5">
               {task.images.slice(0, 3).map((img) => (

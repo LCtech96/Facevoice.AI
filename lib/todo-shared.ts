@@ -7,7 +7,23 @@ export const TIME_ZONE = 'Europe/Rome'
 export type TodoLinkPreview = { url: string; title?: string; description?: string; image?: string; site?: string }
 export type TodoImage = { id: string; name: string; src: string }
 
-export type TodoList = { id: string; title: string; position: number }
+/** Nome con cui l'admin compare nella todo list (chi ha creato le attivita' senza persona). */
+export const ADMIN_NAME = 'Luca'
+
+export type TodoMember = { id: string; name: string }
+
+export type TodoList = {
+  id: string
+  title: string
+  position: number
+  /** null: creata dall'admin (la vedono tutti). */
+  created_by_member: string | null
+  owner_name: string
+  /** Rinominare, spostare, ordinare, eliminare. */
+  can_manage: boolean
+  /** Aggiungere attivita' o spostarci dentro le proprie. */
+  can_add: boolean
+}
 
 export type TodoTask = {
   id: string
@@ -18,7 +34,17 @@ export type TodoTask = {
   priority: number
   position: number
   deadline: string | null
+  /** Vecchio campo di testo libero: resta per le attivita' di prima. */
   assignee: string | null
+  assignee_member: string | null
+  assignee_name: string | null
+  /** null: creata dall'admin. */
+  created_by_member: string | null
+  creator_name: string
+  /** Modificare tutto (titolo, note, foto, scadenza, eliminare). */
+  can_edit: boolean
+  /** Spostare (tabella e ordine) e segnare come fatta. */
+  can_move: boolean
   notify_email: string | null
   reminders_per_day: number
   remind_hours_before: number
@@ -27,7 +53,33 @@ export type TodoTask = {
   updated_at: string
 }
 
-export type TodoBoardState = { board: { name: string }; lists: TodoList[]; tasks: TodoTask[] }
+export type TodoMe = { id: string | null; name: string; admin: boolean }
+
+export type TodoBoardState = { board: { name: string }; me: TodoMe; members: TodoMember[]; lists: TodoList[]; tasks: TodoTask[] }
+
+/**
+ * Chi vede un'attivita' (oltre all'admin, che vede tutto): la persona a cui e' assegnata,
+ * chi l'ha creata, e tutti se l'ha creata l'admin senza assegnarla a nessuno.
+ */
+export function taskVisibleTo(task: { assignee_member: string | null; created_by_member: string | null }, memberId: string): boolean {
+  if (task.assignee_member === memberId || task.created_by_member === memberId) return true
+  return task.created_by_member === null && task.assignee_member === null
+}
+
+/** Nome confrontabile: senza accenti, maiuscole e spazi doppi ("Sèvara  " = "sevara"). */
+export function nameKey(name: string): string {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Tabella "Fatto" (o simili): spostarci un'attivita' vuol dire averla finita. */
+export function isDoneListTitle(title: string): boolean {
+  return /^(fatt[oaie]|completat[oaie]|done|finit[oaie]|chius[oaie])$/.test(nameKey(title).replace(/[^a-z ]/g, '').trim())
+}
 
 export const PRIORITIES = [
   { value: 0, label: 'Nessuna', chip: 'border border-[var(--border-color)] text-[var(--text-secondary)]', bar: 'transparent' },
@@ -45,6 +97,8 @@ export const LIMITS = {
   taskTitle: 300,
   notes: 5000,
   assignee: 120,
+  memberName: 60,
+  membersPerBoard: 50,
   email: 200,
   listsPerBoard: 50,
   tasksPerBoard: 2000,
