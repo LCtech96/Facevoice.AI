@@ -54,14 +54,52 @@ function teaserOf(content: string, max = 420): string {
 export const facebookText = (title: string, content: string, url: string) =>
   [title, teaserOf(content), `Leggi l’articolo completo 👉 ${url}`].filter(Boolean).join('\n\n')
 
+const plain = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+/** Hashtag degli argomenti pronti del Blog automatico (stesse etichette di lib/blog-auto.ts). */
+const TOPIC_HASHTAGS: Record<string, string[]> = {
+  'novita sull ai': ['#intelligenzaartificiale', '#AI', '#innovazione', '#aziende'],
+  'marketing digitale': ['#marketingdigitale', '#digitalmarketing', '#webmarketing', '#aziende'],
+  'social media': ['#socialmedia', '#socialmediamarketing', '#instagram', '#contenuti'],
+  'piccole imprese e pmi': ['#PMI', '#piccoleimprese', '#imprenditori', '#business'],
+  tecnologia: ['#tecnologia', '#innovazione', '#digitale', '#tech'],
+  'ristorazione e turismo': ['#ristorazione', '#turismo', '#ristoranti', '#hospitality'],
+}
+
+const STOPWORDS = new Set('il lo la i gli le un una uno di da del della dei delle dello degli in con su per tra fra e ed o a al alla ai alle nel nella nei sul sulla come che non piu novita news notizie the and of for'.split(' '))
+
+/**
+ * Massimo 5 hashtag (Instagram non ne accetta di piu'), sempre con #FacevoiceAI.
+ * Argomento pronto: i suoi hashtag; argomento scritto a mano: dalle sue parole;
+ * articolo senza argomento (scritto a mano nel blog): hashtag generici.
+ */
+export function hashtagsFor(topic?: string | null): string {
+  const key = topic ? plain(topic) : ''
+  let tags = TOPIC_HASHTAGS[key]
+  if (!tags && key) {
+    const words = key.split(' ').filter((w) => w.length > 2 && !STOPWORDS.has(w))
+    const phrase = words.join('')
+    tags = [...(words.length > 1 && phrase.length <= 24 ? [phrase] : []), ...words].map((w) => `#${w}`)
+    tags = [...new Set(tags)].slice(0, 3)
+    if (tags.length < 4) tags.push('#aziende')
+  }
+  if (!tags || !tags.length) tags = ['#blog', '#aziende', '#innovazione', '#business']
+  return [...tags.slice(0, 4), '#FacevoiceAI'].join(' ')
+}
+
 /** Didascalia Instagram: i link non sono cliccabili, quindi si rimanda al sito. */
-export const instagramCaption = (title: string, content: string) =>
+export const instagramCaption = (title: string, content: string, topic?: string | null) =>
   [
     title,
     teaserOf(content, 700),
     'Articolo completo sul nostro blog: facevoice.ai/blog (link in bio).',
-    // Al massimo 5 hashtag: Instagram non ne accetta di piu'.
-    '#intelligenzaartificiale #AI #innovazione #aziende #FacevoiceAI',
+    hashtagsFor(topic),
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -79,7 +117,7 @@ export type ShareOutcome = {
   errors: string[]
 }
 
-type BlogPostInput = { id?: string; title: string; content: string; slug?: string | null; image_url?: string | null }
+type BlogPostInput = { id?: string; title: string; content: string; slug?: string | null; image_url?: string | null; /** Argomento del Blog automatico: decide gli hashtag. */ topic?: string | null }
 
 /** Copertina, Facebook, Instagram e notifica per un articolo appena pubblicato. */
 export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manual'): Promise<ShareOutcome> {
@@ -123,7 +161,7 @@ export async function shareBlogPost(post: BlogPostInput, origin: 'auto' | 'manua
 
   // 3) Instagram: lo stesso carosello con la didascalia.
   if (settings.shareInstagram) {
-    const sent = carouselReady ? await publishInstagramCarousel(slides, instagramCaption(post.title, post.content)) : { error: 'carosello non pronto: non pubblico un post singolo' }
+    const sent = carouselReady ? await publishInstagramCarousel(slides, instagramCaption(post.title, post.content, post.topic)) : { error: 'carosello non pronto: non pubblico un post singolo' }
     outcome.instagram = sent.error ? 'failed' : 'posted'
     if (sent.error) outcome.errors.push(`Instagram: ${sent.error}`)
   }

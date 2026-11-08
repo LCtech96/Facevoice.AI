@@ -999,7 +999,7 @@ export async function runBlogAuto(manual: boolean, run: { slot?: string | null; 
   console.log(`blog auto (${topic}): ${result.ok ? `pubblicato "${result.title}"` : `non pubblicato (${result.reason})`}`)
   if (result.ok) {
     // Facebook, Instagram e notifica (con l'esito della condivisione): una volta per articolo.
-    const share = await shareBlogPost({ id: result.id, title: result.title, content: result.content, slug: result.slug }, 'auto')
+    const share = await shareBlogPost({ id: result.id, title: result.title, content: result.content, slug: result.slug, topic }, 'auto')
     await recordRun(slotId, {
       lastStatus: 'published',
       lastNote: null,
