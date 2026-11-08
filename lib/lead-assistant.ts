@@ -29,6 +29,7 @@ import { SITE_URL } from '@/lib/seo/site'
 import { createPostDraft, DraftConflictError, loadPostDraft, recentPostDrafts, type PostDraft } from '@/lib/social-posts'
 import { arrangeSlides, carouselOutline, editSlidesAI, isEditable } from '@/lib/carousel-edit'
 import { carouselDraftFromBlogPost } from '@/lib/blog-share'
+import { cleanCaption, listVideoPosts, loadVideoPost, parseRomeTime } from '@/lib/video-posts'
 import {
   cardFor,
   createPendingAction,
@@ -732,6 +733,8 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "create_carousel": {"brief": "cosa vuole Luca: argomento, messaggio, tono, a chi si rivolge, dettagli", "slide_count": 3, "from_draft": "opzionale", "images": ["https://…"] opzionale, "image_notes": "cosa c'è nelle immagini, opzionale", "only_my_images": false, "hook": "opzionale", "slides": [{"title": "", "text": ""}] opzionale} → CREA un carosello (Instagram e Facebook) e lo mostra a Luca in anteprima con il pulsante Pubblica: NON lo pubblica. "slide_count": numero TOTALE di immagini chiesto da Luca, copertina e slide finale comprese ("tre slide" → 3, da 2 a 10); ometti se Luca non dice un numero. "slides" sono solo le slide di contenuto, senza copertina e senza slide finale (con slide_count 3 c'è 1 sola slide di contenuto). Se Luca ha allegato immagini o screenshot (righe "[Immagini allegate da Luca…]" o "[Immagini mandate da Luca prima…]"), usale: se non passi "images" prende da solo quelle allegate a questa richiesta; la prima va in copertina, le altre una per slide, mostrate intere. Le slide senza foto di Luca ricevono un'immagine generata dall'AI (only_my_images: true per evitarlo). In "brief" metti tutto quello che Luca ha detto e quello che si vede nelle immagini: l'AI scrive gancio, slide, didascalia Instagram e testo Facebook. Ci vuole circa un minuto. Usalo SEMPRE quando Luca chiede un post, un carosello o un contenuto da pubblicare, con o senza immagini: non dire mai che non puoi. Con "from_draft": "draftId" rifà un carosello già creato con gli stessi testi, gancio, foto e numero di slide (es. un carosello di prima che non si può correggere slide per slide): gli altri campi solo se Luca chiede cambiamenti.
 - "publish_carousel": {"draftId": "...", "platforms": ["instagram", "facebook"], "caption": "opzionale"} → prepara la pubblicazione di un carosello creato prima (anche quelli del blog), solo dove non è già uscito: compare la scheda di conferma con slide e didascalia, esce solo quando Luca preme «Pubblica». Usalo SOLO se Luca dice esplicitamente di pubblicarlo/ripubblicarlo; altrimenti lascia che prema Pubblica sull'anteprima.
 - "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
+- "recent_videos": {"limit": 10} → video caricati da Luca nella Overview (Reel Instagram e video Facebook): videoId, file, caricato il, stato (bozza, programmato, in pubblicazione, pubblicato, non pubblicato), quando esce, canali, inizio della didascalia, errori. I video si caricano solo dalla Overview (pulsante «Nuovo video»): da qui non si caricano.
+- "schedule_video": {"videoId": "...", "when": "ISO con fuso orario, es. 2026-11-12T18:00:00+01:00 (ora italiana)", "caption": "opzionale: didascalia nuova completa"} → prepara la programmazione di un video già caricato (non pubblicato): compare la scheda di conferma con data, canali e didascalia, si programma solo quando Luca preme «Programma». Prima trova il video con recent_videos (es. «il video di ieri»: quello caricato ieri); se ce n'è più di uno possibile chiedi quale. Calcola "when" dalla data e ora attuali qui sotto. "caption" solo se Luca chiede di cambiarla (max 5 hashtag).
 - "show_post": {"draftId": "..."} → mostra a Luca l'anteprima di un carosello già creato con il pulsante Pubblica (per ripubblicarlo dove non è uscito).
 - "edit_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "slides": [2], "instruction": "cosa cambiare, con le parole di Luca"} → cambia SOLO le slide indicate (numeri da 1: la 1 è la copertina, l'ultima è la slide finale) di un carosello non ancora pubblicato: testi, oppure un'immagine nuova o nessuna immagine se Luca lo chiede. Le altre slide restano identiche. Poi mostra l'anteprima aggiornata. Usalo quando Luca chiede di correggere una slide (es. "nella seconda slide scrivi …").
 - "arrange_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "order": [1, 3, 2, 4]} → nuovo ordine delle slide con i numeri attuali; quelle non elencate vengono TOLTE. La copertina resta la prima; la slide finale resta l'ultima (si può solo togliere); servono almeno 2 slide. Usalo quando Luca chiede di spostare o togliere slide. Poi mostra l'anteprima aggiornata.
@@ -1607,6 +1610,56 @@ export async function runAssistant(
               slide: d.urls.length,
             })),
           }
+          break
+        }
+        case 'recent_videos': {
+          const list = (await listVideoPosts()).slice(0, Math.min(20, asNumber(args.limit) || 10))
+          const rome = (iso?: string | null) => (iso ? new Date(iso).toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : undefined)
+          result = {
+            video: list.map((v) => ({
+              videoId: v.id,
+              file: v.fileName,
+              caricato: rome(v.createdAt),
+              stato: { draft: 'bozza', scheduled: 'programmato', publishing: 'in pubblicazione', published: 'pubblicato', error: 'non pubblicato' }[v.status],
+              esce: v.status === 'scheduled' ? rome(v.scheduledAt) : undefined,
+              pubblicato: rome(v.publishedAt),
+              canali: v.platforms,
+              didascalia: v.caption.slice(0, 200),
+              errori: [v.instagram?.error, v.facebook?.error].filter(Boolean),
+            })),
+            ...(list.length ? {} : { nota: 'nessun video caricato: Luca lo carica dalla Overview con «Nuovo video»' }),
+          }
+          break
+        }
+        case 'schedule_video': {
+          if (!who.admin) {
+            result = { errore: 'chi scrive non è l’amministratore: solo l’amministratore può programmare i video' }
+            break
+          }
+          const video = await loadVideoPost(asText(args.videoId) || '')
+          if (!video) {
+            result = { errore: 'video non trovato: usa recent_videos' }
+            break
+          }
+          if (video.status === 'publishing' || video.status === 'published') {
+            result = { errore: 'questo video è già pubblicato o in pubblicazione: non si può programmare' }
+            break
+          }
+          const at = parseRomeTime(asText(args.when) || '')
+          if (!Number.isFinite(at) || at < Date.now() + 60_000) {
+            result = { errore: 'data e ora mancanti o già passate: chiedi a Luca quando farlo uscire (deve essere nel futuro)' }
+            break
+          }
+          const caption = cleanCaption(asText(args.caption)?.trim() || video.caption)
+          result = await queue(`Programmare il video ${video.fileName}`.slice(0, 150), {
+            kind: 'schedule_video',
+            videoId: video.id,
+            title: video.fileName,
+            scheduledAt: new Date(at).toISOString(),
+            caption,
+            platforms: video.platforms,
+            videoUrl: video.videoUrl,
+          })
           break
         }
         case 'show_post': {

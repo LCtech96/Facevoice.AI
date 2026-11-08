@@ -5,6 +5,7 @@ import { deliver, setOrigin } from '@/lib/meta/agent'
 import { sendFirstEmail, sendFollowupEmail } from '@/lib/lead-send'
 import { sendNewEmail, sendThreadReply } from '@/lib/gmail'
 import { DraftConflictError, loadPostDraft, publishPostDraft } from '@/lib/social-posts'
+import { VideoError, updateVideoPost } from '@/lib/video-posts'
 import { BlogBusyError, BlogScheduleError, describeSlots, saveBlogAutoSettings, startBlogNow, type BlogSchedulePatch } from '@/lib/blog-auto'
 import { listPushDevices, removePushDevice } from '@/lib/push'
 import { loadContentDirections, saveContentDirections } from '@/lib/content-directions'
@@ -41,6 +42,8 @@ export type ConfirmPayload =
   | { kind: 'social_message'; platform: 'instagram' | 'facebook'; contactId: string; name: string; text: string; lastIncomingAt: string | null }
   | { kind: 'send_emails'; drafts: DraftSnapshot[]; done?: Record<string, string> }
   | { kind: 'publish_carousel'; draftId: string; title: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
+  /** Video gia' caricato nella Overview: programmato all'ora scelta (scheduledAt ISO) con questa didascalia. */
+  | { kind: 'schedule_video'; videoId: string; title: string; scheduledAt: string; caption: string; platforms: ('instagram' | 'facebook')[]; videoUrl: string }
   /** topic: argomento scelto (senza = quello della prima uscita). */
   | { kind: 'publish_blog_now'; origin: string; topic?: string }
   /** slots: le uscite come saranno dopo la modifica (per la scheda). */
@@ -235,6 +238,18 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
         ...(p.facebook && p.platforms.includes('facebook') && p.facebook !== p.caption ? { items: [{ label: 'Testo per Facebook', text: p.facebook }] } : {}),
         images: p.base.slice(0, 4),
         confirmLabel: 'Pubblica',
+        ...extra,
+      }
+    case 'schedule_video':
+      return {
+        ...base,
+        text: p.caption,
+        lines: [
+          `Esce il ${new Date(p.scheduledAt).toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}`,
+          `Su ${p.platforms.map((x) => (x === 'instagram' ? 'Instagram (Reel)' : 'Facebook')).join(' e ')}, con la didascalia qui sopra`,
+          `Video: ${p.videoUrl}`,
+        ],
+        confirmLabel: 'Programma',
         ...extra,
       }
     case 'publish_blog_now':
@@ -512,6 +527,15 @@ async function execute(action: PendingAction, secret: { pin?: string; origin?: s
       return sendEmails(action, p)
     case 'publish_carousel':
       return publishCarousel(p)
+    case 'schedule_video': {
+      try {
+        const video = await updateVideoPost(p.videoId, { scheduledAt: p.scheduledAt, caption: p.caption })
+        return { ok: true, outcome: `programmato per il ${new Date(video.scheduledAt!).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` }
+      } catch (error) {
+        if (error instanceof VideoError) return fail(error.message, false)
+        throw error
+      }
+    }
     case 'publish_blog_now': {
       try {
         const { topic } = await startBlogNow(p.origin, p.topic)

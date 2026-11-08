@@ -23,6 +23,7 @@ import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
+import VideoPosts from './VideoPosts'
 
 // ---------------------------------------------------------------------
 // Tipi
@@ -655,6 +656,8 @@ function PostsTab({
           </>
         )}
       </p>
+
+      <VideoPosts authFetch={authFetch} />
 
       <button
         onClick={() => setShowForm(!showForm)}

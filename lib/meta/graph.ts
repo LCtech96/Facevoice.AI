@@ -306,6 +306,61 @@ export async function publishPagePhotos(imageUrls: string[], message: string): P
   return { id: result.raw?.id }
 }
 
+/** Stato di un contenuto Instagram in elaborazione (Reel): FINISHED, IN_PROGRESS, ERROR, EXPIRED, PUBLISHED. */
+export type ContainerStatus = { status: string; detail?: string; error?: string }
+
+/**
+ * Crea il contenuto di un Reel (video pubblico mp4/mov + didascalia) e restituisce subito il suo id:
+ * Instagram lo elabora per qualche minuto, poi si pubblica con publishInstagramContainer.
+ * Serve il permesso instagram_content_publish.
+ */
+export async function createInstagramReel(videoUrl: string, caption: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const igId = await getInstagramUserId(page)
+  if (!igId) return { error: 'nessun account Instagram aziendale collegato alla Pagina' }
+  const res = await post(`${GRAPH}/${igId}/media`, page.token, { media_type: 'REELS', video_url: videoUrl, caption: caption.slice(0, 2200), share_to_feed: true })
+  if (res.error || !res.raw?.id) return { error: res.error || 'Reel non accettato da Instagram' }
+  return { id: res.raw.id }
+}
+
+/** Un solo controllo (nessuna attesa): a che punto e' l'elaborazione del Reel. */
+export async function instagramContainerStatus(containerId: string): Promise<ContainerStatus> {
+  const page = await getPageToken()
+  if (!page) return { status: '', error: 'collegamento Meta non configurato' }
+  try {
+    const res = await fetch(`${GRAPH}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(page.token)}`, { signal: AbortSignal.timeout(10_000) })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { status: '', error: data?.error?.message || `HTTP ${res.status}` }
+    return { status: String(data?.status_code || ''), ...(data?.status ? { detail: String(data.status) } : {}) }
+  } catch (error) {
+    return { status: '', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Pubblica un contenuto Instagram gia' elaborato (FINISHED). */
+export async function publishInstagramContainer(containerId: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const igId = await getInstagramUserId(page)
+  if (!igId) return { error: 'nessun account Instagram aziendale collegato alla Pagina' }
+  const res = await post(`${GRAPH}/${igId}/media_publish`, page.token, { creation_id: containerId })
+  if (res.error) return { error: res.error }
+  return { id: res.raw?.id }
+}
+
+/**
+ * Video sulla Pagina Facebook da un indirizzo pubblico (Facebook lo scarica e lo elabora da solo).
+ * Serve il permesso pages_manage_posts.
+ */
+export async function publishPageVideo(videoUrl: string, description: string): Promise<SendResult> {
+  const page = await getPageToken()
+  if (!page) return { error: 'collegamento Meta non configurato' }
+  const res = await post(`https://graph-video.facebook.com/${GRAPH_VERSION}/${page.pageId}/videos`, page.token, { file_url: videoUrl, description: description.slice(0, 5000) })
+  if (res.error || !res.raw?.id) return { error: res.error || 'video non accettato da Facebook' }
+  return { id: res.raw.id }
+}
+
 /** Rifiuta dopo ms millisecondi (le chiamate a Meta non devono mai fermare una risposta). */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
