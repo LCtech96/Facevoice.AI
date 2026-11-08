@@ -224,7 +224,7 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
   )
 
   const ask = useCallback(
-    async (message: string, model?: string, images?: { data: string; thumb: string }[]) => {
+    async (message: string, model?: string, images?: { data?: string; path?: string; thumb: string }[]) => {
       const text = message.trim()
       if ((!text && !images?.length) || running) return false
       setError(null)
@@ -234,7 +234,14 @@ export function useAssistantChat(scope: 'leads' | 'super', onJobDone?: (job: Job
       setRunning(true)
       const res = await authFetch(API, {
         method: 'POST',
-        body: JSON.stringify({ scope, message: text, model, images: images?.map(({ data, thumb }) => ({ data, thumb })) }),
+        body: JSON.stringify({
+          scope,
+          message: text,
+          model,
+          // Foto gia' caricate (percorso) o, per le chat che non caricano, l'immagine intera.
+          images: images?.filter((i) => i.data && !i.path).map(({ data, thumb }) => ({ data, thumb })),
+          uploads: images?.filter((i) => i.path).map(({ path, thumb }) => ({ path, thumb })),
+        }),
       }).catch(() => null)
       const data = res ? await res.json().catch(() => ({})) : {}
       if (!res?.ok) {

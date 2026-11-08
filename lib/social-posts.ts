@@ -5,6 +5,7 @@ import { createCarousel, type CarouselSource, type Cta, type Slide } from '@/lib
 import { loadContentDirections, nextPaletteMix } from '@/lib/content-directions'
 import { publishInstagramCarousel, publishPagePhotos } from '@/lib/meta/graph'
 import { updateSetting } from '@/lib/settings-store'
+import { sendPushToAdmins } from '@/lib/push'
 
 // Caroselli creati dalla super chat (anche con le foto e gli screenshot di Luca):
 // l'AI scrive gancio, slide e didascalie dalle indicazioni di Luca, il sito crea
@@ -12,6 +13,7 @@ import { updateSetting } from '@/lib/settings-store'
 // preme "Pubblica" (o chiede esplicitamente di pubblicarlo).
 
 const PREFIX = 'content_post:'
+export type SocialPlatform = 'instagram' | 'facebook'
 
 export type PostDraft = {
   id: string
@@ -22,8 +24,16 @@ export type PostDraft = {
   facebook: string
   urls: string[]
   photos: string[]
-  status: 'draft' | 'publishing' | 'published' | 'error'
+  status: 'draft' | 'scheduled' | 'publishing' | 'published' | 'error'
   results?: { instagram?: string; facebook?: string; errors?: string[] }
+  /** Uscita programmata (ISO): il cron lo pubblica a quell'ora (status 'scheduled'). */
+  scheduledAt?: string | null
+  /** Dove pubblicarlo quando e' programmato (senza = Instagram e Facebook). */
+  platforms?: SocialPlatform[]
+  /** Creato dall'autopilota foto con "chiedi conferma": aspetta l'approvazione di Luca. */
+  needsApproval?: boolean
+  /** Da dove arriva (per l'Overview): super chat o autopilota della Libreria foto. */
+  origin?: 'chat' | 'autopilot'
   /** Dati per rifare una slide sola (testi, colori, immagini salvate). Manca nei caroselli di prima. */
   source?: CarouselSource
   createdAt: string
@@ -55,7 +65,7 @@ export const publishingNow = (draft: PostDraft) => draft.status === 'publishing'
 export const MIN_IMAGES = 2
 export const MAX_IMAGES = 10
 
-type Plan = { title: string; hook: string; label: string; slides: Slide[]; caption: string; facebook: string; cta: Cta }
+export type Plan = { title: string; hook: string; label: string; slides: Slide[]; caption: string; facebook: string; cta: Cta }
 
 const PLAN_PROMPT = (slidesRule: string) => `Sei il social media manager di Facevoice AI (agenzia digitale e software house a Terrasini, Palermo: siti, app, automazioni, chatbot e soluzioni di intelligenza artificiale per le aziende).
 Prepari un CAROSELLO per Instagram e Facebook dalle indicazioni di Luca (il titolare) e, se ci sono, dalle sue immagini (te ne do la descrizione, nell'ordine).
@@ -105,14 +115,19 @@ async function planPost(brief: string, imageNotes: string, photoCount: number, d
   )
   const json = (result.message || '').match(/\{[\s\S]*\}/)?.[0]
   if (!json) throw new Error('l’AI non ha preparato il carosello, riprova')
-  const data = JSON.parse(json)
-  const slides = (Array.isArray(data.slides) ? data.slides : [])
-    .map((s: { title?: unknown; text?: unknown }) => ({ title: trim(s.title, 70), text: trim(s.text, 230) }))
-    .filter((s: Slide) => s.title && s.text)
-    .slice(0, contentCount ?? 8)
+  const plan = planFromJson(JSON.parse(json), contentCount)
   // Con un numero chiesto da Luca le slide mancanti le gestisce chi chiama (nuovo tentativo).
-  if (!slides.length && contentCount === undefined) throw new Error('il carosello non ha slide, riprova con più indicazioni')
-  const cta = data.cta || {}
+  if (!plan.slides.length && contentCount === undefined) throw new Error('il carosello non ha slide, riprova con più indicazioni')
+  return plan
+}
+
+/** Testi del carosello scritti dall'AI (JSON gia' letto), ripuliti e accorciati. maxSlides: slide di contenuto al massimo. */
+export function planFromJson(data: Record<string, unknown>, maxSlides?: number): Plan {
+  const slides = (Array.isArray(data.slides) ? data.slides : [])
+    .map((s: { title?: unknown; text?: unknown }) => ({ title: trim(s?.title, 70), text: trim(s?.text, 230) }))
+    .filter((s: Slide) => s.title && s.text)
+    .slice(0, maxSlides ?? 8)
+  const cta = (data.cta || {}) as Record<string, unknown>
   const fallback = slides[0]?.title || trim(data.hook, 60) || trim(data.title, 120) || 'Carosello'
   return {
     title: trim(data.title, 120) || fallback,
@@ -185,6 +200,9 @@ export async function createPostDraft(input: {
   coverFromPhotos?: boolean
   /** Immagini IN TUTTO chieste da Luca (copertina e slide finale comprese), da 2 a 10; senza = decide l'AI. */
   total?: number
+  /** Testi gia' scritti (autopilota foto): nessuna chiamata in piu' all'AI. */
+  plan?: Plan
+  extra?: Pick<PostDraft, 'needsApproval' | 'origin' | 'platforms'>
 }): Promise<PostDraft & { unusedPhotos: number }> {
   if (!hasAIProvider()) throw new Error('manca una chiave AI')
   const photos = (input.photos || []).filter((u) => /^https:\/\//.test(u)).slice(0, 9)
@@ -195,9 +213,9 @@ export async function createPostDraft(input: {
   // Con piu' di una foto la prima fa da copertina; con una sola foto va in copertina.
   const coverPhoto = photos.length && input.coverFromPhotos !== false ? photos[0] : null
   const slidePhotos = coverPhoto && photos.length > 1 ? photos.slice(1) : coverPhoto ? [] : photos
-  let plan = await planPost(input.brief, input.imageNotes || '', photos.length, directions, contentCount)
+  let plan = input.plan ? { ...input.plan, slides: [...input.plan.slides] } : await planPost(input.brief, input.imageNotes || '', photos.length, directions, contentCount)
   const written = () => Math.max(plan.slides.length, input.slides?.length ?? 0)
-  if (contentCount && written() < contentCount) {
+  if (contentCount && written() < contentCount && !input.plan) {
     // L'AI ha scritto meno slide di quelle chieste: un altro tentativo, poi si completano.
     const again = await planPost(input.brief, input.imageNotes || '', photos.length, directions, contentCount).catch(() => null)
     if (again && again.slides.length > plan.slides.length) plan = again
@@ -238,6 +256,7 @@ export async function createPostDraft(input: {
     photos,
     status: 'draft',
     ...(carousel.source ? { source: carousel.source } : {}),
+    ...(input.extra || {}),
     createdAt: now,
     updatedAt: now,
   }
@@ -272,6 +291,11 @@ export async function publishPostDraft(
     if (options.facebook?.trim()) next.facebook = options.facebook.trim().slice(0, 5000)
     return next
   })
+  return sendClaimed(draft, wanted)
+}
+
+/** Manda ai social una bozza gia' prenotata (status 'publishing'), solo dove non e' gia' uscita, e salva l'esito. */
+async function sendClaimed(draft: PostDraft, wanted: readonly SocialPlatform[]): Promise<PostDraft> {
   const previous = draft.results || {}
   const platforms = wanted.filter((p) => !previous[p])
 
@@ -288,10 +312,141 @@ export async function publishPostDraft(
   }
   draft.results = results
   draft.status = results.instagram || results.facebook ? 'published' : 'error'
+  draft.needsApproval = false
   draft.updatedAt = new Date().toISOString()
   await save(draft)
   console.log(`super chat post "${draft.title}": ${draft.status}${results.errors?.length ? ` (${results.errors.join(' | ')})` : ''}`)
   return draft
+}
+
+// ---------------------------------------------------------------------
+// Caroselli programmati: escono da soli all'ora scelta (cron ogni minuto)
+// ---------------------------------------------------------------------
+
+const PLATFORM_NAME: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook' }
+/** Pubblicazione programmata partita e mai finita (funzione fermata): oltre questo tempo si segnala l'errore. */
+const SCHEDULED_STALE_MS = 15 * 60_000
+
+const cleanPlatforms = (value: unknown): SocialPlatform[] => {
+  const list = (Array.isArray(value) ? value : []).filter((p): p is SocialPlatform => p === 'instagram' || p === 'facebook')
+  return list.length ? [...new Set(list)] : ['instagram', 'facebook']
+}
+
+/**
+ * Programma (o riprogramma) un carosello: esce all'ora scelta con le slide che ci sono in
+ * quel momento. base: le slide viste da Luca sulla scheda (se intanto sono cambiate,
+ * DraftConflictError). when nel passato (fino a 1 minuto) = esce al prossimo giro del cron.
+ */
+export async function schedulePostDraft(
+  id: string,
+  input: { scheduledAt: string; platforms?: unknown; base?: string[]; caption?: string; facebook?: string; approve?: boolean }
+): Promise<PostDraft> {
+  const at = Date.parse(input.scheduledAt)
+  if (!Number.isFinite(at)) throw new DraftError('Data e ora non valide.')
+  if (at < Date.now() - 60_000 && !input.approve) throw new DraftError('Questa data è già passata: scegli un orario futuro.')
+  // Senza canali indicati restano quelli gia' scelti (es. autopilota solo Instagram).
+  const chosen = input.platforms === undefined ? null : cleanPlatforms(input.platforms)
+  const loaded = await loadPostDraft(id)
+  if (!loaded) throw new DraftError('Carosello non trovato', 404)
+  return updatePostDraft(id, input.base?.length ? input.base : loaded.urls, (current) => {
+    if (current.status === 'publishing' && publishingNow(current)) throw new DraftError('Pubblicazione già in corso.', 409)
+    const platforms = chosen || (current.platforms?.length ? current.platforms : cleanPlatforms(undefined))
+    const missing = platforms.filter((p) => !current.results?.[p])
+    if (!missing.length) throw new DraftError('Questo carosello è già pubblicato dove chiesto.', 409)
+    const next: PostDraft = { ...current, status: 'scheduled', scheduledAt: new Date(Math.max(at, Date.now() - 60_000)).toISOString(), platforms: missing, needsApproval: false }
+    if (input.caption?.trim()) next.caption = limitHashtags(input.caption.trim()).slice(0, 2200)
+    if (input.facebook?.trim()) next.facebook = input.facebook.trim().slice(0, 5000)
+    return next
+  })
+}
+
+/** Annulla la programmazione: torna bozza (si puo' ancora pubblicare a mano). */
+export async function unschedulePostDraft(id: string): Promise<PostDraft> {
+  const saved = await updateSetting<PostDraft | null>(`${PREFIX}${id}`, parseDraft, (current) => {
+    if (!current) throw new DraftError('Carosello non trovato', 404)
+    if (current.status !== 'scheduled') throw new DraftError(current.status === 'publishing' ? 'Pubblicazione già in corso.' : 'Il carosello non è programmato.', 409)
+    return { ...current, status: 'draft', scheduledAt: null, updatedAt: new Date().toISOString() }
+  })
+  if (!saved) throw new DraftError('Carosello non trovato', 404)
+  return saved
+}
+
+const isDue = (d: PostDraft, now = Date.now()) => d.status === 'scheduled' && Boolean(d.scheduledAt) && Date.parse(d.scheduledAt!) <= now
+
+/** Caroselli programmati (in attesa o in pubblicazione), dal piu' vicino; con needsApproval anche quelli da approvare. */
+export async function listScheduledDrafts(): Promise<PostDraft[]> {
+  // Filtri semplici sul testo JSON (niente tabella nuova): poi si ricontrolla lo stato vero.
+  const patterns = ['%"status":"scheduled"%', '%"status":"publishing"%', '%"needsApproval":true%']
+  const rows = await Promise.all(
+    patterns.map(async (pattern) => {
+      const { data, error } = await supabaseAdmin.from('app_settings').select('key, value').like('key', `${PREFIX}%`).like('value', pattern).limit(100)
+      if (error) throw new Error(error.message)
+      return (data || []) as { key: string; value: string }[]
+    })
+  )
+  const byKey = new Map(rows.flat().map((row) => [row.key, row.value]))
+  return [...byKey.values()]
+    .map((value) => parseDraft(value))
+    .filter((d): d is PostDraft => Boolean(d && (d.status === 'scheduled' || d.status === 'publishing' || (d.needsApproval && d.status === 'draft'))))
+    .sort((a, b) => String(a.scheduledAt || a.createdAt).localeCompare(String(b.scheduledAt || b.createdAt)))
+}
+
+/**
+ * Pubblica un carosello programmato arrivato all'ora: lo prende per se' (una sola funzione
+ * ci riesce: due cron insieme non pubblicano due volte), lo manda e avvisa Luca con l'esito.
+ * null = non era da pubblicare (gia' preso, annullato, non ancora all'ora).
+ */
+export async function publishScheduledDraft(id: string): Promise<PostDraft | null> {
+  if (!validDraftId(id)) return null
+  let mine = false
+  const claimed = await updateSetting<PostDraft | null>(`${PREFIX}${id}`, parseDraft, (current) => {
+    mine = false
+    if (!current || !isDue(current)) return false
+    mine = true
+    return { ...current, status: 'publishing', updatedAt: new Date().toISOString() }
+  })
+  if (!claimed || !mine) return null
+  const wanted = claimed.platforms?.length ? claimed.platforms : (['instagram', 'facebook'] as SocialPlatform[])
+  let done: PostDraft
+  try {
+    done = await sendClaimed({ ...claimed, caption: limitHashtags(claimed.caption) }, wanted)
+  } catch (error) {
+    // Errore prima di sapere l'esito: si segnala, non si riprova da soli (niente doppioni).
+    done = { ...claimed, status: 'error', results: { ...claimed.results, errors: [error instanceof Error ? error.message : String(error)] }, updatedAt: new Date().toISOString() }
+    await save(done).catch(() => undefined)
+  }
+  await notifyCarousel(done)
+  return done
+}
+
+export async function notifyCarousel(draft: PostDraft, prefix = 'Carosello') {
+  const wanted = draft.platforms?.length ? draft.platforms : (['instagram', 'facebook'] as SocialPlatform[])
+  const ok = wanted.filter((p) => draft.results?.[p]).map((p) => PLATFORM_NAME[p])
+  const errors = draft.results?.errors || []
+  const title = !ok.length ? `${prefix} non pubblicato` : errors.length ? `${prefix} pubblicato in parte` : `${prefix} pubblicato`
+  const body = [ok.length ? `Uscito su ${ok.join(' e ')}: «${draft.title}»` : `«${draft.title}»`, ...errors].join('\n').slice(0, 300)
+  await sendPushToAdmins({ title, body, url: '/admin/overview', tag: `carosello-${draft.id}` }).catch(() => undefined)
+}
+
+/**
+ * Cron: caroselli programmati arrivati all'ora (al massimo 3 per giro). launch avvia la
+ * pubblicazione in una funzione a parte (con piu' tempo); i caroselli rimasti "in
+ * pubblicazione" troppo a lungo diventano errore con un avviso (non si ripubblicano da soli).
+ */
+export async function scheduledDraftsTick(launch: (id: string) => Promise<unknown>): Promise<{ started: number }> {
+  const list = await listScheduledDrafts()
+  const now = Date.now()
+  for (const stale of list.filter((d) => d.status === 'publishing' && d.scheduledAt && now - Date.parse(d.updatedAt) > SCHEDULED_STALE_MS)) {
+    const marked = await updateSetting<PostDraft | null>(`${PREFIX}${stale.id}`, parseDraft, (current) => {
+      if (!current || current.status !== 'publishing' || Date.now() - Date.parse(current.updatedAt) <= SCHEDULED_STALE_MS) return false
+      const errors = [...(current.results?.errors || []), 'Pubblicazione interrotta: controlla su Instagram e Facebook se è uscito prima di riprovare.']
+      return { ...current, status: current.results?.instagram || current.results?.facebook ? 'published' : 'error', results: { ...current.results, errors }, updatedAt: new Date().toISOString() }
+    }).catch(() => null)
+    if (marked && marked.status !== 'publishing') await notifyCarousel(marked)
+  }
+  const due = list.filter((d) => isDue(d, now)).slice(0, 3)
+  for (const d of due) await launch(d.id).catch((error) => console.error(`carosello programmato ${d.id}:`, error instanceof Error ? error.message : error))
+  return { started: due.length }
 }
 
 /** Carosello gia' pubblicato (es. dal blog): salvato come bozza per poterlo ripubblicare dove non e' uscito. */

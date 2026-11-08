@@ -30,6 +30,7 @@ import { createPostDraft, DraftConflictError, loadPostDraft, recentPostDrafts, t
 import { arrangeSlides, carouselOutline, editSlidesAI, isEditable } from '@/lib/carousel-edit'
 import { carouselDraftFromBlogPost } from '@/lib/blog-share'
 import { cleanCaption, listVideoPosts, loadVideoPost, parseRomeTime } from '@/lib/video-posts'
+import { addPhotosFromUrls, applyAutopilotPatch, describeAutopilot, libraryOverview, loadAutopilotSettings, PhotoError } from '@/lib/photo-library'
 import {
   cardFor,
   createPendingAction,
@@ -735,6 +736,10 @@ Contenuti di Facevoice (blog automatico, caroselli e post su Instagram e Faceboo
 - "recent_posts": {"limit": 10} → ultimi caroselli (del blog automatico e della super chat): titolo, data, dove sono usciti, errori, draftId e anteprima. Usalo quando Luca chiede se un post è uscito, perché non si è pubblicato o di ripubblicarlo: poi mostra l'anteprima con show_post o ripubblica con publish_carousel se Luca lo chiede.
 - "recent_videos": {"limit": 10} → video caricati da Luca nella Overview (Reel Instagram e video Facebook): videoId, file, caricato il, stato (bozza, programmato, in pubblicazione, pubblicato, non pubblicato), quando esce, canali, inizio della didascalia, errori. I video si caricano solo dalla Overview (pulsante «Nuovo video»): da qui non si caricano.
 - "schedule_video": {"videoId": "...", "when": "ISO con fuso orario, es. 2026-11-12T18:00:00+01:00 (ora italiana)", "caption": "opzionale: didascalia nuova completa"} → prepara la programmazione di un video già caricato (non pubblicato): compare la scheda di conferma con data, canali e didascalia, si programma solo quando Luca preme «Programma». Prima trova il video con recent_videos (es. «il video di ieri»: quello caricato ieri); se ce n'è più di uno possibile chiedi quale. Calcola "when" dalla data e ora attuali qui sotto. "caption" solo se Luca chiede di cambiarla (max 5 hashtag).
+- "schedule_carousel": {"draftId": "...", "when": "ISO con fuso orario, es. 2026-11-12T18:00:00+01:00 (ora italiana)", "platforms": ["instagram", "facebook"], "caption": "opzionale: didascalia nuova completa"} → prepara la PROGRAMMAZIONE di un carosello già creato: compare la scheda di conferma con slide, data e didascalia; si programma solo quando Luca preme «Programma», poi esce da solo a quell'ora e arriva una notifica con l'esito. Usalo quando Luca chiede di pubblicare un carosello a una data o ora (es. «crea un carosello con queste foto … e pubblicalo domani alle 18»: prima create_carousel con le sue foto, poi schedule_carousel con il draftId appena creato). Calcola "when" dalla data e ora attuali qui sotto; se Luca dice solo il giorno chiedi l'ora (o proponi le 18:00 e dillo). "platforms" solo se Luca ne nomina uno.
+- "photo_library": {} → Libreria foto della Overview (foto caricate da Luca per l'autopilota): quante foto, quante mai usate, quante usate negli ultimi 14 giorni, impostazioni dell'autopilota foto e ultimi giri (con draftId dei caroselli creati). Usalo per «quante foto ci sono nella libreria», «com'è andato l'autopilota». Le foto si caricano dalla Overview (sezione «Libreria foto», fino a 300) oppure con add_to_photo_library.
+- "add_to_photo_library": {"images": ["https://…"] opzionale, "note": "opzionale: di cosa parlano"} → aggiunge alla Libreria foto le foto allegate da Luca in chat (senza "images" prende quelle allegate a questa richiesta). Usalo SOLO se Luca chiede di aggiungerle o salvarle nella libreria.
+- "update_photo_autopilot": {"enabled": true, "days": [1, 3, 5], "times": ["18:00"], "minPhotos": 3, "maxPhotos": 6, "topic": "argomento e tono", "platforms": ["instagram", "facebook"], "confirm": false} → prepara la modifica dell'autopilota foto (ogni giorno scelto, alle ore scelte, l'AI prende alcune foto della libreria, scrive i testi e pubblica un carosello da sola): compare la scheda di conferma, cambia solo con «Conferma». Metti solo i campi da cambiare. days: 0 = domenica … 6 = sabato; times: ore italiane "HH:MM", una per post (da 1 a 3 al giorno, almeno 60 minuti tra due); minPhotos/maxPhotos: foto per carosello, da 2 a 9 (più la slide finale); confirm: true = ogni carosello aspetta l'approvazione di Luca (notifica), false = esce da solo. Es. «attiva l'autopilota foto alle 18 sull'argomento X» → {"enabled": true, "times": ["18:00"], "topic": "X"}.
 - "show_post": {"draftId": "..."} → mostra a Luca l'anteprima di un carosello già creato con il pulsante Pubblica (per ripubblicarlo dove non è uscito).
 - "edit_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "slides": [2], "instruction": "cosa cambiare, con le parole di Luca"} → cambia SOLO le slide indicate (numeri da 1: la 1 è la copertina, l'ultima è la slide finale) di un carosello non ancora pubblicato: testi, oppure un'immagine nuova o nessuna immagine se Luca lo chiede. Le altre slide restano identiche. Poi mostra l'anteprima aggiornata. Usalo quando Luca chiede di correggere una slide (es. "nella seconda slide scrivi …").
 - "arrange_carousel": {"draftId": "opzionale, senza = l'ultimo carosello", "order": [1, 3, 2, 4]} → nuovo ordine delle slide con i numeri attuali; quelle non elencate vengono TOLTE. La copertina resta la prima; la slide finale resta l'ultima (si può solo togliere); servono almeno 2 slide. Usalo quando Luca chiede di spostare o togliere slide. Poi mostra l'anteprima aggiornata.
@@ -1604,6 +1609,8 @@ export async function runAssistant(
               titolo: d.title,
               creato: d.createdAt,
               stato: d.status,
+              ...(d.status === 'scheduled' && d.scheduledAt ? { esce: new Date(d.scheduledAt).toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) } : {}),
+              ...(d.needsApproval ? { da_approvare: true } : {}),
               instagram: d.results?.instagram ? 'pubblicato' : 'non pubblicato',
               facebook: d.results?.facebook ? 'pubblicato' : 'non pubblicato',
               errori: d.results?.errors?.length ? d.results.errors : undefined,
@@ -1660,6 +1667,89 @@ export async function runAssistant(
             platforms: video.platforms,
             videoUrl: video.videoUrl,
           })
+          break
+        }
+        case 'schedule_carousel': {
+          if (!who.admin) {
+            result = { errore: ONLY_ADMIN }
+            break
+          }
+          const draft = await loadPostDraft(asText(args.draftId) || '')
+          if (!draft) {
+            result = { errore: 'carosello non trovato: crea prima il carosello con create_carousel (o trovalo con recent_posts)' }
+            break
+          }
+          if (draft.status === 'publishing') {
+            result = { errore: 'questo carosello è in pubblicazione proprio ora' }
+            break
+          }
+          const at = parseRomeTime(asText(args.when) || '')
+          if (!Number.isFinite(at) || at < Date.now() + 60_000) {
+            result = { errore: 'data e ora mancanti o già passate: chiedi a Luca quando farlo uscire (deve essere nel futuro)' }
+            break
+          }
+          const wanted = (Array.isArray(args.platforms) ? args.platforms : ['instagram', 'facebook']).filter((p): p is 'instagram' | 'facebook' => p === 'instagram' || p === 'facebook')
+          const platforms = (wanted.length ? wanted : (['instagram', 'facebook'] as const)).filter((p) => !draft.results?.[p])
+          if (!platforms.length) {
+            result = { errore: 'questo carosello è già pubblicato dove chiesto: niente da programmare' }
+            break
+          }
+          const caption = asText(args.caption)?.trim() ? cleanCaption(asText(args.caption)) : draft.caption
+          result = await queue(`Programmare «${draft.title}»`.slice(0, 150), {
+            kind: 'schedule_carousel',
+            draftId: draft.id,
+            title: draft.title,
+            scheduledAt: new Date(at).toISOString(),
+            platforms: [...platforms],
+            base: draft.urls,
+            caption,
+            ...(draft.facebook ? { facebook: draft.facebook } : {}),
+          })
+          break
+        }
+        case 'photo_library': {
+          result = await libraryOverview()
+          break
+        }
+        case 'add_to_photo_library': {
+          if (!who.admin) {
+            result = { errore: 'chi scrive non è l’amministratore: solo l’amministratore può cambiare la libreria foto' }
+            break
+          }
+          const given = Array.isArray(args.images) ? args.images.filter((u): u is string => typeof u === 'string' && u.startsWith('https://')) : []
+          const urls = given.length ? given : attachedImages
+          if (!urls.length) {
+            result = { errore: 'nessuna foto allegata: chiedi a Luca di allegarle a questo messaggio (o di caricarle dalla Overview, sezione Libreria foto)' }
+            break
+          }
+          try {
+            reportStatus('Aggiungo le foto alla libreria…')
+            const added = await addPhotosFromUrls(urls, asText(args.note) || '')
+            result = { aggiunte: added.photos.length, ...(added.errors.length ? { errori: added.errors } : {}), nota: 'le foto sono nella Libreria foto della Overview: l’autopilota le può usare' }
+          } catch (error) {
+            result = { errore: error instanceof PhotoError ? error.message : 'foto non aggiunte, riprova' }
+          }
+          break
+        }
+        case 'update_photo_autopilot': {
+          if (!who.admin) {
+            result = { errore: 'chi scrive non è l’amministratore: solo l’amministratore può cambiare l’autopilota foto' }
+            break
+          }
+          const allowed = ['enabled', 'days', 'times', 'minPhotos', 'maxPhotos', 'topic', 'platforms', 'confirm'] as const
+          const patch: Record<string, unknown> = {}
+          for (const k of allowed) if (args[k] !== undefined) patch[k] = args[k]
+          if (typeof patch.times === 'string') patch.times = [patch.times]
+          if (!Object.keys(patch).length) {
+            result = { errore: 'niente da cambiare: chiedi a Luca cosa vuole cambiare' }
+            break
+          }
+          try {
+            const after = applyAutopilotPatch(await loadAutopilotSettings(), patch)
+            result = await queue('Cambiare l’autopilota foto', { kind: 'photo_autopilot', patch, lines: describeAutopilot(after) })
+          } catch (error) {
+            result = { errore: error instanceof PhotoError ? error.message : 'modifica non valida' }
+          }
           break
         }
         case 'show_post': {

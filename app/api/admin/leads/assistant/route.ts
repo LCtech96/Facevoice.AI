@@ -23,6 +23,7 @@ import {
 import { internalKey, requestRound, resumeOrClose } from '@/lib/assistant-launch'
 import { parseBudget } from '@/lib/assistant-budget'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { cleanChatUploads } from '@/lib/chat-uploads'
 
 export const dynamic = 'force-dynamic'
 // Il lavoro continua dopo la risposta (after): serve il tempo massimo.
@@ -111,7 +112,11 @@ export async function POST(req: NextRequest) {
 
   const images = cleanImages(body?.images)
   if ('error' in images) return NextResponse.json({ error: images.error }, { status: 400 })
-  const text = String(body?.message || '').trim().slice(0, 2000) || (images.list.length ? 'Guarda le immagini allegate.' : '')
+  // Foto gia' caricate dal browser nello spazio delle immagini (fino a 10): qui solo percorso e anteprima.
+  const uploads = cleanChatUploads(body?.uploads)
+  if ('error' in uploads) return NextResponse.json({ error: uploads.error }, { status: 400 })
+  const attachedCount = images.list.length + uploads.list.length
+  const text = String(body?.message || '').trim().slice(0, 2000) || (attachedCount ? 'Guarda le immagini allegate.' : '')
   if (!text) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
 
   const current = await recoverStaleJob(scope, await loadState(scope))
@@ -154,7 +159,9 @@ export async function POST(req: NextRequest) {
       id: newId(),
       role: 'user',
       text,
-      ...(images.list.length ? { images: images.list.map((img) => img.thumb), imageKeys } : {}),
+      ...(attachedCount ? { images: [...images.list.map((img) => img.thumb), ...uploads.list.map((u) => u.thumb)] } : {}),
+      ...(images.list.length ? { imageKeys } : {}),
+      ...(uploads.list.length ? { imagePaths: uploads.list.map((u) => u.path) } : {}),
     })
     s.job = {
       id: jobId,

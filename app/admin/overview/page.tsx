@@ -18,12 +18,14 @@ import {
   Link2,
   Mail,
   RefreshCw,
+  Images,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import VideoPosts from './VideoPosts'
+import PhotoLibrary from './PhotoLibrary'
 
 // ---------------------------------------------------------------------
 // Tipi
@@ -245,6 +247,12 @@ export default function AdminOverviewPage() {
             <Calendar className="w-4 h-4" /> Post programmati
           </h2>
           <PostsTab posts={posts} channels={channels} authFetch={authFetch} onChange={setPosts} />
+        </section>
+        <section className="mt-10 pt-6 border-t border-[var(--border-color)]">
+          <h2 className="flex items-center gap-2 mb-3 text-lg font-semibold text-[var(--text-primary)]">
+            <Images className="w-4 h-4" /> Libreria foto
+          </h2>
+          <PhotoLibrary authFetch={authFetch} />
         </section>
         </fieldset>
       </div>

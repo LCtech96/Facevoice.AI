@@ -4,7 +4,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deliver, setOrigin } from '@/lib/meta/agent'
 import { sendFirstEmail, sendFollowupEmail } from '@/lib/lead-send'
 import { sendNewEmail, sendThreadReply } from '@/lib/gmail'
-import { DraftConflictError, loadPostDraft, publishPostDraft } from '@/lib/social-posts'
+import { DraftConflictError, DraftError, loadPostDraft, publishPostDraft, schedulePostDraft } from '@/lib/social-posts'
+import { PhotoError, describeAutopilot, saveAutopilotSettings } from '@/lib/photo-library'
 import { VideoError, updateVideoPost } from '@/lib/video-posts'
 import { BlogBusyError, BlogScheduleError, describeSlots, saveBlogAutoSettings, startBlogNow, type BlogSchedulePatch } from '@/lib/blog-auto'
 import { listPushDevices, removePushDevice } from '@/lib/push'
@@ -44,6 +45,10 @@ export type ConfirmPayload =
   | { kind: 'publish_carousel'; draftId: string; title: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
   /** Video gia' caricato nella Overview: programmato all'ora scelta (scheduledAt ISO) con questa didascalia. */
   | { kind: 'schedule_video'; videoId: string; title: string; scheduledAt: string; caption: string; platforms: ('instagram' | 'facebook')[]; videoUrl: string }
+  /** Carosello gia' creato: esce da solo all'ora scelta (scheduledAt ISO), con le slide della scheda (base). */
+  | { kind: 'schedule_carousel'; draftId: string; title: string; scheduledAt: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
+  /** Modifica dell'autopilota foto (solo i campi da cambiare); lines: come sara' dopo (per la scheda). */
+  | { kind: 'photo_autopilot'; patch: Record<string, unknown>; lines: string[] }
   /** topic: argomento scelto (senza = quello della prima uscita). */
   | { kind: 'publish_blog_now'; origin: string; topic?: string }
   /** slots: le uscite come saranno dopo la modifica (per la scheda). */
@@ -252,6 +257,22 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
         confirmLabel: 'Programma',
         ...extra,
       }
+    case 'schedule_carousel':
+      return {
+        ...base,
+        text: p.caption,
+        lines: [
+          `Esce il ${new Date(p.scheduledAt).toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}`,
+          `Su ${p.platforms.map((x) => (x === 'instagram' ? 'Instagram' : 'Facebook')).join(' e ')}, ${p.base.length} slide, con la didascalia qui sopra`,
+          'Esce da solo a quell’ora: arriva una notifica con l’esito.',
+        ],
+        ...(p.facebook && p.platforms.includes('facebook') && p.facebook !== p.caption ? { items: [{ label: 'Testo per Facebook', text: p.facebook }] } : {}),
+        images: p.base.slice(0, 4),
+        confirmLabel: 'Programma',
+        ...extra,
+      }
+    case 'photo_autopilot':
+      return { ...base, lines: p.lines, confirmLabel: 'Conferma', ...extra }
     case 'publish_blog_now':
       return {
         ...base,
@@ -533,6 +554,26 @@ async function execute(action: PendingAction, secret: { pin?: string; origin?: s
         return { ok: true, outcome: `programmato per il ${new Date(video.scheduledAt!).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` }
       } catch (error) {
         if (error instanceof VideoError) return fail(error.message, false)
+        throw error
+      }
+    }
+    case 'schedule_carousel': {
+      if (!(await loadPostDraft(p.draftId))) return fail('carosello non trovato', false)
+      try {
+        const draft = await schedulePostDraft(p.draftId, { scheduledAt: p.scheduledAt, platforms: p.platforms, base: p.base, caption: p.caption, facebook: p.facebook })
+        return { ok: true, outcome: `programmato per il ${new Date(draft.scheduledAt!).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` }
+      } catch (error) {
+        if (error instanceof DraftConflictError) return fail('il carosello è cambiato dopo la richiesta: chiedimi di nuovo di programmarlo, così vedi la versione giusta', false)
+        if (error instanceof DraftError) return fail(error.message, false)
+        throw error
+      }
+    }
+    case 'photo_autopilot': {
+      try {
+        const saved = await saveAutopilotSettings(p.patch)
+        return { ok: true, outcome: describeAutopilot(saved).join(' · ') }
+      } catch (error) {
+        if (error instanceof PhotoError) return fail(`${error.message} Chiedimi di nuovo la modifica.`, false)
         throw error
       }
     }

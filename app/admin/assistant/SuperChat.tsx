@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Coins, ImagePlus, Loader2, Mic, Plus, Sparkles, X } from 'lucide-react'
-import { prepareImage, type PreparedImage } from '@/lib/client-image'
+import { prepareUploadPhoto, uploadToSignedUrl, type UploadPhoto } from '@/lib/client-image'
 import { authFetch, useAssistantChat, type Job, type SocialAction, type Usage } from '@/components/useAssistantChat'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import { useDictation } from '@/components/useDictation'
@@ -28,7 +28,10 @@ import { fmtCost, fmtTokens, usageLine } from './format'
 // (contratti, preventivi, lettere) si aprono in PDF con un tocco.
 
 const MODEL_KEY = 'fv_superchat_model'
-const MAX_IMAGES = 4
+const MAX_IMAGES = 10
+
+/** Foto allegata al prossimo messaggio: caricata subito nello spazio delle immagini (path quando ha finito). */
+type Attached = { id: string; thumb: string; path?: string; uploading?: boolean }
 
 const EXAMPLES = [
   'Quali aziende della lista hanno Instagram e quanti follower hanno?',
@@ -37,6 +40,7 @@ const EXAMPLES = [
   'Prepara le controrisposte a chi ha risposto alle email',
   'Trovami 20 ristoranti a Palermo e preparagli la prima email',
   'Crea un carosello di 3 slide con questa foto e una call to action finale',
+  'Crea un carosello con queste foto, testi sul nostro ultimo progetto, e pubblicalo domani alle 18',
   'Sviluppami il contratto per il lavoro di cui ho parlato con Giusy su Instagram',
 ]
 
@@ -63,7 +67,8 @@ export default function SuperChat() {
   const [choice, setChoice] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
   // Immagini allegate al prossimo messaggio (scelte o incollate).
-  const [images, setImages] = useState<PreparedImage[]>([])
+  const [images, setImages] = useState<Attached[]>([])
+  const [dragging, setDragging] = useState(false)
   const [imageError, setImageError] = useState<string | null>(null)
   const [chatError, setChatError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -175,32 +180,66 @@ export default function SuperChat() {
   }, [setDrafts, appendTurn])
   sendAllRef.current = sendAll
 
-  const addImages = async (files: Blob[]) => {
-    const list = files.filter((f) => f.type.startsWith('image/'))
+  const addImages = async (files: File[]) => {
+    const list = files.filter((f) => f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name))
     if (!list.length) return
     setImageError(null)
     const room = MAX_IMAGES - images.length
-    if (room <= 0) return setImageError(`Al massimo ${MAX_IMAGES} immagini per messaggio.`)
-    const ready: PreparedImage[] = []
+    if (room <= 0) return setImageError(`Al massimo ${MAX_IMAGES} foto per messaggio.`)
+    // Ridotte nel browser (lato lungo max 2048 px, JPEG), poi caricate direttamente: Vercel non accetta richieste grandi.
+    const ready: UploadPhoto[] = []
     for (const file of list.slice(0, room)) {
       try {
-        ready.push(await prepareImage(file))
-      } catch {
-        setImageError('Questa immagine non si apre: prova con uno screenshot o una foto JPG/PNG.')
+        ready.push(await prepareUploadPhoto(file))
+      } catch (e) {
+        setImageError(e instanceof Error ? e.message : 'Questa immagine non si apre: prova con una foto JPG o PNG.')
       }
     }
-    setImages((current) => [...current, ...ready].slice(0, MAX_IMAGES))
-    if (list.length > room) setImageError(`Al massimo ${MAX_IMAGES} immagini per messaggio.`)
+    if (list.length > room) setImageError(`Al massimo ${MAX_IMAGES} foto per messaggio.`)
+    if (!ready.length) return
+    setImages((current) => [...current, ...ready.map((p) => ({ id: p.id, thumb: p.thumb, uploading: true }))].slice(0, MAX_IMAGES))
+    const drop = (ids: string[], message: string) => {
+      setImages((current) => current.filter((x) => !ids.includes(x.id)))
+      setImageError(message)
+    }
+    try {
+      const res = await authFetch('/api/admin/leads/assistant/upload', { method: 'POST', body: JSON.stringify({ scope: 'super', count: ready.length }) })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !Array.isArray(data.uploads)) throw new Error(data.error || 'Caricamento non disponibile, riprova.')
+      await Promise.all(
+        ready.map(async (photo, i) => {
+          const slot = data.uploads[i] as { path: string; signedUrl: string }
+          try {
+            await uploadToSignedUrl(slot.signedUrl, photo.blob, photo.name)
+            setImages((current) => current.map((x) => (x.id === photo.id ? { ...x, path: slot.path, uploading: false } : x)))
+          } catch {
+            drop([photo.id], 'Una foto non si è caricata: riprova.')
+          }
+        })
+      )
+    } catch (e) {
+      drop(
+        ready.map((p) => p.id),
+        e instanceof Error ? e.message : 'Caricamento non riuscito, riprova.'
+      )
+    }
   }
+
+  const uploading = images.some((img) => img.uploading)
 
   const ask = async (message: string) => {
     if ((!message.trim() && !images.length) || busy) return
+    if (uploading) return setImageError('Aspetta che le foto finiscano di caricarsi.')
     if (dictation.listening) dictation.stop()
     setChatError(null)
-    const attached = images
+    const attached = images.filter((img) => img.path)
     setInput('')
     setImages([])
-    const ok = await askServer(message, model, attached)
+    const ok = await askServer(
+      message,
+      model,
+      attached.map((img) => ({ path: img.path, thumb: img.thumb }))
+    )
     // Invio non riuscito: le immagini tornano nel campo, cosi' non vanno perse.
     if (!ok && attached.length) setImages(attached)
   }
@@ -494,7 +533,8 @@ export default function SuperChat() {
                 {images.map((img) => (
                   <div key={img.id} className="relative shrink-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={img.thumb} alt="Anteprima" className="h-16 w-16 rounded-lg object-cover" />
+                    <img src={img.thumb} alt="Anteprima" className={`h-16 w-16 rounded-lg object-cover ${img.uploading ? 'opacity-50' : ''}`} />
+                    {img.uploading && <Loader2 className="absolute left-5 top-5 h-6 w-6 animate-spin text-white drop-shadow" />}
                     <button
                       type="button"
                       onClick={() => setImages((list) => list.filter((x) => x.id !== img.id))}
@@ -539,11 +579,28 @@ export default function SuperChat() {
             {dictation.error && <p className="mb-1.5 px-1 text-xs text-[#FF3B30]">{dictation.error}</p>}
             {imageError && <p className="mb-1.5 px-1 text-xs text-[#FF3B30]">{imageError}</p>}
             {dictation.listening && <p className="mb-1.5 px-1 text-xs text-[var(--text-secondary)]">Ti ascolto… parla, poi tocca il microfono rosso per fermare e invia.</p>}
-            <div className="flex items-end gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-2">
+            <div
+              onDragOver={(e) => {
+                if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
+                  e.preventDefault()
+                  setDragging(true)
+                }
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                const files = Array.from(e.dataTransfer?.files || [])
+                setDragging(false)
+                if (files.length) {
+                  e.preventDefault()
+                  addImages(files)
+                }
+              }}
+              className={`flex items-end gap-2 rounded-2xl border bg-[var(--background-secondary)] p-2 ${dragging ? 'border-[var(--accent-blue)] ring-2 ring-[var(--accent-blue)]/40' : 'border-[var(--border-color)]'}`}
+            >
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,.heic,.heif"
                 multiple
                 className="hidden"
                 onChange={(e) => {
@@ -555,8 +612,8 @@ export default function SuperChat() {
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={images.length >= MAX_IMAGES}
-                aria-label="Allega un'immagine"
-                title="Allega un'immagine (puoi anche incollarla)"
+                aria-label="Allega foto"
+                title="Allega fino a 10 foto (puoi anche incollarle o trascinarle qui)"
                 className="p-2 text-[var(--text-secondary)] disabled:opacity-40"
               >
                 <ImagePlus className="h-5 w-5" />
@@ -598,7 +655,7 @@ export default function SuperChat() {
               <button
                 type="button"
                 onClick={() => ask(input)}
-                disabled={busy || (!input.trim() && !images.length)}
+                disabled={busy || uploading || (!input.trim() && !images.length)}
                 aria-label="Invia"
                 className="rounded-full bg-[var(--accent-blue)] p-2.5 text-white disabled:opacity-40"
               >

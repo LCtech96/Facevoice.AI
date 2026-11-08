@@ -733,3 +733,31 @@ export async function describeMedia(media: ImageInput[]): Promise<string> {
     return ''
   })
 }
+
+/**
+ * Immagini lette con istruzioni proprie (es. descrizione delle foto della Libreria foto):
+ * Stesso ordine dei fornitori di readImages (con riserva se il primo fallisce). Testo vuoto se nessuno risponde.
+ */
+export async function describeImagesWith(images: ImageInput[], prompt: string, feature: string, maxOutputTokens = 2000): Promise<string> {
+  if (!images.length) return ''
+  const pref = preferredModel()
+  const claudeReady = Boolean(getAnthropicApiKey()) && pref !== 'gemini'
+  const viaClaude = () =>
+    claudeText(pref.startsWith('claude') ? pref : CLAUDE_FALLBACK_MODEL, {
+      feature,
+      messages: [{ role: 'user', content: [...imageBlocks(images), { type: 'text', text: prompt }] }],
+      maxOutputTokens,
+    })
+  if (pref.startsWith('claude') && claudeReady) return viaClaude()
+  if (geminiUsable()) {
+    try {
+      const result = await tryGemini([{ role: 'user', content: prompt, attachments: images }], undefined, { temperature: 0.2, maxOutputTokens, feature })
+      if (result.message.trim()) return result.message.trim()
+    } catch (error) {
+      noteGeminiFailure(error)
+      if (!claudeReady) throw error
+    }
+  }
+  if (!claudeReady) throw new Error('Nessun modello disponibile per leggere le immagini')
+  return viaClaude()
+}

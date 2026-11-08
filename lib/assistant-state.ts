@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runAssistant, type Draft, type SocialAction } from '@/lib/lead-assistant'
 import { overBudget, type Budget } from '@/lib/assistant-budget'
 import sharp from 'sharp'
+import { loadChatUploads } from '@/lib/chat-uploads'
 
 // Conversazioni dell'assistente salvate sul server (una per pagina: "leads" e
 // "super"). Ogni richiesta diventa un lavoro che prosegue anche se la pagina
@@ -28,6 +29,8 @@ export type Turn = {
   imageText?: string
   /** Le stesse immagini salvate come file pubblici: usabili nei post e nei caroselli. */
   imageUrls?: string[]
+  /** Foto caricate dal browser direttamente nello spazio delle immagini (in attesa di essere lette). */
+  imagePaths?: string[]
 }
 
 export type Job = {
@@ -213,20 +216,27 @@ async function withImages(scope: Scope, jobId: string, start: AssistantState, me
   if (!turn) return message
   const earlier = userTurns.slice(-6, -1).flatMap((t) => t.imageUrls || [])
   const join = (note: string) => (note ? `${message}\n\n${note}` : message)
-  if (turn.imageText || !turn.imageKeys?.length) return join(imageNote(turn.imageText, turn.imageUrls, earlier))
+  const keyList = turn.imageKeys || []
+  const pathList = turn.imagePaths || []
+  if (turn.imageText || (!keyList.length && !pathList.length)) return join(imageNote(turn.imageText, turn.imageUrls, earlier))
 
-  reportStatus(turn.imageKeys.length > 1 ? 'Guardo le immagini…' : 'Guardo l’immagine…')
-  const keys = turn.imageKeys.map((k) => `${IMAGE_PREFIX}${k}`)
-  const { data } = await supabaseAdmin.from('app_settings').select('key, value').in('key', keys)
-  const images: ImageInput[] = keys
+  const count = keyList.length + pathList.length
+  reportStatus(count > 1 ? 'Guardo le immagini…' : 'Guardo l’immagine…')
+  const keys = keyList.map((k) => `${IMAGE_PREFIX}${k}`)
+  const { data } = keys.length ? await supabaseAdmin.from('app_settings').select('key, value').in('key', keys) : { data: [] as { key: string; value: string }[] }
+  const inline: ImageInput[] = keys
     .map((key) => (data || []).find((row) => row.key === key)?.value?.match(/^data:([^;]+);base64,(.+)$/))
     .filter((m): m is RegExpMatchArray => Boolean(m))
     .map((m) => ({ mimeType: m[1], data: m[2] }))
+  // Foto caricate dal browser: gia' pubbliche (si usano le originali), all'AI vanno ridotte.
+  const uploaded = pathList.length ? await loadChatUploads(pathList) : { urls: [] as string[], images: [] as ImageInput[] }
+  const images = [...inline, ...uploaded.images]
   let text = ''
-  const [read, urls] = await Promise.all([
+  const [read, storedUrls] = await Promise.all([
     readImages(images, turn.text).catch((error) => `(non sono riuscito a leggere le immagini: ${error instanceof Error ? error.message : 'errore'})`),
-    Promise.all(images.map(storeChatImage)).then((list) => list.filter((u): u is string => Boolean(u))),
+    Promise.all(inline.map(storeChatImage)).then((list) => list.filter((u): u is string => Boolean(u))),
   ])
+  const urls = [...storedUrls, ...uploaded.urls]
   text = read
   const note = imageNote(text.slice(0, 8000), urls, earlier)
   await updateState(scope, (s) => {
@@ -235,10 +245,11 @@ async function withImages(scope: Scope, jobId: string, start: AssistantState, me
     t.imageText = text.slice(0, 8000)
     if (urls.length) t.imageUrls = urls
     delete t.imageKeys
+    delete t.imagePaths
     // I giri successivi ripartono da job.original: deve contenere anche le immagini lette.
     if (s.job?.id === jobId) s.job.original = `${s.job.original}\n\n${note}`
   }).catch(() => undefined)
-  await supabaseAdmin.from('app_settings').delete().in('key', keys)
+  if (keys.length) await supabaseAdmin.from('app_settings').delete().in('key', keys)
   return join(note)
 }
 

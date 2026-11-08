@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Bell, CalendarClock, Check, ChevronDown, Copy, Facebook, FilePenLine, FileText, Instagram, KeyRound, Loader2, Mail, Newspaper, Send, Settings2, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Bell, CalendarClock, Check, ChevronDown, Copy, Facebook, FilePenLine, FileText, Images, Instagram, KeyRound, Loader2, Mail, Newspaper, Send, Settings2, ShieldCheck, Trash2, X } from 'lucide-react'
 import { authFetch, type ConfirmAction } from '@/components/useAssistantChat'
 import { PIN_PATTERN } from '@/lib/contract-text'
 import { useSyncedText } from './useSyncedText'
@@ -23,6 +23,7 @@ const DONE_LABEL: Record<string, string> = {
   share_contract: 'Fatto',
   publish_carousel: 'Pubblicato',
   schedule_video: 'Programmato',
+  schedule_carousel: 'Programmato',
   publish_blog_now: 'Avviato',
 }
 
@@ -32,7 +33,8 @@ function iconFor(action: ConfirmAction) {
   if (action.action === 'send_document') return FileText
   if (action.action === 'share_contract') return FilePenLine
   if (action.action === 'publish_carousel') return Send
-  if (action.action === 'schedule_video') return CalendarClock
+  if (action.action === 'schedule_video' || action.action === 'schedule_carousel') return CalendarClock
+  if (action.action === 'photo_autopilot') return Images
   if (action.action === 'publish_blog_now') return Newspaper
   if (action.action === 'remove_push_devices') return Bell
   if (action.action === 'clear_content_directions') return Trash2
