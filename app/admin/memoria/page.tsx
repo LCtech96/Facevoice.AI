@@ -6,6 +6,7 @@ import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import MemoryTab, { type KnowledgeItem } from './MemoryTab'
 import AIContextPanel from './AIContextPanel'
+import CorrectionsPanel from './CorrectionsPanel'
 
 // Memoria AI: cosa sa l'assistente (voci di memoria) e le regole per ogni lavoro.
 // Si apre dal menu in alto; prima era una scheda di "Canali e AI".
@@ -54,6 +55,12 @@ export default function MemoryPage() {
             <fieldset disabled={readOnly} className="contents">
               <MemoryTab items={items} authFetch={authFetch} onChange={setItems} />
             </fieldset>
+            {/* Correzioni delle risposte (da «Correggi» in Messaggi): si possono copiare tra le voci qui sopra. */}
+            <CorrectionsPanel
+              authFetch={authFetch}
+              readOnly={readOnly}
+              onPromoted={(item) => setItems((list) => [item as KnowledgeItem, ...(list || [])])}
+            />
             {/* Fuori dal fieldset: in sola consultazione i blocchi devono comunque aprirsi. */}
             <AIContextPanel authFetch={authFetch} readOnly={readOnly} />
           </>

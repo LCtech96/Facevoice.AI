@@ -6,6 +6,7 @@ import { CLARITY_RULES, parseSuspicious } from '@/lib/clarity-rules'
 import { callAI, hasAIProvider } from '@/lib/ai'
 import { buildRealtimeDateTimeInstructionsItalian } from '@/lib/current-datetime'
 import { loadKnowledge } from '@/lib/meta/agent'
+import { replyGuidance } from '@/lib/corrections'
 import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { sendPushToAdmins } from '@/lib/push'
@@ -225,9 +226,13 @@ export async function handleSiteMessage(
       }))
     : [...clientHistory.slice(-HISTORY_LIMIT), { role: 'user', content: text }]
 
-  const knowledge = await loadKnowledge().catch(() => '')
+  const [knowledge, corrections] = await Promise.all([
+    loadKnowledge().catch(() => ''),
+    // Correzioni del team (Memoria AI): niente esempi durante una verifica dell'identita'.
+    replyGuidance({ platform: WEB_PLATFORM, incoming: text, recent: history.slice(-4).map((m) => m.content), examples: !identity?.hold }),
+  ])
   // Prima le istruzioni uguali per tutti i visitatori (si rileggono dalla cache), poi quelle
-  // di questo visitatore e di questo momento (nome, lingua, data e ora, verifica).
+  // di questo visitatore e di questo momento (nome, lingua, correzioni, data e ora, verifica).
   const system = [
     await sectionText(SITE_PROMPT),
     knowledge ? `\n\n## Informazioni ufficiali\n${knowledge}` : '',
@@ -238,6 +243,7 @@ export async function handleSiteMessage(
     language !== 'it'
       ? `\n\n## Lingua\nIl visitatore ha scelto la lingua ${LANGUAGE_NAMES[language]} sul sito: rispondi SEMPRE e SOLO in ${LANGUAGE_NAMES[language]}, anche se scrive in un'altra lingua. Traduci anche la frase di chiusura per l'operatore. Il tag ${HANDOFF_TAG} resta identico.`
       : '',
+    corrections ? `\n\n${corrections}` : '',
     `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     identityPrompt(identity, WEB_PLATFORM),
   ].join('')

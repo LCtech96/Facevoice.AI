@@ -21,6 +21,8 @@ import {
   Globe,
   Trash2,
   Sparkles,
+  PencilLine,
+  Loader2,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
@@ -76,6 +78,58 @@ const PLATFORM: Record<Platform, { label: string; icon: typeof Instagram; color:
   instagram: { label: 'Instagram', icon: Instagram, color: '#E1306C' },
   email: { label: 'Email', icon: Mail, color: '#EA4335' },
   web: { label: 'Chat sito', icon: Globe, color: '#FF6A1A' },
+}
+
+/** Risposte dell'AI che si possono correggere: bozze da approvare, o inviate dall'AI (da sola o approvate cosi' com'erano). */
+const correctable = (m: Message) =>
+  m.direction === 'out' && (m.status === 'pending' || (m.status === 'sent' && (m.origin === 'ai_auto' || m.origin === 'ai_approved')))
+
+/** Messaggi della persona a cui rispondeva la nostra risposta (gli ultimi di fila prima di lei, stesso canale). */
+function answeredTexts(messages: Message[], reply: Message): string {
+  const index = messages.findIndex((m) => m.id === reply.id)
+  const picked: string[] = []
+  for (let i = index - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.platform !== reply.platform) continue
+    if (m.direction === 'out') {
+      if (m.status === 'rejected' || m.status === 'pending') continue
+      if (picked.length) break
+      continue
+    }
+    if (reply.kind === 'comment' ? m.kind !== 'comment' : m.kind !== 'message') continue
+    picked.push(m.body)
+    if (picked.length >= 3 || reply.kind === 'comment') break
+  }
+  return picked.reverse().join('\n')
+}
+
+type CorrectionResult = {
+  rule: { rule: string; count?: number } | null
+  learned: boolean
+  how?: 'new' | 'merged' | 'replaced' | 'updated' | null
+  strong?: boolean
+  regenerated?: boolean
+  regenerateError?: string
+  message?: Message | null
+}
+
+function correctionNotice(result: CorrectionResult, draft: boolean): string {
+  const text = `«${result.rule?.rule || ''}»`
+  const n = result.rule?.count || 1
+  const head =
+    result.how === 'merged' && result.strong
+      ? `Regola rafforzata: ${text}. Corretta ${n} volte, ora vale più della Memoria.`
+      : result.how === 'merged'
+        ? `Regola rafforzata: ${text}. Corretta ${n} volte.`
+        : result.how === 'replaced'
+          ? `Regola cambiata: ${text}. Prende il posto di quella che diceva il contrario.`
+          : `Correzione salvata: ${text}.${result.learned ? '' : ' L’AI non era disponibile: resta il tuo esempio, puoi riscrivere la regola in Memoria AI.'}`
+  const tail = draft
+    ? result.regenerated
+      ? ' La bozza è stata rifatta: controllala e inviala.'
+      : ` La bozza non è stata rifatta${result.regenerateError ? ` (${result.regenerateError})` : ''}: modificala tu.`
+    : ' L’AI la seguirà nelle prossime risposte.'
+  return `${head}${tail} La trovi in Memoria AI → Correzioni imparate.`
 }
 
 const POLL_MS = 5_000
@@ -593,6 +647,7 @@ function InboxPage() {
   const threadRef = useRef<HTMLDivElement>(null)
   const [swipeOpen, setSwipeOpen] = useState<string | null>(null)
   const [removed, setRemoved] = useState<{ name: string; previous: Record<string, string | null> } | null>(null)
+  const [correcting, setCorrecting] = useState<Message | null>(null)
   const removedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -718,10 +773,29 @@ function InboxPage() {
       const data = await res.json()
       if (data.message) setMessages((list) => list.map((m) => (m.id === message.id ? data.message : m)))
       if (!res.ok) setNotice(data.error || 'Operazione non riuscita')
+      else if (data.correction === 'learning') {
+        setNotice('Inviata. La tua modifica diventa una correzione: l’AI la userà come esempio nelle prossime risposte (la trovi in Memoria AI → Correzioni imparate).')
+      }
       loadConversations()
     } finally {
       setBusyId(null)
     }
+  }
+
+  // Correzione salvata: la bozza rifatta prende il posto di quella vecchia (anche nel testo in modifica).
+  const corrected = (message: Message, result: CorrectionResult) => {
+    setCorrecting(null)
+    const fresh = result.message
+    if (fresh) setMessages((list) => list.map((m) => (m.id === message.id ? fresh : m)))
+    if (result.regenerated) {
+      setDrafts((d) => {
+        const next = { ...d }
+        delete next[message.id]
+        return next
+      })
+    }
+    setNotice(correctionNotice(result, message.status === 'pending'))
+    loadConversations()
   }
 
   const current = selectedKey ? conversations.find((c) => c.key === selectedKey) : undefined
@@ -1097,6 +1171,16 @@ function InboxPage() {
                           />
                           <DraftTranslate text={value} />
                           <div className="mt-2 flex justify-end gap-2">
+                            {m.status === 'pending' && (
+                              <button
+                                onClick={() => setCorrecting(m)}
+                                disabled={busyId === m.id}
+                                title="Spiega all’AI cosa non va: rifà la bozza e lo ricorda per le prossime risposte"
+                                className="mr-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50"
+                              >
+                                <PencilLine className="h-4 w-4" /> Correggi
+                              </button>
+                            )}
                             <button onClick={() => act(m, 'reject')} disabled={busyId === m.id} className="rounded-full px-3 py-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-50">
                               Scarta
                             </button>
@@ -1128,6 +1212,16 @@ function InboxPage() {
                           {!isIn && m.origin === 'manual_app' ? ' · dall’app' : ''}
                           {m.status === 'sending' ? ' · invio…' : ''}
                           {isPending ? ' · bozza' : ''}
+                          {!isIn && m.origin === 'ai_auto' ? ' · AI' : ''}
+                          {canReply && correctable(m) && m.status === 'sent' && (
+                            <button
+                              onClick={() => setCorrecting(m)}
+                              title="Spiega all’AI cosa non va: lo ricorda per le prossime risposte"
+                              className="ml-1 inline-flex items-center gap-1 text-[var(--accent-blue)]"
+                            >
+                              <PencilLine className="h-3 w-3" /> Correggi
+                            </button>
+                          )}
                         </p>
                       </div>
                     )
@@ -1192,7 +1286,139 @@ function InboxPage() {
           </section>
         </div>
       </div>
+      {correcting && (
+        <CorrectionSheet
+          message={correcting}
+          current={correcting.status === 'pending' ? drafts[correcting.id] ?? correcting.body : correcting.body}
+          incoming={answeredTexts(messages, correcting)}
+          onClose={() => setCorrecting(null)}
+          onSaved={(result) => corrected(correcting, result)}
+        />
+      )}
     </main>
+  )
+}
+
+/**
+ * Correggi: messaggio della persona e risposta dell'AI (da leggere), cosa non va / come
+ * dovrebbe rispondere e, se vuoi, la risposta giusta. Su una bozza l'AI la rifà subito;
+ * in ogni caso la correzione resta per le prossime risposte (Memoria AI).
+ */
+function CorrectionSheet({
+  message,
+  current,
+  incoming,
+  onClose,
+  onSaved,
+}: {
+  message: Message
+  /** Testo della bozza come lo vedi ora (anche se l'hai gia' ritoccato). */
+  current: string
+  incoming: string
+  onClose: () => void
+  onSaved: (result: CorrectionResult) => void
+}) {
+  const [feedback, setFeedback] = useState('')
+  const [corrected, setCorrected] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const draft = message.status === 'pending'
+  const ready = Boolean(feedback.trim() || corrected.trim())
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !saving && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [saving, onClose])
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    const res = await authFetch('/api/admin/inbox/corrections', {
+      method: 'POST',
+      body: JSON.stringify({ messageId: message.id, feedback, corrected }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setSaving(false)
+    if (!res?.ok) return setError(data.error || 'Connessione non riuscita, riprova.')
+    onSaved(data as CorrectionResult)
+  }
+
+  const box = 'mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--background-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]'
+  const field =
+    'mt-1 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center" onClick={() => !saving && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Correggi la risposta"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[var(--background)] p-5 shadow-xl md:max-w-lg md:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-[var(--text-primary)]">Correggi la risposta</h2>
+            <p className="text-sm text-[var(--text-secondary)]">
+              {draft ? 'L’AI rifà la bozza e lo ricorda per i messaggi simili.' : 'L’AI lo ricorda per i messaggi simili.'}
+            </p>
+          </div>
+          <button onClick={onClose} disabled={saving} aria-label="Chiudi" className="text-[var(--text-secondary)]">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs font-semibold text-[var(--text-secondary)]">Messaggio della persona</p>
+        <div translate="no" className={box}>
+          {incoming || <span className="text-[var(--text-secondary)]">Nessun messaggio</span>}
+        </div>
+        <p className="mt-3 text-xs font-semibold text-[var(--text-secondary)]">{draft ? 'Bozza dell’AI' : 'Risposta dell’AI'}</p>
+        <div translate="no" className={box}>
+          {current}
+        </div>
+
+        <label htmlFor="correction-feedback" className="mt-4 block text-sm font-semibold text-[var(--text-primary)]">
+          Cosa non va / come dovrebbe rispondere?
+        </label>
+        <textarea
+          id="correction-feedback"
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          maxLength={1000}
+          rows={3}
+          placeholder="Es. prima saluta e chiedi il nome, poi chiedi di cosa si occupa. Niente elenco dei servizi."
+          className={field}
+        />
+
+        <label htmlFor="correction-text" className="mt-3 block text-sm font-semibold text-[var(--text-primary)]">
+          Risposta giusta <span className="font-normal text-[var(--text-secondary)]">(facoltativa)</span>
+        </label>
+        <textarea
+          id="correction-text"
+          value={corrected}
+          onChange={(e) => setCorrected(e.target.value)}
+          maxLength={2000}
+          rows={Math.min(8, Math.max(3, corrected.split('\n').length + 1))}
+          placeholder={draft ? 'Se la scrivi, la bozza diventa questa.' : 'Come avresti risposto tu.'}
+          className={field}
+        />
+
+        {error && <p className="mt-3 text-sm text-[#FF3B30]">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} disabled={saving} className="rounded-full px-4 py-2 text-sm text-[var(--text-secondary)]">
+            Annulla
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || !ready}
+            className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} {draft ? 'Correggi e rifai la bozza' : 'Salva correzione'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

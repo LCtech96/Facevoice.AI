@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type OutgoingTarget } from '@/lib/meta/agent'
 import { releaseVerificationCode } from '@/lib/identity-verify'
+import { attachSentExample, correctedMessage, isSubstantialEdit, learnFromEditedDraft } from '@/lib/corrections'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +13,10 @@ const SELECT =
 /**
  * Azioni su una bozza AI: { action: 'approve', text? } la invia (eventualmente
  * modificata), { action: 'reject' } la scarta. Si puo' anche ritentare un invio fallito.
+ * Bozza dell'AI modificata in modo sostanziale e inviata: parte il testo modificato e,
+ * dopo la risposta, diventa una correzione (lib/corrections.ts, "Correzioni imparate" in
+ * Memoria AI). Bozza gia' corretta con "Correggi" solo a parole e inviata cosi': il testo
+ * inviato diventa l'esempio di quella correzione.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const access = await guard(req, 'inbox', 'reply')
@@ -23,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: draft } = await supabaseAdmin
     .from('social_messages')
-    .select('id, platform, kind, contact_id, channel_account_id, reply_to, body, status, direction')
+    .select('id, platform, kind, contact_id, channel_account_id, reply_to, body, status, direction, created_at')
     .eq('id', id)
     .maybeSingle()
 
@@ -77,11 +82,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   // Bozza inviata cosi' com'era o corretta da Luca: diventa un esempio per le prossime risposte.
-  if (!sent.error) await setOrigin(id, text === String(draft.body).trim() ? 'ai_approved' : 'ai_edited')
+  const original = String(draft.body ?? '').trim()
+  const edited = text !== original
+  // Solo le bozze (non i ritentativi: la' il testo dell'AI era gia' stato sostituito).
+  const learning = !sent.error && draft.status === 'pending' && edited && isSubstantialEdit(original, text)
+  if (!sent.error) {
+    const viaCorrection = !edited && draft.status === 'pending' && (await correctedMessage(id))
+    await setOrigin(id, edited || viaCorrection ? 'ai_edited' : 'ai_approved')
+    if (learning) {
+      after(() =>
+        learnFromEditedDraft({
+          messageId: id,
+          original,
+          edited: text,
+          by: access.email,
+          draft: { platform: draft.platform, kind: draft.kind, contact_id: draft.contact_id, reply_to: draft.reply_to, created_at: draft.created_at },
+        }).then(() => undefined)
+      )
+    } else if (draft.status === 'pending') {
+      // Corretta prima solo a parole: il testo inviato diventa l'esempio (se manca).
+      after(() => attachSentExample(id, text).then(() => undefined))
+    }
+  }
   // Era la risposta che annuncia l'email di verifica: solo ora parte il codice, all'email registrata.
   if (!sent.error) {
     await releaseVerificationCode(draft.platform, draft.contact_id, id).catch((e) => console.error('verifica identità, codice:', e))
   }
   if (sent.error) return NextResponse.json({ error: `Invio non riuscito: ${sent.error}`, message: data }, { status: 502 })
-  return NextResponse.json({ message: data })
+  return NextResponse.json({ message: data, ...(learning ? { correction: 'learning' } : {}) })
 }

@@ -480,6 +480,7 @@ export const SITE_FEATURES: Record<string, string> = {
   risposte_email: 'Risposte email',
   risposte_social: 'Risposte Instagram, Facebook, WhatsApp',
   controrisposte_clienti: 'Controrisposte ai clienti cercati',
+  correzioni_risposte: 'Correzioni delle risposte (regole imparate)',
   assistente_clienti: 'Super chat e assistente clienti',
   email_clienti: 'Email e follow-up ai clienti',
   analisi_clienti: 'Analisi dei siti dei clienti',

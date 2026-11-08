@@ -24,6 +24,7 @@ import { baseDomain, emailsInText, isAutomaticEmail } from '@/lib/email-address'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { autoReplyAllowed, loadOutreachReplySettings, scheduleAutoSend } from '@/lib/outreach-reply'
 import { defineSection, sectionText } from '@/lib/ai-context'
+import { guidanceFromRules, readRules, type ReplyRule } from '@/lib/corrections'
 import { bookedSlotsText, cancelAppointmentsFor, createAppointment, parseAppointmentMarkers } from '@/lib/appointments'
 import {
   currentVerification,
@@ -478,6 +479,8 @@ type ReplyOptions = {
   // dei messaggi privati, lib/meta/reply-queue.ts): times = ore dei messaggi della serie. generateReply
   // ci scrive cosa ha letto nello storico.
   batch?: { times: number[]; lastInAt?: string | null; pending?: number }
+  // "Correggi" nella casella Messaggi: la bozza da rifare e cosa non andava secondo il team.
+  correction?: { previous: string; feedback: string }
 }
 
 /** Scheda della Ricerca clienti di chi sta rispondendo alla nostra email di primo contatto. */
@@ -677,7 +680,7 @@ async function generateReply(
     console.error(`${platform} agent: nessuna chiave AI (Gemini o Claude), nessuna risposta generata`)
     return ''
   }
-  const { publicComment, postCaption, privateFollowUp, outreach, instructions } = options
+  const { publicComment, postCaption, privateFollowUp, outreach, instructions, correction } = options
   const fromComment = Boolean(publicComment)
 
   // Verifica dell'identita': all'AI arriva solo lo stato e cosa chiedere, mai i dati dell'archivio.
@@ -698,7 +701,7 @@ async function generateReply(
   }
 
   // Dai commenti si parte solo dal testo del commento: lo storico privato non va mai citato in pubblico.
-  const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal] = await Promise.all([
+  const [knowledge, history, styleExamples, outreachSettings, base, commentRules, outreachRules, funnel, booked, personal, rules] = await Promise.all([
     loadKnowledge(),
     fromComment
       ? Promise.resolve<LoadedHistory>({ messages: [{ role: 'user', content: publicComment! }], opener: null, handWritten: false, pending: [], lastInAt: null })
@@ -712,12 +715,24 @@ async function generateReply(
     fromComment ? Promise.resolve('') : sectionText(FUNNEL_RULES),
     fromComment ? Promise.resolve('') : bookedSlotsText().catch(() => ''),
     platform === 'email' ? Promise.resolve('') : sectionText(PERSONAL_REPLY),
+    // Correzioni del team (Memoria AI → Correzioni imparate): mai bloccanti.
+    readRules().catch(() => [] as ReplyRule[]),
   ])
   const strategy = outreach ? await strategyExamples(outreachSettings?.strategy || '') : ''
   if (options.batch) {
     options.batch.lastInAt = history.lastInAt
     options.batch.pending = history.pending.length
   }
+
+  const lastUserText = fromComment ? publicComment! : [...history.messages].reverse().find((m) => m.role === 'user')?.content || ''
+  // Regole scelte per parole in comune col messaggio (e gli ultimi della chat). Esempi solo nelle
+  // conversazioni private e mai durante una verifica: vengono da conversazioni di altre persone.
+  const corrections = guidanceFromRules(rules, {
+    platform,
+    incoming: [lastUserText, ...(options.batch ? history.pending : [])].join('\n'),
+    recent: history.messages.slice(-4).map((m) => m.content),
+    examples: !verifying && !(fromComment && !privateFollowUp),
+  })
 
   const { system, stableTail, systemTail } = buildAgentSystem({
     base,
@@ -732,10 +747,13 @@ async function generateReply(
     styleExamples,
     personal,
     client: clientBlock(contactName, history.messages.filter((m) => m.role === 'assistant').length),
-    instructions:
+    corrections: corrections ? `\n\n${corrections}` : '',
+    instructions: [
       instructions !== undefined
         ? `\n\n## Luca ha chiesto questa risposta dalla Super chat\nScrivila comunque (non rispondere NESSUNA_RISPOSTA), seguendo alla lettera le sue indicazioni: ${instructions || 'nessuna indicazione in più, rispondi nel merito all’ultimo messaggio'}`
         : '',
+      correction ? correctionPrompt(correction) : '',
+    ].join(''),
     dateTime: `\n\n## Data e ora\n${buildRealtimeDateTimeInstructionsItalian()}`,
     // Regole per i commenti solo nella risposta pubblica; il privato che la segue ha le sue.
     identity: identityPrompt(identity, platform, { comment: fromComment ? (privateFollowUp ? 'private' : 'public') : undefined }),
@@ -765,6 +783,15 @@ async function generateReply(
   }
 }
 
+/** "Correggi" su una bozza: rifarla seguendo l'indicazione del team (vale piu' di tutto il resto, tranne le regole di base). */
+export function correctionPrompt(correction: { previous: string; feedback: string }): string {
+  const previous = correction.previous.replace(/\s+/g, ' ').trim().slice(0, 1500)
+  return `\n\n## Correzione del team su questa risposta
+Avevi preparato questa bozza: «${previous}»
+Il team dice cosa non va e come dovresti rispondere: «${correction.feedback.trim().slice(0, 1000)}»
+Riscrivi la risposta seguendo alla lettera questa indicazione (vale più delle correzioni e degli stili scritti sopra). Scrivila comunque (non rispondere NESSUNA_RISPOSTA) e non dire alla persona che la risposta è stata corretta.`
+}
+
 /** Pezzi del prompt dell'agente, gia' formattati (stringa vuota = sezione assente). */
 export type AgentPromptParts = {
   base: string
@@ -779,6 +806,8 @@ export type AgentPromptParts = {
   styleExamples: string
   personal: string
   client: string
+  /** Correzioni del team (regole ed esempi scelti per questo messaggio): cambiano a ogni risposta. */
+  corrections?: string
   instructions: string
   dateTime: string
   identity: string
@@ -794,8 +823,8 @@ export type AgentPromptParts = {
  * un decimo del prezzo, con Gemini aiuta la cache implicita), poi gli esempi di stile e le
  * indicazioni personali (stableTail: gli esempi cambiano a ogni risposta inviata, approvata o
  * corretta da Luca, e con un secondo breakpoint la parte prima resta in cache), infine quello
- * che cambia a ogni risposta (post commentato, scheda del cliente, orari occupati, nome, data e
- * ora, verifica, contesto della chat, lingua). Le sezioni restano le stesse, con lo stesso
+ * che cambia a ogni risposta (post commentato, scheda del cliente, orari occupati, nome, correzioni
+ * del team scelte per questo messaggio, data e ora, verifica, contesto della chat, lingua). Le sezioni restano le stesse, con lo stesso
  * testo: cambia solo l'ordine (gli orari degli appuntamenti restano prima di "Data e ora", a
  * cui rimandano).
  */
@@ -814,6 +843,7 @@ export function buildAgentSystem(p: AgentPromptParts): { system: string; stableT
     p.outreachFacts,
     p.appointments,
     p.client,
+    p.corrections || '',
     p.instructions,
     p.dateTime,
     CLARITY_RULES,
@@ -1101,6 +1131,62 @@ export async function prepareInboxReply(
   else if (opened?.skipped) warning = [warning, SKIPPED_CLAIM_NOTICE].filter(Boolean).join(' · ')
   if (checked.reason) warning = [warning, `messaggio poco attendibile: ${checked.reason}`].filter(Boolean).join(' · ')
   return { ok: true, text, warning, sentTo: recipient }
+}
+
+/**
+ * "Correggi" su una bozza nella casella Messaggi: con la risposta giusta scritta dal team la
+ * bozza prende quel testo; con la sola indicazione l'AI la riscrive subito (stesso canale,
+ * stesso tipo: messaggio, commento pubblico o privato dal commento) seguendo la correzione.
+ * La bozza resta la stessa (stesso id), da controllare e inviare. Niente verifiche o
+ * appuntamenti nuovi da qui: le righe speciali si tolgono.
+ */
+export async function regenerateDraft(
+  draftId: string,
+  correction: { feedback: string; corrected?: string }
+): Promise<{ ok: boolean; text?: string; reason?: string }> {
+  const { data: draft } = await supabaseAdmin
+    .from('social_messages')
+    .select('id, platform, kind, contact_id, contact_name, reply_to, body, status, direction')
+    .eq('id', draftId)
+    .maybeSingle()
+  if (!draft || draft.direction !== 'out') return { ok: false, reason: 'bozza non trovata' }
+  if (draft.status !== 'pending' && draft.status !== 'failed') return { ok: false, reason: 'questa risposta è già stata gestita' }
+  const platform = draft.platform as SocialPlatform
+  const max = platform === 'email' ? 6000 : 1900
+
+  let text = (correction.corrected || '').trim().slice(0, max)
+  if (!text) {
+    const fromComment = draft.kind === 'comment' || Boolean(draft.reply_to && platform !== 'email')
+    let commentText = ''
+    if (fromComment && draft.reply_to) {
+      const { data: comment } = await supabaseAdmin
+        .from('social_messages')
+        .select('body')
+        .eq('platform', platform)
+        .eq('direction', 'in')
+        .eq('external_id', draft.reply_to)
+        .limit(1)
+        .maybeSingle()
+      commentText = comment?.body ? String(comment.body) : ''
+    }
+    const options: ReplyOptions = { correction: { previous: String(draft.body || ''), feedback: correction.feedback } }
+    if (fromComment && commentText) {
+      options.publicComment = commentText
+      if (draft.kind === 'message') options.privateFollowUp = true
+    }
+    const raw = await generateReply(platform, draft.contact_id, draft.contact_name ?? null, options)
+    text = parseSuspicious(parseAppointmentMarkers(parseIdentityMarker(parseOutreachReply(raw).text).text).text).text.slice(0, max)
+  }
+  if (!text) return { ok: false, reason: 'nuova bozza non preparata, riprova' }
+
+  const { data: updated } = await supabaseAdmin
+    .from('social_messages')
+    .update({ body: text, status: 'pending', error_message: null })
+    .eq('id', draftId)
+    .in('status', ['pending', 'failed'])
+    .select('id')
+  if (!updated?.length) return { ok: false, reason: 'la bozza è stata appena inviata o scartata' }
+  return { ok: true, text }
 }
 
 /**
