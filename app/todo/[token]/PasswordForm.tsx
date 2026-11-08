@@ -5,7 +5,7 @@ import { Eye, EyeOff, ListTodo, Loader2 } from 'lucide-react'
 
 // Password della todo list: va solo al server, che la confronta con l'hash.
 
-export default function PasswordForm({ token }: { token: string }) {
+export default function PasswordForm({ token, revoked = false }: { token: string; revoked?: boolean }) {
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -59,6 +59,11 @@ export default function PasswordForm({ token }: { token: string }) {
             {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
           </button>
         </div>
+        {revoked && !error && (
+          <p className="mt-4 rounded-xl border border-[#FF9500]/40 bg-[#FF9500]/10 px-3 py-2 text-sm text-[var(--text-primary)]" role="status">
+            La password è stata cambiata: chiedi la nuova password all’admin.
+          </p>
+        )}
         {error && (
           <p className="mt-2 text-sm text-[#FF3B30]" role="alert">
             {error}

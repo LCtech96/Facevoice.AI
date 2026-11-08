@@ -41,6 +41,18 @@ export default function Portal({ name }: { name: string }) {
     load()
   }, [projectId, load])
 
+  // Sulla schermata generale (dentro un progetto ci pensa la bacheca ogni 6 s): ogni 15 s
+  // un controllo leggero, cosi' chi ha la password vecchia esce subito e vede l'avviso.
+  useEffect(() => {
+    if (projectId) return
+    const timer = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return
+      const res = await fetch('/api/todo/home', { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
+      if (res?.status === 401) onLocked()
+    }, 15_000)
+    return () => clearInterval(timer)
+  }, [projectId, onLocked])
+
   const open = (boardId: string, task?: string) => router.push(`/todo?p=${encodeURIComponent(boardId)}${task ? `&t=${encodeURIComponent(task)}` : ''}`)
   const back = () => router.push('/todo')
 

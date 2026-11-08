@@ -109,6 +109,23 @@ export function verifySession(value: string | undefined | null, board: SessionBo
   return expected.length === given.length && timingSafeEqual(expected, given)
 }
 
+/**
+ * Cookie autentico (firma giusta, non scaduto) ma di una versione vecchia: l'admin ha
+ * cambiato la password (o rigenerato l'accesso) dopo che questa persona era entrata.
+ */
+export function sessionWasRevoked(value: string | undefined | null, board: SessionBoard, at = Date.now()): boolean {
+  const key = serverKey('todo-session')
+  if (!key || !value || typeof value !== 'string') return false
+  const [versionText, expText, sig] = value.split('.')
+  const version = Number(versionText)
+  const exp = Number(expText)
+  if (!sig || !Number.isInteger(version) || version === board.session_version) return false
+  if (!Number.isFinite(exp) || exp * 1000 < at) return false
+  const expected = Buffer.from(sessionSig(key, board.id, version, exp))
+  const given = Buffer.from(sig)
+  return expected.length === given.length && timingSafeEqual(expected, given)
+}
+
 // ---------------------------------------------------------------------
 // Cookie delle persone (accesso con nome e password a piu' progetti) e dell'admin
 // ---------------------------------------------------------------------

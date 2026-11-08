@@ -21,8 +21,12 @@ export const metadata: Metadata = {
 
 export default async function TodoPortalPage() {
   let person = null
+  let revoked = false
   try {
-    person = await accessForSession(readAccessSession((await cookies()).get(ACCESS_COOKIE)?.value))
+    const session = readAccessSession((await cookies()).get(ACCESS_COOKIE)?.value)
+    person = await accessForSession(session)
+    // Cookie autentico ma non piu' valido: password cambiata o accesso tolto dall'admin.
+    revoked = !person && !!session
   } catch {
     person = null
   }
@@ -33,7 +37,7 @@ export default async function TodoPortalPage() {
           <Portal name={person.name} />
         </Suspense>
       ) : (
-        <LoginForm />
+        <LoginForm revoked={revoked} />
       )}
     </main>
   )

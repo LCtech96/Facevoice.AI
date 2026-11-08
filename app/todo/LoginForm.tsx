@@ -8,7 +8,7 @@ import { Eye, EyeOff, FolderOpen, Loader2 } from 'lucide-react'
 
 const field = 'min-h-[48px] w-full bg-transparent px-4 text-base text-[var(--text-primary)] outline-none'
 
-export default function LoginForm() {
+export default function LoginForm({ revoked = false }: { revoked?: boolean }) {
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
@@ -42,6 +42,11 @@ export default function LoginForm() {
         <FolderOpen className="mx-auto h-9 w-9 text-[var(--accent-blue)]" />
         <h1 className="mt-3 text-center text-lg font-semibold text-[var(--text-primary)]">Progetti</h1>
         <p className="mt-1 text-center text-sm text-[var(--text-secondary)]">Entra con il nome e la password che ti sono stati dati.</p>
+        {revoked && !error && (
+          <p className="mt-4 rounded-xl border border-[#FF9500]/40 bg-[#FF9500]/10 px-3 py-2 text-sm text-[var(--text-primary)]" role="status">
+            La password è stata cambiata: chiedi la nuova password all’admin.
+          </p>
+        )}
         <label className="mt-5 block text-sm font-medium text-[var(--text-primary)]" htmlFor="todo-name">
           Nome
         </label>

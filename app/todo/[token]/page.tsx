@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import { sessionCookieName, verifySession } from '@/lib/todo-auth'
+import { sessionCookieName, sessionWasRevoked, verifySession } from '@/lib/todo-auth'
 import { TodoError, boardByToken, type BoardRow } from '@/lib/todo-store'
 import PasswordForm from './PasswordForm'
 import GuestBoard from './GuestBoard'
@@ -40,10 +40,12 @@ export default async function TodoLinkPage({ params }: { params: Promise<{ token
     return <Notice title="Pagina non disponibile" text="Qualcosa non è andato: riprova tra poco." />
   }
   if (!board) return <Notice title="Link non valido" text="Il link non esiste o non è più attivo. Chiedi un link nuovo a chi te l’ha mandato." />
-  const unlocked = verifySession((await cookies()).get(sessionCookieName(board.id))?.value, board)
+  const cookie = (await cookies()).get(sessionCookieName(board.id))?.value
+  const unlocked = verifySession(cookie, board)
+  const revoked = !unlocked && sessionWasRevoked(cookie, board)
   return (
     <main className="min-h-[100dvh] bg-[var(--background)]" translate="no">
-      {unlocked ? <GuestBoard token={token} name={board.name} /> : <PasswordForm token={token} />}
+      {unlocked ? <GuestBoard token={token} name={board.name} /> : <PasswordForm token={token} revoked={revoked} />}
     </main>
   )
 }
