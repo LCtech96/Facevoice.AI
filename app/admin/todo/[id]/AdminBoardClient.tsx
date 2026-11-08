@@ -6,11 +6,9 @@ import { ArrowLeft, Copy, ListTodo } from 'lucide-react'
 import TodoBoard from '@/components/todo/TodoBoard'
 import { useAdminGate } from '../../contratti/useAdminGate'
 import { adminTodoFetch, copyText } from '../todo-admin-api'
-import PeoplePanel from './PeoplePanel'
 
-// La todo list vista dall'admin: stessa bacheca di chi ha il link, ma l'admin vede
-// tutto e puo' modificare tutto. Il server da' all'admin un cookie da admin (senza
-// password, 12 ore) e la bacheca usa le stesse route. Sopra: le persone della todo list.
+// La todo list vista dall'admin: stessa bacheca di chi ha il link. Il server da'
+// all'admin lo stesso cookie di accesso (senza password) e la bacheca usa le stesse route.
 
 export default function AdminBoardClient({ id }: { id: string }) {
   const allowed = useAdminGate()
@@ -18,24 +16,20 @@ export default function AdminBoardClient({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const reopened = useRef(0)
-  const [peopleOpen, setPeopleOpen] = useState(false)
-  useEffect(() => {
-    setPeopleOpen(new URLSearchParams(window.location.search).has('persone'))
-  }, [])
 
   const open = useCallback(async () => {
     const r = await adminTodoFetch(`/api/admin/todo/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ action: 'open' }) })
     if (r.ok && r.data.token) {
       setError(null)
       setInfo({ token: r.data.token, name: r.data.name, link: r.data.link })
-    } else setError(r.data.setup ? (r.data.update ? 'Esegui lo SQL aggiornato della todo list (file supabase/migrations/2026-11-08_todo_people.sql).' : 'Esegui prima lo SQL della todo list.') : r.data.error || 'Non riesco ad aprire la todo list.')
+    } else setError(r.data.setup ? 'Esegui prima lo SQL della todo list.' : r.data.error || 'Non riesco ad aprire la todo list.')
   }, [id])
 
   useEffect(() => {
     if (allowed) open()
   }, [allowed, open])
 
-  // Accesso scaduto (12 ore passate o link nuovo da un'altra scheda): si riapre, al massimo qualche volta.
+  // Accesso scaduto (password cambiata o link nuovo da un'altra scheda): si riapre, al massimo qualche volta.
   const onLocked = useCallback(() => {
     if (reopened.current++ < 3) {
       setInfo(null)
@@ -79,7 +73,6 @@ export default function AdminBoardClient({ id }: { id: string }) {
         )}
       </div>
       {error && <p className="mx-4 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
-      {info && <PeoplePanel key={`p-${peopleOpen}`} boardId={id} startOpen={peopleOpen} />}
       {info && <TodoBoard key={info.token} token={info.token} onLocked={onLocked} />}
     </div>
   )

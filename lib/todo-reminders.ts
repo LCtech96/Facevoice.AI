@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { openToken } from '@/lib/todo-auth'
-import { boardLink, isMissingPeople, isMissingSetup, todoOrigin } from '@/lib/todo-store'
+import { boardLink, isMissingSetup, todoOrigin } from '@/lib/todo-store'
 import { formatRome, priorityLabel, romeDay, romeToUtc } from '@/lib/todo-shared'
 
 // Solleciti via email per le attivita' con scadenza vicina. Per ogni attivita' si
@@ -10,8 +10,7 @@ import { formatRome, priorityLabel, romeDay, romeToUtc } from '@/lib/todo-shared
 // (ora italiana). Il cron gira ogni minuto: ogni fascia si "prenota" con una riga
 // unica (attivita', giorno, fascia), quindi anche due giri sovrapposti non mandano
 // mai due volte la stessa email. Attivita' fatta, cancellata o scaduta: niente piu'
-// solleciti. Senza email scritta sull'attivita' si usa quella della persona a cui e'
-// assegnata (se l'admin gliel'ha messa).
+// solleciti.
 
 const DAY_START_H = 8
 const DAY_SPAN_H = 12
@@ -78,7 +77,7 @@ export function timeLeft(ms: number): string {
   return `tra ${d} giorni`
 }
 
-type DueTask = ReminderTask & { board_id: string; list_id: string; title: string; priority: number; assignee: string | null; assignee_member?: string | null }
+type DueTask = ReminderTask & { board_id: string; list_id: string; title: string; priority: number; assignee: string | null }
 
 export function reminderEmail(input: { task: DueTask; boardName: string; listTitle: string; link: string | null; now: number }) {
   const { task, boardName, listTitle, link, now } = input
@@ -102,7 +101,7 @@ export function reminderEmail(input: { task: DueTask; boardName: string; listTit
     ...rows.map(([k, v]) => `${k}: ${v}`),
     '',
     link ? `Apri la todo list: ${link}` : '',
-    link ? 'Per aprirla servono il tuo nome e la tua password.' : '',
+    link ? 'Per aprirla serve la password che ti è stata data.' : '',
     '',
     `Ricevi questo promemoria fino a ${task.reminders_per_day} ${task.reminders_per_day === 1 ? 'volta' : 'volte'} al giorno, finché l’attività non è segnata come fatta o non arriva la scadenza.`,
   ]
@@ -115,66 +114,34 @@ export function reminderEmail(input: { task: DueTask; boardName: string; listTit
 ${rows.map(([k, v]) => `<tr><td style="padding: 4px 12px 4px 0; color: #666;">${escapeHtml(k)}</td><td style="padding: 4px 0;"><strong>${escapeHtml(v)}</strong></td></tr>`).join('\n')}
 </table>
 ${link ? `<p><a href="${escapeHtml(link)}" style="display: inline-block; background: #007AFF; color: #fff; padding: 10px 18px; border-radius: 999px; text-decoration: none;">Apri la todo list</a></p>
-<p style="color: #666; font-size: 13px;">Per aprirla servono il tuo nome e la tua password.</p>` : ''}
+<p style="color: #666; font-size: 13px;">Per aprirla serve la password che ti è stata data.</p>` : ''}
 <p style="color: #666; font-size: 13px;">Ricevi questo promemoria fino a ${task.reminders_per_day} ${task.reminders_per_day === 1 ? 'volta' : 'volte'} al giorno, finché l’attività non è segnata come fatta o non arriva la scadenza.</p>`)
   return { subject, text, html }
 }
 
 /** Un giro del cron: manda i solleciti dovuti adesso. */
 export async function todoRemindersTick(requestOrigin?: string | null, now = Date.now()): Promise<{ sent: number; skipped?: string }> {
-  const inWindow = (cols: string) =>
-    supabaseAdmin
-      .from('todo_tasks')
-      .select(cols)
-      .eq('done', false)
-      .not('deadline', 'is', null)
-      .gt('deadline', new Date(now).toISOString())
-      .lte('deadline', new Date(now + MAX_HOURS_BEFORE * 3600_000).toISOString())
-  const BASE = 'id, board_id, list_id, title, priority, deadline, done, assignee, notify_email, reminders_per_day, remind_hours_before'
-  // 1) attivita' con l'email scritta; 2) senza email ma assegnate a una persona (si usa la sua email).
-  const [withEmail, byMember] = await Promise.all([
-    inWindow(`${BASE}, assignee_member`).not('notify_email', 'is', null).order('deadline', { ascending: true }).limit(500),
-    inWindow(`${BASE}, assignee_member`).is('notify_email', null).not('assignee_member', 'is', null).order('deadline', { ascending: true }).limit(500),
-  ])
-  let first = withEmail
-  if (first.error && isMissingPeople(first.error)) {
-    // SQL delle persone non ancora eseguito: i solleciti continuano come prima.
-    first = await inWindow(BASE).not('notify_email', 'is', null).order('deadline', { ascending: true }).limit(500)
-  }
-  const error = first.error
+  const { data, error } = await supabaseAdmin
+    .from('todo_tasks')
+    .select('id, board_id, list_id, title, priority, deadline, done, assignee, notify_email, reminders_per_day, remind_hours_before')
+    .eq('done', false)
+    .not('deadline', 'is', null)
+    .not('notify_email', 'is', null)
+    .gt('deadline', new Date(now).toISOString())
+    .lte('deadline', new Date(now + MAX_HOURS_BEFORE * 3600_000).toISOString())
+    .order('deadline', { ascending: true })
+    .limit(500)
   if (error) {
     // Tabelle non ancora create: il cron non deve riempire i log ogni minuto.
     if (isMissingSetup(error)) return { sent: 0, skipped: 'setup' }
     throw new Error(`todo solleciti: ${error.message}`)
   }
-  const fromMembers = byMember.error ? [] : ((byMember.data || []) as unknown as DueTask[])
-  const memberIds = Array.from(new Set(fromMembers.map((t) => t.assignee_member).filter((id): id is string => Boolean(id))))
-  const people = new Map<string, { board_id: string; name: string; email: string | null }>()
-  const assigned = new Set<string>(((first.data || []) as unknown as DueTask[]).map((t) => t.assignee_member).filter((id): id is string => Boolean(id)))
-  for (const id of memberIds) assigned.add(id)
-  if (assigned.size) {
-    const { data: rows } = await supabaseAdmin.from('todo_members').select('id, board_id, name, email').in('id', Array.from(assigned))
-    for (const m of (rows || []) as { id: string; board_id: string; name: string; email: string | null }[]) people.set(m.id, m)
-  }
-  const person = (t: DueTask) => {
-    const m = t.assignee_member ? people.get(t.assignee_member) : undefined
-    return m && m.board_id === t.board_id ? m : undefined
-  }
-  const due = [
-    ...((first.data || []) as unknown as DueTask[]),
-    ...fromMembers.flatMap((t) => {
-      const email = person(t)?.email
-      return email ? [{ ...t, notify_email: email }] : []
-    }),
-  ]
-    .map((t) => ({ ...t, assignee: person(t)?.name || t.assignee }))
-    .sort((a, b) => Date.parse(a.deadline || '') - Date.parse(b.deadline || ''))
   const origin = todoOrigin(requestOrigin)
   const boards = new Map<string, { name: string; link: string | null } | null>()
   const lists = new Map<string, string>()
   let sent = 0
 
-  for (const task of due) {
+  for (const task of (data || []) as DueTask[]) {
     if (sent >= MAX_EMAILS_PER_RUN) break
     const start = windowStart(task)
     let slot = dueSlot(task, now, false)

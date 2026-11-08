@@ -7,7 +7,7 @@ import TodoBoard from '@/components/todo/TodoBoard'
 // Todo list per chi ha il link: solo il nome e la bacheca, nessun altro collegamento.
 
 export default function GuestBoard({ token, name }: { token: string; name: string }) {
-  // Password cambiata, persona tolta o link rigenerato: si ricarica e ricompare la richiesta di nome e password.
+  // Password cambiata o link rigenerato: si ricarica e ricompare la richiesta della password.
   const onLocked = useCallback(() => window.location.reload(), [])
 
   const logout = async () => {

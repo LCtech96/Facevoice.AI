@@ -1,23 +1,21 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Bell, ExternalLink, ImagePlus, Loader2, Lock, Trash2, X } from 'lucide-react'
-import { EMAIL_RE, PRIORITIES, formatRome, isoToRomeInput, romeInputToIso, type TodoBoardState, type TodoList, type TodoMember, type TodoTask } from '@/lib/todo-shared'
+import { ArrowDown, ArrowUp, Bell, ExternalLink, ImagePlus, Loader2, Trash2, X } from 'lucide-react'
+import { EMAIL_RE, PRIORITIES, formatRome, isoToRomeInput, romeInputToIso, type TodoBoardState, type TodoList, type TodoTask } from '@/lib/todo-shared'
 import { moveLocally, patchLocally, uploadImage, type OpResult } from './todo-api'
 import LinkText from './LinkText'
-import AssignPanel from './AssignPanel'
 
 // Scheda di un'attivita': titolo, note (con i link cliccabili e le anteprime), fatta,
 // importanza, sposta, scadenza e solleciti via email, foto. Ogni campo si salva da
 // solo (al cambio o quando si esce dal campo); i campi che non si stanno scrivendo si
-// aggiornano con le modifiche fatte da altri. Le attivita' create da altri (per una
-// persona: quelle dell'admin o di un'altra persona) si possono solo spostare e segnare
-// come fatte: il resto si vede ma non si cambia (e il server lo rifiuta comunque).
+// aggiornano con le modifiche fatte da altri.
 
 type Draft = {
   title: string
   notes: string
   deadline: string
+  assignee: string
   notify_email: string
 }
 
@@ -25,6 +23,7 @@ const fromTask = (t: TodoTask): Draft => ({
   title: t.title,
   notes: t.notes,
   deadline: isoToRomeInput(t.deadline),
+  assignee: t.assignee || '',
   notify_email: t.notify_email || '',
 })
 
@@ -51,33 +50,25 @@ export default function TaskModal({
   task,
   lists,
   listTasks,
-  members,
-  admin,
   run,
   onClose,
   onMessage,
   refresh,
-  focusAssign,
 }: {
   token: string
   task: TodoTask
   lists: TodoList[]
   listTasks: TodoTask[]
-  members: TodoMember[]
-  admin: boolean
   run: Run
   onClose: () => void
   onMessage: (m: string) => void
   refresh: () => void
-  /** Aperta dal bollino «Da collegare»: si va subito al modulo «Assegna a». */
-  focusAssign?: boolean
 }) {
   const [draft, setDraft] = useState<Draft>(() => fromTask(task))
   const dirty = useRef(new Set<keyof Draft>())
   const [uploading, setUploading] = useState(0)
   const [viewer, setViewer] = useState<{ src: string; name: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const readOnly = !task.can_edit
 
   // Modifiche fatte da altri: si aggiornano solo i campi che qui non si stanno scrivendo.
   useEffect(() => {
@@ -103,7 +94,6 @@ export default function TaskModal({
   /** Salva un campo di testo quando si esce dal campo (solo se e' cambiato). */
   const commit = async (k: keyof Draft) => {
     if (!dirty.current.has(k)) return
-    if (readOnly) return dirty.current.delete(k)
     const v = draft[k]
     if (k === 'title') {
       const t = v.replace(/\s+/g, ' ').trim()
@@ -116,6 +106,7 @@ export default function TaskModal({
       return save({ title: t }, [k])
     }
     if (k === 'notes') return v === task.notes ? dirty.current.delete(k) : save({ notes: v }, [k])
+    if (k === 'assignee') return v.trim() === (task.assignee || '') ? dirty.current.delete(k) : save({ assignee: v.trim() }, [k])
     if (k === 'notify_email') {
       const e = v.trim().toLowerCase()
       if (e && !EMAIL_RE.test(e)) return onMessage('Indirizzo email non valido.')
@@ -167,7 +158,7 @@ export default function TaskModal({
     await run({ op: 'deleteTask', taskId: task.id }, (s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== task.id) }))
   }
 
-  const reminderReady = Boolean(task.deadline && (task.notify_email || task.assignee_member))
+  const reminderReady = Boolean(task.deadline && task.notify_email)
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 md:items-center md:p-6" onClick={() => void close()}>
@@ -180,14 +171,9 @@ export default function TaskModal({
       >
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border-color)] px-4 py-3">
           <label className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
-            <input type="checkbox" checked={task.done} disabled={!task.can_move} onChange={(e) => save({ done: e.target.checked })} className="h-5 w-5 accent-[#34C759]" />
+            <input type="checkbox" checked={task.done} onChange={(e) => save({ done: e.target.checked })} className="h-5 w-5 accent-[#34C759]" />
             {task.done ? 'Fatta' : 'Da fare'}
           </label>
-          {readOnly && (
-            <span className="inline-flex min-w-0 items-center gap-1 text-xs text-[var(--text-secondary)]">
-              <Lock className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">Creata da {task.creator_name}: puoi solo spostarla</span>
-            </span>
-          )}
           <button type="button" onClick={() => void close()} className="inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-[var(--background-secondary)]" aria-label="Chiudi">
             <X className="h-5 w-5 text-[var(--text-primary)]" />
           </button>
@@ -198,7 +184,7 @@ export default function TaskModal({
             <label className={label} htmlFor="todo-title">
               Titolo
             </label>
-            <input id="todo-title" value={draft.title} readOnly={readOnly} maxLength={300} onChange={(e) => edit('title', e.target.value)} onBlur={() => commit('title')} className={`${input} font-semibold`} />
+            <input id="todo-title" value={draft.title} maxLength={300} onChange={(e) => edit('title', e.target.value)} onBlur={() => commit('title')} className={`${input} font-semibold`} />
           </div>
 
           <div>
@@ -208,7 +194,6 @@ export default function TaskModal({
                 <button
                   key={p.value}
                   type="button"
-                  disabled={readOnly}
                   onClick={() => p.value !== task.priority && save({ priority: p.value })}
                   className={`min-h-[36px] rounded-full px-3 text-xs font-semibold ${task.priority === p.value ? `${p.chip} ring-2 ring-[var(--accent-blue)]` : 'border border-[var(--border-color)] text-[var(--text-secondary)]'}`}
                 >
@@ -218,13 +203,11 @@ export default function TaskModal({
             </div>
           </div>
 
-          {admin && <AssignPanel task={task} members={members} run={run} focus={focusAssign} />}
-
           <div>
             <label className={label} htmlFor="todo-notes">
               Note (i link restano cliccabili)
             </label>
-            <textarea id="todo-notes" value={draft.notes} readOnly={readOnly} maxLength={5000} rows={4} onChange={(e) => edit('notes', e.target.value)} onBlur={() => commit('notes')} className={`${input} resize-y`} placeholder="Dettagli, link, cose da ricordare…" />
+            <textarea id="todo-notes" value={draft.notes} maxLength={5000} rows={4} onChange={(e) => edit('notes', e.target.value)} onBlur={() => commit('notes')} className={`${input} resize-y`} placeholder="Dettagli, link, cose da ricordare…" />
             {task.notes.trim() && !dirty.current.has('notes') && /https?:\/\/|www\./i.test(task.notes) && (
               <LinkText text={task.notes} className="mt-1 block whitespace-pre-wrap break-words text-xs text-[var(--text-secondary)]" />
             )}
@@ -254,9 +237,9 @@ export default function TaskModal({
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className={label}>Immagini</span>
-              {!readOnly && <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading > 0} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)] disabled:opacity-50">
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading > 0} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)] disabled:opacity-50">
                 {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {uploading > 0 ? 'Caricamento…' : 'Carica immagini'}
-              </button>}
+              </button>
               <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={(e) => onFiles(e.target.files)} />
             </div>
             {task.images.length ? (
@@ -267,7 +250,7 @@ export default function TaskModal({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={img.src} alt={img.name} loading="lazy" className="aspect-square w-full rounded-lg object-cover" />
                     </button>
-                    {!readOnly && <button
+                    <button
                       type="button"
                       onClick={() => {
                         if (window.confirm('Togliere questa immagine?')) run({ op: 'removeImage', taskId: task.id, imageId: img.id }, (s) => patchLocally(s, task.id, { images: task.images.filter((i) => i.id !== img.id) }))
@@ -276,12 +259,12 @@ export default function TaskModal({
                       aria-label="Togli immagine"
                     >
                       <Trash2 className="h-4 w-4" />
-                    </button>}
+                    </button>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-[var(--text-secondary)]">{readOnly ? 'Nessuna immagine.' : 'Nessuna immagine. JPG, PNG, WEBP o GIF fino a 10 MB.'}</p>
+              <p className="text-xs text-[var(--text-secondary)]">Nessuna immagine. JPG, PNG, WEBP o GIF fino a 10 MB.</p>
             )}
           </div>
 
@@ -314,8 +297,8 @@ export default function TaskModal({
                   Scadenza (ora italiana)
                 </label>
                 <div className="flex gap-1">
-                  <input id="todo-deadline" type="datetime-local" disabled={readOnly} value={draft.deadline} onChange={(e) => edit('deadline', e.target.value)} onBlur={() => commit('deadline')} className={input} />
-                  {draft.deadline && !readOnly && (
+                  <input id="todo-deadline" type="datetime-local" value={draft.deadline} onChange={(e) => edit('deadline', e.target.value)} onBlur={() => commit('deadline')} className={input} />
+                  {draft.deadline && (
                     <button
                       type="button"
                       onClick={() => {
@@ -331,50 +314,23 @@ export default function TaskModal({
                   )}
                 </div>
               </div>
-              {admin ? (
-                <div>
-                  <span className={label}>A chi è assegnata</span>
-                  <p className="py-2 text-sm text-[var(--text-primary)]">{task.assignee_member ? task.assignee_name : task.assignee ? `${task.assignee} (da collegare)` : 'Nessuno (la vedono tutti)'}</p>
-                  <p className="text-[11px] text-[var(--text-secondary)]">Creata da {task.creator_name}</p>
-                </div>
-              ) : (
-                <div>
-                  <label className={label} htmlFor="todo-assignee">
-                    A chi è assegnata
-                  </label>
-                  <select
-                    id="todo-assignee"
-                    value={task.assignee_member || ''}
-                    disabled={readOnly}
-                    onChange={(e) => {
-                      const id = e.target.value || null
-                      const name = members.find((m) => m.id === id)?.name || null
-                      void run({ op: 'updateTask', taskId: task.id, fields: { assignee_member: id } }, (s) => patchLocally(s, task.id, { assignee_member: id, assignee_name: name, assignee: name }))
-                    }}
-                    className={input}
-                  >
-                    <option value="">Nessuno</option>
-                    {task.assignee_member && !members.some((m) => m.id === task.assignee_member) && <option value={task.assignee_member}>{task.assignee_name || 'Persona rimossa'}</option>}
-                    {members.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                  {!task.assignee_member && task.assignee && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Prima: {task.assignee}</p>}
-                </div>
-              )}
+              <div>
+                <label className={label} htmlFor="todo-assignee">
+                  A chi è assegnata
+                </label>
+                <input id="todo-assignee" value={draft.assignee} maxLength={120} onChange={(e) => edit('assignee', e.target.value)} onBlur={() => commit('assignee')} className={input} placeholder="Nome" />
+              </div>
               <div className="sm:col-span-2">
                 <label className={label} htmlFor="todo-email">
                   Email a cui mandare i solleciti
                 </label>
-                <input id="todo-email" type="email" inputMode="email" autoCapitalize="none" readOnly={readOnly} value={draft.notify_email} maxLength={200} onChange={(e) => edit('notify_email', e.target.value)} onBlur={() => commit('notify_email')} className={input} placeholder={task.assignee_member ? 'Se vuota: l’email della persona assegnata' : 'nome@esempio.it'} />
+                <input id="todo-email" type="email" inputMode="email" autoCapitalize="none" value={draft.notify_email} maxLength={200} onChange={(e) => edit('notify_email', e.target.value)} onBlur={() => commit('notify_email')} className={input} placeholder="nome@esempio.it" />
               </div>
               <div>
                 <label className={label} htmlFor="todo-perday">
                   Solleciti al giorno
                 </label>
-                <select id="todo-perday" disabled={readOnly} value={task.reminders_per_day} onChange={(e) => save({ reminders_per_day: Number(e.target.value) })} className={input}>
+                <select id="todo-perday" value={task.reminders_per_day} onChange={(e) => save({ reminders_per_day: Number(e.target.value) })} className={input}>
                   {[1, 2, 3, 4, 5, 6].map((n) => (
                     <option key={n} value={n}>
                       {n} {n === 1 ? 'volta' : 'volte'} al giorno
@@ -386,7 +342,7 @@ export default function TaskModal({
                 <label className={label} htmlFor="todo-start">
                   Inizia a sollecitare
                 </label>
-                <select id="todo-start" disabled={readOnly} value={task.remind_hours_before} onChange={(e) => save({ remind_hours_before: Number(e.target.value) })} className={input}>
+                <select id="todo-start" value={task.remind_hours_before} onChange={(e) => save({ remind_hours_before: Number(e.target.value) })} className={input}>
                   {(START_OPTIONS.some((o) => o.h === task.remind_hours_before) ? START_OPTIONS : [...START_OPTIONS, { h: task.remind_hours_before, label: `${task.remind_hours_before} ore prima` }]).map((o) => (
                     <option key={o.h} value={o.h}>
                       {o.label}
@@ -400,19 +356,15 @@ export default function TaskModal({
                 ? task.done
                   ? 'Attività fatta: nessun sollecito.'
                   : `Le email partono da ${START_OPTIONS.find((o) => o.h === task.remind_hours_before)?.label || `${task.remind_hours_before} ore prima`} della scadenza (${formatRome(task.deadline)}), fino a ${task.reminders_per_day} al giorno tra le 8 e le 20, finché l’attività non è fatta.`
-                : 'Per i solleciti servono la scadenza e l’email (o una persona assegnata con la sua email).'}
+                : 'Per i solleciti servono la scadenza e l’email.'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-[var(--border-color)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          {readOnly ? (
-            <span />
-          ) : (
-            <button type="button" onClick={remove} className="inline-flex min-h-[40px] items-center gap-1 rounded-full border border-[#FF3B30]/40 px-4 text-sm text-[#FF3B30]">
-              <Trash2 className="h-4 w-4" /> Elimina
-            </button>
-          )}
+          <button type="button" onClick={remove} className="inline-flex min-h-[40px] items-center gap-1 rounded-full border border-[#FF3B30]/40 px-4 text-sm text-[#FF3B30]">
+            <Trash2 className="h-4 w-4" /> Elimina
+          </button>
           <button type="button" onClick={() => void close()} className="inline-flex min-h-[40px] items-center rounded-full bg-[var(--accent-blue)] px-5 text-sm font-semibold text-white">
             Fatto
           </button>
