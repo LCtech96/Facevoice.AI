@@ -7,6 +7,7 @@ import { updateSetting } from '@/lib/settings-store'
 import { workspaceOwnerId } from '@/lib/workspace'
 import { accessFrom, enabledAssistantUsers, type AssistantAccess } from '@/lib/assistant-access'
 import { automationsFrom, automationsSentToday, enabledAutomationsUsers, romeDay } from '@/lib/automations-access'
+import { enabledVideoRepliesUsers, videoRepliesFrom } from '@/lib/video-replies-access'
 import {
   allBillingStates,
   billingConfigured,
@@ -1031,6 +1032,8 @@ export type BridgeUser = {
   assistant: AssistantAccess
   /** Pagina Automazioni (email programmate) visibile per questa persona (stesse regole dell'Assistente). */
   automations: boolean
+  /** Video automazione (video risposte nei messaggi diretti) visibile per questa persona (stesse regole). */
+  videoReplies: boolean
   /** Email inviate oggi (giorno italiano) dalle automazioni dei suoi spazi (di cui e' titolare; se non ne ha, quelli di cui e' membro). */
   automationsSentToday: number
   /**
@@ -1104,7 +1107,7 @@ async function allOverrides(): Promise<Map<string, UsageLight>> {
 export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeUser[] }> {
   const now = new Date()
   const withBilling = billingConfigured()
-  const [users, memberships, overrides, rate, billingStates, assistantOn, automationsOn, sentToday] = await Promise.all([
+  const [users, memberships, overrides, rate, billingStates, assistantOn, automationsOn, sentToday, videoRepliesOn] = await Promise.all([
     allAuthUsers(),
     allMemberships(),
     allOverrides(),
@@ -1113,6 +1116,7 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
     enabledAssistantUsers(),
     enabledAutomationsUsers(),
     automationsSentToday(),
+    enabledVideoRepliesUsers(),
   ])
 
   const spacesOf = new Map<string, BridgeUser['workspaces']>()
@@ -1179,6 +1183,7 @@ export async function bridgeUsers(): Promise<{ updatedAt: string; users: BridgeU
           : {}),
         assistant: accessFrom(spaces.map((w) => w.id), assistantOn.has(user.id)),
         automations: automationsFrom(spaces.map((w) => w.id), automationsOn.has(user.id)),
+        videoReplies: videoRepliesFrom(spaces.map((w) => w.id), videoRepliesOn.has(user.id)),
         automationsSentToday: (owned.length ? owned : spaces).reduce((sum, w) => sum + (sentToday.get(w.id) || 0), 0),
         usage,
       })

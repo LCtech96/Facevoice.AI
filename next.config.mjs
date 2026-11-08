@@ -22,6 +22,15 @@ const nextConfig = {
           { key: 'Cache-Control', value: 'no-store, max-age=0' },
         ],
       },
+      // Video risposte mandate come link (/v/<codice>): mai indicizzate, il codice non esce come referrer.
+      {
+        source: '/v/:path*',
+        headers: [
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'Cache-Control', value: 'no-store, max-age=0' },
+        ],
+      },
     ]
   },
   async redirects() {

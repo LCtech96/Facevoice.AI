@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { FACEVOICE_WORKSPACE_ID, workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { readConnectionSecret, saveConnection, setChannelState, takeOverConnection, updateConnection, type Connection } from './connections'
-import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginAction, sendInstagramLoginText } from './instagram'
+import { instagramLoginContactName, instagramLoginSecret, sendInstagramLoginAction, sendInstagramLoginText, sendInstagramLoginVideo } from './instagram'
 
 // Facebook e Instagram dei clienti: collegamento con "Facebook Login for
 // Business" (configurazione con token di sistema che non scade), Pagine e
@@ -203,6 +203,19 @@ export async function sendMetaText(connection: Connection, recipientId: string, 
     method: 'POST',
     headers: { Authorization: `Bearer ${secret.pageToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { text } }),
+  })
+  return { id: data.message_id || `meta:${Date.now()}` }
+}
+
+/** Video come allegato (Messenger o Direct): Meta lo scarica dall'indirizzo pubblico dell'archivio. */
+export async function sendMetaVideo(connection: Connection, recipientId: string, url: string): Promise<{ id: string }> {
+  const igSecret = await instagramLoginSecret(connection)
+  if (igSecret) return sendInstagramLoginVideo(connection, igSecret, recipientId, url)
+  const secret = await readConnectionSecret<MetaSecret>(connection.id)
+  const data = await graph<{ message_id?: string }>(`/me/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${secret.pageToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: recipientId }, messaging_type: 'RESPONSE', message: { attachment: { type: 'video', payload: { url, is_reusable: true } } } }),
   })
   return { id: data.message_id || `meta:${Date.now()}` }
 }

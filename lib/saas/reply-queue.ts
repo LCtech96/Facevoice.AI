@@ -7,6 +7,7 @@ import { listConnections } from './connections'
 import { sendMetaSenderAction, type SenderAction } from './meta'
 import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, wroteAfter } from './meta-history'
 import { respondToMessage, type ReplyOutcome } from './responder'
+import { VIDEO_ORIGIN } from './video-replies'
 
 // Ritardo delle risposte automatiche (scelto dal cliente nell'omnichat) e coda
 // delle risposte in attesa. Nei messaggi diretti (Instagram, Messenger) si aspetta
@@ -262,7 +263,7 @@ async function latestIncoming(db: WorkspaceDb, platform: string, contactId: stri
  */
 export async function humanReplied(db: WorkspaceDb, item: Pick<QueueItem, 'platform' | 'contactId' | 'firstAt'>): Promise<boolean> {
   const since = new Date(item.firstAt).toISOString()
-  const { data: replies } = await db
+  const { data: rows } = await db
     .from('social_messages')
     .select('origin, created_at')
     .eq('platform', item.platform)
@@ -273,7 +274,9 @@ export async function humanReplied(db: WorkspaceDb, item: Pick<QueueItem, 'platf
     .or('origin.is.null,origin.neq.ai_auto')
     .gte('created_at', since)
     .limit(50)
-  if (!replies?.length) return false
+  // I video risposte partono con la risposta automatica: non sono di una persona.
+  const replies = (rows || []).filter((row) => row.origin !== VIDEO_ORIGIN)
+  if (!replies.length) return false
   if (replies.some((row) => row.origin !== APP_ORIGIN)) return true
   const { data: incoming } = await db
     .from('social_messages')

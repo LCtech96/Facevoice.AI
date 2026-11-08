@@ -217,6 +217,17 @@ export async function sendInstagramLoginText(connection: Connection, secret: Ins
 }
 
 /** "Visto" o "sta scrivendo..." nel Direct (accesso di Instagram). */
+/** Video (allegato con indirizzo pubblico) nel Direct, con l'accesso di Instagram. */
+export async function sendInstagramLoginVideo(connection: Connection, secret: InstagramSecret, recipientId: string, url: string): Promise<{ id: string }> {
+  const token = await tokenFor(connection, secret)
+  const data = await igFetch<{ message_id?: string }>(`${IG_GRAPH}/me/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: recipientId }, message: { attachment: { type: 'video', payload: { url } } } }),
+  })
+  return { id: data.message_id || `ig:${Date.now()}` }
+}
+
 export async function sendInstagramLoginAction(connection: Connection, secret: InstagramSecret, recipientId: string, action: 'mark_seen' | 'typing_on'): Promise<void> {
   const token = await tokenFor(connection, secret)
   await fetch(`${IG_GRAPH}/me/messages`, {

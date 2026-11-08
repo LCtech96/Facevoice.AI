@@ -65,7 +65,7 @@ export default function AIChatWidget() {
   const openRef = useRef(false)
 
   const isChatPage = pathname?.startsWith('/ai-chat')
-  const hidden = isChatPage || pathname?.startsWith('/admin') || pathname === '/app' || pathname?.startsWith('/app/') || pathname?.startsWith('/c/')
+  const hidden = isChatPage || pathname?.startsWith('/admin') || pathname === '/app' || pathname?.startsWith('/app/') || pathname?.startsWith('/c/') || pathname?.startsWith('/v/')
 
   useEffect(() => {
     openRef.current = isOpen

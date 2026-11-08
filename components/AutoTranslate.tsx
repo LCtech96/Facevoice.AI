@@ -24,7 +24,7 @@ const HAS_LETTERS = /\p{L}{2,}/u
 type Entry = { original: string; applied?: string }
 
 function isPrivatePath(pathname: string | null) {
-  return Boolean(pathname && (pathname.startsWith('/admin') || pathname.startsWith('/ai-chat') || pathname.startsWith('/c/')))
+  return Boolean(pathname && (pathname.startsWith('/admin') || pathname.startsWith('/ai-chat') || pathname.startsWith('/c/') || pathname.startsWith('/v/')))
 }
 
 function skipped(el: Element | null): boolean {

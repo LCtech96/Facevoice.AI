@@ -7,7 +7,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 // l'indirizzo contiene il token del link, che non deve finire nelle statistiche.
 const isPrivate = (url: string) => {
   try {
-    return new URL(url, 'https://x').pathname.startsWith('/c/')
+    return /^\/(c|v)\//.test(new URL(url, 'https://x').pathname)
   } catch {
     return false
   }

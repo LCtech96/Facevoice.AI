@@ -10,6 +10,7 @@ import { looksLikeImage, prepareImage } from '@/lib/client-image'
 import { AI_MODEL_CHOICES, asModelChoice } from '@/lib/ai-models'
 import { PHOTO_LAYOUTS, TEXT_LAYOUTS } from '@/lib/photo-layouts'
 import { looksLikeVideo } from '@/lib/saas/video-shared'
+import { PendingVideo, TurnVideo, VideoReplyActionCard, useChatVideo, type ChatVideo, type VideoReplyAction } from '@/components/app/AssistantVideo'
 
 const MODEL_KEY = 'fv_app_assistant_model'
 
@@ -104,6 +105,8 @@ type PendingAction = {
     document?: { id: string; version: number; title: string; pages: number }
     /** Condivisione del contratto: il PIN si sceglie qui (mai in chat). */
     pin?: { min: number; max: number; for: string }
+    /** Video risposta: anteprima del video. */
+    video?: { url: string; title: string }
     status: 'pending' | 'running' | 'done' | 'failed' | 'discarded' | 'expired' | 'unconfirmed'
     createdAt: string
     expiresAt: string
@@ -112,9 +115,9 @@ type PendingAction = {
 }
 /** Contratto condiviso con link e PIN: il link si copia dalla rotta protetta (non sta nella chat). */
 type ContractAction = { kind: 'contract'; at: string; contract: { id: string; title: string; recipient: string; status: string; channel: string } }
-type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction | DocumentAction | PendingAction | ContractAction
+type Action = { kind: 'post'; post: Post } | { kind: 'image'; url: string; note: string } | SentAction | WebImagesAction | AutomationAction | ProspectAction | DocumentAction | PendingAction | ContractAction | VideoReplyAction
 type Target = { postId: string; slide: number; thumb?: string; slides?: number[] }
-type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; target?: Target; actions?: Action[]; at: string }
+type Turn = { role: 'user' | 'assistant'; text: string; images?: string[]; video?: ChatVideo; target?: Target; actions?: Action[]; at: string }
 type Attachment = { id: string; thumb: string; url: string | null; error?: string }
 type Connection = { platform: string; status: string; canPublish?: boolean }
 
@@ -186,7 +189,7 @@ function AssistantLocked() {
 }
 
 function AssistantChat() {
-  const { appFetch, workspace, automations } = useWorkspace()
+  const { appFetch, workspace, automations, videoReplies } = useWorkspace()
   // Con le Automazioni attive anche un esempio di email programmata.
   const examples = automations === true ? [...EXAMPLES, 'Ogni lunedì alle 9 manda un’email a mario@esempio.it con le novità della settimana'] : EXAMPLES
   const [turns, setTurns] = useState<Turn[] | null>(null)
@@ -218,6 +221,8 @@ function AssistantChat() {
   const endRef = useRef<HTMLDivElement>(null)
   const canManage = workspace?.role !== 'member'
   const dictation = useDictation((text) => setInput((v) => (v ? `${v} ${text}` : text)))
+  // Video allegato (video risposte): caricamento diretto nell'archivio.
+  const chatVideo = useChatVideo(appFetch)
 
   // Chat aperta: ogni chat resta salvata; da "Contenuti programmati" si arriva con
   // ?post=<id> (la chat in cui si e' lavorato a quel post) o ?chat=<id>.
@@ -299,21 +304,23 @@ function AssistantChat() {
   }
   const [dragging, setDragging] = useState(false)
 
-  const uploading = attachments.some((a) => !a.url && !a.error)
+  const uploading = attachments.some((a) => !a.url && !a.error) || chatVideo.uploading
   const ready = attachments.filter((a) => a.url).map((a) => a.url!)
 
   /** target: slide toccata nell'anteprima (la richiesta riguarda solo quella). */
   const send = async (text = input, target?: Target) => {
     const message = text.trim()
-    if ((!message && !ready.length) || busy || uploading) return false
+    const video = chatVideo.video
+    if ((!message && !ready.length && !video) || busy || uploading) return false
     if (dictation.listening) dictation.stop()
     setBusy(true)
     setError(null)
     if (!target) setInput('')
     const sentAttachments = attachments
     setAttachments([])
-    setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, ...(target ? { target } : {}), at: new Date().toISOString() }])
-    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, model, chatId: chatRef.current, ...(target ? { target } : {}) }) }).catch(() => null)
+    chatVideo.clear()
+    setTurns((t) => [...(t || []), { role: 'user', text: message, images: ready, ...(video ? { video } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }])
+    const res = await appFetch('/api/app/assistant', { method: 'POST', body: JSON.stringify({ message, images: ready, ...(video ? { video } : {}), model, chatId: chatRef.current, ...(target ? { target } : {}) }) }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setBusy(false)
     // La richiesta ha usato l'AI: il gettone del consumo si aggiorna.
@@ -330,6 +337,7 @@ function AssistantChat() {
     }
     setError(data?.error || 'Richiesta non riuscita, riprova.')
     setAttachments(sentAttachments)
+    chatVideo.restore(video)
     load()
   }
 
@@ -423,6 +431,7 @@ function AssistantChat() {
                       ))}
                     </div>
                   ) : null}
+                  {turn.video ? <TurnVideo video={turn.video} /> : null}
                   {turn.target ? (
                     <div className="mb-2 flex items-center justify-end gap-2 text-xs text-[var(--text-secondary)]">
                       {turn.target.thumb ? (
@@ -455,6 +464,8 @@ function AssistantChat() {
                       <AutomationActionCard key={`a${k}`} action={action} />
                     ) : action.kind === 'prospect' ? (
                       <ProspectActionCard key={`p${k}`} action={action} />
+                    ) : action.kind === 'video_reply' ? (
+                      <VideoReplyActionCard key={`v${k}`} action={action} />
                     ) : action.kind === 'web_images' ? (
                       // Con il post fatto da queste immagini basta l'anteprima (con le fonti sotto).
                       turn.actions?.some((a) => a.kind === 'post') ? null : (
@@ -509,6 +520,7 @@ function AssistantChat() {
               ))}
             </div>
           )}
+          {chatVideo.chip}
           <label className="relative mb-1.5 flex max-w-full items-center gap-1 px-1 text-[11px] text-[var(--text-secondary)]">
             <Sparkles className="h-3 w-3 shrink-0" />
             <select
@@ -531,6 +543,8 @@ function AssistantChat() {
             <button onClick={() => fileRef.current?.click()} disabled={attachments.length >= 10} aria-label="Allega foto" className="p-2 text-[var(--text-secondary)] disabled:opacity-40">
               <ImagePlus className="h-5 w-5" />
             </button>
+            {/* Video risposte: solo con la Video automazione attiva. */}
+            {videoReplies === true && chatVideo.button(busy || Boolean(chatVideo.video))}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -561,7 +575,7 @@ function AssistantChat() {
             )}
             <button
               onClick={() => send()}
-              disabled={busy || uploading || (!input.trim() && !ready.length)}
+              disabled={busy || uploading || (!input.trim() && !ready.length && !chatVideo.video)}
               aria-label="Invia"
               className="rounded-full bg-[var(--accent-blue)] p-2.5 text-white disabled:opacity-40"
             >
@@ -1776,6 +1790,7 @@ function ConfirmCard({
             {open ? text : p.text}
           </p>
         ))}
+      <PendingVideo video={p.video} />
       {p.document ? (
         <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
           <FileText className="h-3.5 w-3.5" /> PDF allegato: <span translate="no">{p.document.title}</span> (v{p.document.version})

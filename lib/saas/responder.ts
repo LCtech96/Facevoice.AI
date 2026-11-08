@@ -12,6 +12,7 @@ import { replyGuidance } from './corrections'
 import { sendEmailReply } from './email'
 import { sendMetaText } from './meta'
 import { APP_ORIGIN, AUTOMATIC_REPLY_GRACE_MS, looksAutomatic, syncConversationHistory } from './meta-history'
+import { VIDEO_ORIGIN, attachVideoToDraft, parseVideoChoice, retryVideoRow, sendDraftVideo, videoChoicesFor, videoChoicesSection, type VideoSendOutcome } from './video-replies'
 
 // Risposte AI per i clienti del SaaS. L'AI scrive come l'attivita' del cliente,
 // seguendo le sue istruzioni (generali + del canale). Se l'automazione del canale
@@ -253,6 +254,9 @@ export type ReplyOutcome = {
   messageId?: string
   /** AI del piano finita: nessuna risposta (e nessun nuovo tentativo) fino al periodo dopo. */
   blocked?: boolean
+  /** Video risposta scelta dall'AI (parte dopo il testo, o resta proposta sulla bozza). */
+  videoId?: string
+  video?: VideoSendOutcome | null
 }
 
 /** Risposta non preparata perche' l'AI inclusa nel piano e' finita. */
@@ -385,7 +389,7 @@ export async function respondToMessage(
   // Campagna accesa per questo canale (email, Direct, Messenger)? Letta adesso: anche le
   // risposte in coda usano quella valida al momento in cui si scrivono.
   const campaignRead = readCampaign(db.workspaceId).then((c) => campaignFor(c, message.platform, 'message'))
-  const [instructions, name, lang, campaign, corrections] = await Promise.all([
+  const [instructions, name, lang, campaign, corrections, videoChoices] = await Promise.all([
     readInstructions(db.workspaceId),
     workspaceName(db.workspaceId),
     languageFor(db.workspaceId, `${message.subject || ''}\n${message.body}`, inbound),
@@ -400,6 +404,8 @@ export async function respondToMessage(
         ...(active ? { campaign: { since: active.activeSince } } : {}),
       })
     ),
+    // Video risposte per questo canale (solo Instagram e Messenger, mai email): l'AI ne sceglie al massimo uno.
+    videoChoicesFor(db.workspaceId, message.platform, message.contact_id).catch(() => []),
   ])
   const general = instructions.general.trim()
   const specific = (instructions[message.platform as InstructionChannel] || '').trim()
@@ -434,6 +440,7 @@ export async function respondToMessage(
       message.contact_name ? `La persona si chiama "${message.contact_name}" (usa il nome di battesimo solo se sembra un nome di persona).` : '',
       message.subject ? `Oggetto dell'email ricevuta: "${message.subject}".` : '',
       corrections,
+      videoChoicesSection(videoChoices),
       buildRealtimeDateTimeInstructionsItalian(),
       `${RULES}\n${languageReminder(lang)}`,
     ]
@@ -456,6 +463,9 @@ export async function respondToMessage(
     console.error('saas responder:', error instanceof Error ? error.message : error)
     return { status: 'failed', reason: 'AI non disponibile' }
   }
+  // Riga [[VIDEO: id]]: solo un id tra quelli offerti vale (prima delle altre righe tra [[ ]], che si tolgono).
+  const picked = parseVideoChoice(draft, videoChoices.map((v) => v.id))
+  draft = picked.text
   const suspicious = parseSuspicious(draft)
   const reason = suspicious.reason
   // Dettaglio mancante ("te lo confermo a breve") o proposta citata che non e' nella chat:
@@ -500,10 +510,13 @@ export async function respondToMessage(
   }
   // Scritta con la campagna: chip "Campagna" nell'Omnichat (nessuna colonna in piu').
   if (campaign) await markCampaignReply(db.workspaceId, saved.id as string, campaign)
-  if (!autoSend) return { status: 'pending', messageId: saved.id, reason: reason || undefined }
+  // Video scelto: legato alla risposta, parte subito dopo il testo (ora o quando la bozza si invia).
+  const videoId = picked.videoId ?? undefined
+  if (videoId) await attachVideoToDraft(db.workspaceId, message.platform, message.contact_id, saved.id as string, videoId)
+  if (!autoSend) return { status: 'pending', messageId: saved.id, reason: reason || undefined, videoId }
   // Inviato: la nota "Da confermare" resta sul messaggio, il titolare la vede nell'omnichat.
   const sent = await deliverDraft(db, saved.id as string, text, 'ai_auto', { note })
-  return sent.ok ? { status: 'sent', messageId: saved.id } : { status: 'failed', reason: sent.error, messageId: saved.id }
+  return sent.ok ? { status: 'sent', messageId: saved.id, videoId, video: sent.video } : { status: 'failed', reason: sent.error, messageId: saved.id, videoId }
 }
 
 /** Motivo della bozza piu' la nota "Da confermare" (una delle due puo' mancare). */
@@ -559,14 +572,16 @@ export async function deliverDraft(
   origin: string,
   /** note: riga per il titolare che resta sul messaggio inviato (es. "Da confermare: …"). */
   options: { note?: string | null } = {}
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; video?: VideoSendOutcome | null }> {
   const { data: draft } = await db
     .from('social_messages')
-    .select('id, platform, contact_id, subject, reply_to, channel_account_id, status')
+    .select('id, platform, contact_id, contact_name, subject, reply_to, channel_account_id, status, origin')
     .eq('id', draftId)
     .maybeSingle()
   if (!draft) return { ok: false, error: 'messaggio non trovato' }
   if (draft.status === 'sent') return { ok: true }
+  // Video risposta non partita ("Riprova" dall'Omnichat): si rimanda il video, mai il testo della riga.
+  if (draft.origin === VIDEO_ORIGIN) return retryVideoRow(db, draftId)
 
   // Chi sta mandando lo stesso messaggio in questo momento? Si "prenota" l'invio.
   const { data: claimed } = await db
@@ -584,7 +599,9 @@ export async function deliverDraft(
       if (!account) throw new Error(`${draft.platform === 'facebook' ? 'Pagina Facebook' : 'Instagram'} non collegato`)
       const { id } = await sendMetaText(account, draft.contact_id, body)
       await db.from('social_messages').update({ status: 'sent', external_id: id, origin, error_message: options.note ?? null, created_at: new Date().toISOString() }).eq('id', draftId)
-      return { ok: true }
+      // Video proposto sulla risposta: parte dopo il testo; un suo errore resta sulla riga del video, non qui.
+      const video = await sendDraftVideo(db, { ...draft, id: draftId } as Parameters<typeof sendDraftVideo>[1])
+      return { ok: true, video }
     }
     if (draft.platform !== 'email') throw new Error('canale non ancora collegabile')
     const connections = await listConnections(db, 'email')

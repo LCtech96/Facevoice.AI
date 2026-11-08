@@ -96,7 +96,7 @@ function useSaveDashboardLanguage() {
 }
 
 function Frame({ children }: { children: ReactNode }) {
-  const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant, automations } = useWorkspace()
+  const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant, automations, videoReplies } = useWorkspace()
   const pathname = usePathname()
   useSaveDashboardLanguage()
   // "Piano" solo con i pagamenti online attivi: prima del lancio tutto resta com'era.
@@ -124,7 +124,7 @@ function Frame({ children }: { children: ReactNode }) {
 
   const active = (href: string) => (href === '/app' ? pathname === '/app' : pathname?.startsWith(href))
   const showContracts = workspace.role !== 'member'
-  const nav = NAV.filter((item) => (item.href !== '/app/assistente' || assistant === true) && (item.href !== '/app/automazioni' || automations === true))
+  const nav = NAV.filter((item) => (item.href !== '/app/assistente' || assistant === true) && (item.href !== '/app/automazioni' || automations === true || videoReplies === true))
 
   return (
     <div className="min-h-[100dvh] pb-20 md:pb-0 md:pl-60">

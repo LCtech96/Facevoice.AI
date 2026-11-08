@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireWorkspace } from '@/lib/workspace'
 import { chatSendWindow } from '@/lib/saas/assistant-send'
 import { campaignMarks } from '@/lib/saas/campaign'
+import { threadVideos } from '@/lib/saas/video-replies'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,8 +50,10 @@ export async function GET(req: NextRequest) {
     access.workspace.id,
     rows.filter((m) => m.direction === 'out' && String(m.origin || '').startsWith('ai')).map((m) => m.id as string)
   )
+  // Video risposte: proposto sulla bozza (+ video) o inviato (anteprima nella conversazione).
+  const videos = await threadVideos(access.workspace.id, platform, contact, rows as { id: string; origin: string | null; status: string | null; direction: string }[])
   return NextResponse.json({
-    messages: rows.map((m) => ({ ...m, campaign: marks.get(m.id as string) ?? null })),
+    messages: rows.map((m) => ({ ...m, campaign: marks.get(m.id as string) ?? null, video: videos.get(m.id as string) ?? null })),
     sendWindow: chatSendWindow(platform, lastIn?.created_at as string | undefined),
   })
 }

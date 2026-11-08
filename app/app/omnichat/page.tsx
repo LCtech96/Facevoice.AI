@@ -6,6 +6,7 @@ import { ArrowLeft, Check, ChevronDown, Clock, Facebook, Globe, Instagram, Loade
 import { useWorkspace } from '@/components/app/WorkspaceContext'
 import { useDictation } from '@/components/useDictation'
 import { useTranslation } from '@/lib/i18n/LanguageContext'
+import { VideoChip } from '@/components/app/VideoReplies'
 
 // Omnichat: tutte le conversazioni dei canali collegati, la risposta a mano o
 // con le bozze dell'AI, e l'automazione di ogni canale. "Correggi" sotto ogni
@@ -44,7 +45,11 @@ type Message = {
   created_at: string
   /** Scritta dall'AI con la Campagna: nome della campagna ('' senza nome), altrimenti null. */
   campaign?: string | null
+  /** Video risposta: proposto sulla bozza (parte con lei) o inviato (riga del video). */
+  video?: { title: string; url: string | null; proposed: boolean; videoId: string } | null
 }
+/** Riga di un video risposta mandato dall'AI (lib/saas/video-replies.ts). */
+const VIDEO_ORIGIN = 'ai_video'
 type CampaignScope = 'email' | 'instagram_dm' | 'instagram_comments' | 'facebook_messenger' | 'facebook_comments'
 type CampaignScopes = Record<CampaignScope, boolean>
 type Campaign = { active: boolean; name: string; text: string; scopes: CampaignScopes; activeSince: string | null; updatedAt: string | null; updatedBy: string | null }
@@ -76,6 +81,7 @@ function alwaysMessage(result: CorrectionResult): string {
 /** Risposte scritte dall'AI che si possono correggere: inviate da sola, approvate, o bozze. */
 const correctable = (m: Message) =>
   m.direction === 'out' &&
+  m.origin !== VIDEO_ORIGIN &&
   (m.status === 'pending' || m.status === 'failed' ? String(m.origin || '').startsWith('ai') : m.status === 'sent' && (m.origin === 'ai_auto' || m.origin === 'ai_approved'))
 const sameText = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
 
@@ -528,6 +534,31 @@ function Thread({
         {messages === null && <Loader2 className="mx-auto h-5 w-5 animate-spin text-[var(--text-secondary)]" />}
         {messages?.map((m) => {
           const pending = m.direction === 'out' && (m.status === 'pending' || m.status === 'failed')
+          if (pending && m.origin === VIDEO_ORIGIN) {
+            return (
+              <div key={m.id} className="ml-auto max-w-[92%] rounded-2xl border border-[#FF3B30] bg-[var(--background-secondary)] p-3">
+                <p className="text-xs font-semibold text-[#FF3B30]">Video non inviato</p>
+                {m.error_message && <p className="mt-1 text-xs text-[var(--text-secondary)]">{m.error_message}</p>}
+                <VideoChip className="mt-2" title={m.video?.title || 'video'} url={m.video?.url ?? null} note="La risposta scritta è partita: manca solo il video." />
+                <div className="mt-2 flex justify-end gap-2">
+                  <button
+                    onClick={() => post('/api/app/inbox/draft', { action: 'reject', id: m.id }, `reject:${m.id}`)}
+                    disabled={Boolean(busy)}
+                    className="rounded-full px-3 py-1.5 text-sm text-[var(--text-secondary)]"
+                  >
+                    Lascia stare
+                  </button>
+                  <button
+                    onClick={() => post('/api/app/inbox/reply', { draftId: m.id, body: m.body }, `send:${m.id}`)}
+                    disabled={Boolean(busy)}
+                    className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                  >
+                    {busy === `send:${m.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Riprova
+                  </button>
+                </div>
+              </div>
+            )
+          }
           if (pending) {
             const value = drafts[m.id] ?? m.body
             return (
@@ -543,6 +574,18 @@ function Thread({
                   rows={Math.min(14, Math.max(4, value.split('\n').length + 1))}
                   className="mt-2 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-[16px] text-[var(--text-primary)] md:text-sm"
                 />
+                {m.video?.proposed && (
+                  <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-2">
+                    <VideoChip title={`+ video: ${m.video.title}`} url={m.video.url} note="Parte subito dopo il messaggio." />
+                    <button
+                      onClick={() => post('/api/app/video-replies', { action: 'detach', draftId: m.id }, `detach:${m.id}`)}
+                      disabled={Boolean(busy)}
+                      className="shrink-0 rounded-full px-2 py-1 text-xs text-[var(--text-secondary)]"
+                    >
+                      Togli il video
+                    </button>
+                  </div>
+                )}
                 <div className="mt-2 flex flex-wrap justify-end gap-2">
                   {correctable(m) && (
                     <button
@@ -581,11 +624,12 @@ function Thread({
                   mine ? 'bg-[var(--accent-blue)] text-white' : 'bg-[var(--background-secondary)] text-[var(--text-primary)]'
                 }`}
               >
-                {m.body}
+                {m.origin === VIDEO_ORIGIN ? <VideoChip title={m.video?.title || m.body} url={m.video?.url ?? null} className="text-white" /> : m.body}
               </div>
+              {mine && m.origin === VIDEO_ORIGIN && m.error_message && <p className="mt-0.5 text-right text-[11px] text-[#FF9500]">{m.error_message}</p>}
               <p className={`mt-1 text-[11px] text-[var(--text-secondary)] ${mine ? 'text-right' : ''}`}>
                 {when(m.created_at, language)}
-                {mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
+                {mine && m.origin === VIDEO_ORIGIN ? ' · video risposta' : mine && m.origin?.startsWith('ai') ? ' · AI' : ''}
                 {mine && m.campaign != null && <CampaignChip name={m.campaign} />}
                 {mine && m.origin === 'mailbox' ? ' · inviata dalla casella' : ''}
                 {mine && m.origin === 'manual_app' ? ' · dall’app' : ''}

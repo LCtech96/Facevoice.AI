@@ -28,6 +28,8 @@ type State = {
   automations: boolean | null
   /** Rilegge lo stato delle Automazioni; null: non letto. */
   refreshAutomations: () => Promise<boolean | null>
+  /** Video automazione (scheda in Automazioni) visibile per questa persona; null: non si sa, decide il server. */
+  videoReplies: boolean | null
   selectWorkspace: (id: string) => void
   reload: () => Promise<void>
   signOut: () => Promise<void>
@@ -56,6 +58,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [assistant, setAssistant] = useState<boolean | null>(null)
   const [automations, setAutomations] = useState<boolean | null>(null)
+  const [videoReplies, setVideoReplies] = useState<boolean | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -84,6 +87,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setEmail(data.email || null)
       setAssistant(typeof data.assistant === 'boolean' ? data.assistant : null)
       setAutomations(typeof data.automations === 'boolean' ? data.automations : null)
+      setVideoReplies(typeof data.videoReplies === 'boolean' ? data.videoReplies : null)
     }
     setLoaded(true)
   }, [token])
@@ -111,6 +115,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (typeof data?.automations !== 'boolean') return null
     setAutomations(data.automations)
     if (typeof data.assistant === 'boolean') setAssistant(data.assistant)
+    if (typeof data.videoReplies === 'boolean') setVideoReplies(data.videoReplies)
     return data.automations
   }, [token])
 
@@ -152,6 +157,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             .then((data) => {
               if (data?.code === 'assistant_disabled') setAssistant(false)
               if (data?.code === 'automations_disabled') setAutomations(false)
+              if (data?.code === 'video_replies_disabled') setVideoReplies(false)
               // Termini in vigore non accettati (per esempio aggiornati mentre l'app era aperta): torna il blocco.
               if (data?.code === 'terms_required') window.dispatchEvent(new Event(TERMS_REQUIRED_EVENT))
             })
@@ -167,6 +173,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setWorkspaces([])
     setAssistant(null)
     setAutomations(null)
+    setVideoReplies(null)
   }, [supabase])
 
   const value: State = {
@@ -180,6 +187,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshAssistant,
     automations,
     refreshAutomations,
+    videoReplies,
     selectWorkspace,
     reload,
     signOut,

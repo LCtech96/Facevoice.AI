@@ -5,6 +5,9 @@ import { asModelChoice, runWithStatus } from '@/lib/ai'
 import { aiBlockedMessage, isAIBlockedError, workspaceAIBlocked } from '@/lib/usage-limits'
 import { chatForPost, hidePin, loadChat, loadChatIndex, openChat, postView, refreshPostActions, runClientAssistant, saveChat, startChat, type ChatAction, type ChatTurn } from '@/lib/saas/assistant'
 import { refreshAssistantCards } from '@/lib/saas/assistant-actions'
+import { isWorkspaceVideo } from '@/lib/saas/video'
+import type { ChatVideo } from '@/lib/saas/video-replies-assistant'
+import { workspaceVideoRepliesAccess } from '@/lib/video-replies-access'
 import { describePhotos, getPost, postVersions } from '@/lib/saas/posts'
 
 export const dynamic = 'force-dynamic'
@@ -60,6 +63,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ turns, chatId })
 }
 
+/** Video allegato nella chat: indirizzo del nostro archivio (cartella dello spazio), nome e peso. */
+function chatVideoFrom(workspaceId: string, value: unknown): ChatVideo | null {
+  const v = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+  const url = typeof v?.url === 'string' ? v.url : ''
+  if (!url || !isWorkspaceVideo(workspaceId, url)) return null
+  const size = Number(v?.size)
+  return { url, name: typeof v?.name === 'string' ? v.name.slice(0, 120) : 'video', size: Number.isFinite(size) && size > 0 ? size : 0 }
+}
+
 export async function POST(req: NextRequest) {
   const access = await requireAssistant(req, 'admin')
   if (access instanceof NextResponse) return access
@@ -69,7 +81,9 @@ export async function POST(req: NextRequest) {
   // Modello scelto dal cliente nella chat: vale per tutta la richiesta.
   const model = asModelChoice(body.model)
   const images = (Array.isArray(body.images) ? body.images : []).filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('https://')).slice(0, 10)
-  if (!message && !images.length) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
+  // Video allegato (video risposte): solo un video caricato da questo spazio.
+  const video = chatVideoFrom(access.workspace.id, body.video)
+  if (!message && !images.length && !video) return NextResponse.json({ error: 'Scrivi cosa vuoi fare' }, { status: 400 })
   // AI del piano finita: la richiesta non parte (e non resta in chat).
   if (await workspaceAIBlocked(access.workspace.id)) return NextResponse.json({ error: await aiBlockedMessage(access.workspace.id), blocked: true }, { status: 402 })
   // Slide toccata nell'anteprima: la richiesta riguarda solo quella.
@@ -92,7 +106,11 @@ export async function POST(req: NextRequest) {
   const automations = await workspaceAutomationsAccess(access.userId, access.workspace.id)
     .then((a) => a.enabled)
     .catch(() => false)
-  const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }
+  // Video automazione (video risposte) per chi scrive e per il titolare: senza, niente strumenti dei video.
+  const videoReplies = await workspaceVideoRepliesAccess(access.userId, access.workspace.id)
+    .then((a) => a.enabled)
+    .catch(() => false)
+  const userTurn: ChatTurn = { role: 'user', text: message, ...(images.length ? { images } : {}), ...(video ? { video } : {}), ...(target ? { target } : {}), at: new Date().toISOString() }
   // La richiesta si salva subito: se la pagina si chiude, la risposta arriva lo stesso.
   await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
   let reply: ChatTurn
@@ -108,7 +126,7 @@ export async function POST(req: NextRequest) {
         userTurn.imageNotes = await describePhotos(images, access.workspace.id)
         await saveChat(access.workspace.id, access.userId, [...history, userTurn], chatId)
       }
-      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions, { automations, chatId })
+      return runClientAssistant(access.db, access.userId, message, images, history, userTurn.imageNotes || [], target, actions, { automations, chatId, video, videoReplies })
     })
     reply = { role: 'assistant', text: result.reply, ...(result.actions.length ? { actions: result.actions } : {}), at: new Date().toISOString() }
   } catch (error) {

@@ -32,6 +32,8 @@ import {
   sendProspectNow,
   type SettingsInput,
 } from './prospects'
+import { runVideoReplyAction } from './video-replies-assistant'
+import { workspaceVideoRepliesAccess } from '@/lib/video-replies-access'
 
 // Doppia autorizzazione dell'Assistente: ogni azione che esce dalla chat o non si puo'
 // annullare (messaggi e email alle persone, documenti inviati, post pubblicati o programmati,
@@ -69,6 +71,8 @@ export type PendingKind =
   | 'set_find_clients'
   | 'share_contract'
   | 'set_photo_autopilot'
+  | 'create_video_reply'
+  | 'delete_video_reply'
 
 export type PendingStatus = 'pending' | 'running' | 'done' | 'failed' | 'discarded'
 
@@ -86,6 +90,8 @@ export type PendingSummary = {
   document?: { id: string; version: number; title: string; pages: number }
   /** La scheda chiede un PIN (condivisione del contratto): si scrive li', non parte con la chat. */
   pin?: { min: number; max: number; for: string }
+  /** Video risposta: anteprima del video nella scheda. */
+  video?: { url: string; title: string }
 }
 
 export type PendingAction = {
@@ -409,6 +415,15 @@ async function run(db: WorkspaceDb, userId: string, action: PendingAction, now: 
   const p = action.payload
   const at = new Date().toISOString()
   switch (action.kind) {
+    case 'create_video_reply':
+    case 'delete_video_reply': {
+      // Video automazione spenta dal pannello dopo che la scheda e' stata preparata: non si fa niente.
+      if (!(await workspaceVideoRepliesAccess(userId, db.workspaceId).then((a) => a.enabled).catch(() => false))) {
+        return { ok: false, message: 'La video automazione non è più attiva per questo account: non è stato fatto niente.', cards: [] }
+      }
+      const outcome = await runVideoReplyAction(db, userId, action.kind, p, extra.origin)
+      return { ok: outcome.ok, message: outcome.message, cards: outcome.card ? [{ kind: 'video_reply', op: outcome.card.op, at, video: outcome.card.video }] : [] }
+    }
     case 'share_contract': {
       // Caricato solo qui (link, PIN, invio): il PIN va solo a shareContract, che salva l'hash.
       const contracts = await import('./contracts')
