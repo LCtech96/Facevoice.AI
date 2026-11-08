@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from 'next/server'
 import { ADMIN_SESSION_TTL_S, readSession, sessionCookieName, SESSION_TTL_S, signSession } from '@/lib/todo-auth'
-import { notifyTaskDone } from '@/lib/todo-notify'
+import { notifyAssigned, notifyTaskDone, type InviteStatus } from '@/lib/todo-notify'
 import { isDoneListTitle } from '@/lib/todo-shared'
 import {
   TodoError,
@@ -19,6 +19,7 @@ import {
   sortListByPriority,
   updateTask,
   viewerFor,
+  type Assigned,
   type BoardRow,
   type MemberRow,
   type Viewer,
@@ -133,6 +134,25 @@ async function listTitles(boardId: string, ids: string[]): Promise<Map<string, s
 }
 
 /**
+ * Invito alla persona appena assegnata (una email per operazione, con tutte le attivita').
+ * Si aspetta il risultato per dire all'admin se e' partita, ma il salvataggio e' gia' fatto:
+ * un'email non partita non lo annulla. Chi assegna a se stesso non riceve niente.
+ * All'admin si dice com'e' andata; a una persona no (niente email di altri).
+ */
+async function invite(board: BoardRow, viewer: Viewer, assigned: Assigned | null | undefined, origin: string): Promise<Record<string, unknown>> {
+  if (!assigned) return {}
+  if (!viewer.admin && assigned.member.id === viewer.member.id) return {}
+  let status: InviteStatus
+  try {
+    status = await notifyAssigned({ board, member: assigned.member, taskIds: assigned.taskIds, origin, password: assigned.password })
+  } catch {
+    status = 'failed'
+  }
+  if (!viewer.admin) return {}
+  return { invite: { status, name: assigned.member.name, email: assigned.member.email, created: assigned.created } }
+}
+
+/**
  * Le operazioni sulla todo list (per l'admin e per chi ha il link). I permessi li
  * controlla il modulo dei dati in base a chi chiede (viewer). origin: per il link
  * all'admin nell'avviso "fatta".
@@ -155,15 +175,15 @@ export async function applyOp(board: BoardRow, viewer: Viewer, body: Record<stri
       await sortListByPriority(board, viewer, body.listId)
       return {}
     case 'addTask': {
-      const r = await addTask(board, viewer, body.listId, body.fields)
+      const r = await addTask(board, viewer, body.listId, body.fields, body.assign)
       if (r.linksChanged) runAfter(() => refreshLinks(board.id, r.id))
-      return { id: r.id }
+      return { id: r.id, ...(await invite(board, viewer, r.assigned, origin)) }
     }
     case 'updateTask': {
-      const r = await updateTask(board, viewer, body.taskId, body.fields)
+      const r = await updateTask(board, viewer, body.taskId, body.fields, body.assign)
       if (r.linksChanged) runAfter(() => refreshLinks(board.id, body.taskId as string))
       if (r.completed) noticeDone(board, viewer, String(body.taskId).toLowerCase(), r.listId, r.listId, origin)
-      return {}
+      return await invite(board, viewer, r.assigned, origin)
     }
     case 'moveTask': {
       const r = await moveTask(board, viewer, body.taskId, body.listId, body.index)

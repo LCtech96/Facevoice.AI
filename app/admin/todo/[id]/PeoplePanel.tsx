@@ -120,7 +120,7 @@ export default function PeoplePanel({ boardId, startOpen }: { boardId: string; s
       {open && (
         <div className="mt-2 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4">
           <p className="text-xs text-[var(--text-secondary)]">
-            Tutti usano lo stesso link ed entrano con il loro nome e la loro password. Ognuno vede solo le attività assegnate a lui, quelle che ha creato e quelle senza persona create da te. Le attività che crei tu le possono solo spostare e segnare come fatte.
+            Tutti usano lo stesso link ed entrano con il loro nome e la loro password. Ognuno vede solo le attività assegnate a lui, quelle che ha creato e quelle senza persona create da te. Le attività che crei tu le possono solo spostare e segnare come fatte. Di solito non serve passare da qui: apri un’attività e in «Assegna a» scrivi nome, email e password.
           </p>
           {error && <p className="mt-3 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
           {notice && <p className="mt-3 rounded-xl border border-[#34C759]/40 bg-[#34C759]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{notice}</p>}

@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 
 type Ctx = { params: Promise<{ token: string }> }
 
-const WRONG = 'Nome o password non corretti.'
+const WRONG = 'Nome o password non corretti. Usa il nome con cui ti è stata assegnata l’attività.'
 
 // Hash finto: con un nome sconosciuto si fa lo stesso lavoro, cosi' i tempi non dicono nulla.
 let dummyHash: Promise<string> | null = null

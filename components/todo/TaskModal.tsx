@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Bell, ExternalLink, ImagePlus, Loader2, Lock, Trash
 import { EMAIL_RE, PRIORITIES, formatRome, isoToRomeInput, romeInputToIso, type TodoBoardState, type TodoList, type TodoMember, type TodoTask } from '@/lib/todo-shared'
 import { moveLocally, patchLocally, uploadImage, type OpResult } from './todo-api'
 import LinkText from './LinkText'
+import AssignPanel from './AssignPanel'
 
 // Scheda di un'attivita': titolo, note (con i link cliccabili e le anteprime), fatta,
 // importanza, sposta, scadenza e solleciti via email, foto. Ogni campo si salva da
@@ -56,6 +57,7 @@ export default function TaskModal({
   onClose,
   onMessage,
   refresh,
+  focusAssign,
 }: {
   token: string
   task: TodoTask
@@ -67,6 +69,8 @@ export default function TaskModal({
   onClose: () => void
   onMessage: (m: string) => void
   refresh: () => void
+  /** Aperta dal bollino «Da collegare»: si va subito al modulo «Assegna a». */
+  focusAssign?: boolean
 }) {
   const [draft, setDraft] = useState<Draft>(() => fromTask(task))
   const dirty = useRef(new Set<keyof Draft>())
@@ -214,6 +218,8 @@ export default function TaskModal({
             </div>
           </div>
 
+          {admin && <AssignPanel task={task} members={members} run={run} focus={focusAssign} />}
+
           <div>
             <label className={label} htmlFor="todo-notes">
               Note (i link restano cliccabili)
@@ -325,32 +331,39 @@ export default function TaskModal({
                   )}
                 </div>
               </div>
-              <div>
-                <label className={label} htmlFor="todo-assignee">
-                  A chi è assegnata
-                </label>
-                <select
-                  id="todo-assignee"
-                  value={task.assignee_member || ''}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    const id = e.target.value || null
-                    const name = members.find((m) => m.id === id)?.name || null
-                    void run({ op: 'updateTask', taskId: task.id, fields: { assignee_member: id } }, (s) => patchLocally(s, task.id, { assignee_member: id, assignee_name: name, assignee: name }))
-                  }}
-                  className={input}
-                >
-                  <option value="">Nessuno{admin ? ' (la vedono tutti)' : ''}</option>
-                  {task.assignee_member && !members.some((m) => m.id === task.assignee_member) && <option value={task.assignee_member}>{task.assignee_name || 'Persona rimossa'}</option>}
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-                {!task.assignee_member && task.assignee && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Prima: {task.assignee}</p>}
-                {admin && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Creata da {task.creator_name}</p>}
-              </div>
+              {admin ? (
+                <div>
+                  <span className={label}>A chi è assegnata</span>
+                  <p className="py-2 text-sm text-[var(--text-primary)]">{task.assignee_member ? task.assignee_name : task.assignee ? `${task.assignee} (da collegare)` : 'Nessuno (la vedono tutti)'}</p>
+                  <p className="text-[11px] text-[var(--text-secondary)]">Creata da {task.creator_name}</p>
+                </div>
+              ) : (
+                <div>
+                  <label className={label} htmlFor="todo-assignee">
+                    A chi è assegnata
+                  </label>
+                  <select
+                    id="todo-assignee"
+                    value={task.assignee_member || ''}
+                    disabled={readOnly}
+                    onChange={(e) => {
+                      const id = e.target.value || null
+                      const name = members.find((m) => m.id === id)?.name || null
+                      void run({ op: 'updateTask', taskId: task.id, fields: { assignee_member: id } }, (s) => patchLocally(s, task.id, { assignee_member: id, assignee_name: name, assignee: name }))
+                    }}
+                    className={input}
+                  >
+                    <option value="">Nessuno</option>
+                    {task.assignee_member && !members.some((m) => m.id === task.assignee_member) && <option value={task.assignee_member}>{task.assignee_name || 'Persona rimossa'}</option>}
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  {!task.assignee_member && task.assignee && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">Prima: {task.assignee}</p>}
+                </div>
+              )}
               <div className="sm:col-span-2">
                 <label className={label} htmlFor="todo-email">
                   Email a cui mandare i solleciti

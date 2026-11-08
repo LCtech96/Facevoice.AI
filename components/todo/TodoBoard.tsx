@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDownWideNarrow, Bell, CalendarClock, ChevronLeft, ChevronRight, GripVertical, ImageIcon, Link2, Loader2, Lock, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, User, PenLine } from 'lucide-react'
+import { ArrowDownWideNarrow, Bell, CalendarClock, ChevronLeft, ChevronRight, GripVertical, ImageIcon, Link2, Loader2, Lock, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, User, UserPlus, PenLine } from 'lucide-react'
 import { PRIORITIES, formatRome, taskVisibleTo, type TodoBoardState, type TodoList, type TodoTask } from '@/lib/todo-shared'
 import { boardOp, loadBoard, moveLocally, patchLocally, tasksOf } from './todo-api'
 import TaskModal from './TaskModal'
@@ -38,6 +38,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
   const [fatal, setFatal] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [openTask, setOpenTask] = useState<string | null>(null)
+  const [focusAssign, setFocusAssign] = useState(false)
   const [newList, setNewList] = useState('')
   const [adding, setAdding] = useState<Record<string, string>>({})
   const [editingList, setEditingList] = useState<string | null>(null)
@@ -373,7 +374,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
                   return (
                     <div key={task.id} className={isDragged ? 'opacity-30' : undefined}>
                       {line && <div className="mb-2 h-1 rounded-full bg-[var(--accent-blue)]" />}
-                      <TaskCard task={task} now={now} admin={state.me.admin} onOpen={() => setOpenTask(task.id)} onToggle={() => run({ op: 'updateTask', taskId: task.id, fields: { done: !task.done } }, (s) => patchLocally(s, task.id, { done: !task.done }))} onGrip={(e) => startDrag(e, task)} />
+                      <TaskCard task={task} now={now} admin={state.me.admin} onOpen={() => (setFocusAssign(false), setOpenTask(task.id))} onLink={() => (setFocusAssign(true), setOpenTask(task.id))} onToggle={() => run({ op: 'updateTask', taskId: task.id, fields: { done: !task.done } }, (s) => patchLocally(s, task.id, { done: !task.done }))} onGrip={(e) => startDrag(e, task)} />
                     </div>
                   )
                 })}
@@ -446,6 +447,7 @@ export default function TodoBoard({ token, onLocked }: { token: string; onLocked
           onClose={() => setOpenTask(null)}
           onMessage={setMessage}
           refresh={refresh}
+          focusAssign={focusAssign}
         />
       )}
 
@@ -468,7 +470,27 @@ function swapLists(lists: TodoList[], id: string, dir: -1 | 1): TodoList[] {
   return lists.map((l) => (l.id === a.id ? { ...l, position: b.position } : l.id === b.id ? { ...l, position: a.position } : l))
 }
 
-function TaskCard({ task, now, admin, onOpen, onToggle, onGrip, lifted }: { task: TodoTask; now: number; admin: boolean; onOpen: () => void; onToggle: () => void; onGrip: (e: React.PointerEvent) => void; lifted?: boolean }) {
+function TaskCard({
+  task,
+  now,
+  admin,
+  onOpen,
+  onLink,
+  onToggle,
+  onGrip,
+  lifted,
+}: {
+  task: TodoTask
+  now: number
+  admin: boolean
+  onOpen: () => void
+  onLink?: () => void
+  onToggle: () => void
+  onGrip: (e: React.PointerEvent) => void
+  lifted?: boolean
+}) {
+  // Vecchia attivita' assegnata solo con un nome scritto: per l'admin, da collegare a una persona vera.
+  const toLink = admin && !task.assignee_member && task.assignee ? task.assignee : null
   const pr = PRIORITIES.find((p) => p.value === task.priority) || PRIORITIES[0]
   const preview = task.links.find((l) => l.title || l.image)
   return (
@@ -499,7 +521,20 @@ function TaskCard({ task, now, admin, onOpen, onToggle, onGrip, lifted }: { task
                 <CalendarClock className="h-3 w-3" /> {formatRome(task.deadline)}
               </span>
             )}
-            {task.assignee_name && (
+            {toLink && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  ;(onLink || onOpen)()
+                }}
+                className="inline-flex items-center gap-1 rounded-full bg-[#FF9500]/15 px-2 py-0.5 text-left font-medium text-[#c76a00]"
+                title="Imposta email e password per farla entrare"
+              >
+                <UserPlus className="h-3 w-3 shrink-0" /> Da collegare: {toLink} — imposta email e password
+              </button>
+            )}
+            {task.assignee_name && !toLink && (
               <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2 py-0.5 text-[var(--text-secondary)]" title="Assegnata a">
                 <User className="h-3 w-3" /> {task.assignee_name}
               </span>

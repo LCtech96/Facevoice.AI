@@ -306,6 +306,11 @@ function cleanEmail(value: unknown): string | null {
 }
 
 export async function addMember(board: BoardRow, input: { name?: unknown; email?: unknown; password?: unknown }): Promise<MemberRow> {
+  return (await createMember(board, input)).member
+}
+
+/** Persona nuova; linked: le vecchie attivita' (testo libero con il suo nome) che ora sono sue. */
+async function createMember(board: BoardRow, input: { name?: unknown; email?: unknown; password?: unknown }): Promise<{ member: MemberRow; linked: string[] }> {
   const name = oneLine(input.name, LIMITS.memberName)
   const key = nameKey(name)
   if (!key) throw new TodoError('Scrivi il nome della persona.')
@@ -327,7 +332,7 @@ export async function addMember(board: BoardRow, input: { name?: unknown; email?
   const { data: old } = await supabaseAdmin.from('todo_tasks').select('id, assignee').eq('board_id', board.id).is('assignee_member', null).not('assignee', 'is', null)
   const ids = ((old || []) as { id: string; assignee: string | null }[]).filter((t) => nameKey(t.assignee || '') === key).map((t) => t.id)
   if (ids.length) await supabaseAdmin.from('todo_tasks').update({ assignee_member: member.id }).eq('board_id', board.id).in('id', ids)
-  return member
+  return { member, linked: ids }
 }
 
 async function memberOf(board: BoardRow, memberId: unknown): Promise<MemberRow> {
@@ -473,7 +478,8 @@ export async function loadState(board: BoardRow, viewer: Viewer, imageSrc: (path
   return {
     board: { name: board.name },
     me: viewer.admin ? { id: null, name: ADMIN_NAME, admin: true } : { id: viewer.member.id, name: viewer.member.name, admin: false },
-    members: members.map((m) => ({ id: m.id, name: m.name })),
+    // Le email delle persone solo all'admin (per il modulo «Assegna a»).
+    members: members.map((m) => (viewer.admin ? { id: m.id, name: m.name, email: m.email } : { id: m.id, name: m.name })),
     lists: outLists,
     tasks: outTasks,
   }
@@ -675,53 +681,166 @@ export function cleanTaskFields(input: unknown): Record<string, unknown> {
 }
 
 /** La persona assegnata deve essere di questa todo list; il suo nome resta anche nel vecchio campo. */
-async function resolveAssignee(boardId: string, clean: Record<string, unknown>) {
-  if (!('assignee_member' in clean)) return
+async function resolveAssignee(boardId: string, clean: Record<string, unknown>): Promise<MemberRow | null> {
+  if (!('assignee_member' in clean)) return null
   if (clean.assignee_member === null) {
     clean.assignee = null
-    return
+    return null
   }
   const m = await memberById(boardId, clean.assignee_member)
   if (!m) throw new TodoError('Persona non trovata.', 400)
   clean.assignee_member = m.id
   clean.assignee = m.name
+  return m
 }
 
-export async function addTask(board: BoardRow, viewer: Viewer, listId: unknown, fields: unknown) {
+// ---------------------------------------------------------------------
+// Assegnazione con la persona (solo admin): chi assegna decide nome, email e password
+// ---------------------------------------------------------------------
+
+/**
+ * Cosa arriva dal modulo «Assegna a» dell'admin: una persona che c'e' gia' (memberId, o
+ * un nome che corrisponde) con l'email ed eventualmente una password nuova, oppure una
+ * persona nuova (nome, email e password obbligatori). La password non si salva mai in
+ * chiaro: serve solo per l'hash e, se l'admin lo chiede, per l'email di questo invio.
+ */
+export type AssignInput = { memberId?: unknown; name?: unknown; email?: unknown; password?: unknown; includePassword?: unknown }
+
+type AssignPlan = { existing: MemberRow | null; name: string; email: string | null | undefined; password: string | null; includePassword: boolean }
+
+/** Persona assegnata in questa operazione (per l'email di invito). */
+export type Assigned = { member: MemberRow; taskIds: string[]; password: string | null; created: boolean }
+
+export const ADMIN_ONLY_PEOPLE = 'Solo l’admin può aggiungere persone o cambiare le password. Scegli una persona dall’elenco.'
+
+/** Controlla tutto PRIMA di scrivere qualcosa: se qui c'e' un errore, non si salva niente. */
+async function planAssign(board: BoardRow, viewer: Viewer, input: unknown): Promise<AssignPlan> {
+  if (!viewer.admin) throw new TodoError(ADMIN_ONLY_PEOPLE, 403)
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TodoError('Dati non validi.')
+  const a = input as AssignInput
+  if (a.password !== undefined && a.password !== null && typeof a.password !== 'string') throw new TodoError('Password non valida.')
+  const password = typeof a.password === 'string' && a.password !== '' ? a.password : null
+  if (password) {
+    const problem = passwordProblem(password)
+    if (problem) throw new TodoError(problem)
+  }
+  const email = 'email' in a ? cleanEmail(a.email) : undefined
+  const includePassword = a.includePassword === true && password !== null
+  let existing: MemberRow | null = null
+  if (a.memberId !== undefined && a.memberId !== null && a.memberId !== '') {
+    existing = await memberById(board.id, a.memberId)
+    if (!existing) throw new TodoError('Persona non trovata: forse è stata tolta.', 404)
+  } else {
+    const name = oneLine(a.name, LIMITS.memberName)
+    if (!nameKey(name)) throw new TodoError('Scrivi il nome della persona.')
+    existing = await memberForLogin(board.id, name)
+    if (!existing) {
+      if (!email) throw new TodoError(`Scrivi l’email di ${name}: serve per mandare l’invito e gli avvisi.`)
+      if (!password) throw new TodoError(`Scegli una password per ${name} (almeno ${LIMITS.passwordMin} caratteri).`)
+      return { existing: null, name, email, password, includePassword }
+    }
+  }
+  return { existing, name: existing.name, email, password, includePassword }
+}
+
+/** Crea la persona (o aggiorna email e password di quella che c'e'). undo: per annullare se l'attivita' non si salva. */
+async function runAssign(board: BoardRow, plan: AssignPlan): Promise<{ member: MemberRow; linked: string[]; undo: () => Promise<void> }> {
+  if (!plan.existing) {
+    const { member, linked } = await createMember(board, { name: plan.name, email: plan.email, password: plan.password })
+    const undo = async () => {
+      if (linked.length) await supabaseAdmin.from('todo_tasks').update({ assignee_member: null }).eq('board_id', board.id).in('id', linked)
+      await supabaseAdmin.from('todo_members').delete().eq('id', member.id).eq('board_id', board.id)
+    }
+    return { member, linked, undo }
+  }
+  let member = plan.existing
+  if (plan.email !== undefined && plan.email !== member.email) member = await setMemberEmail(board, member.id, plan.email)
+  if (plan.password) member = await setMemberPassword(board, member.id, plan.password)
+  return { member, linked: [], undo: async () => undefined }
+}
+
+const assignedOf = (member: MemberRow, taskId: string, linked: string[], plan: AssignPlan | null): Assigned => ({
+  member,
+  taskIds: Array.from(new Set([taskId, ...linked])),
+  password: plan?.includePassword ? plan.password : null,
+  created: Boolean(plan && !plan.existing),
+})
+
+export async function addTask(board: BoardRow, viewer: Viewer, listId: unknown, fields: unknown, assign?: unknown) {
   await listOf(board.id, viewer, listId, 'add')
   const clean = cleanTaskFields(fields)
   if (!clean.title) throw new TodoError('Scrivi il titolo dell’attività.')
-  await resolveAssignee(board.id, clean)
+  const plan = assign !== undefined && assign !== null ? await planAssign(board, viewer, assign) : null
+  let member: MemberRow | null = null
+  if (plan) delete clean.assignee_member
+  else member = await resolveAssignee(board.id, clean)
   if ((await countRows('todo_tasks', board.id)) >= LIMITS.tasksPerBoard) throw new TodoError(`Al massimo ${LIMITS.tasksPerBoard} attività per todo list.`)
   const position = await lastPosition('todo_tasks', board.id, listId as string)
+  const done = plan ? await runAssign(board, plan) : null
+  if (done) {
+    member = done.member
+    clean.assignee_member = done.member.id
+    clean.assignee = done.member.name
+  }
   const { data, error } = await supabaseAdmin
     .from('todo_tasks')
     .insert({ ...clean, board_id: board.id, list_id: listId, position, created_by_member: me(viewer) })
     .select('id, title, notes')
     .single()
+  if (error && done) await done.undo().catch(() => undefined)
   check(error, 'nuova attività')
   const row = data as { id: string; title: string; notes: string }
-  return { id: row.id, linksChanged: extractLinks(`${row.title}\n${row.notes || ''}`).length > 0 }
+  return {
+    id: row.id,
+    linksChanged: extractLinks(`${row.title}\n${row.notes || ''}`).length > 0,
+    assigned: member ? assignedOf(member, row.id, done?.linked || [], plan) : null,
+  }
 }
 
 /**
  * Modifica campo per campo. Chi vede un'attivita' non sua puo' solo segnarla fatta/da fare.
- * completed: e' appena diventata fatta (per l'avviso all'admin).
+ * completed: e' appena diventata fatta (per l'avviso all'admin). assign: modulo «Assegna a» dell'admin.
+ * assigned: persona a cui e' stata assegnata adesso (per l'email di invito).
  */
-export async function updateTask(board: BoardRow, viewer: Viewer, taskId: unknown, fields: unknown): Promise<{ linksChanged: boolean; completed: boolean; listId: string }> {
-  const clean = cleanTaskFields(fields)
-  const before = await taskOf(board.id, viewer, taskId, Object.keys(clean).every((k) => k === 'done' || k === 'done_at') ? 'move' : 'edit')
-  if (!Object.keys(clean).length) return { linksChanged: false, completed: false, listId: before.list_id }
-  await resolveAssignee(board.id, clean)
+export async function updateTask(
+  board: BoardRow,
+  viewer: Viewer,
+  taskId: unknown,
+  fields: unknown,
+  assign?: unknown
+): Promise<{ linksChanged: boolean; completed: boolean; listId: string; assigned?: Assigned }> {
+  const clean = cleanTaskFields(fields ?? {})
+  const withAssign = assign !== undefined && assign !== null
+  if (withAssign && !viewer.admin) throw new TodoError(ADMIN_ONLY_PEOPLE, 403)
+  const before = await taskOf(board.id, viewer, taskId, !withAssign && Object.keys(clean).every((k) => k === 'done' || k === 'done_at') ? 'move' : 'edit')
+  if (!Object.keys(clean).length && !withAssign) return { linksChanged: false, completed: false, listId: before.list_id }
+  const plan = withAssign ? await planAssign(board, viewer, assign) : null
+  let member: MemberRow | null = null
+  if (plan) delete clean.assignee_member
+  else member = await resolveAssignee(board.id, clean)
+  const done = plan ? await runAssign(board, plan) : null
+  if (done) {
+    member = done.member
+    clean.assignee_member = done.member.id
+    clean.assignee = done.member.name
+  }
   const { error } = await supabaseAdmin
     .from('todo_tasks')
     .update({ ...clean, updated_at: nowIso() })
     .eq('id', before.id)
     .eq('board_id', board.id)
+  if (error && done) await done.undo().catch(() => undefined)
   check(error, 'modifica attività')
   const text = (t: { title: string; notes: string }) => extractLinks(`${t.title}\n${t.notes || ''}`).join(' ')
   const after = { title: (clean.title as string) ?? before.title, notes: (clean.notes as string) ?? before.notes }
-  return { linksChanged: text(after) !== text(before), completed: clean.done === true && !before.done, listId: before.list_id }
+  // Invito solo se l'assegnazione e' nuova (o passa dal modulo dell'admin): i doppioni li ferma comunque il registro degli inviti.
+  const fresh = member && (plan || before.assignee_member !== member.id)
+  return {
+    linksChanged: text(after) !== text(before),
+    completed: clean.done === true && !before.done,
+    listId: before.list_id,
+    ...(fresh && member ? { assigned: assignedOf(member, before.id, done?.linked || [], plan) } : {}),
+  }
 }
 
 /**
@@ -778,6 +897,53 @@ export async function claimDoneNotice(boardId: string, taskId: string, at = Date
     .lt('done_notified_at', new Date(at - DONE_NOTICE_WINDOW_MS).toISOString())
     .select('id')
   return !again.error && Boolean(again.data && again.data.length)
+}
+
+// ---------------------------------------------------------------------
+// Registro degli inviti (attivita' + persona): un invito solo per ogni coppia
+// ---------------------------------------------------------------------
+
+// Nessuna tabella nuova: si usa il registro dei solleciti con un giorno fuori uso
+// (2000-01-01), che i solleciti non contano mai (contano per giorno di oggi e per
+// invii recenti). Una riga per attivita' e persona: slot dall'id della persona,
+// email = id della persona (per riconoscerla). Si cancella da sola con l'attivita'.
+const INVITE_DAY = '2000-01-01'
+const INVITE_AT = '2000-01-01T00:00:00.000Z'
+
+function inviteSlot(memberId: string): number {
+  let h = 0
+  for (const ch of memberId) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return 1 + (h % 32000)
+}
+
+/**
+ * Prenota l'invito per questa attivita' e questa persona.
+ * 'claimed': da mandare (e da liberare se l'email non parte); 'done': gia' mandato; 'free': da mandare senza registro.
+ */
+export async function claimInvite(boardId: string, taskId: string, memberId: string): Promise<'claimed' | 'done' | 'free'> {
+  const slot = inviteSlot(memberId)
+  const { error } = await supabaseAdmin
+    .from('todo_reminders_sent')
+    .insert({ task_id: taskId, board_id: boardId, day: INVITE_DAY, slot, email: `member:${memberId}`, sent_at: INVITE_AT })
+    .select('id')
+    .single()
+  if (!error) return 'claimed'
+  if (error.code !== '23505') return 'free'
+  const { data } = await supabaseAdmin.from('todo_reminders_sent').select('email').eq('task_id', taskId).eq('day', INVITE_DAY).eq('slot', slot).maybeSingle()
+  // Stesso slot ma un'altra persona (caso rarissimo): si manda lo stesso.
+  return (data as { email: string } | null)?.email === `member:${memberId}` ? 'done' : 'free'
+}
+
+/** Email non partita: l'invito si libera (si potra' rimandare). */
+export async function releaseInvite(boardId: string, taskId: string, memberId: string): Promise<void> {
+  await supabaseAdmin
+    .from('todo_reminders_sent')
+    .delete()
+    .eq('task_id', taskId)
+    .eq('board_id', boardId)
+    .eq('day', INVITE_DAY)
+    .eq('slot', inviteSlot(memberId))
+    .eq('email', `member:${memberId}`)
 }
 
 // ---------------------------------------------------------------------

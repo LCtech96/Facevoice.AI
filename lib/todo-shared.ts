@@ -10,7 +10,8 @@ export type TodoImage = { id: string; name: string; src: string }
 /** Nome con cui l'admin compare nella todo list (chi ha creato le attivita' senza persona). */
 export const ADMIN_NAME = 'Luca'
 
-export type TodoMember = { id: string; name: string }
+/** email: solo per l'admin. */
+export type TodoMember = { id: string; name: string; email?: string | null }
 
 export type TodoList = {
   id: string
