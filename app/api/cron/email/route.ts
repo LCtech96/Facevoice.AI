@@ -11,6 +11,7 @@ import { processDueDmReplies } from '@/lib/meta/reply-queue'
 import { videoPostsTick } from '@/lib/video-posts'
 import { todoRemindersTick } from '@/lib/todo-reminders'
 import { photoPostsTick } from '@/lib/photo-library'
+import { waCampaignTick } from '@/lib/wa-campaigns'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -57,6 +58,8 @@ export async function GET(req: NextRequest) {
     photoPostsTick(req.nextUrl.origin).catch((error) => console.error('caroselli e autopilota foto:', error)),
     // Solleciti via email delle todo list condivise (scadenze vicine).
     todoRemindersTick(req.nextUrl.origin).catch((error) => console.error('todo solleciti:', error)),
+    // Campagne WhatsApp: un lotto per giro (limite giornaliero e budget mensile).
+    waCampaignTick().catch((error) => console.error('campagne WhatsApp:', error)),
     wakeSaasPreview().catch((error) => console.warn('saas cron:', error instanceof Error ? error.message : error)),
     ...SCOPES.map(async (scope) => resumeOrClose(req.nextUrl.origin, scope, await loadState(scope)).catch((error) => console.error('assistant resume:', error))),
   ])
