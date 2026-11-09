@@ -69,6 +69,7 @@ import { pdfFilename } from '@/lib/pdf-doc'
 import { CHANNEL_LABEL, SHARE_CHANNELS, STATUS_LABEL, applyNewVersion, contractForDocument, contractFromDocument, listContracts, loadContract, termsProblem, type ShareChannel } from '@/lib/contracts'
 import { DELIVERY_DAYS, formatCollabDate, parseDateTimeInput, readTerms, statedDateTime, statedDeliveryDays, type DeliveryDays } from '@/lib/contract-terms'
 import { MAX_SHARE_TEXT, defaultShareText } from '@/lib/contract-share'
+import { WA_TOOLS, WA_TOOLS_PROMPT, runWaTool } from '@/lib/wa-assistant'
 
 // Agente della Ricerca clienti. Riceve una richiesta in linguaggio naturale e
 // la porta a termine usando degli strumenti (cercare, analizzare, preparare
@@ -755,6 +756,8 @@ Documenti (contratti, preventivi, accordi, lettere: Luca li apre in PDF con un t
 - "send_document": {"document_id": "opzionale", "version": "numero, opzionale", "to": "email, opzionale", "text": "testo dell'email che accompagna il PDF"} → PREPARA l'invio del PDF per email (nella conversazione email da cui nasce il documento, o all'indirizzo "to" dato da Luca): compare la scheda di conferma, parte solo con «Accetta e invia». Su Instagram, Facebook, WhatsApp e chat del sito non si possono allegare file da qui: spiega a Luca che può aprire il PDF, scaricarlo e mandarlo dall'app (o darti un'email della persona).
 PRIMA DI UN CONTRATTO O UN ACCORDO (regola obbligatoria): ogni contratto ha i «Termini della collaborazione»: data e ora della collaborazione e termine di consegna dei contenuti (7, 14 o 30 giorni). Se né la richiesta di Luca né la conversazione dicono la data e ora della collaborazione E il termine di consegna, NON chiamare subito create_document: chiedi PRIMA a Luca, in un solo messaggio breve con al massimo 3 domande: 1) data e ora della collaborazione (o «nessuna data»); 2) termine di consegna dei contenuti: 7, 14 o 30 giorni (o nessuno); 3) solo se manca davvero, un altro fatto essenziale (per esempio cosa riceve la controparte in cambio). Poi chiama create_document con collaboration_at, delivery_days e, se Luca dice che non ci sono date, dates_skipped: true. Non inventare mai date o termini. I valori restano modificabili nella pagina del contratto prima della firma; senza i due termini il contratto non si condivide e non si firma (se share_contract lo dice, spiega a Luca cosa scegliere nella pagina del contratto).
 Dopo create_document o update_document la risposta dice in 2-3 frasi cosa contiene e su quale conversazione si basa, elenca gli spazi lasciati vuoti (dati che nessuno ha detto: nel PDF sono linee da compilare a mano o al momento della firma, mai segnaposto nel testo) e scrive UNA volta: "${DOC_DISCLAIMER}" (l'avviso sta solo qui in chat, mai nel documento). Non incollare il testo del documento in chat: è nel PDF.
+
+${WA_TOOLS_PROMPT}
 
 Se Luca fa una domanda generale (consigli, idee, strategia, testi), rispondi direttamente senza strumenti.
 
@@ -2166,6 +2169,11 @@ export async function runAssistant(
           break
         }
         default:
+          // Campagne WhatsApp (lib/wa-assistant): letture e schede di conferma.
+          if (call.tool && WA_TOOLS.has(call.tool)) {
+            result = await runWaTool(call.tool, args, { admin: who.admin, queue })
+            break
+          }
           result = { errore: `strumento sconosciuto: ${call.tool}` }
       }
     } catch (error) {

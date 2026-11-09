@@ -13,6 +13,7 @@ import { loadContentDirections, saveContentDirections } from '@/lib/content-dire
 import { findVersion, loadDocument, renderDocumentPdf } from '@/lib/assistant-documents'
 import { CHANNEL_LABEL, PIN_RE, linkOrigin, type ShareChannel } from '@/lib/contracts'
 import { MAX_SHARE_TEXT, shareContractNow, textHasPin } from '@/lib/contract-share'
+import { WA_EDITABLE_MAX, executeWaAction, waCardFor, type WaConfirmPayload } from '@/lib/wa-assistant'
 
 // Doppia conferma della super chat. Gli strumenti dell'assistente che agiscono
 // fuori dalla chat o non si possono annullare (messaggi, email, pubblicazioni,
@@ -78,6 +79,8 @@ export type ConfirmPayload =
    * to: email (canale email) o contactId (Instagram, Facebook, WhatsApp); vuoto per "solo link".
    */
   | { kind: 'share_contract'; contractId: string; title: string; name: string; channel: ShareChannel; to: string; lastIncomingAt: string | null; text: string }
+  /** Campagne WhatsApp: crea campagna, aggiungi contattabile, richiesta di consenso (lib/wa-assistant). */
+  | WaConfirmPayload
 
 export type ConfirmKind = ConfirmPayload['kind']
 export type ActionStatus = 'pending' | 'running' | 'done' | 'failed' | 'discarded'
@@ -133,7 +136,7 @@ export type ConfirmCard = {
   contractId?: string
 }
 
-const EDITABLE_MAX: Partial<Record<ConfirmKind, number>> = { social_message: 1900, send_document: 6000, replace_content_directions: 3000, share_contract: MAX_SHARE_TEXT }
+const EDITABLE_MAX: Partial<Record<ConfirmKind, number>> = { social_message: 1900, send_document: 6000, replace_content_directions: 3000, share_contract: MAX_SHARE_TEXT, ...WA_EDITABLE_MAX }
 
 export const newActionId = () => `a${Date.now().toString(36)}${randomUUID().replace(/-/g, '').slice(0, 10)}`
 
@@ -338,6 +341,8 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
         ...extra,
       }
     }
+    default:
+      return { ...base, ...waCardFor(p), ...extra }
   }
 }
 
@@ -618,6 +623,8 @@ async function execute(action: PendingAction, secret: { pin?: string; origin?: s
     }
     case 'send_document':
       return sendDocument(p)
+    default:
+      return executeWaAction(p, action.decidedBy || null)
   }
 }
 
