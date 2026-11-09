@@ -10,7 +10,7 @@ import {
   type VariableMapping,
 } from '@/lib/wa-shared'
 import { addContact, consentRequestCheck, costOverview, findTemplate, listContacts, loadSettings, loadTemplates, requestConsent, tablesReady, SETUP_MESSAGE, WaError } from '@/lib/wa-store'
-import { createCampaign, listCampaigns, normalizeAudience, normalizeVariables, previewAudience, validateCampaignTemplate } from '@/lib/wa-campaigns'
+import { audienceLanguages, createCampaign, listCampaigns, withVersions, normalizeAudience, normalizeVariables, previewAudience, validateCampaignTemplate } from '@/lib/wa-campaigns'
 
 // Campagne WhatsApp nella super chat: strumenti di lettura (modelli, contattabili,
 // costi) e tre azioni con la scheda di conferma (lib/assistant-confirm): crea
@@ -40,7 +40,7 @@ export const WA_EDITABLE_MAX = { wa_consent_request: 1000 } as const
 export const WA_TOOLS_PROMPT = `Campagne WhatsApp (numero ${'+39 351 420 6353'}, pagina Campagne WhatsApp). Regole di legge: messaggi promozionali solo a chi ha dato il consenso; chi ci ha solo scritto riceve risposte, non campagne; chi scrive STOP non riceve più niente. Non inventare consensi.
 - "wa_templates": {} → modelli approvati da Meta (nome, lingua, categoria MARKETING/UTILITY, testo, variabili {{1}}…).
 - "wa_contacts": {"sector": "opzionale", "tag": "opzionale", "filter": "nome o numero, opzionale"} → contattabili WhatsApp: quanti, quanti con consenso ai messaggi promozionali, disiscritti, e un elenco (id, nome, numero, settore, tag, consenso, stato).
-- "wa_create_campaign": {"template": "nome modello", "language": "opzionale", "sector": "opzionale", "tags": ["opzionale"], "contact_ids": ["opzionale"], "when": "ISO con fuso, es. 2026-11-10T10:00:00+01:00 (ora italiana)", "variables": {"body:1": {"type": "nome", "value": "testo di riserva se manca il nome"}, "body:2": {"type": "fisso", "value": "testo"}}, "name": "opzionale", "non_promotional": false} → PREPARA una campagna: compare la scheda di conferma con modello, anteprima del messaggio, quanti la ricevono e quando; si crea solo con «Conferma» e poi parte da sola all'ora scelta a lotti (limite giornaliero). Solo modelli APPROVED. Per UTILITY serve "non_promotional": true e solo se il messaggio non è promozionale. Prima usa wa_templates per sapere le variabili; {{1}} di solito è il nome ("type": "nome"). Calcola "when" dalla data e ora qui sopra (es. «domani alle 10»).
+- "wa_create_campaign": {"template": "nome modello", "language": "opzionale", "sector": "opzionale", "tags": ["opzionale"], "contact_ids": ["opzionale"], "when": "ISO con fuso, es. 2026-11-10T10:00:00+01:00 (ora italiana)", "variables": {"body:1": {"type": "nome", "value": "testo di riserva se manca il nome"}, "body:2": {"type": "fisso", "value": "testo"}}, "name": "opzionale", "non_promotional": false} → PREPARA una campagna: compare la scheda di conferma con modello, anteprima del messaggio, quanti la ricevono e quando; si crea solo con «Conferma» e poi parte da sola all'ora scelta a lotti (limite giornaliero). Solo modelli APPROVED. Per UTILITY serve "non_promotional": true e solo se il messaggio non è promozionale. Prima usa wa_templates per sapere le variabili; {{1}} di solito è il nome ("type": "nome"). Calcola "when" dalla data e ora qui sopra (es. «domani alle 10»). "language" è la lingua predefinita (di solito it): se il modello ha altre lingue approvate, ogni contatto riceve da solo la versione nella sua lingua. Modello con immagine/video/PDF nell'intestazione: serve "header:media": {"type": "fisso", "value": "link https del file"}; se Luca non ha il link, digli di creare la campagna dalla pagina Campagne WhatsApp, dove carica il file.
 - "wa_costs": {} → quanto si è speso su WhatsApp questo mese (stima e costo reale da Meta se disponibile), budget, costo per campagna, ultimi 7 giorni, campagne in corso.
 - "wa_add_contact": {"phone": "+39…", "name": "...", "sector": "opzionale", "tags": ["opzionale"], "consent_note": "come ha dato il consenso, con le parole di Luca"} → PREPARA l'aggiunta ai contattabili: scheda di conferma, si aggiunge solo con «Conferma». Usalo SOLO se Luca dice esplicitamente di avere il consenso della persona; altrimenti chiediglielo (o proponi wa_request_consent se ci ha scritto su WhatsApp).
 - "wa_request_consent": {"contact": "numero, nome o contactId WhatsApp di chi ci ha scritto", "text": "opzionale"} → PREPARA la domanda di consenso (con i bottoni «Sì, va bene» / «No, grazie») a chi ci ha scritto su WhatsApp nelle ultime 24 ore: scheda di conferma, parte solo con «Accetta e invia». Se risponde sì diventa contattabile da solo.`
@@ -170,6 +170,7 @@ export async function runWaTool(
             preview: renderPreview(template, variables, { name: sample.name }),
           })),
           destinatari: preview.eligible.length,
+          per_lingua: audienceLanguages((await withVersions(template, variables)).template, preview.eligible),
           esclusi: Object.fromEntries(Object.entries(preview.skipped).map(([k, n]) => [SKIP_LABEL[k] || k, n])),
         }
       }

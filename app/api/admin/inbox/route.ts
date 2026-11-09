@@ -1,3 +1,4 @@
+import { mediaPreviewText } from '@/lib/wa-media-shared'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guard } from '@/lib/staff-access'
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest) {
         members: [],
         platforms: [],
         contactName: row.contact_name,
-        lastMessage: row.body,
+        lastMessage: mediaPreviewText(row.body),
         lastDirection: row.direction,
         lastStatus: row.status,
         lastPlatform: row.platform,

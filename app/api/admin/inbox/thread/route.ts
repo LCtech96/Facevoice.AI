@@ -4,6 +4,8 @@ import { guard } from '@/lib/staff-access'
 import { deliver, setOrigin, type SocialPlatform } from '@/lib/meta/agent'
 import { resolveKey, type Member } from '@/lib/meta/identities'
 import { isHidden, loadHidden } from '@/lib/inbox-hidden'
+import { sendWhatsAppMediaReply } from '@/lib/wa-media'
+import { WaError } from '@/lib/wa-store'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,6 +62,22 @@ export async function POST(req: NextRequest) {
   if (!members.length) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
+
+  // Foto o video su WhatsApp (caricato prima con /api/admin/inbox/media): solo entro le 24 ore.
+  if (body?.media) {
+    const wa = members.find((m) => m.platform === 'whatsapp')
+    if (!wa) return NextResponse.json({ error: 'Foto e video si possono mandare solo nelle conversazioni WhatsApp.' }, { status: 400 })
+    try {
+      const res = await sendWhatsAppMediaReply({ contactId: wa.contactId, url: String(body.media?.url || ''), caption: typeof body.text === 'string' ? body.text : '' })
+      if (res.error) return NextResponse.json({ error: `Invio non riuscito: ${res.error}`, message: res.message }, { status: 502 })
+      return NextResponse.json({ message: res.message })
+    } catch (error) {
+      if (error instanceof WaError) return NextResponse.json({ error: error.message }, { status: error.status })
+      console.error('casella, foto/video WhatsApp:', error)
+      return NextResponse.json({ error: 'Invio non riuscito: riprova.' }, { status: 500 })
+    }
+  }
+
   const text = String(body?.text || '').trim().slice(0, 10000)
   if (!text) return NextResponse.json({ error: 'Scrivi un messaggio' }, { status: 400 })
 

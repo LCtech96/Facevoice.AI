@@ -23,7 +23,11 @@ import {
   Sparkles,
   PencilLine,
   Loader2,
+  Paperclip,
+  FileText,
 } from 'lucide-react'
+import { uploadToSignedUrl } from '@/lib/client-image'
+import { parseMediaBody, serviceWindow, validateWaMedia, type WaMediaKind } from '@/lib/wa-media-shared'
 import Navigation from '@/components/Navigation'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
@@ -135,6 +139,32 @@ function correctionNotice(result: CorrectionResult, draft: boolean): string {
 const POLL_MS = 5_000
 // Con la casella aperta le email si controllano piu' spesso del cron (1 minuto).
 const EMAIL_SYNC_MS = 20_000
+
+/** Foto, video o PDF di un messaggio WhatsApp (salvato come "[immagine](link)" + didascalia). */
+function MessageBody({ body, tone }: { body: string; tone: 'in' | 'out' }) {
+  const media = parseMediaBody(body)
+  if (!media) return <TranslatableBody text={body} tone={tone} />
+  return (
+    <div className="space-y-2">
+      {media.url ? (
+        media.kind === 'image' ? (
+          <a href={media.url} target="_blank" rel="noreferrer">
+            <img src={media.url} alt="Immagine" className="max-h-72 w-full rounded-xl object-cover" />
+          </a>
+        ) : media.kind === 'video' ? (
+          <video src={media.url} controls playsInline preload="metadata" className="max-h-72 w-full rounded-xl bg-black" />
+        ) : (
+          <a href={media.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 underline">
+            <FileText className="h-4 w-4" /> Documento
+          </a>
+        )
+      ) : (
+        <p className="italic opacity-80">[{media.kind === 'image' ? 'immagine' : media.kind === 'video' ? 'video' : 'documento'}]</p>
+      )}
+      {media.caption && <TranslatableBody text={media.caption} tone={tone} />}
+    </div>
+  )
+}
 
 function formatTime(iso: string) {
   const d = new Date(iso)
@@ -648,6 +678,11 @@ function InboxPage() {
   const [swipeOpen, setSwipeOpen] = useState<string | null>(null)
   const [removed, setRemoved] = useState<{ name: string; previous: Record<string, string | null> } | null>(null)
   const [correcting, setCorrecting] = useState<Message | null>(null)
+  // Foto o video da mandare su WhatsApp (gia' caricato nello spazio; la didascalia e' il testo scritto).
+  const [attachment, setAttachment] = useState<{ url: string; kind: WaMediaKind; name: string; preview: string } | null>(null)
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  useEffect(() => setAttachment(null), [selectedKey])
   const removedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -805,19 +840,53 @@ function InboxPage() {
   const lastPrivate = [...messages].reverse().find((m) => m.direction === 'in' && m.kind === 'message')
   const activeReplyPlatform = replyPlatform || lastPrivate?.platform || ''
 
+  // WhatsApp: foto e video liberi solo entro 24 ore dall'ultimo messaggio della persona.
+  const lastWhatsApp = [...messages].reverse().find((m) => m.platform === 'whatsapp' && m.direction === 'in' && m.kind === 'message')
+  const waWindow = serviceWindow(lastWhatsApp?.created_at)
+  const canAttach = activeReplyPlatform === 'whatsapp'
+
+  const clearAttachment = () => {
+    if (attachment) URL.revokeObjectURL(attachment.preview)
+    setAttachment(null)
+  }
+
+  const pickAttachment = async (file: File | undefined) => {
+    if (!file) return
+    setNotice(null)
+    const check = validateWaMedia({ fileName: file.name, type: file.type, size: file.size }, ['image', 'video'])
+    if (!check.ok) return setNotice(check.error)
+    setUploadPct(0)
+    try {
+      const res = await authFetch('/api/admin/inbox/media', { method: 'POST', body: JSON.stringify({ fileName: file.name, type: check.contentType, size: file.size }) })
+      const ticket = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(ticket.error || 'Caricamento non disponibile')
+      await uploadToSignedUrl(ticket.signedUrl, new Blob([file], { type: ticket.contentType }), file.name, setUploadPct)
+      clearAttachment()
+      setAttachment({ url: ticket.publicUrl, kind: check.kind, name: file.name, preview: URL.createObjectURL(file) })
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Caricamento non riuscito')
+    } finally {
+      setUploadPct(null)
+    }
+  }
+
   const sendManual = async () => {
-    if (!selectedKey || !reply.trim()) return
+    if (!selectedKey || (!reply.trim() && !attachment)) return
+    const media = canAttach && attachment ? attachment : null
+    if (media && !waWindow.open) return setNotice(waWindow.reason)
     setBusyId('manual')
     setNotice(null)
     try {
       const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(selectedKey)}`, {
         method: 'POST',
-        body: JSON.stringify({ text: reply, platform: activeReplyPlatform || undefined }),
+        body: JSON.stringify(media ? { text: reply, media: { url: media.url } } : { text: reply, platform: activeReplyPlatform || undefined }),
       })
       const data = await res.json()
       if (data.message) setMessages((list) => [...list, data.message])
-      if (res.ok) setReply('')
-      else setNotice(data.error || 'Invio non riuscito')
+      if (res.ok) {
+        setReply('')
+        if (media) clearAttachment()
+      } else setNotice(data.error || 'Invio non riuscito')
       loadConversations()
     } finally {
       setBusyId(null)
@@ -1202,7 +1271,7 @@ function InboxPage() {
                             isIn ? 'bg-[var(--background-secondary)] text-[var(--text-primary)]' : isPending ? 'border border-dashed border-[#FF9500] text-[var(--text-primary)]' : 'bg-[var(--accent-blue)] text-white'
                           }`}
                         >
-                          <TranslatableBody text={m.body} tone={isIn ? 'in' : 'out'} />
+                          <MessageBody body={m.body} tone={isIn ? 'in' : 'out'} />
                         </div>
                         <p className={`mt-1 flex flex-wrap items-center gap-1 text-[11px] text-[var(--text-secondary)] ${isIn ? '' : 'justify-end'}`}>
                           <PlatformBadge platform={m.platform} size="xs" />
@@ -1247,7 +1316,46 @@ function InboxPage() {
                         </select>
                       </div>
                     )}
+                    {canAttach && attachment && (
+                      <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border-color)] p-2 text-xs text-[var(--text-secondary)]">
+                        {attachment.kind === 'image' ? (
+                          <img src={attachment.preview} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                        ) : (
+                          <video src={attachment.preview} muted playsInline className="h-12 w-12 rounded-lg bg-black object-cover" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">
+                          {attachment.name} · il testo che scrivi diventa la didascalia
+                        </span>
+                        <button onClick={clearAttachment} aria-label="Togli il file" className="p-1">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                    {canAttach && !waWindow.open && <p className="mb-2 text-xs text-[#FF9500]">{waWindow.reason}</p>}
                     <div className="flex items-end gap-2">
+                      {canAttach && (
+                        <>
+                          <input
+                            ref={fileRef}
+                            type="file"
+                            accept="image/jpeg,image/png,video/mp4,.jpg,.jpeg,.png,.mp4"
+                            className="hidden"
+                            onChange={(e) => {
+                              pickAttachment(e.target.files?.[0])
+                              e.target.value = ''
+                            }}
+                          />
+                          <button
+                            onClick={() => (waWindow.open ? fileRef.current?.click() : setNotice(waWindow.reason))}
+                            disabled={Boolean(busyId) || uploadPct !== null}
+                            title="Manda una foto (JPG/PNG, max 5 MB) o un video (MP4, max 16 MB)"
+                            aria-label="Allega foto o video"
+                            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-color)] text-[var(--accent-blue)] disabled:opacity-50 ${waWindow.open ? '' : 'opacity-50'}`}
+                          >
+                            {uploadPct !== null ? <span className="text-[10px] font-semibold">{uploadPct}%</span> : <Paperclip className="h-4 w-4" />}
+                          </button>
+                        </>
+                      )}
                       <textarea
                         value={reply}
                         onChange={(e) => setReply(e.target.value)}
@@ -1272,7 +1380,7 @@ function InboxPage() {
                       </button>
                       <button
                         onClick={sendManual}
-                        disabled={!reply.trim() || Boolean(busyId)}
+                        disabled={(!reply.trim() && !(canAttach && attachment)) || Boolean(busyId) || uploadPct !== null}
                         aria-label="Invia"
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--accent-blue)] text-white disabled:opacity-50"
                       >

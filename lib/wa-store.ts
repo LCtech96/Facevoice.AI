@@ -15,6 +15,9 @@ import {
   romeDay,
   romeMonth,
   summarizeCosts,
+  contactLanguage,
+  visibleTags,
+  withLanguageTag,
   waIdOf,
   type ConsentSource,
   type CostRow,
@@ -120,7 +123,7 @@ export async function saveSettings(patch: Record<string, unknown>): Promise<WaSe
 
 export type GraphResult = { ok: true; data: any } | { ok: false; code: number | null; message: string; status: number }
 
-async function graphCall(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 15000): Promise<GraphResult> {
+export async function graphCall(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 15000): Promise<GraphResult> {
   const token = getSystemToken()
   if (!token) return { ok: false, code: null, message: 'Token WhatsApp non configurato (WHATSAPP_ACCESS_TOKEN)', status: 0 }
   try {
@@ -259,7 +262,10 @@ export async function findTemplate(name: string, language?: string): Promise<WaT
   const { items } = await loadTemplates()
   const n = name.trim().toLowerCase()
   const same = items.filter((t) => t.name.toLowerCase() === n)
-  return (language ? same.find((t) => t.language === language) : same.find((t) => t.status === 'APPROVED') || same[0]) || null
+  if (language) return same.find((t) => t.language === language) || null
+  // Senza lingua: l'italiano approvato, se c'e' (le altre lingue arrivano per destinatario).
+  const approved = same.filter((t) => t.status === 'APPROVED')
+  return approved.find((t) => t.language.toLowerCase().split(/[_-]/)[0] === 'it') || approved[0] || same[0] || null
 }
 
 // ---------------------------------------------------------------------
@@ -433,7 +439,16 @@ export async function updateContact(id: string, patch: Record<string, unknown>) 
   if (patch.name !== undefined) next.name = text(patch.name)
   if (patch.company !== undefined) next.company = text(patch.company)
   if (patch.sector !== undefined) next.sector = text(patch.sector, 80)
-  if (patch.tags !== undefined) next.tags = cleanTags(patch.tags)
+  if (patch.tags !== undefined || patch.language !== undefined) {
+    // La lingua sta tra i tag ("lingua:en", vedi wa-shared): non si perde modificando i tag.
+    const contact = await findContact(id)
+    if (!contact) throw new WaError('Contatto non trovato.', 404)
+    const tags = patch.tags !== undefined ? visibleTags(cleanTags(patch.tags)).slice(0, 19) : visibleTags(contact.tags)
+    const cur = contactLanguage(contact)
+    if (patch.language === undefined) next.tags = withLanguageTag(tags, cur.lang, cur.manual)
+    else if (patch.language === 'auto' || patch.language === null) next.tags = withLanguageTag(tags, null, false)
+    else next.tags = withLanguageTag(tags, String(patch.language).toLowerCase(), true)
+  }
   const { data, error } = await supabaseAdmin.from('wa_contacts').update(next).eq('id', id).select(CONTACT_COLS).maybeSingle()
   check(error, 'modifica contatto')
   if (!data) throw new WaError('Contatto non trovato.', 404)

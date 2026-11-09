@@ -1,5 +1,7 @@
 import { handleIncoming } from '@/lib/meta/agent'
 import { applyStatuses, waInbound, type InboundOutcome, type WaStatus } from '@/lib/wa-campaigns'
+import { storeInboundWhatsAppMedia } from '@/lib/wa-media'
+import { mediaBody } from '@/lib/wa-media-shared'
 
 type WhatsAppMessage = {
   from: string
@@ -10,6 +12,10 @@ type WhatsAppMessage = {
   button?: { text?: string; payload?: string }
   /** Bottoni e liste dei messaggi interattivi (es. la richiesta di consenso). */
   interactive?: { type?: string; button_reply?: { id?: string; title?: string }; list_reply?: { id?: string; title?: string } }
+  /** Foto, video e documenti: id del file su Meta (da scaricare) e didascalia. */
+  image?: { id?: string; mime_type?: string; caption?: string }
+  video?: { id?: string; mime_type?: string; caption?: string }
+  document?: { id?: string; mime_type?: string; caption?: string; filename?: string }
 }
 
 type WhatsAppChangeValue = {
@@ -32,7 +38,23 @@ function messageText(message: WhatsAppMessage): { text: string | null; fromButto
     const reply = message.interactive?.button_reply || message.interactive?.list_reply
     return { text: reply?.title || null, fromButton: true, buttonId: reply?.id || null }
   }
+  if (message.type === 'image' || message.type === 'video' || message.type === 'document') {
+    return { text: message[message.type]?.caption || null, fromButton: false, buttonId: null }
+  }
   return { text: null, fromButton: false, buttonId: null }
+}
+
+const PLACEHOLDER: Record<string, string> = { image: '[immagine]', video: '[video]', document: '[documento]', audio: '[audio]', sticker: '[sticker]', location: '[posizione]', contacts: '[contatto]' }
+
+/**
+ * Testo salvato in casella per foto e video: il file scaricato da Meta (si vede nella chat)
+ * piu' la didascalia; se il download non riesce, "[immagine]" / "[video]" e la didascalia.
+ */
+async function mediaText(message: WhatsAppMessage, caption: string | null): Promise<string | null> {
+  if (message.type !== 'image' && message.type !== 'video' && message.type !== 'document') return caption
+  const id = message[message.type]?.id
+  const url = id && message.type !== 'document' ? await storeInboundWhatsAppMedia(id, message.type) : null
+  return mediaBody(message.type, url, caption)
 }
 
 /** Restituisce le chiavi delle risposte messe in coda (invio automatico), da aspettare nel webhook. */
@@ -62,8 +84,8 @@ export async function handleWhatsAppWebhook(payload: WhatsAppPayload): Promise<s
             contactName,
             externalId: message.id,
             channelAccountId: value.metadata?.phone_number_id ?? null,
-            text,
-            fallbackLabel: `[${message.type}]`,
+            text: await mediaText(message, text),
+            fallbackLabel: PLACEHOLDER[message.type] || `[${message.type}]`,
             // STOP o risposta al consenso: abbiamo gia' risposto noi, l'AI non risponde.
             silent: outcome.silent,
           })

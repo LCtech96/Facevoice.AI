@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, ExternalLink, Loader2, Megaphone, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ExternalLink, FileText, Loader2, Megaphone, RefreshCw, Upload } from 'lucide-react'
+import { uploadToSignedUrl } from '@/lib/client-image'
 import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { isAdminEmail } from '@/lib/admin-auth'
@@ -14,11 +15,16 @@ import {
   formatEur,
   hasMarketingConsent,
   renderPreview,
+  contactLanguage,
+  languageBase,
+  visibleTags,
+  LANGUAGE_LABEL,
   type VariableMapping,
   type WaContact,
   type WaSettings,
   type WaTemplate,
 } from '@/lib/wa-shared'
+import { WA_MEDIA_LIMITS, mediaKindOfHeader, mediaLinkProblem, validateWaMedia, type WaMediaKind } from '@/lib/wa-media-shared'
 import type { CostOverview, TemplatesState } from '@/lib/wa-store'
 import type { CampaignWithCounts } from '@/lib/wa-campaigns'
 
@@ -215,28 +221,152 @@ type Run = (action: string, payload: Record<string, unknown>, ok?: (res: any) =>
 // Campagne
 // ---------------------------------------------------------------------
 
+const ACCEPT: Record<WaMediaKind, string> = { image: 'image/jpeg,image/png,.jpg,.jpeg,.png', video: 'video/mp4,.mp4', document: 'application/pdf,.pdf' }
+
+/** Anteprima del file dell'intestazione (immagine, video o PDF). */
+function MediaPreview({ kind, url, small }: { kind: WaMediaKind; url: string; small?: boolean }) {
+  if (!url) return <div className={`flex items-center justify-center bg-black/10 text-xs text-black/60 ${small ? 'h-14' : 'h-40'}`}>{WA_MEDIA_LIMITS[kind].label} da scegliere</div>
+  if (kind === 'image') return <img src={url} alt="" className={`w-full object-cover ${small ? 'h-14' : 'max-h-64'}`} />
+  if (kind === 'video') return <video src={url} controls={!small} muted playsInline preload="metadata" className={`w-full bg-black ${small ? 'h-14 object-cover' : 'max-h-64'}`} />
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white/60 p-3 text-xs text-black underline">
+      <FileText className="h-5 w-5 shrink-0" /> {decodeURIComponent(url.split('/').pop() || 'documento.pdf')}
+    </a>
+  )
+}
+
+type MediaItem = { name: string; url: string; kind: WaMediaKind; size: number | null; createdAt: string | null }
+
+/**
+ * File dell'intestazione: caricamento diretto nello spazio (indirizzo firmato) oppure
+ * uno gia' caricato. Tipo e peso controllati prima secondo i limiti di WhatsApp.
+ */
+function MediaPicker({ kind, value, onChange }: { kind: WaMediaKind; value: string; onChange: (url: string) => void }) {
+  const [items, setItems] = useState<MediaItem[]>([])
+  const [progress, setProgress] = useState<number | null>(null)
+  const [err, setErr] = useState('')
+  const [manual, setManual] = useState(false)
+  const limits = WA_MEDIA_LIMITS[kind]
+
+  const refresh = useCallback(() => {
+    call('media_list')
+      .then((r) => setItems(((r?.media || []) as MediaItem[]).filter((m) => m.kind === kind)))
+      .catch(() => setItems([]))
+  }, [kind])
+  useEffect(refresh, [refresh])
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return
+    setErr('')
+    const check = validateWaMedia({ fileName: file.name, type: file.type, size: file.size }, [kind])
+    if (!check.ok) return setErr(check.error)
+    setProgress(0)
+    try {
+      const ticket = await call('media_upload', { kind, fileName: file.name, type: check.contentType, size: file.size })
+      await uploadToSignedUrl(ticket.signedUrl, new Blob([file], { type: ticket.contentType }), file.name, setProgress)
+      onChange(ticket.publicUrl)
+      refresh()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Caricamento non riuscito.')
+    } finally {
+      setProgress(null)
+    }
+  }
+
+  return (
+    <div className="grid gap-2 rounded-xl border border-[var(--border-color)] p-3 text-sm">
+      <p className="font-medium text-[var(--text-primary)]">
+        File dell&apos;intestazione: {limits.label} <span className="font-normal text-[var(--text-secondary)]">({limits.hint})</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className={`${btnGhost} cursor-pointer`}>
+          {progress !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {progress !== null ? `Carico… ${progress}%` : `Carica ${limits.label}`}
+          <input type="file" accept={ACCEPT[kind]} className="hidden" disabled={progress !== null} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = '' }} />
+        </label>
+        {items.length > 0 && (
+          <select className={`${input} w-auto max-w-full flex-1`} value={items.some((m) => m.url === value) ? value : ''} onChange={(e) => e.target.value && onChange(e.target.value)}>
+            <option value="">…oppure scegli uno già caricato</option>
+            {items.map((m) => (
+              <option key={m.url} value={m.url}>
+                {m.name.replace(/^\d{14}-[a-f0-9]{8}-/, '')}
+                {m.size ? ` · ${Math.round((m.size / 1024 / 1024) * 10) / 10} MB` : ''}
+              </option>
+            ))}
+          </select>
+        )}
+        <button type="button" className="text-xs text-[var(--accent-blue)] underline" onClick={() => setManual((v) => !v)}>
+          {manual ? 'Nascondi link' : 'Ho già un link'}
+        </button>
+      </div>
+      {manual && <input className={input} placeholder="https://… (link pubblico, raggiungibile da Meta)" value={value} onChange={(e) => onChange(e.target.value.trim())} />}
+      {value && <p className="truncate text-xs text-[var(--text-secondary)]">Scelto: {decodeURIComponent(value.split('/').pop() || value)}</p>}
+      {err && <p className="text-xs text-[#FF3B30]">{err}</p>}
+    </div>
+  )
+}
+
+/** Come creare su WhatsApp Manager un modello con immagine o video in alto. */
+function MediaTemplateHelp({ managerUrl }: { managerUrl: string }) {
+  return (
+    <details className="rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-4 text-sm text-[var(--text-primary)]">
+      <summary className="cursor-pointer font-semibold">Come creare un modello con immagine o video</summary>
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-[var(--text-secondary)]">
+        <li>
+          Apri{' '}
+          <a className="text-[var(--accent-blue)]" href={managerUrl} target="_blank" rel="noreferrer">
+            WhatsApp Manager → Modelli di messaggio
+          </a>{' '}
+          e premi «Crea modello» (categoria Marketing per le promozioni).
+        </li>
+        <li>In «Intestazione» scegli «Contenuti multimediali», poi «Immagine» o «Video» (o «Documento» per un PDF).</li>
+        <li>Carica un esempio: serve solo a Meta per approvare il modello. Il file vero lo scegli qui in ogni campagna.</li>
+        <li>Scrivi il testo (puoi usare {'{{1}}'} per il nome), aggiungi il piè di pagina «Scrivi STOP per non ricevere più messaggi» e invia in revisione.</li>
+        <li>Per i clienti stranieri aggiungi allo stesso modello la lingua «Inglese (US)» con il testo tradotto: ognuno riceverà la sua lingua.</li>
+        <li>Quando è approvato, qui premi «Aggiorna modelli da Meta» nella scheda Modelli.</li>
+      </ol>
+      <p className="mt-2 text-xs text-[var(--text-secondary)]">
+        Limiti di WhatsApp: immagine {WA_MEDIA_LIMITS.image.hint}; video {WA_MEDIA_LIMITS.video.hint}; documento {WA_MEDIA_LIMITS.document.hint}.
+      </p>
+    </details>
+  )
+}
+
 function CampaignsTab({ data, run }: { data: Data; run: Run }) {
   const usable = data.templates.items.filter((t) => t.status === 'APPROVED' && !t.unsupported && (t.category === 'MARKETING' || t.category === 'UTILITY'))
+  // Un modello puo' avere piu' lingue su Meta (es. it e en_US): si sceglie il nome, poi la lingua predefinita.
+  const names = [...new Set(usable.map((t) => t.name))]
   const [key, setKey] = useState('')
-  const template = usable.find((t) => `${t.name}|${t.language}` === key) || null
+  const [lang, setLang] = useState('')
+  const langs = usable.filter((t) => t.name === key)
+  const template = langs.find((t) => t.language === lang) || null
   const [vars, setVars] = useState<Record<string, VariableMapping>>({})
   const [name, setName] = useState('')
   const [sector, setSector] = useState('')
   const [tags, setTags] = useState('')
   const [when, setWhen] = useState(romeLocalIn(15))
   const [ack, setAck] = useState(false)
-  const [preview, setPreview] = useState<{ eligible: number; matched: number; skipped: Record<string, number> } | null>(null)
+  const [preview, setPreview] = useState<{ eligible: number; matched: number; skipped: Record<string, number>; languages?: Record<string, number>; excludedLanguages?: { language: string; reason: string }[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [recipients, setRecipients] = useState<any[]>([])
 
   useEffect(() => {
+    // Lingua predefinita: italiano se c'e', altrimenti la prima approvata.
+    const versions = usable.filter((t) => t.name === key)
+    setLang((versions.find((t) => languageBase(t.language) === 'it') || versions[0])?.language || '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  useEffect(() => {
     const next: Record<string, VariableMapping> = {}
-    for (const v of template?.variables || []) next[v.key] = v.key === 'header:media' ? { type: 'fisso', value: '' } : v.name === '1' ? { type: 'nome', value: 'ciao' } : { type: 'fisso', value: '' }
+    for (const v of template?.variables || []) next[v.key] = v.key === 'header:media' ? { type: 'fisso', value: vars['header:media']?.value || '' } : v.name === '1' ? { type: 'nome', value: 'ciao' } : { type: 'fisso', value: '' }
     setVars(next)
     setPreview(null)
     setAck(false)
-  }, [key])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, lang])
+  const mediaKind = mediaKindOfHeader(template?.headerFormat)
+  const mediaProblem = template ? mediaLinkProblem(template.headerFormat, vars['header:media']?.value) : null
 
   const audience = { sector: sector.trim() || undefined, tags: tags.split(',').map((t) => t.trim()).filter(Boolean) }
   const costByCampaign = new Map((data.costs?.campaigns || []).map((c) => [c.id, c]))
@@ -244,12 +374,13 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
   const calc = async () => {
     if (!template) return
     setBusy(true)
-    const res = await run('preview_audience', { templateName: template.name, templateLanguage: template.language, audience })
+    const res = await run('preview_audience', { templateName: template.name, templateLanguage: template.language, audience, variables: vars })
     if (res) setPreview(res)
     setBusy(false)
   }
   const create = async () => {
     if (!template) return
+    if (mediaProblem) return window.alert(mediaProblem.charAt(0).toUpperCase() + mediaProblem.slice(1) + '.')
     if (!window.confirm(`Creare la campagna con il modello «${template.name}»? Parte da sola all'ora scelta.`)) return
     setBusy(true)
     const res = await run(
@@ -292,16 +423,42 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
                 Modello approvato
                 <select className={input} value={key} onChange={(e) => setKey(e.target.value)}>
                   <option value="">Scegli…</option>
-                  {usable.map((t) => (
-                    <option key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>
-                      {t.name} ({t.language}) · {t.category === 'MARKETING' ? 'promozionale' : 'servizio'}
-                    </option>
-                  ))}
+                  {names.map((n) => {
+                    const t = usable.find((x) => x.name === n)!
+                    const ls = usable.filter((x) => x.name === n).map((x) => x.language)
+                    return (
+                      <option key={n} value={n}>
+                        {n} ({ls.join(', ')}) · {t.category === 'MARKETING' ? 'promozionale' : 'servizio'}
+                        {mediaKindOfHeader(t.headerFormat) ? ` · con ${WA_MEDIA_LIMITS[mediaKindOfHeader(t.headerFormat)!].label}` : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
+              {langs.length > 0 && (
+                <div className="text-sm">
+                  <label>
+                    Lingua predefinita
+                    <select className={input} value={lang} onChange={(e) => setLang(e.target.value)}>
+                      {langs.map((t) => (
+                        <option key={t.language} value={t.language}>
+                          {t.language}
+                          {LANGUAGE_LABEL[languageBase(t.language)] ? ` · ${LANGUAGE_LABEL[languageBase(t.language)]}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    {langs.length > 1
+                      ? `Lingue approvate: ${langs.map((t) => t.language).join(', ')}. Ogni contatto riceve la versione nella sua lingua (riconosciuta dai suoi messaggi o scelta in Contattabili); chi non ha una lingua o ha una lingua che il modello non ha riceve quella predefinita. I testi fissi delle variabili valgono per tutte le lingue.`
+                      : 'Il modello ha una sola lingua approvata: la ricevono tutti. Per mandarlo anche in inglese, aggiungi la lingua allo stesso modello su WhatsApp Manager e poi «Aggiorna modelli da Meta».'}
+                  </p>
+                </div>
+              )}
               {template && (
                 <>
-                  {template.variables.map((v) => (
+                  {mediaKind && <MediaPicker kind={mediaKind} value={vars['header:media']?.value || ''} onChange={(url) => setVars({ ...vars, 'header:media': { type: 'fisso', value: url } })} />}
+                  {template.variables.filter((v) => v.key !== 'header:media').map((v) => (
                     <div key={v.key} className="grid grid-cols-[110px_1fr] items-center gap-2 text-sm">
                       <span className="text-[var(--text-secondary)]">{v.key === 'header:media' ? 'File intestazione' : `{{${v.name}}}${v.where === 'header' ? ' titolo' : ''}`}</span>
                       <div className="flex gap-2">
@@ -347,7 +504,10 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
             </div>
             {template && (
               <div className="grid content-start gap-3">
-                <div className="whitespace-pre-wrap rounded-2xl bg-[#DCF8C6] p-3 text-sm text-black">{renderPreview(template, vars, { name: 'Mario Rossi' })}</div>
+                <div className="overflow-hidden rounded-2xl bg-[#DCF8C6] text-sm text-black">
+                  {mediaKind && <MediaPreview kind={mediaKind} url={mediaProblem ? '' : vars['header:media']?.value || ''} />}
+                  <div className="whitespace-pre-wrap p-3">{renderPreview(template, vars, { name: 'Mario Rossi' })}</div>
+                </div>
                 <p className="text-xs text-[var(--text-secondary)]">
                   {template.category === 'MARKETING'
                     ? 'Promozionale: solo contatti attivi con consenso esplicito (non basta che ci abbiano scritto).'
@@ -362,6 +522,16 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
                         {n} esclusi: {SKIP_LABEL[k] || k}
                       </p>
                     ))}
+                    {preview.languages && Object.keys(preview.languages).length > 0 && (
+                      <p className="text-[var(--text-secondary)]">
+                        Per lingua: {Object.entries(preview.languages).map(([l, n]) => `${l} ${n}`).join(' · ')}
+                      </p>
+                    )}
+                    {preview.excludedLanguages?.map((x) => (
+                      <p key={x.language} className="text-[#FF9500]">
+                        Versione {x.language} non usata: {x.reason}
+                      </p>
+                    ))}
                     {template.category === 'MARKETING' && <p className="text-[var(--text-secondary)]">Costo stimato se tutti consegnati: {formatEur(preview.eligible * data.settings.prices.marketing)}</p>}
                   </div>
                 )}
@@ -369,7 +539,7 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
                   <button className={btnGhost} onClick={calc} disabled={busy}>
                     Calcola destinatari
                   </button>
-                  <button className={btnPrimary} onClick={create} disabled={busy || (template.category === 'UTILITY' && !ack)}>
+                  <button className={btnPrimary} onClick={create} disabled={busy || (template.category === 'UTILITY' && !ack) || Boolean(mediaProblem)}>
                     {busy && <Loader2 className="h-4 w-4 animate-spin" />} Crea campagna
                   </button>
                 </div>
@@ -378,6 +548,8 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
           </div>
         )}
       </Card>
+
+      <MediaTemplateHelp managerUrl={data.managerUrl} />
 
       <Card title="Campagne">
         {!data.campaigns?.length ? (
@@ -394,9 +566,14 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
                       <p className="font-semibold text-[var(--text-primary)]">{c.name}</p>
                       <p className="text-[var(--text-secondary)]">
                         {CAMPAIGN_STATUS_LABEL[c.status]}
-                        {c.paused_reason === 'budget' ? ' (budget mensile raggiunto)' : ''} · {c.template_name} · {romeDateTime(c.scheduled_at)}
+                        {c.paused_reason === 'budget' ? ' (budget mensile raggiunto)' : ''} · {c.template_name} ({[c.template_language, ...(c.template_snapshot?.versions || []).map((v) => v.language)].join(', ')}) · {romeDateTime(c.scheduled_at)}
                       </p>
                     </div>
+                    {mediaKindOfHeader(c.template_snapshot?.headerFormat) && c.variables?.['header:media']?.value && (
+                      <div className="w-24 overflow-hidden rounded-lg border border-[var(--border-color)]">
+                        <MediaPreview kind={mediaKindOfHeader(c.template_snapshot.headerFormat)!} url={c.variables['header:media'].value} small />
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       {(c.status === 'scheduled' || c.status === 'sending') && (
                         <button className={btnGhost} onClick={() => run('campaign_action', { id: c.id, op: 'pause' }, () => 'Campagna in pausa.')}>
@@ -458,6 +635,29 @@ function CampaignsTab({ data, run }: { data: Data; run: Run }) {
 // Contattabili
 // ---------------------------------------------------------------------
 
+/** Lingua del contatto per le campagne: automatica (dai suoi messaggi) o scelta a mano. */
+function LanguageSelect({ contact, run }: { contact: WaContact; run: Run }) {
+  const { lang, manual } = contactLanguage(contact)
+  const value = manual ? lang || 'altro' : 'auto'
+  return (
+    <label className="mt-1 flex items-center gap-1">
+      Lingua
+      <select
+        className="rounded-lg border border-[var(--border-color)] bg-[var(--background)] px-1 py-0.5 text-xs text-[var(--text-primary)]"
+        value={value}
+        onChange={(e) => run('update_contact', { id: contact.id, patch: { language: e.target.value } }, () => 'Lingua aggiornata.')}
+      >
+        <option value="auto">Automatica{!manual && lang ? ` (${LANGUAGE_LABEL[lang] || lang})` : ' (non ancora riconosciuta)'}</option>
+        {Object.entries(LANGUAGE_LABEL).map(([k, label]) => (
+          <option key={k} value={k}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function ContactsTab({ data, run }: { data: Data; run: Run }) {
   const contacts = data.contacts || []
   const [filter, setFilter] = useState('')
@@ -496,7 +696,8 @@ function ContactsTab({ data, run }: { data: Data; run: Run }) {
                   </td>
                   <td className="py-2 pr-2 text-xs text-[var(--text-secondary)]">
                     {[c.company, c.sector].filter(Boolean).join(' · ')}
-                    {c.tags?.length ? <p>{c.tags.map((t) => `#${t}`).join(' ')}</p> : null}
+                    {visibleTags(c.tags).length ? <p>{visibleTags(c.tags).map((t) => `#${t}`).join(' ')}</p> : null}
+                    <LanguageSelect contact={c} run={run} />
                   </td>
                   <td className="py-2 pr-2 text-xs">
                     <p>{CONSENT_LABEL[c.consent_source]}</p>

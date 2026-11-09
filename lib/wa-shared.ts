@@ -6,6 +6,9 @@
 // ha solo scritto (ha_scritto) riceve risposte di servizio, non campagne. Chi
 // scrive STOP non riceve piu' niente.
 
+import { replyLanguage } from '@/lib/reply-language'
+import { mediaHeaderParameter, mediaKindOfHeader, mediaLinkProblem } from '@/lib/wa-media-shared'
+
 export const WA_DEFAULT_PHONE_NUMBER_ID = '1416651248198066'
 export const WA_DEFAULT_WABA_ID = '1140709422252960'
 export const WA_DISPLAY_NUMBER = '+39 351 420 6353'
@@ -60,6 +63,11 @@ export type WaTemplate = {
   /** Motivo per cui da qui non si puo' usare (es. bottone con link variabile). */
   unsupported: string | null
   components: unknown[]
+  /**
+   * Solo nella copia salvata con la campagna: le altre lingue approvate dello stesso modello,
+   * scelte per ogni destinatario secondo la sua lingua (vedi pickTemplateVersion).
+   */
+  versions?: WaTemplate[]
 }
 
 /** Valore di una variabile: nome del contatto (con testo di riserva) o testo fisso. */
@@ -319,10 +327,10 @@ export function missingVariables(template: WaTemplate, variables: Record<string,
     .filter((v) => {
       const m = variables[v.key]
       if (!m || (m.type !== 'nome' && m.type !== 'fisso')) return true
-      if (v.key === 'header:media') return m.type !== 'fisso' || !/^https:\/\/\S+$/.test(m.value.trim())
+      if (v.key === 'header:media') return m.type !== 'fisso' || Boolean(mediaLinkProblem(template.headerFormat, m.value))
       return m.type === 'fisso' && !m.value.trim()
     })
-    .map((v) => (v.key === 'header:media' ? 'link https del file di intestazione' : `{{${v.name}}}`))
+    .map((v) => (v.key === 'header:media' ? mediaLinkProblem(template.headerFormat, variables[v.key]?.value) || 'file dell’intestazione' : `{{${v.name}}}`))
 }
 
 /** components per POST /messages (type template). */
@@ -330,10 +338,11 @@ export function buildTemplateComponents(template: WaTemplate, variables: Record<
   const out: unknown[] = []
   const named = template.parameterFormat === 'NAMED'
   const param = (v: TemplateVariable) => ({ type: 'text', text: variableValue(variables[v.key], contact).slice(0, 1000), ...(named ? { parameter_name: v.name } : {}) })
-  if (template.headerFormat && template.headerFormat !== 'TEXT') {
+  const mediaKind = mediaKindOfHeader(template.headerFormat)
+  if (mediaKind) {
+    // Intestazione con immagine, video o PDF: il file va dato a ogni invio (link pubblico).
     const link = variables['header:media']?.value?.trim() || ''
-    const kind = template.headerFormat.toLowerCase()
-    out.push({ type: 'header', parameters: [{ type: kind, [kind]: { link } }] })
+    out.push({ type: 'header', parameters: [mediaHeaderParameter(mediaKind, link)] })
   } else {
     const hv = template.variables.filter((v) => v.where === 'header')
     if (hv.length) out.push({ type: 'header', parameters: hv.map(param) })
@@ -350,6 +359,93 @@ export function renderPreview(template: WaTemplate, variables: Record<string, Va
   return [template.headerText ? fill(template.headerText, 'header') : '', fill(template.body, 'body'), template.footer || '']
     .filter(Boolean)
     .join('\n\n')
+}
+
+// ---------------------------------------------------------------------
+// Lingua del contatto e versione del modello
+// ---------------------------------------------------------------------
+//
+// La lingua si salva tra i tag del contatto (nessuna colonna nuova): "lingua:en" se
+// riconosciuta dai suoi messaggi, "lingua:en:manuale" se scelta a mano (non cambia piu'
+// da sola). "lingua:altro:manuale" = nessuna lingua precisa: si usa quella predefinita.
+
+export const LANGUAGE_LABEL: Record<string, string> = { it: 'Italiano', en: 'Inglese', es: 'Spagnolo', fr: 'Francese', de: 'Tedesco', pt: 'Portoghese', altro: 'Altra (lingua predefinita)' }
+const LANG_TAG_RE = /^lingua:([a-z]{2}|altro)(:manuale)?$/
+const NAME_TO_CODE: Record<string, string> = { italiano: 'it', inglese: 'en', spagnolo: 'es', francese: 'fr', tedesco: 'de', portoghese: 'pt' }
+
+/** "en_US" -> "en". */
+export const languageBase = (code: string | null | undefined) => String(code || '').toLowerCase().split(/[_-]/)[0]
+
+export function contactLanguage(c: { tags?: string[] | null }): { lang: string | null; manual: boolean } {
+  for (const t of c.tags || []) {
+    const m = LANG_TAG_RE.exec(t)
+    if (m) return { lang: m[1] === 'altro' ? null : m[1], manual: Boolean(m[2]) }
+  }
+  return { lang: null, manual: false }
+}
+
+/** Tag con la lingua aggiornata. lang null e manual false: lingua tolta (torna automatica). */
+export function withLanguageTag(tags: string[] | null | undefined, lang: string | null, manual: boolean): string[] {
+  const rest = (tags || []).filter((t) => !t.startsWith('lingua:'))
+  if (manual) return [...rest, `lingua:${lang && LANGUAGE_LABEL[lang] ? lang : 'altro'}:manuale`]
+  return lang ? [...rest, `lingua:${lang}`] : rest
+}
+
+/** Tag da mostrare (senza quello della lingua, che ha il suo campo). */
+export const visibleTags = (tags: string[] | null | undefined) => (tags || []).filter((t) => !t.startsWith('lingua:'))
+
+/** Lingua di un messaggio ricevuto (it, en, es, fr, de, pt) o null se non e' chiara (es. "ok"). */
+export function detectContactLanguage(text: string | null | undefined): string | null {
+  const name = replyLanguage(text)
+  return name ? NAME_TO_CODE[name] || null : null
+}
+
+/**
+ * Versione del modello per un destinatario: quella nella sua lingua, se approvata;
+ * altrimenti quella nella lingua predefinita della campagna.
+ */
+export function pickTemplateVersion(template: WaTemplate, contactLang: string | null): WaTemplate {
+  if (!contactLang) return template
+  const all = [template, ...(template.versions || [])]
+  const exact = all.find((t) => t.language.toLowerCase() === contactLang.toLowerCase())
+  return exact || all.find((t) => languageBase(t.language) === contactLang) || template
+}
+
+/**
+ * Altre lingue dello stesso modello usabili con le stesse variabili: approvate, stessa
+ * categoria e stessa intestazione. Le altre si scartano con il motivo.
+ */
+export function templateVersions(all: WaTemplate[], main: WaTemplate, variables: Record<string, VariableMapping>): { versions: WaTemplate[]; excluded: { language: string; reason: string }[] } {
+  const versions: WaTemplate[] = []
+  const excluded: { language: string; reason: string }[] = []
+  for (const t of all) {
+    if (t.name !== main.name || t.language === main.language) continue
+    const reason =
+      t.status !== 'APPROVED'
+        ? `non approvata (${t.status})`
+        : t.unsupported
+          ? t.unsupported
+          : t.category !== main.category
+            ? `categoria diversa (${t.category})`
+            : (t.headerFormat || 'NONE') !== (main.headerFormat || 'NONE') && (mediaKindOfHeader(t.headerFormat) || mediaKindOfHeader(main.headerFormat))
+              ? 'intestazione diversa'
+              : missingVariables(t, variables).length
+                ? `variabili diverse (${missingVariables(t, variables).join(', ')})`
+                : null
+    if (reason) excluded.push({ language: t.language, reason })
+    else versions.push({ ...t, versions: undefined })
+  }
+  return { versions, excluded }
+}
+
+/** Quanti destinatari ricevono ogni lingua. */
+export function languageSplit(template: WaTemplate, contacts: { tags?: string[] | null }[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const c of contacts) {
+    const v = pickTemplateVersion(template, contactLanguage(c).lang)
+    out[v.language] = (out[v.language] || 0) + 1
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------

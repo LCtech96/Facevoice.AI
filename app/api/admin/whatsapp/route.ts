@@ -21,8 +21,10 @@ import {
   findContact,
   updateContact,
 } from '@/lib/wa-store'
-import { campaignAction, campaignRecipients, createCampaign, listCampaigns, normalizeAudience, normalizeVariables, previewAudience } from '@/lib/wa-campaigns'
+import { audienceLanguages, campaignAction, campaignRecipients, createCampaign, listCampaigns, normalizeAudience, normalizeVariables, previewAudience, withVersions } from '@/lib/wa-campaigns'
 import { findTemplate } from '@/lib/wa-store'
+import { createWaMediaUpload, listWaMedia } from '@/lib/wa-media'
+import type { WaMediaKind } from '@/lib/wa-media-shared'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -62,6 +64,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ settings: await saveSettings(body.settings || {}) })
       case 'sync_templates':
         return NextResponse.json({ templates: await syncTemplates() })
+      case 'media_upload': {
+        // File dell'intestazione di una campagna: indirizzo firmato, il browser carica direttamente.
+        const kinds = (['image', 'video', 'document'] as WaMediaKind[]).filter((k) => k === body.kind)
+        if (!kinds.length) throw new WaError('Tipo di file non valido.')
+        return NextResponse.json(await createWaMediaUpload({ fileName: body.fileName, type: body.type, size: body.size }, kinds, 'campagne'))
+      }
+      case 'media_list':
+        return NextResponse.json({ media: await listWaMedia('campagne') })
       case 'leads_search':
         return NextResponse.json({ leads: await searchLeads(typeof body.q === 'string' ? body.q : '') })
     }
@@ -97,7 +107,15 @@ export async function POST(req: NextRequest) {
         const template = await findTemplate(String(body.templateName || ''), body.templateLanguage)
         if (!template) throw new WaError('Modello non trovato.')
         const p = await previewAudience(template.category, normalizeAudience(body.audience))
-        return NextResponse.json({ eligible: p.eligible.length, matched: p.matched, skipped: p.skipped, sample: p.eligible.slice(0, 5).map((c) => c.name || c.phone) })
+        const { template: full, excluded } = await withVersions(template, normalizeVariables(body.variables))
+        return NextResponse.json({
+          eligible: p.eligible.length,
+          matched: p.matched,
+          skipped: p.skipped,
+          sample: p.eligible.slice(0, 5).map((c) => c.name || c.phone),
+          languages: audienceLanguages(full, p.eligible),
+          excludedLanguages: excluded,
+        })
       }
       case 'create_campaign': {
         const scheduledAt = body.scheduledAt ? romeLocalToIso(String(body.scheduledAt)) : new Date().toISOString()

@@ -5,6 +5,12 @@ import { sendPushToAdmins } from '@/lib/push'
 import {
   buildTemplateComponents,
   consentAnswer,
+  contactLanguage,
+  detectContactLanguage,
+  languageSplit,
+  pickTemplateVersion,
+  templateVersions,
+  withLanguageTag,
   eligibilityFor,
   isOptOut,
   missingVariables,
@@ -29,6 +35,7 @@ import {
   findTemplate,
   listContacts,
   loadSettings,
+  loadTemplates,
   logOutgoing,
   nowIso,
   realPricing,
@@ -38,6 +45,8 @@ import {
   tablesReady,
   unsubscribe,
 } from '@/lib/wa-store'
+import { checkMediaLink } from '@/lib/wa-media'
+import { mediaKindOfHeader } from '@/lib/wa-media-shared'
 
 // Campagne WhatsApp: creazione (pubblico fissato al momento della creazione),
 // invio a lotti dal cron (limite giornaliero, budget mensile, una sola esecuzione
@@ -78,6 +87,16 @@ export function normalizeAudience(raw: unknown): Audience {
 }
 
 export type AudiencePreview = { eligible: WaContact[]; skipped: Record<string, number>; matched: number }
+
+/** Il modello scelto (lingua predefinita) con le altre lingue approvate usabili con le stesse variabili. */
+export async function withVersions(template: WaTemplate, variables: Record<string, VariableMapping>) {
+  const { items } = await loadTemplates()
+  const { versions, excluded } = templateVersions(items, template, variables)
+  return { template: { ...template, versions } as WaTemplate, excluded }
+}
+
+/** Destinatari per lingua del modello (es. { it: 40, en_US: 3 }). */
+export const audienceLanguages = (template: WaTemplate, eligible: WaContact[]) => languageSplit(template, eligible)
 
 /** Chi riceverebbe la campagna adesso, e chi resta fuori (con il motivo). */
 export async function previewAudience(category: string, audience: Audience, contacts?: WaContact[]): Promise<AudiencePreview> {
@@ -135,7 +154,12 @@ export async function createCampaign(input: CreateCampaignInput): Promise<{ camp
   const when = Date.parse(input.scheduledAt)
   if (!Number.isFinite(when)) throw new WaError('Data e ora non valide.')
   if (when < Date.now() - 5 * 60_000) throw new WaError('La data scelta è già passata.')
-  const t = template as WaTemplate
+  // Le altre lingue approvate dello stesso modello vanno nella copia salvata: ogni destinatario
+  // riceve la versione nella sua lingua, o quella predefinita (scelta nel modulo).
+  const t = (await withVersions(template as WaTemplate, input.variables)).template
+  // Modello con immagine, video o PDF: il file deve rispondere al link (Meta lo scarica a ogni invio).
+  const mediaKind = mediaKindOfHeader(t.headerFormat)
+  if (mediaKind) await checkMediaLink(input.variables['header:media']?.value?.trim() || '', mediaKind)
   const preview = await previewAudience(t.category, input.audience)
   if (!preview.eligible.length) throw new WaError('Nessun contatto può ricevere questa campagna (servono contatti attivi con il consenso).')
   const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim().slice(0, 120) : `${t.name} · ${new Date(when).toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' })}`
@@ -380,7 +404,7 @@ export async function waCampaignTick(opts: { now?: number; timeMs?: number } = {
       const batch = await claimBatch(c.id, allowed, token)
       const template = c.template_snapshot
       const contactIds = batch.map((r) => r.contact_id).filter((x): x is string => Boolean(x))
-      const { data: contacts } = contactIds.length ? await supabaseAdmin.from('wa_contacts').select('id, phone, name, status, consent_source, consent_log').in('id', contactIds) : { data: [] }
+      const { data: contacts } = contactIds.length ? await supabaseAdmin.from('wa_contacts').select('id, phone, name, status, consent_source, consent_log, tags').in('id', contactIds) : { data: [] }
       const byId = new Map((contacts || []).map((x: any) => [x.id, x]))
       for (const [i, r] of batch.entries()) {
         if (stop || timeLeft() <= 0) {
@@ -396,11 +420,13 @@ export async function waCampaignTick(opts: { now?: number; timeMs?: number } = {
           continue
         }
         const phone = normalizePhone(contact.phone) as string
-        const components = buildTemplateComponents(template, c.variables, { name: contact.name ?? r.name })
-        const sent = await sendTemplateMessage(settings, phone, { name: c.template_name, language: c.template_language }, components)
+        // Versione nella lingua del contatto, se il modello ce l'ha; altrimenti la predefinita.
+        const version = pickTemplateVersion(template, contactLanguage(contact).lang)
+        const components = buildTemplateComponents(version, c.variables, { name: contact.name ?? r.name })
+        const sent = await sendTemplateMessage(settings, phone, { name: c.template_name, language: version.language }, components)
         if ('id' in sent) {
           await supabaseAdmin.from('wa_campaign_recipients').update({ status: 'sent', wamid: sent.id, sent_at: new Date().toISOString(), claim: null }).eq('id', r.id).eq('claim', token)
-          await logOutgoing(settings, phone, contact.name ?? r.name, `[Campagna «${c.name}»]\n${renderPreview(template, c.variables, { name: contact.name ?? r.name })}`, sent)
+          await logOutgoing(settings, phone, contact.name ?? r.name, `[Campagna «${c.name}»]\n${renderPreview(version, c.variables, { name: contact.name ?? r.name })}`, sent)
           result.sent++
           capLeft--
           tickLeft--
@@ -533,10 +559,12 @@ export async function waInbound(input: InboundInput): Promise<InboundOutcome> {
     if (error instanceof WaError && error.setup) return none
     throw error
   }
+  // Lingua dai suoi messaggi scritti (non dai bottoni), se chiara: per scegliere la versione dei modelli.
+  const detected = input.fromButton ? null : detectContactLanguage(input.text)
   if (!contact) {
     const { data, error } = await supabaseAdmin
       .from('wa_contacts')
-      .insert({ phone, name: input.name, consent_source: 'ha_scritto', consent_at: at, consent_note: 'Ha scritto per primo su WhatsApp (solo risposte di servizio)', status: 'attivo', last_inbound_at: at, consent_log: [{ at, event: 'ha_scritto' }] })
+      .insert({ phone, name: input.name, tags: withLanguageTag([], detected, false), consent_source: 'ha_scritto', consent_at: at, consent_note: 'Ha scritto per primo su WhatsApp (solo risposte di servizio)', status: 'attivo', last_inbound_at: at, consent_log: [{ at, event: 'ha_scritto' }] })
       .select('*')
       .single()
     if (error && error.code !== '23505') {
@@ -545,7 +573,9 @@ export async function waInbound(input: InboundInput): Promise<InboundOutcome> {
     contact = (data as WaContact) || (await findContactByPhone(phone))
     if (!contact) return none
   } else {
-    await supabaseAdmin.from('wa_contacts').update({ last_inbound_at: at, ...(contact.name ? {} : { name: input.name }) }).eq('id', contact.id)
+    const current = contactLanguage(contact)
+    const language = detected && !current.manual && current.lang !== detected ? { tags: withLanguageTag(contact.tags, detected, false) } : {}
+    await supabaseAdmin.from('wa_contacts').update({ last_inbound_at: at, ...(contact.name ? {} : { name: input.name }), ...language }).eq('id', contact.id)
   }
 
   // Risposta a una campagna degli ultimi 7 giorni: conta come risposta (una per destinatario).
