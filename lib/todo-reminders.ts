@@ -1,8 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
 import { openToken } from '@/lib/todo-auth'
+import { listAccesses, portalPersonFor, type AccessRow } from '@/lib/todo-access'
 import { boardLink, isMissingSetup, todoOrigin } from '@/lib/todo-store'
-import { formatRome, priorityLabel, romeDay, romeToUtc } from '@/lib/todo-shared'
+import { formatRome, portalPath, priorityLabel, romeDay, romeToUtc } from '@/lib/todo-shared'
 
 // Solleciti via email per le attivita' con scadenza vicina. Per ogni attivita' si
 // sceglie quante email al giorno (1-6) e da quante ore prima della scadenza partire.
@@ -10,7 +11,9 @@ import { formatRome, priorityLabel, romeDay, romeToUtc } from '@/lib/todo-shared
 // (ora italiana). Il cron gira ogni minuto: ogni fascia si "prenota" con una riga
 // unica (attivita', giorno, fascia), quindi anche due giri sovrapposti non mandano
 // mai due volte la stessa email. Attivita' fatta, cancellata o scaduta: niente piu'
-// solleciti.
+// solleciti. Se l'email e' di una persona con l'accesso alla pagina generale e quel
+// progetto, il link porta dritto all'attivita' nella sua pagina (senza password del
+// progetto); per gli altri resta il link del singolo progetto.
 
 const DAY_START_H = 8
 const DAY_SPAN_H = 12
@@ -79,8 +82,13 @@ export function timeLeft(ms: number): string {
 
 type DueTask = ReminderTask & { board_id: string; list_id: string; title: string; priority: number; assignee: string | null }
 
-export function reminderEmail(input: { task: DueTask; boardName: string; listTitle: string; link: string | null; now: number }) {
-  const { task, boardName, listTitle, link, now } = input
+/** Link diretto all'attivita' nella pagina generale della persona. */
+export const portalTaskLink = (origin: string, boardId: string, taskId: string) => `${origin}${portalPath(boardId, taskId)}`
+
+export function reminderEmail(input: { task: DueTask; boardName: string; listTitle: string; link: string | null; now: number; portal?: boolean }) {
+  const { task, boardName, listTitle, link, now, portal = false } = input
+  const button = portal ? 'Apri l’attività' : 'Apri la todo list'
+  const note = portal ? 'Si apre la tua pagina dei progetti, direttamente su questa attività.' : 'Per aprirla serve la password che ti è stata data.'
   const deadline = formatRome(task.deadline, true)
   const left = timeLeft(Date.parse(task.deadline || '') - now)
   const subject = `Promemoria: «${task.title}» scade ${left}`
@@ -100,8 +108,8 @@ export function reminderEmail(input: { task: DueTask; boardName: string; listTit
     '',
     ...rows.map(([k, v]) => `${k}: ${v}`),
     '',
-    link ? `Apri la todo list: ${link}` : '',
-    link ? 'Per aprirla serve la password che ti è stata data.' : '',
+    link ? `${button}: ${link}` : '',
+    link ? note : '',
     '',
     `Ricevi questo promemoria fino a ${task.reminders_per_day} ${task.reminders_per_day === 1 ? 'volta' : 'volte'} al giorno, finché l’attività non è segnata come fatta o non arriva la scadenza.`,
   ]
@@ -113,8 +121,8 @@ export function reminderEmail(input: { task: DueTask; boardName: string; listTit
 <table style="border-collapse: collapse; margin: 16px 0;">
 ${rows.map(([k, v]) => `<tr><td style="padding: 4px 12px 4px 0; color: #666;">${escapeHtml(k)}</td><td style="padding: 4px 0;"><strong>${escapeHtml(v)}</strong></td></tr>`).join('\n')}
 </table>
-${link ? `<p><a href="${escapeHtml(link)}" style="display: inline-block; background: #007AFF; color: #fff; padding: 10px 18px; border-radius: 999px; text-decoration: none;">Apri la todo list</a></p>
-<p style="color: #666; font-size: 13px;">Per aprirla serve la password che ti è stata data.</p>` : ''}
+${link ? `<p><a href="${escapeHtml(link)}" style="display: inline-block; background: #007AFF; color: #fff; padding: 10px 18px; border-radius: 999px; text-decoration: none;">${escapeHtml(button)}</a></p>
+<p style="color: #666; font-size: 13px;">${escapeHtml(note)}</p>` : ''}
 <p style="color: #666; font-size: 13px;">Ricevi questo promemoria fino a ${task.reminders_per_day} ${task.reminders_per_day === 1 ? 'volta' : 'volte'} al giorno, finché l’attività non è segnata come fatta o non arriva la scadenza.</p>`)
   return { subject, text, html }
 }
@@ -137,6 +145,7 @@ export async function todoRemindersTick(requestOrigin?: string | null, now = Dat
     throw new Error(`todo solleciti: ${error.message}`)
   }
   const origin = todoOrigin(requestOrigin)
+  let people: AccessRow[] | null = null
   const boards = new Map<string, { name: string; link: string | null } | null>()
   const lists = new Map<string, string>()
   let sent = 0
@@ -177,7 +186,10 @@ export async function todoRemindersTick(requestOrigin?: string | null, now = Dat
     }
     const board = boards.get(task.board_id)
     if (!board) continue
-    const mail = reminderEmail({ task, boardName: board.name, listTitle: lists.get(task.list_id) || '', link: board.link, now })
+    if (people === null) people = await listAccesses().catch(() => [])
+    const person = portalPersonFor(task, people)
+    const link = person ? portalTaskLink(origin, task.board_id, task.id) : board.link
+    const mail = reminderEmail({ task, boardName: board.name, listTitle: lists.get(task.list_id) || '', link, now, portal: Boolean(person) })
     const ok = await sendEmail({ to: task.notify_email as string, ...mail })
     if (ok) sent++
     // Invio non riuscito: la fascia si libera e il prossimo giro riprova.

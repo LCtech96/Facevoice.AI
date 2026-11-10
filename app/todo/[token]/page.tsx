@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
-import { sessionCookieName, sessionWasRevoked, verifySession } from '@/lib/todo-auth'
+import { redirect } from 'next/navigation'
+import { ACCESS_COOKIE, sessionCookieName, sessionWasRevoked, verifySession } from '@/lib/todo-auth'
+import { portalPathForLink } from '@/lib/todo-access'
 import { TodoError, boardByToken, type BoardRow } from '@/lib/todo-store'
 import PasswordForm from './PasswordForm'
 import GuestBoard from './GuestBoard'
@@ -12,6 +14,8 @@ export const revalidate = 0
 // dall'admin. Pagina a sé: nessun menu del sito, nessun collegamento ad altre pagine.
 // Prima della password non si mostra nemmeno il nome della todo list. Link sconosciuto
 // o rigenerato: sempre lo stesso "Link non valido". Mai indicizzata, mai in cache.
+// Chi e' gia' entrato nella pagina generale e ha questo progetto va li' (niente
+// password del progetto).
 
 export const metadata: Metadata = {
   title: 'Todo list',
@@ -40,7 +44,10 @@ export default async function TodoLinkPage({ params }: { params: Promise<{ token
     return <Notice title="Pagina non disponibile" text="Qualcosa non è andato: riprova tra poco." />
   }
   if (!board) return <Notice title="Link non valido" text="Il link non esiste o non è più attivo. Chiedi un link nuovo a chi te l’ha mandato." />
-  const cookie = (await cookies()).get(sessionCookieName(board.id))?.value
+  const jar = await cookies()
+  const portal = await portalPathForLink(board.id, jar.get(ACCESS_COOKIE)?.value)
+  if (portal) redirect(portal)
+  const cookie = jar.get(sessionCookieName(board.id))?.value
   const unlocked = verifySession(cookie, board)
   const revoked = !unlocked && sessionWasRevoked(cookie, board)
   return (

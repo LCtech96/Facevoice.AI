@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual, type ScryptOptions } from 'crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, scrypt as scryptCallback, timingSafeEqual, type ScryptOptions } from 'crypto'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { LIMITS } from '@/lib/todo-shared'
 
@@ -149,24 +149,75 @@ function sameSig(a: string, b: string) {
 
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/**
+ * La pagina generale si apre una volta sola per dispositivo: il cookie dura 180 giorni
+ * e si rinnova quando la persona la usa (dopo almeno un giorno). Password cambiata o
+ * accesso eliminato lo annullano comunque subito (versione nel cookie).
+ */
+export const PORTAL_SESSION_TTL_S = 180 * 24 * 3600
+export const PORTAL_REFRESH_AFTER_S = 24 * 3600
+
 export function signAccessSession(access: { id: string; session_version: number }, at = Date.now()): string | null {
-  const exp = Math.floor(at / 1000) + SESSION_TTL_S
+  const exp = Math.floor(at / 1000) + PORTAL_SESSION_TTL_S
   const payload = `${access.id}.${access.session_version}.${exp}`
   const sig = sign('todo-access-session', payload)
   return sig ? `${payload}.${sig}` : null
 }
 
-/** Id e versione dal cookie della persona, se la firma e la scadenza vanno bene (la versione la confronta chi chiama). */
-export function readAccessSession(value: string | undefined | null, at = Date.now()): { id: string; version: number } | null {
+/** Id, versione e scadenza dal cookie della persona, se la firma e la scadenza vanno bene (la versione la confronta chi chiama). */
+export function readAccessSession(value: string | undefined | null, at = Date.now()): { id: string; version: number; exp: number } | null {
   if (!value || typeof value !== 'string' || value.length > 200) return null
   const [id, versionText, expText, sig] = value.split('.')
   const version = Number(versionText)
   const exp = Number(expText)
   if (!sig || !ID_RE.test(id || '') || !Number.isInteger(version)) return null
-  if (!Number.isFinite(exp) || exp * 1000 < at || exp * 1000 > at + SESSION_TTL_S * 1000 + 60_000) return null
+  if (!Number.isFinite(exp) || exp * 1000 < at || exp * 1000 > at + PORTAL_SESSION_TTL_S * 1000 + 60_000) return null
   const expected = sign('todo-access-session', `${id}.${versionText}.${expText}`)
-  return expected && sameSig(expected, sig) ? { id: id.toLowerCase(), version } : null
+  return expected && sameSig(expected, sig) ? { id: id.toLowerCase(), version, exp } : null
 }
+
+/** Il cookie va rinnovato (emesso da piu' di un giorno). */
+export const accessSessionNeedsRefresh = (session: { exp: number }, at = Date.now()) => session.exp * 1000 - at < (PORTAL_SESSION_TTL_S - PORTAL_REFRESH_AFTER_S) * 1000
+
+// ---------------------------------------------------------------------
+// Secondo passaggio dell'entrata: codice di 6 cifre per email
+// ---------------------------------------------------------------------
+
+/** Cookie «in attesa del codice»: dopo la password giusta, per 10 minuti; non apre nessun progetto. */
+export const PENDING_COOKIE = 'fv_todo_pending'
+export const PENDING_TTL_S = 10 * 60
+const NONCE_RE = /^[A-Za-z0-9_-]{22}$/
+
+export const newNonce = () => randomBytes(16).toString('base64url')
+
+export function signPending(access: { id: string; session_version: number }, nonce: string, at = Date.now()): string | null {
+  if (!NONCE_RE.test(nonce)) return null
+  const exp = Math.floor(at / 1000) + PENDING_TTL_S
+  const payload = `${access.id}.${access.session_version}.${nonce}.${exp}`
+  const sig = sign('todo-login-pending', payload)
+  return sig ? `${payload}.${sig}` : null
+}
+
+export function readPending(value: string | undefined | null, at = Date.now()): { id: string; version: number; nonce: string; exp: number } | null {
+  if (!value || typeof value !== 'string' || value.length > 240) return null
+  const [id, versionText, nonce, expText, sig] = value.split('.')
+  const version = Number(versionText)
+  const exp = Number(expText)
+  if (!sig || !ID_RE.test(id || '') || !Number.isInteger(version) || !NONCE_RE.test(nonce || '')) return null
+  if (!Number.isFinite(exp) || exp * 1000 < at || exp * 1000 > at + PENDING_TTL_S * 1000 + 60_000) return null
+  const expected = sign('todo-login-pending', `${id}.${versionText}.${nonce}.${expText}`)
+  return expected && sameSig(expected, sig) ? { id: id.toLowerCase(), version, nonce, exp } : null
+}
+
+/** Codice di 6 cifre casuale. */
+export const newLoginCode = () => String(randomInt(0, 1_000_000)).padStart(6, '0')
+
+/** Impronta del codice (il codice in chiaro non si salva), legata a persona e tentativo. */
+export function loginCodeHash(accessId: string, nonce: string, code: string): string | null {
+  return sign('todo-login-code', `${accessId}.${nonce}.${code}`)
+}
+
+export const sameLoginCodeHash = (a: string, b: string) => typeof a === 'string' && typeof b === 'string' && sameSig(a, b)
 
 export function signAdminSession(email: string, at = Date.now()): string | null {
   const exp = Math.floor(at / 1000) + ADMIN_SESSION_TTL_S

@@ -1,6 +1,24 @@
 import { after, NextRequest, NextResponse } from 'next/server'
-import { ACCESS_COOKIE, ADMIN_COOKIE, ADMIN_SESSION_TTL_S, readAccessSession, readAdminSession, sessionCookieName, SESSION_TTL_S, signAccessSession, signAdminSession, signSession, verifySession } from '@/lib/todo-auth'
+import {
+  ACCESS_COOKIE,
+  ADMIN_COOKIE,
+  ADMIN_SESSION_TTL_S,
+  PENDING_COOKIE,
+  PENDING_TTL_S,
+  PORTAL_SESSION_TTL_S,
+  accessSessionNeedsRefresh,
+  readAccessSession,
+  readAdminSession,
+  sessionCookieName,
+  SESSION_TTL_S,
+  signAccessSession,
+  signAdminSession,
+  signPending,
+  signSession,
+  verifySession,
+} from '@/lib/todo-auth'
 import { accessForSession, type AccessRow } from '@/lib/todo-access'
+import { rememberOwnTask, viewerKey } from '@/lib/todo-bell'
 import { LINK_GUEST_NAME, notifyTaskDone } from '@/lib/todo-notify'
 import { TodoError, addImage, addList, addTask, boardById, boardByToken, deleteList, deleteTask, imageUploadUrl, moveList, moveTask, refreshLinks, removeImage, renameList, sortListByPriority, todoOrigin, updateTask, type BoardRow } from '@/lib/todo-store'
 
@@ -71,15 +89,32 @@ export type Viewer = { kind: 'admin' } | { kind: 'link' } | { kind: 'person'; ac
 
 const cookieOptions = (req: NextRequest, maxAge: number) => ({ httpOnly: true, secure: req.nextUrl.protocol === 'https:', sameSite: 'lax' as const, path: '/', maxAge })
 
-/** Cookie della persona (dopo nome e password giusti). */
+/** Cookie della persona (dopo nome, password e codice giusti): 180 giorni, rinnovato con l'uso. */
 export function setAccessCookie(res: NextResponse, req: NextRequest, access: AccessRow): boolean {
   const value = signAccessSession(access)
   if (!value) return false
-  res.cookies.set(ACCESS_COOKIE, value, cookieOptions(req, SESSION_TTL_S))
+  res.cookies.set(ACCESS_COOKIE, value, cookieOptions(req, PORTAL_SESSION_TTL_S))
   return true
 }
 
 export const clearAccessCookie = (res: NextResponse, req: NextRequest) => res.cookies.set(ACCESS_COOKIE, '', cookieOptions(req, 0))
+
+/** La persona sta usando la pagina: se il cookie ha piu' di un giorno, altri 180 giorni da adesso. */
+export function refreshAccessCookie(res: NextResponse, req: NextRequest, access: AccessRow): NextResponse {
+  const session = readAccessSession(req.cookies.get(ACCESS_COOKIE)?.value)
+  if (session && session.id === access.id && session.version === access.session_version && accessSessionNeedsRefresh(session)) setAccessCookie(res, req, access)
+  return res
+}
+
+/** Cookie «in attesa del codice» (10 minuti): non apre nessun progetto. */
+export function setPendingCookie(res: NextResponse, req: NextRequest, access: AccessRow, nonce: string): boolean {
+  const value = signPending(access, nonce)
+  if (!value) return false
+  res.cookies.set(PENDING_COOKIE, value, cookieOptions(req, PENDING_TTL_S))
+  return true
+}
+
+export const clearPendingCookie = (res: NextResponse, req: NextRequest) => res.cookies.set(PENDING_COOKIE, '', cookieOptions(req, 0))
 
 /** Cookie dell'admin per i progetti (si chiede con il suo accesso al pannello). */
 export function setAdminCookie(res: NextResponse, req: NextRequest, email: string): boolean {
@@ -167,6 +202,8 @@ export async function applyOp(req: NextRequest, board: BoardRow, viewer: Viewer,
     case 'addTask': {
       const r = await addTask(board, body.listId, body.fields)
       if (r.linksChanged) runAfter(() => refreshLinks(board.id, r.id))
+      // Per chi l'ha aggiunta non e' una «nuova attivita'» nella campanella.
+      if (viewer.kind !== 'link') await rememberOwnTask(viewerKey(viewer.kind === 'admin' ? viewer : { kind: 'person', id: viewer.access.id }), r.id).catch(() => undefined)
       return { id: r.id }
     }
     case 'updateTask': {

@@ -35,6 +35,35 @@ export type TodoHomeBoard = { id: string; name: string; todo: number; late: numb
 export type TodoCalendarTask = { id: string; board_id: string; title: string; deadline: string; done: boolean; priority: number }
 export type TodoHomeData = { boards: TodoHomeBoard[]; tasks: TodoCalendarTask[] }
 
+/** Avviso della campanella: cosa fare, dal piu' urgente. */
+export type TodoBellKind = 'overdue' | 'today' | 'soon' | 'reminder' | 'new'
+export type TodoBellItem = {
+  id: string
+  taskId: string
+  boardId: string
+  boardName: string
+  title: string
+  kind: TodoBellKind
+  label: string
+  deadline: string | null
+  /** Quando l'avviso e' diventato attuale (per «da leggere»). */
+  at: string
+  unread: boolean
+}
+export type TodoBellData = { items: TodoBellItem[]; unread: number }
+
+/** Colore di ogni tipo di avviso (rosso in ritardo, arancio oggi, giallo presto, blu il resto). */
+export const BELL_COLORS: Record<TodoBellKind, string> = { overdue: '#FF3B30', today: '#FF9500', soon: '#d4a500', reminder: '#007AFF', new: '#007AFF' }
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_SHAPE.test(v)
+
+/** Indirizzo della pagina generale su un progetto (e su un'attivita'). */
+export function portalPath(boardId?: string | null, taskId?: string | null): string {
+  if (!isUuid(boardId)) return '/todo'
+  return `/todo?p=${boardId.toLowerCase()}${isUuid(taskId) ? `&t=${taskId.toLowerCase()}` : ''}`
+}
+
 /** Colori dei progetti nel calendario (uno per cartella, in ordine). */
 export const PROJECT_COLORS = ['#007AFF', '#AF52DE', '#FF9500', '#34C759', '#FF2D55', '#5AC8FA', '#A2845E', '#FFCC00', '#5856D6', '#30B0C7']
 export const projectColor = (index: number) => PROJECT_COLORS[((index % PROJECT_COLORS.length) + PROJECT_COLORS.length) % PROJECT_COLORS.length]

@@ -1,11 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Eye, EyeOff, KeyRound, Loader2, Plus, Trash2, UserPlus, Users, Wand2, X } from 'lucide-react'
-import { adminTodoFetch, copyText, generatePassword, type AdminAccess, type AdminBoard } from './todo-admin-api'
+import { AlertTriangle, Copy, Eye, EyeOff, KeyRound, Loader2, Mail, Plus, Trash2, UserPlus, Users, Wand2, X } from 'lucide-react'
+import { adminTodoFetch, copyText, generatePassword, looksLikeEmail, type AdminAccess, type AdminBoard } from './todo-admin-api'
 
 // Accessi delle persone ai progetti: chi vede cosa. Nome e password li sceglie l'admin
-// (pulsante «Genera» per una password casuale) e li comunica lui: non partono email.
+// (pulsante «Genera» per una password casuale) e li comunica lui: non partono email
+// con la password. L'email della persona e' obbligatoria: a ogni entrata le arriva un
+// codice di 6 cifre (senza email non puo' entrare) e i solleciti le portano il link
+// diretto all'attivita'.
 
 const input =
   'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 text-base text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm'
@@ -53,7 +56,7 @@ export function Credentials({ name, password, portal, onClose }: { name: string;
     <div className="rounded-2xl border border-[var(--accent-blue)]/50 bg-[var(--accent-blue)]/10 p-4">
       <p className="text-sm font-semibold text-[var(--text-primary)]">Accesso pronto per «{name}»</p>
       <pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs text-[var(--text-primary)]">{text}</pre>
-      <p className="mt-2 text-xs text-[var(--text-secondary)]">Comunicalo tu (a voce o in chat): non viene mandato per email e la password non si potrà più rivedere.</p>
+      <p className="mt-2 text-xs text-[var(--text-secondary)]">Comunicalo tu (a voce o in chat): non viene mandato per email e la password non si potrà più rivedere. Quando entra, le arriva per email un codice di 6 cifre.</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
@@ -75,6 +78,15 @@ export function Credentials({ name, password, portal, onClose }: { name: string;
   )
 }
 
+/** Avviso: accesso senza email (non puo' entrare finche' non la si aggiunge). */
+function MissingEmail() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-[#FF9500]/15 px-2 py-0.5 text-[11px] font-semibold text-[#FF9500]" title="Senza email non può entrare: aggiungila.">
+      <AlertTriangle className="h-3 w-3" /> Email mancante
+    </span>
+  )
+}
+
 /** Finestra «Dai accesso» per i progetti selezionati: persona esistente o nuova. */
 export function GrantDialog({
   boards,
@@ -91,6 +103,7 @@ export function GrantDialog({
 }) {
   const [who, setWho] = useState<string>(accesses[0]?.id || 'new')
   const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -101,12 +114,13 @@ export function GrantDialog({
     setError(null)
     if (who === 'new') {
       if (!name.trim()) return setError('Scrivi il nome della persona.')
+      if (!looksLikeEmail(email)) return setError('Scrivi un’email valida: serve per il codice di entrata.')
       if (password.length < 6) return setError('La password deve avere almeno 6 caratteri.')
     }
     setBusy(true)
     const r =
       who === 'new'
-        ? await adminTodoFetch('/api/admin/todo/accessi', { method: 'POST', body: JSON.stringify({ name, password, boardIds: selected }) })
+        ? await adminTodoFetch('/api/admin/todo/accessi', { method: 'POST', body: JSON.stringify({ name, email, password, boardIds: selected }) })
         : await adminTodoFetch(`/api/admin/todo/accessi/${encodeURIComponent(who)}`, { method: 'PATCH', body: JSON.stringify({ action: 'grant', boardIds: selected }) })
     setBusy(false)
     if (!r.ok) return setError(r.data.error || 'Operazione non riuscita.')
@@ -133,6 +147,7 @@ export function GrantDialog({
             <label key={a.id} className={`flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl border px-3 ${who === a.id ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'border-[var(--border-color)]'}`}>
               <input type="radio" name="who" checked={who === a.id} onChange={() => setWho(a.id)} />
               <span className="text-sm font-medium text-[var(--text-primary)]">{a.name}</span>
+              {!a.email && <MissingEmail />}
               <span className="ml-auto text-xs text-[var(--text-secondary)]">{a.boardIds.length} progetti</span>
             </label>
           ))}
@@ -149,6 +164,12 @@ export function GrantDialog({
                 Nome (con questo entra)
               </label>
               <input id="grant-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Es. Monia" className={input} autoFocus />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-[var(--text-secondary)]" htmlFor="grant-email">
+                Email (obbligatoria: le arriva il codice per entrare)
+              </label>
+              <input id="grant-email" type="email" inputMode="email" autoComplete="off" required value={email} onChange={(e) => setEmail(e.target.value)} maxLength={200} placeholder="Es. monia@gmail.com" className={input} />
             </div>
             <div>
               <label className="mb-1 block text-xs text-[var(--text-secondary)]" htmlFor="grant-pw">
@@ -176,7 +197,10 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
   const [newPw, setNewPw] = useState('')
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [emailFor, setEmailFor] = useState<string | null>(null)
+  const [newEmail, setNewEmail] = useState('')
   const [credentials, setCredentials] = useState<{ name: string; password: string } | null>(null)
   const boardName = new Map(boards.map((b) => [b.id, b.name]))
 
@@ -200,11 +224,13 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
   const create = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return setError('Scrivi il nome della persona.')
+    if (!looksLikeEmail(email)) return setError('Scrivi un’email valida: serve per il codice di entrata.')
     if (password.length < 6) return setError('La password deve avere almeno 6 caratteri.')
-    const r = await call('create', '/api/admin/todo/accessi', { method: 'POST', body: JSON.stringify({ name, password, boardIds: [] }) }, 'Accesso creato: ora aggiungi i progetti.')
+    const r = await call('create', '/api/admin/todo/accessi', { method: 'POST', body: JSON.stringify({ name, email, password, boardIds: [] }) }, 'Accesso creato: ora aggiungi i progetti.')
     if (r) {
       setCredentials({ name: r.data.access?.name || name, password })
       setName('')
+      setEmail('')
       setPassword('')
       setAdding(false)
     }
@@ -221,7 +247,7 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
         </button>
       </div>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">
-        Chi ha un accesso entra da <span className="font-mono">{portal}</span> con nome e password e vede solo i suoi progetti. Per darne altri: seleziona le cartelle e premi «Dai accesso».
+        Chi ha un accesso entra da <span className="font-mono">{portal}</span> con nome, password e un codice che gli arriva per email, e vede solo i suoi progetti. Per darne altri: seleziona le cartelle e premi «Dai accesso».
       </p>
       {error && <p className="mt-3 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
       {notice && <p className="mt-3 rounded-xl border border-[#34C759]/40 bg-[#34C759]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{notice}</p>}
@@ -231,8 +257,9 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
         </div>
       )}
       {adding && (
-        <form onSubmit={create} className="mt-3 grid gap-2 rounded-xl border border-[var(--border-color)] p-3 sm:grid-cols-[1fr_1fr_auto]">
+        <form onSubmit={create} className="mt-3 grid gap-2 rounded-xl border border-[var(--border-color)] p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Nome (es. Monia)" className={input} aria-label="Nome" />
+          <input type="email" inputMode="email" autoComplete="off" required value={email} onChange={(e) => setEmail(e.target.value)} maxLength={200} placeholder="Email (obbligatoria)" className={input} aria-label="Email (obbligatoria: le arriva il codice per entrare)" />
           <PasswordField id="new-access-pw" value={password} onChange={setPassword} placeholder="Password" />
           <button type="submit" disabled={busy === 'create'} className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-full bg-[var(--accent-blue)] px-4 text-sm font-semibold text-white disabled:opacity-50">
             {busy === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Crea
@@ -247,8 +274,16 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
           return (
             <div key={a.id} className="rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-[var(--text-primary)]">{a.name}</p>
+                <div className="min-w-0">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                    {a.name} {!a.email && <MissingEmail />}
+                  </p>
+                  {a.email && <p className="truncate text-xs text-[var(--text-secondary)]">{a.email}</p>}
+                </div>
                 <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => (setEmailFor(emailFor === a.id ? null : a.id), setNewEmail(a.email || ''))} className={pill}>
+                    <Mail className="h-3.5 w-3.5" /> {a.email ? 'Cambia email' : 'Aggiungi email'}
+                  </button>
                   <button type="button" onClick={() => (setPwFor(pwFor === a.id ? null : a.id), setNewPw(''))} className={pill}>
                     <KeyRound className="h-3.5 w-3.5" /> Cambia password
                   </button>
@@ -296,6 +331,24 @@ export default function AccessPanel({ boards, accesses, portal, reload }: { boar
                   </select>
                 )}
               </div>
+              {emailFor === a.id && (
+                <form
+                  className="mt-3 flex flex-col gap-2 sm:flex-row"
+                  onSubmit={async (e) => {
+                    e.preventDefault()
+                    if (!looksLikeEmail(newEmail)) return setError('Scrivi un’email valida: serve per il codice di entrata.')
+                    if (await patch(a, { action: 'email', email: newEmail }, `Email di ${a.name} salvata.`)) {
+                      setEmailFor(null)
+                      setNewEmail('')
+                    }
+                  }}
+                >
+                  <input type="email" inputMode="email" autoComplete="off" required value={newEmail} onChange={(e) => setNewEmail(e.target.value)} maxLength={200} placeholder="Email (es. monia@gmail.com)" className={`${input} flex-1`} aria-label={`Email di ${a.name}`} autoFocus />
+                  <button type="submit" disabled={busy === `email:${a.id}`} className="inline-flex min-h-[44px] items-center justify-center gap-1 rounded-full bg-[var(--accent-blue)] px-4 text-sm font-semibold text-white disabled:opacity-50">
+                    {busy === `email:${a.id}` && <Loader2 className="h-4 w-4 animate-spin" />} Salva email
+                  </button>
+                </form>
+              )}
               {pwFor === a.id && (
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                   <div className="flex-1">

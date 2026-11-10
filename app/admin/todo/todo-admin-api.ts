@@ -1,6 +1,7 @@
 'use client'
 
 import { getAccessToken } from '@/lib/session-token'
+import { EMAIL_RE } from '@/lib/todo-shared'
 
 /** Chiamata alle route admin della todo list con il token di accesso dell'admin. */
 export async function adminTodoFetch(url: string, init: RequestInit = {}) {
@@ -33,7 +34,13 @@ export function generatePassword(length = 10): string {
 }
 
 export type AdminBoard = { id: string; name: string; createdAt: string; updatedAt: string; link: string | null }
-export type AdminAccess = { id: string; name: string; boardIds: string[]; createdAt: string }
+export type AdminAccess = { id: string; name: string; email: string | null; boardIds: string[]; createdAt: string }
+
+/** Email scritta bene (stesso controllo del server). */
+export const looksLikeEmail = (v: string) => EMAIL_RE.test(v.trim().toLowerCase())
+
+/** Campanella dell'admin (tutti i progetti), con il suo accesso. */
+export const adminBellRequest = async (method: 'GET' | 'POST') => adminTodoFetch('/api/admin/todo/bell', { method })
 
 /** Cookie dell'admin per aprire i progetti (anche le foto). */
 export async function ensureAdminCookie(): Promise<boolean> {

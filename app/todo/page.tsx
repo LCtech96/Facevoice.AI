@@ -1,8 +1,9 @@
 import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import { cookies } from 'next/headers'
-import { ACCESS_COOKIE, readAccessSession } from '@/lib/todo-auth'
+import { ACCESS_COOKIE, PENDING_COOKIE, readAccessSession, readPending } from '@/lib/todo-auth'
 import { accessForSession } from '@/lib/todo-access'
+import { pendingLogin } from '@/lib/todo-login'
 import LoginForm from './LoginForm'
 import Portal from './Portal'
 
@@ -10,8 +11,10 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 // Pagina generale dei progetti per le persone a cui l'admin ha dato un accesso:
-// si entra con nome e password, poi si vedono solo i propri progetti (cartelle e
-// calendario) e si lavora dentro. Pagina a sé, mai indicizzata, mai in cache.
+// si entra una volta sola (nome, password e codice arrivato per email), poi si vedono
+// solo i propri progetti (cartelle, calendario, campanella) e si lavora dentro. I link
+// ?p=progetto&t=attivita' (anche dalle email) restano anche passando dall'entrata.
+// Pagina a sé, mai indicizzata, mai in cache.
 
 export const metadata: Metadata = {
   title: 'Progetti',
@@ -22,11 +25,17 @@ export const metadata: Metadata = {
 export default async function TodoPortalPage() {
   let person = null
   let revoked = false
+  let pending: { maskedEmail: string; resendIn: number } | null = null
   try {
-    const session = readAccessSession((await cookies()).get(ACCESS_COOKIE)?.value)
+    const jar = await cookies()
+    const session = readAccessSession(jar.get(ACCESS_COOKIE)?.value)
     person = await accessForSession(session)
     // Cookie autentico ma non piu' valido: password cambiata o accesso tolto dall'admin.
     revoked = !person && !!session
+    if (!person) {
+      const waiting = await pendingLogin(readPending(jar.get(PENDING_COOKIE)?.value))
+      if (waiting) pending = { maskedEmail: waiting.maskedEmail, resendIn: waiting.resendIn }
+    }
   } catch {
     person = null
   }
@@ -37,7 +46,7 @@ export default async function TodoPortalPage() {
           <Portal name={person.name} />
         </Suspense>
       ) : (
-        <LoginForm revoked={revoked} />
+        <LoginForm revoked={revoked && !pending} pending={pending} />
       )}
     </main>
   )

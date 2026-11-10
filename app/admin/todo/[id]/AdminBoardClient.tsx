@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Copy, KeyRound, Loader2, Pencil, RefreshCw, Settings, Trash2 } from 'lucide-react'
 import TodoBoard from '@/components/todo/TodoBoard'
+import TodoBell from '@/components/todo/TodoBell'
 import ProjectHeader from '@/components/todo/ProjectHeader'
 import { projectApi } from '@/components/todo/todo-api'
 import { useAdminGate } from '../../contratti/useAdminGate'
 import { PasswordField } from '../AccessPanel'
-import { adminTodoFetch, copyText, ensureAdminCookie, type AdminBoard } from '../todo-admin-api'
+import { adminBellRequest, adminTodoFetch, copyText, ensureAdminCookie, type AdminBoard } from '../todo-admin-api'
 
 // Un progetto visto dall'admin: «← Tutti i progetti», nome, impostazioni del progetto
 // (link, password del link, nome, eliminazione) e la stessa bacheca delle persone.
@@ -91,11 +92,14 @@ export default function AdminBoardClient({ id, task }: { id: string; task: strin
         name={board?.name || 'Progetto'}
         onBack={back}
         actions={
-          board && (
-            <button type="button" onClick={() => setSettings(!settings)} className={pill} aria-expanded={settings}>
-              <Settings className="h-3.5 w-3.5" /> Impostazioni progetto
-            </button>
-          )
+          <>
+            {board && (
+              <button type="button" onClick={() => setSettings(!settings)} className={pill} aria-expanded={settings}>
+                <Settings className="h-3.5 w-3.5" /> Impostazioni progetto
+              </button>
+            )}
+            <TodoBell request={adminBellRequest} onOpen={(item) => router.push(`/admin/todo/${encodeURIComponent(item.boardId)}?t=${encodeURIComponent(item.taskId)}`)} />
+          </>
         }
       />
       {board && settings && (
@@ -169,7 +173,16 @@ export default function AdminBoardClient({ id, task }: { id: string; task: strin
       )}
       {error && <p className="mx-4 mb-3 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
       {notice && <p className="mx-4 mb-3 rounded-xl border border-[#34C759]/40 bg-[#34C759]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{notice}</p>}
-      {ready && <TodoBoard key={boardKey} api={projectApi(id)} initialTask={task} onLocked={onLocked} notFoundText="Progetto non trovato: forse è stato eliminato." />}
+      {ready && (
+        <TodoBoard
+          key={boardKey}
+          api={projectApi(id)}
+          initialTask={task}
+          onTaskClose={() => task && router.replace(`/admin/todo/${encodeURIComponent(id)}`, { scroll: false })}
+          onLocked={onLocked}
+          notFoundText="Progetto non trovato: forse è stato eliminato."
+        />
+      )}
     </div>
   )
 }

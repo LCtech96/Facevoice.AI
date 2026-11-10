@@ -29,12 +29,15 @@ export default function TodoBoard({
   api,
   onLocked,
   initialTask = null,
+  onTaskClose,
   notFoundText = 'Il link non è più valido. Chiedi un link nuovo a chi te l’ha mandato.',
 }: {
   api: string
   onLocked: () => void
-  /** Attivita' da aprire subito (dal calendario). */
+  /** Attivita' da aprire (dal calendario, dalla campanella o dal link di un'email). */
   initialTask?: string | null
+  /** Scheda dell'attivita' chiusa (per togliere l'attivita' dall'indirizzo). */
+  onTaskClose?: () => void
   notFoundText?: string
 }) {
   const [state, setState] = useState<TodoBoardState | null>(null)
@@ -56,6 +59,11 @@ export default function TodoBoard({
   const loadSeq = useRef(0)
   const stateRef = useRef<TodoBoardState | null>(null)
   stateRef.current = state
+
+  // Un'altra attivita' chiesta dall'indirizzo (es. dalla campanella): si apre.
+  useEffect(() => {
+    if (initialTask) setOpenTask(initialTask)
+  }, [initialTask])
 
   const refresh = useCallback(async () => {
     const seq = ++loadSeq.current
@@ -405,7 +413,10 @@ export default function TodoBoard({
           lists={lists}
           listTasks={tasksOf(state, current.list_id)}
           run={run}
-          onClose={() => setOpenTask(null)}
+          onClose={() => {
+            setOpenTask(null)
+            onTaskClose?.()
+          }}
           onMessage={setMessage}
           refresh={refresh}
         />

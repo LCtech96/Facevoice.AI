@@ -1,20 +1,24 @@
 import { randomUUID } from 'crypto'
 import { readSetting, updateSetting } from '@/lib/settings-store'
-import { hashPassword, passwordProblem, verifyPassword } from '@/lib/todo-auth'
+import { hashPassword, passwordProblem, readAccessSession, verifyPassword } from '@/lib/todo-auth'
 import { TodoError, listBoards } from '@/lib/todo-store'
-import { LIMITS, nameKey } from '@/lib/todo-shared'
+import { EMAIL_RE, LIMITS, isUuid, nameKey, portalPath } from '@/lib/todo-shared'
 
 // Accessi delle persone ai progetti (es. «Monia» vede i progetti A, B e C).
 // Li crea solo l'admin: nome, password scelta da lui (salvata solo come hash scrypt)
 // e i progetti. Si entra da un'unica pagina (/todo) con nome e password. Tutto sta in
 // una riga di app_settings (pochi accessi, modifiche sicure anche in contemporanea).
 // Cambiare password o eliminare l'accesso fa uscire subito la persona (versione nel
-// cookie); togliere un progetto lo nasconde alla richiesta successiva.
+// cookie); togliere un progetto lo nasconde alla richiesta successiva. L'email della
+// persona (una per persona) serve per il codice di entrata e per i solleciti con il
+// link diretto alla sua pagina dei progetti.
 
 export type AccessRow = {
   id: string
   name: string
   name_key: string
+  /** Email della persona (minuscole); null per gli accessi creati prima che servisse. */
+  email: string | null
   password_hash: string
   board_ids: string[]
   session_version: number
@@ -32,7 +36,11 @@ function parse(raw: string | null): AccessStore {
   try {
     const v = raw ? JSON.parse(raw) : null
     const people = Array.isArray(v?.people) ? (v.people as AccessRow[]) : []
-    return { people: people.filter((p) => p && typeof p.id === 'string' && typeof p.password_hash === 'string').map((p) => ({ ...p, board_ids: Array.isArray(p.board_ids) ? p.board_ids : [] })) }
+    return {
+      people: people
+        .filter((p) => p && typeof p.id === 'string' && typeof p.password_hash === 'string')
+        .map((p) => ({ ...p, email: typeof p.email === 'string' && p.email ? p.email : null, board_ids: Array.isArray(p.board_ids) ? p.board_ids : [] })),
+    }
   } catch {
     return { people: [] }
   }
@@ -65,6 +73,7 @@ export async function accessById(id: string): Promise<AccessRow | null> {
 export const accessView = (a: AccessRow, existing?: Set<string>) => ({
   id: a.id,
   name: a.name,
+  email: a.email,
   boardIds: existing ? a.board_ids.filter((b) => existing.has(b)) : a.board_ids,
   createdAt: a.created_at,
 })
@@ -73,6 +82,26 @@ function cleanName(name: unknown): string {
   const n = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, LIMITS.personName) : ''
   if (!n) throw new TodoError('Scrivi il nome della persona.')
   return n
+}
+
+/** Email obbligatoria (serve per il codice di entrata), valida, in minuscolo. */
+export function cleanEmail(email: unknown): string {
+  const e = typeof email === 'string' ? email.trim().toLowerCase() : ''
+  if (!e) throw new TodoError('Scrivi l’email della persona: serve per il codice di entrata.')
+  if (e.length > LIMITS.email || !EMAIL_RE.test(e)) throw new TodoError('Indirizzo email non valido.')
+  return e
+}
+
+const emailTaken = (people: AccessRow[], email: string, exceptId?: string) => people.find((p) => p.id !== exceptId && p.email === email)
+
+/** «m***a@gmail.com»: si vede a chi e' partito il codice senza mostrare l'indirizzo intero. */
+export function maskEmail(email: string | null): string {
+  if (!email) return ''
+  const at = email.lastIndexOf('@')
+  if (at < 1) return '***'
+  const local = email.slice(0, at)
+  const masked = local.length <= 2 ? `${local[0]}***` : `${local[0]}***${local[local.length - 1]}`
+  return `${masked}${email.slice(at)}`
 }
 
 /** Solo progetti che esistono davvero. */
@@ -86,15 +115,18 @@ async function cleanBoardIds(ids: unknown): Promise<string[]> {
 
 const nowIso = () => new Date().toISOString()
 
-export async function createAccess(name: unknown, password: unknown, boardIds: unknown): Promise<AccessRow> {
+export async function createAccess(name: unknown, password: unknown, boardIds: unknown, email?: unknown): Promise<AccessRow> {
   const n = cleanName(name)
+  const mail = cleanEmail(email)
   const problem = passwordProblem(password)
   if (problem) throw new TodoError(problem)
   const boards = await cleanBoardIds(boardIds)
   const password_hash = await hashPassword(password as string)
-  const row: AccessRow = { id: randomUUID(), name: n, name_key: nameKey(n), password_hash, board_ids: boards, session_version: 1, created_at: nowIso(), updated_at: nowIso() }
+  const row: AccessRow = { id: randomUUID(), name: n, name_key: nameKey(n), email: mail, password_hash, board_ids: boards, session_version: 1, created_at: nowIso(), updated_at: nowIso() }
   await save((people) => {
     if (people.some((p) => p.name_key === row.name_key)) throw new TodoError(`Esiste già un accesso con il nome «${n}»: sceglilo dall’elenco.`, 409)
+    const other = emailTaken(people, mail)
+    if (other) throw new TodoError(`Questa email è già usata da «${other.name}».`, 409)
     return [...people, row]
   })
   return row
@@ -122,6 +154,21 @@ export async function grantBoards(id: string, boardIds: unknown): Promise<Access
 export async function revokeBoards(id: string, boardIds: unknown): Promise<AccessRow> {
   const drop = new Set(Array.isArray(boardIds) ? boardIds.filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()) : [])
   return change(id, (a) => ({ board_ids: a.board_ids.filter((b) => !drop.has(b)) }))
+}
+
+/** Email nuova (una per persona). I codici gia' mandati all'email di prima non valgono piu'. */
+export async function setAccessEmail(id: string, email: unknown): Promise<AccessRow> {
+  const mail = cleanEmail(email)
+  let changed: AccessRow | null = null
+  await save((people) => {
+    const i = people.findIndex((p) => p.id === id)
+    if (i < 0) throw new TodoError('Accesso non trovato.', 404)
+    const other = emailTaken(people, mail, id)
+    if (other) throw new TodoError(`Questa email è già usata da «${other.name}».`, 409)
+    changed = { ...people[i], email: mail, updated_at: nowIso() }
+    return people.map((p, j) => (j === i ? (changed as AccessRow) : p))
+  })
+  return changed as unknown as AccessRow
 }
 
 /** Password nuova: la persona esce e deve rientrare con quella nuova. */
@@ -164,6 +211,36 @@ export async function accessForSession(session: { id: string; version: number } 
   if (!session) return null
   const person = await accessById(session.id)
   return person && person.session_version === session.version ? person : null
+}
+
+/** Dove andare dopo l'entrata: il progetto (e l'attivita') chiesti, solo se sono della persona. */
+export function nextForAccess(access: Pick<AccessRow, 'board_ids'>, boardId: unknown, taskId: unknown): string {
+  if (!isUuid(boardId) || !access.board_ids.includes(boardId.toLowerCase())) return '/todo'
+  return portalPath(boardId, isUuid(taskId) ? taskId : null)
+}
+
+/**
+ * Link del singolo progetto aperto da chi e' gia' entrato nella pagina generale e ha
+ * quel progetto: si va li' (niente password del progetto). Altrimenti null.
+ */
+export async function portalPathForLink(boardId: string, accessCookie: string | undefined | null): Promise<string | null> {
+  const person = await accessForSession(readAccessSession(accessCookie)).catch(() => null)
+  return person && person.board_ids.includes(boardId) ? portalPath(boardId) : null
+}
+
+/** La persona della pagina generale a cui va un sollecito: stessa email e quel progetto. */
+export function portalPersonFor(task: { board_id: string; notify_email: string | null; assignee?: string | null }, people: AccessRow[]): AccessRow | null {
+  const has = (p: AccessRow) => p.board_ids.includes(task.board_id)
+  const email = (task.notify_email || '').trim().toLowerCase()
+  if (email) {
+    const byEmail = people.find((p) => p.email === email && has(p))
+    if (byEmail) return byEmail
+  }
+  // Per nome solo se la persona non ha un'email salvata: con un'email diversa il
+  // sollecito va a qualcun altro, che il link della pagina generale non lo apre.
+  const key = nameKey(task.assignee || '')
+  if (!key) return null
+  return people.find((p) => p.name_key === key && !p.email && has(p)) || null
 }
 
 // ---------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { applyOp, errorResponse, json, projectAccess, readBody, sameOrigin } from '@/lib/todo-http'
+import { applyOp, errorResponse, json, projectAccess, readBody, refreshAccessCookie, sameOrigin } from '@/lib/todo-http'
 import { loadState } from '@/lib/todo-store'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +16,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const access = await projectAccess(req, id)
     if ('res' in access) return access.res
     const base = `/api/todo/p/${access.board.id}`
-    return json(await loadState(access.board, (path) => `${base}/image?p=${encodeURIComponent(path)}`))
+    const res = json(await loadState(access.board, (path) => `${base}/image?p=${encodeURIComponent(path)}`))
+    return access.viewer.kind === 'person' ? refreshAccessCookie(res, req, access.viewer.access) : res
   } catch (error) {
     return errorResponse(error)
   }

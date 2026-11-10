@@ -3,17 +3,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Copy, FolderPlus, ListTodo, Loader2, Plus, RefreshCw, UserCheck, Users, X } from 'lucide-react'
+import { AlertTriangle, Copy, FolderPlus, ListTodo, Loader2, Plus, RefreshCw, UserCheck, Users, X } from 'lucide-react'
 import TodoHome from '@/components/todo/TodoHome'
-import type { TodoHomeData } from '@/lib/todo-shared'
+import TodoBell from '@/components/todo/TodoBell'
+import type { TodoBellItem, TodoHomeData } from '@/lib/todo-shared'
 import { useAdminGate } from '../contratti/useAdminGate'
 import AccessPanel, { Credentials, GrantDialog, PasswordField } from './AccessPanel'
-import { adminTodoFetch, copyText, type AdminAccess, type AdminBoard } from './todo-admin-api'
+import { adminBellRequest, adminTodoFetch, copyText, type AdminAccess, type AdminBoard } from './todo-admin-api'
 
 // Schermata generale dei progetti (solo l'admin): cartelle di tutti i progetti e
 // calendario delle scadenze; «Nuovo progetto»; selezione di piu' cartelle e «Dai
 // accesso» per farle vedere a una persona (nome + password scelti qui, mai per email);
-// pannello «Accessi» per vedere e cambiare chi vede cosa.
+// pannello «Accessi» per vedere e cambiare chi vede cosa; campanella con cosa c'e' da
+// fare in tutti i progetti.
 
 const input =
   'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 text-base text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm'
@@ -98,6 +100,7 @@ export default function TodoAdminClient() {
     })
 
   const open = (boardId: string, taskId?: string) => router.push(`/admin/todo/${encodeURIComponent(boardId)}${taskId ? `?t=${encodeURIComponent(taskId)}` : ''}`)
+  const openFromBell = (item: TodoBellItem) => open(item.boardId, item.taskId)
 
   if (!allowed) {
     return (
@@ -125,12 +128,14 @@ export default function TodoAdminClient() {
           </h1>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">Una cartella per cliente. Apri una cartella per le sue cose da fare; seleziona più cartelle per farle vedere a una persona.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <TodoBell request={adminBellRequest} onOpen={openFromBell} />
           <button type="button" onClick={() => setShowNew(!showNew)} className="inline-flex min-h-[40px] items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 text-sm font-semibold text-white">
             <FolderPlus className="h-4 w-4" /> Nuovo progetto
           </button>
           <button type="button" onClick={() => setShowAccess(!showAccess)} className={`${pill} min-h-[40px] text-sm`}>
             <Users className="h-4 w-4" /> Accessi ({accesses.length})
+            {accesses.some((a) => !a.email) && <AlertTriangle className="h-4 w-4 text-[#FF9500]" aria-label="Qualche accesso senza email" />}
           </button>
           <button type="button" onClick={load} className={`${pill} min-h-[40px]`} aria-label="Aggiorna">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />

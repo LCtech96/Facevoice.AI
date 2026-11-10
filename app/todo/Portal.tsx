@@ -1,25 +1,43 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { FolderOpen, Loader2, LogOut, RefreshCw } from 'lucide-react'
 import TodoBoard from '@/components/todo/TodoBoard'
 import TodoHome from '@/components/todo/TodoHome'
+import TodoBell, { type BellRequest } from '@/components/todo/TodoBell'
 import ProjectHeader from '@/components/todo/ProjectHeader'
 import { projectApi } from '@/components/todo/todo-api'
-import { projectColor, type TodoHomeData } from '@/lib/todo-shared'
+import { portalPath, projectColor, type TodoBellItem, type TodoHomeData } from '@/lib/todo-shared'
 
 // Pagina della persona: i suoi progetti (cartelle + calendario) e, aprendone uno, le
-// sue tabelle e attivita'. Avanti e indietro con i tasti del browser (?p=progetto).
+// sue tabelle e attivita'. In alto il suo nome, la campanella e «Esci». Avanti e
+// indietro con i tasti del browser (?p=progetto&t=attivita'): chi arriva dal link di
+// un'email va dritto all'attivita' e, tornando indietro, trova i suoi progetti.
+
+const LANDED_KEY = 'fv_todo_landed'
+
+/** Cambia indirizzo senza ricaricare (la pagina legge ?p e ?t); aprendo qualcosa si riparte dall'alto. */
+function go(url: string, replace = false) {
+  if (replace) return window.history.replaceState(null, '', url)
+  window.history.pushState(null, '', url)
+  window.scrollTo(0, 0)
+}
+
+const bellRequest: BellRequest = async (method) => {
+  const res = await fetch('/api/todo/bell', { method, credentials: 'same-origin', cache: 'no-store', headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined }).catch(() => null)
+  const data = res ? await res.json().catch(() => ({})) : {}
+  return { ok: Boolean(res?.ok), status: res?.status || 0, data: data || {} }
+}
 
 export default function Portal({ name }: { name: string }) {
-  const router = useRouter()
   const params = useSearchParams()
   const projectId = params.get('p')
   const taskId = params.get('t')
   const [data, setData] = useState<TodoHomeData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const loaded = useRef(false)
 
   // Accesso finito (password cambiata o accesso tolto): si ricarica e ricompare l'entrata.
   const onLocked = useCallback(() => window.location.reload(), [])
@@ -31,6 +49,7 @@ export default function Portal({ name }: { name: string }) {
     setLoading(false)
     if (res?.status === 401) return onLocked()
     if (res?.ok && body?.boards) {
+      loaded.current = true
       setData({ boards: body.boards, tasks: body.tasks || [] })
       setError(null)
     } else setError(body?.error || 'Connessione assente: riprova.')
@@ -38,7 +57,7 @@ export default function Portal({ name }: { name: string }) {
 
   // All'apertura e ogni volta che si torna alla schermata generale (conteggi aggiornati).
   useEffect(() => {
-    load()
+    if (!projectId || !loaded.current) load()
   }, [projectId, load])
 
   // Sulla schermata generale (dentro un progetto ci pensa la bacheca ogni 6 s): ogni 15 s
@@ -53,8 +72,29 @@ export default function Portal({ name }: { name: string }) {
     return () => clearInterval(timer)
   }, [projectId, onLocked])
 
-  const open = (boardId: string, task?: string) => router.push(`/todo?p=${encodeURIComponent(boardId)}${task ? `&t=${encodeURIComponent(task)}` : ''}`)
-  const back = () => router.push('/todo')
+  // Arrivo da fuori (email) direttamente su un progetto: sotto si mette la schermata dei
+  // progetti, cosi' «indietro» porta li' e non fuori dal sito. Una volta per scheda.
+  useEffect(() => {
+    let first = true
+    try {
+      first = !window.sessionStorage.getItem(LANDED_KEY)
+      window.sessionStorage.setItem(LANDED_KEY, '1')
+    } catch {
+      first = false
+    }
+    if (!first || !new URLSearchParams(window.location.search).get('p')) return
+    const timer = setTimeout(() => {
+      const here = `${window.location.pathname}${window.location.search}`
+      const state = window.history.state
+      window.history.replaceState(state, '', '/todo')
+      window.history.pushState(state, '', here)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [])
+
+  const open = (boardId: string, task?: string) => go(portalPath(boardId, task))
+  const back = () => go('/todo')
+  const openFromBell = (item: TodoBellItem) => go(portalPath(item.boardId, item.taskId))
 
   const logout = async () => {
     await fetch('/api/todo/login', { method: 'DELETE', credentials: 'same-origin' }).catch(() => null)
@@ -66,15 +106,18 @@ export default function Portal({ name }: { name: string }) {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--background)]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-3">
-          <button type="button" onClick={back} className="flex min-w-0 items-center gap-2 text-lg font-bold text-[var(--text-primary)]">
+      <header className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--background)]/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
+          <button type="button" onClick={back} className="flex min-h-[40px] min-w-0 items-center gap-2 text-lg font-bold text-[var(--text-primary)]" aria-label="I miei progetti">
             <FolderOpen className="h-5 w-5 shrink-0 text-[var(--accent-blue)]" />
             <span className="truncate">Progetti</span>
           </button>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="hidden text-sm text-[var(--text-secondary)] sm:inline">{name}</span>
-            <button type="button" onClick={logout} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)]">
+          <div className="flex min-w-0 shrink-0 items-center gap-2">
+            <span className="max-w-[28vw] truncate text-xs text-[var(--text-secondary)] sm:max-w-[200px] sm:text-sm" title={name}>
+              {name}
+            </span>
+            <TodoBell request={bellRequest} onOpen={openFromBell} onLocked={onLocked} />
+            <button type="button" onClick={logout} className="inline-flex min-h-[40px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)]">
               <LogOut className="h-3.5 w-3.5" /> Esci
             </button>
           </div>
@@ -84,7 +127,14 @@ export default function Portal({ name }: { name: string }) {
       {projectId ? (
         <div className="pt-4">
           <ProjectHeader name={project?.name || 'Progetto'} color={index >= 0 ? projectColor(index) : undefined} onBack={back} />
-          <TodoBoard key={`${projectId}:${taskId || ''}`} api={projectApi(projectId)} initialTask={taskId} onLocked={onLocked} notFoundText="Progetto non trovato o non più condiviso con te." />
+          <TodoBoard
+            key={projectId}
+            api={projectApi(projectId)}
+            initialTask={taskId}
+            onTaskClose={() => go(portalPath(projectId), true)}
+            onLocked={onLocked}
+            notFoundText="Progetto non trovato o non più condiviso con te."
+          />
         </div>
       ) : (
         <div className="mx-auto max-w-6xl px-4 pb-24 pt-4">
