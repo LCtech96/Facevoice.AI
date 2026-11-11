@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server'
-import { applyOp, errorResponse, json, projectAccess, readBody, refreshAccessCookie, sameOrigin } from '@/lib/todo-http'
+import { applyOp, canEditProject, errorResponse, json, projectAccess, readBody, refreshAccessCookie, sameOrigin } from '@/lib/todo-http'
 import { loadState } from '@/lib/todo-store'
 
 export const dynamic = 'force-dynamic'
 
 // Un progetto aperto dalla schermata generale (per id): l'admin (suo cookie) o una
 // persona a cui l'admin l'ha dato (cookie della persona, progetto nel suo accesso).
-// Stesso contenuto e stesse modifiche di chi ha il link del progetto.
+// Solo l'admin lo modifica; la persona puo' solo spostare le attivita' e segnarle fatte.
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -16,7 +16,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const access = await projectAccess(req, id)
     if ('res' in access) return access.res
     const base = `/api/todo/p/${access.board.id}`
-    const res = json(await loadState(access.board, (path) => `${base}/image?p=${encodeURIComponent(path)}`))
+    const state = await loadState(access.board, (path) => `${base}/image?p=${encodeURIComponent(path)}`)
+    const res = json({ ...state, canEdit: canEditProject(access.viewer) })
     return access.viewer.kind === 'person' ? refreshAccessCookie(res, req, access.viewer.access) : res
   } catch (error) {
     return errorResponse(error)

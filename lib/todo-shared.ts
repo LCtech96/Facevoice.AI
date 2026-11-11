@@ -27,7 +27,8 @@ export type TodoTask = {
   updated_at: string
 }
 
-export type TodoBoardState = { board: { name: string }; lists: TodoList[]; tasks: TodoTask[] }
+/** canEdit: chi guarda puo' modificare il progetto (solo l'admin); gli altri spostano e segnano fatte. */
+export type TodoBoardState = { board: { name: string }; lists: TodoList[]; tasks: TodoTask[]; canEdit?: boolean }
 
 /** Un progetto nella schermata generale (cartella): conteggi e prossima scadenza. */
 export type TodoHomeBoard = { id: string; name: string; todo: number; late: number; done: number; next: string | null }

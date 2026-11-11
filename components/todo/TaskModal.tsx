@@ -9,7 +9,8 @@ import LinkText from './LinkText'
 // Scheda di un'attivita': titolo, note (con i link cliccabili e le anteprime), fatta,
 // importanza, sposta, scadenza e solleciti via email, foto. Ogni campo si salva da
 // solo (al cambio o quando si esce dal campo); i campi che non si stanno scrivendo si
-// aggiornano con le modifiche fatte da altri.
+// aggiornano con le modifiche fatte da altri. Chi non e' l'admin vede tutto ma puo'
+// solo segnarla fatta e spostarla (gli altri campi sono in sola lettura).
 
 type Draft = {
   title: string
@@ -48,6 +49,7 @@ const label = 'mb-1 block text-xs font-medium text-[var(--text-secondary)]'
 export default function TaskModal({
   api,
   task,
+  canEdit,
   lists,
   listTasks,
   run,
@@ -57,6 +59,8 @@ export default function TaskModal({
 }: {
   api: string
   task: TodoTask
+  /** Solo l'admin: titolo, note, importanza, scadenza, solleciti, foto, eliminazione. */
+  canEdit: boolean
   lists: TodoList[]
   listTasks: TodoTask[]
   run: Run
@@ -159,6 +163,7 @@ export default function TaskModal({
   }
 
   const reminderReady = Boolean(task.deadline && task.notify_email)
+  const priority = PRIORITIES.find((p) => p.value === task.priority) || PRIORITIES[0]
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 md:items-center md:p-6" onClick={() => void close()}>
@@ -180,6 +185,44 @@ export default function TaskModal({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
+          {!canEdit && (
+            <div className="space-y-4">
+              <p className="rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                Puoi segnarla come fatta e spostarla. Il resto lo modifica solo l’admin.
+              </p>
+              <div>
+                <span className={label}>Titolo</span>
+                <LinkText text={task.title} className="block break-words text-base font-semibold text-[var(--text-primary)]" />
+              </div>
+              {task.priority > 0 && (
+                <div>
+                  <span className={label}>Importanza</span>
+                  <span className={`inline-flex min-h-[28px] items-center rounded-full px-3 text-xs font-semibold ${priority.chip}`}>{priority.label}</span>
+                </div>
+              )}
+              <div>
+                <span className={label}>Note</span>
+                {task.notes.trim() ? (
+                  <LinkText text={task.notes} className="block whitespace-pre-wrap break-words text-sm text-[var(--text-primary)]" />
+                ) : (
+                  <p className="text-sm text-[var(--text-secondary)]">Nessuna nota.</p>
+                )}
+              </div>
+              <div className="grid gap-3 rounded-xl border border-[var(--border-color)] p-3 sm:grid-cols-2">
+                <div>
+                  <span className={label}>Scadenza</span>
+                  <p className="text-sm text-[var(--text-primary)]">{task.deadline ? formatRome(task.deadline) : 'Nessuna'}</p>
+                </div>
+                <div>
+                  <span className={label}>A chi è assegnata</span>
+                  <p className="text-sm text-[var(--text-primary)]">{task.assignee || '—'}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {canEdit && (
+          <>
           <div>
             <label className={label} htmlFor="todo-title">
               Titolo
@@ -212,6 +255,8 @@ export default function TaskModal({
               <LinkText text={task.notes} className="mt-1 block whitespace-pre-wrap break-words text-xs text-[var(--text-secondary)]" />
             )}
           </div>
+          </>
+          )}
 
           {task.links.length > 0 && (
             <div className="space-y-2">
@@ -237,10 +282,14 @@ export default function TaskModal({
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className={label}>Immagini</span>
-              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading > 0} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)] disabled:opacity-50">
-                {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {uploading > 0 ? 'Caricamento…' : 'Carica immagini'}
-              </button>
-              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={(e) => onFiles(e.target.files)} />
+              {canEdit && (
+                <>
+                  <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading > 0} className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)] disabled:opacity-50">
+                    {uploading > 0 ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {uploading > 0 ? 'Caricamento…' : 'Carica immagini'}
+                  </button>
+                  <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={(e) => onFiles(e.target.files)} />
+                </>
+              )}
             </div>
             {task.images.length ? (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -250,21 +299,23 @@ export default function TaskModal({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={img.src} alt={img.name} loading="lazy" className="aspect-square w-full rounded-lg object-cover" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm('Togliere questa immagine?')) run({ op: 'removeImage', taskId: task.id, imageId: img.id }, (s) => patchLocally(s, task.id, { images: task.images.filter((i) => i.id !== img.id) }))
-                      }}
-                      className="absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white"
-                      aria-label="Togli immagine"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm('Togliere questa immagine?')) run({ op: 'removeImage', taskId: task.id, imageId: img.id }, (s) => patchLocally(s, task.id, { images: task.images.filter((i) => i.id !== img.id) }))
+                        }}
+                        className="absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white"
+                        aria-label="Togli immagine"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-[var(--text-secondary)]">Nessuna immagine. JPG, PNG, WEBP o GIF fino a 10 MB.</p>
+              <p className="text-xs text-[var(--text-secondary)]">{canEdit ? 'Nessuna immagine. JPG, PNG, WEBP o GIF fino a 10 MB.' : 'Nessuna immagine.'}</p>
             )}
           </div>
 
@@ -287,6 +338,7 @@ export default function TaskModal({
             </div>
           </div>
 
+          {canEdit && (
           <div className="rounded-xl border border-[var(--border-color)] p-3">
             <p className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-[var(--text-primary)]">
               <Bell className="h-4 w-4" /> Scadenza e solleciti
@@ -359,12 +411,17 @@ export default function TaskModal({
                 : 'Per i solleciti servono la scadenza e l’email.'}
             </p>
           </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-[var(--border-color)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <button type="button" onClick={remove} className="inline-flex min-h-[40px] items-center gap-1 rounded-full border border-[#FF3B30]/40 px-4 text-sm text-[#FF3B30]">
-            <Trash2 className="h-4 w-4" /> Elimina
-          </button>
+          {canEdit ? (
+            <button type="button" onClick={remove} className="inline-flex min-h-[40px] items-center gap-1 rounded-full border border-[#FF3B30]/40 px-4 text-sm text-[#FF3B30]">
+              <Trash2 className="h-4 w-4" /> Elimina
+            </button>
+          ) : (
+            <span />
+          )}
           <button type="button" onClick={() => void close()} className="inline-flex min-h-[40px] items-center rounded-full bg-[var(--accent-blue)] px-5 text-sm font-semibold text-white">
             Fatto
           </button>

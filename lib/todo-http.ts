@@ -181,8 +181,28 @@ function noticeDone(req: NextRequest, board: BoardRow, viewer: Viewer, taskId: s
   runAfter(() => notifyTaskDone({ board, who, taskId, fromListId, toListId, origin }))
 }
 
-/** Le operazioni sulla todo list (uguali per l'admin, per le persone e per chi ha il link). */
+/** Solo l'admin modifica il progetto (tabelle, attivita', foto). */
+export const canEditProject = (viewer: Viewer) => viewer.kind === 'admin'
+
+export const READ_ONLY_MESSAGE = 'Questo progetto lo modifica solo l’admin: puoi spostare le attività e segnarle come fatte.'
+
+/** Cosa puo' fare chi non e' l'admin: spostare un'attivita' o segnarla fatta / da fare (e nient'altro). */
+function allowedForGuest(body: Record<string, unknown>): boolean {
+  if (body.op === 'moveTask') return true
+  if (body.op !== 'updateTask') return false
+  const fields = body.fields
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return false
+  const keys = Object.keys(fields)
+  return keys.length === 1 && keys[0] === 'done' && typeof (fields as Record<string, unknown>).done === 'boolean'
+}
+
+/**
+ * Le operazioni sulla todo list. L'admin puo' tutto; le persone e chi ha il link
+ * possono solo spostare le attivita' e segnarle fatte: niente tabelle nuove, rinominate,
+ * spostate o cancellate, niente attivita' nuove, modificate o cancellate, niente foto.
+ */
 export async function applyOp(req: NextRequest, board: BoardRow, viewer: Viewer, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!canEditProject(viewer) && !allowedForGuest(body)) throw new TodoError(READ_ONLY_MESSAGE, 403)
   const op = body.op
   switch (op) {
     case 'addList':

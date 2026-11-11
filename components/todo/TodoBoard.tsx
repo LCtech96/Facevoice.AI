@@ -7,8 +7,10 @@ import { boardOp, loadBoard, moveLocally, patchLocally, tasksOf } from './todo-a
 import TaskModal from './TaskModal'
 import LinkText from './LinkText'
 
-// Bacheca della todo list: tabelle (colonne) con le attivita'. Uguale per l'admin
-// e per chi ha il link. Si aggiorna da sola ogni pochi secondi; ogni modifica manda
+// Bacheca della todo list: tabelle (colonne) con le attivita'. L'admin modifica tutto;
+// gli altri (persone e chi ha il link) vedono tutto ma possono solo spostare le
+// attivita' e segnarle fatte (il server lo controlla comunque, qui si tolgono i
+// comandi). Si aggiorna da sola ogni pochi secondi; ogni modifica manda
 // solo il campo cambiato (l'ultima modifica di un campo vince) e gli spostamenti
 // usano posizioni, cosi' due persone insieme non perdono attivita'.
 // Spostare: trascina la maniglia (anche con il dito) oppure usa "Sposta" nella scheda.
@@ -234,6 +236,7 @@ export default function TodoBoard({
     )
   }
 
+  const canEdit = state.canEdit === true
   const lists = [...state.lists].sort((a, b) => a.position - b.position)
   const dragged = drag ? state.tasks.find((t) => t.id === drag.taskId) : null
   const current = openTask ? state.tasks.find((t) => t.id === openTask) : null
@@ -269,7 +272,10 @@ export default function TodoBoard({
   return (
     <div className="pb-24" style={drag ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}>
       <div className="mb-3 flex items-center justify-between gap-2 px-4">
-        <p className="text-xs text-[var(--text-secondary)]">Trascina con la maniglia <GripVertical className="inline h-3.5 w-3.5" /> oppure apri un’attività per spostarla.</p>
+        <p className="text-xs text-[var(--text-secondary)]">
+          Trascina con la maniglia <GripVertical className="inline h-3.5 w-3.5" /> oppure apri un’attività per spostarla.
+          {!canEdit && ' Il resto del progetto lo modifica solo l’admin.'}
+        </p>
         <button type="button" onClick={refresh} className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-full border border-[var(--border-color)] px-3 text-xs text-[var(--text-primary)]" aria-label="Aggiorna">
           <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} /> Aggiorna
         </button>
@@ -289,7 +295,11 @@ export default function TodoBoard({
               className={`w-[86vw] max-w-[340px] shrink-0 snap-start rounded-2xl border bg-[var(--background-secondary)] p-2 sm:w-[300px] ${dropHere >= 0 ? 'border-[var(--accent-blue)]' : 'border-[var(--border-color)]'}`}
             >
               <header className="relative flex items-center gap-1 px-1 pb-2 pt-1">
-                {editingList === list.id ? (
+                {!canEdit ? (
+                  <p className="min-w-0 flex-1 truncate py-1.5 text-sm font-semibold text-[var(--text-primary)]">
+                    {list.title} <span className="font-normal text-[var(--text-secondary)]">· {tasks.length - doneCount}{doneCount ? ` (+${doneCount} fatte)` : ''}</span>
+                  </p>
+                ) : editingList === list.id ? (
                   <form
                     className="flex-1"
                     onSubmit={(e) => {
@@ -313,10 +323,12 @@ export default function TodoBoard({
                     {list.title} <span className="font-normal text-[var(--text-secondary)]">· {tasks.length - doneCount}{doneCount ? ` (+${doneCount} fatte)` : ''}</span>
                   </button>
                 )}
-                <button type="button" onClick={() => setListMenu(listMenu === list.id ? null : list.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--background)]" aria-label="Azioni della tabella">
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
-                {listMenu === list.id && (
+                {canEdit && (
+                  <button type="button" onClick={() => setListMenu(listMenu === list.id ? null : list.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--background)]" aria-label="Azioni della tabella">
+                    <MoreHorizontal className="h-5 w-5" />
+                  </button>
+                )}
+                {canEdit && listMenu === list.id && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setListMenu(null)} />
                     <div className="absolute right-0 top-10 z-40 w-56 overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--card-background)] shadow-xl">
@@ -354,6 +366,7 @@ export default function TodoBoard({
                 {dropHere >= 0 && dropHere === others.length && <div className="h-1 rounded-full bg-[var(--accent-blue)]" />}
               </div>
 
+              {canEdit && (
               <form
                 className="mt-2 flex items-center gap-1"
                 onSubmit={(e) => {
@@ -372,10 +385,12 @@ export default function TodoBoard({
                   <Plus className="h-5 w-5" />
                 </button>
               </form>
+              )}
             </section>
           )
         })}
 
+        {canEdit && (
         <form
           className="w-[86vw] max-w-[340px] shrink-0 snap-start rounded-2xl border border-dashed border-[var(--border-color)] p-2 sm:w-[300px]"
           onSubmit={(e) => {
@@ -394,6 +409,7 @@ export default function TodoBoard({
             </button>
           </div>
         </form>
+        )}
       </div>
 
       {dragged && (
@@ -410,6 +426,7 @@ export default function TodoBoard({
         <TaskModal
           api={api}
           task={current}
+          canEdit={canEdit}
           lists={lists}
           listTasks={tasksOf(state, current.list_id)}
           run={run}

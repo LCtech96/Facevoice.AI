@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
-import { applyOp, errorResponse, guestBoard, json, readBody, sameOrigin } from '@/lib/todo-http'
+import { applyOp, canEditProject, errorResponse, guestBoard, json, readBody, sameOrigin } from '@/lib/todo-http'
 import { loadState } from '@/lib/todo-store'
 
 export const dynamic = 'force-dynamic'
 
-// Contenuto della todo list e modifiche (tabelle, attivita', foto), per chi ha il
-// link e ha messo la password (cookie firmato di QUESTA todo list). Si tocca solo
+// Contenuto della todo list per chi ha il link e ha messo la password (cookie firmato
+// di QUESTA todo list). Chi ha il link puo' solo spostare le attivita' e segnarle
+// fatte; le altre modifiche (tabelle, attivita', foto) solo l'admin. Si tocca solo
 // questa todo list: ogni operazione filtra per il suo id.
 
 type Ctx = { params: Promise<{ token: string }> }
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const access = await guestBoard(req, token)
     if ('res' in access) return access.res
     const state = await loadState(access.board, (path) => `/api/todo/${token}/image?p=${encodeURIComponent(path)}`)
-    return json(state)
+    return json({ ...state, canEdit: canEditProject(access.viewer) })
   } catch (error) {
     return errorResponse(error)
   }
