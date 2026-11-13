@@ -100,6 +100,8 @@ export default function ContactsFooter() {
 
   // Nell'area admin i contatti dell'azienda non servono: per l'admin resta
   // solo una riga con i pulsanti Utenti e Consumi, per gli altri niente footer.
+  // Chat WhatsApp (/whatsapp): a schermo intero come i Messaggi.
+  if (pathname?.startsWith('/whatsapp')) return null
   if (pathname?.startsWith('/admin')) {
     if (!isAdmin || FULL_SCREEN_ADMIN.some((p) => pathname.startsWith(p))) return null
     return (

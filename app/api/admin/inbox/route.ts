@@ -59,6 +59,8 @@ export async function GET(req: NextRequest) {
 
   const params = req.nextUrl.searchParams
   const platform = params.get('platform')
+  // Conversazioni che hanno SOLO questo canale da togliere (es. le chat WhatsApp, che hanno la loro pagina).
+  const exclude = params.get('exclude')
   const query = params.get('q')?.trim().toLowerCase() || ''
   const filter = params.get('filter')
 
@@ -186,6 +188,7 @@ export async function GET(req: NextRequest) {
 
   const list = all
     .filter((c) => !platform || !PLATFORMS.includes(platform) || c.platforms.includes(platform))
+    .filter((c) => !exclude || !PLATFORMS.includes(exclude) || c.platforms.some((p) => p !== exclude))
     .filter((c) => filter !== 'pending' || c.pending > 0)
     .filter((c) => filter !== 'unread' || c.unread > 0)
     .filter(

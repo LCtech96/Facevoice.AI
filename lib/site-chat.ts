@@ -9,7 +9,8 @@ import { loadKnowledge } from '@/lib/meta/agent'
 import { replyGuidance } from '@/lib/corrections'
 import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
-import { sendPushToAdmins } from '@/lib/push'
+import { sendPushToPeople } from '@/lib/push'
+import { notifyRecipients } from '@/lib/notify-prefs'
 import { SITE_URL } from '@/lib/seo/site'
 import {
   identityNotice,
@@ -157,7 +158,8 @@ export async function handleSiteMessage(
   // Con una verifica gia' aperta l'AI prepara solo una bozza da approvare.
   if (handedOff) {
     if (verifying && identity) await draftVerificationReply(sessionId, contactName, identity, language)
-    await sendPushToAdmins({
+    const recipients = await notifyRecipients(WEB_PLATFORM).catch(() => ({ push: [] as string[], email: [] as string[] }))
+    await sendPushToPeople(recipients.push, {
       title: `${contactName || 'Visitatore'} · Chat sito`,
       body: [text.slice(0, 140), verifying ? identityNotice(identity) : null].filter(Boolean).join('\n'),
       url: `/admin/inbox?c=${encodeURIComponent(`${WEB_PLATFORM}:${sessionId}`)}`,
@@ -442,9 +444,11 @@ async function notifyHandoff(sessionId: string, contactName: string | null, tran
     )
     .join('')
 
+  const recipients = await notifyRecipients(WEB_PLATFORM).catch(() => ({ push: [...ADMIN_EMAILS], email: [...ADMIN_EMAILS] }))
   const [emailResult, pushResult] = await Promise.allSettled([
-    sendEmail({
-      to: [...ADMIN_EMAILS],
+    recipients.email.length
+      ? sendEmail({
+      to: recipients.email,
       replyTo: email || undefined,
       subject: `Chat sito: ${who} aspetta un operatore`,
       text: `${who} ha chiesto di parlare con il team dalla chat del sito.\n\nEmail: ${email || '-'}\nTelefono: ${phone || '-'}\n\nConversazione:\n${transcriptText}\n\nRispondi in tempo reale: ${link}`,
@@ -455,8 +459,9 @@ Telefono: ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>
 <p><a href="${link}" style="display: inline-block; background: #1f4fe0; color: #ffffff; padding: 12px 20px; border-radius: 999px; text-decoration: none; font-weight: 600;">Apri la chat e rispondi ora</a></p>
 <p style="margin-top: 20px;"><strong>Conversazione:</strong></p>
 <div style="background: #f7f7f7; padding: 14px 16px; border-radius: 8px;">${transcriptHtml}</div>`),
-    }),
-    sendPushToAdmins({
+    })
+      : Promise.resolve('nessuno ha scelto l’email'),
+    sendPushToPeople(recipients.push, {
       title: `${who} aspetta un operatore · Chat sito`,
       body: 'Apri la chat per rispondere in tempo reale.',
       url: `/admin/inbox?c=${encodeURIComponent(`${WEB_PLATFORM}:${sessionId}`)}`,

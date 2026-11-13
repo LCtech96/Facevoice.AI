@@ -67,7 +67,8 @@ export default function AIChatWidget() {
   const isChatPage = pathname?.startsWith('/ai-chat')
   // Pagina del contratto (/c/…): solo il contratto, niente chat del sito.
   // Todo list condivisa (/todo/…): pagina a sé, niente chat.
-  const hidden = isChatPage || pathname?.startsWith('/admin') || pathname?.startsWith('/c/') || pathname?.startsWith('/todo/')
+  // Chat WhatsApp (/whatsapp): gestionale, niente chat del sito.
+  const hidden = isChatPage || pathname?.startsWith('/admin') || pathname?.startsWith('/whatsapp') || pathname?.startsWith('/c/') || pathname?.startsWith('/todo/')
 
   useEffect(() => {
     openRef.current = isOpen

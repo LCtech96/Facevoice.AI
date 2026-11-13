@@ -1,7 +1,7 @@
 'use client'
 
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen, LayoutGrid, FilePenLine, ListTodo, Megaphone } from 'lucide-react'
+import { Users, Briefcase, Home, MessageSquare, LogIn, UserPlus, LogOut, User as UserIcon, Shield, Calendar, Wallet, Menu, Handshake, Inbox, Bot, BarChart3, LayoutDashboard, Target, Sparkles, BookOpen, LayoutGrid, FilePenLine, ListTodo, Megaphone, MessageCircle, BellRing } from 'lucide-react'
 import LanguageSelector from './LanguageSelector'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -99,6 +99,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   // Dipendenti: le pagine del gestionale che l'admin ha aperto per loro.
   const staff = useStaffAccess(Boolean(user) && !isAdmin)
   const staffPages = isAdmin ? [] : STAFF_PAGE_IDS.filter((page) => staff.can(page))
+  // Notifiche dei messaggi: per chi vede i Messaggi (admin e dipendenti).
+  const canNotify = isAdmin || staffPages.includes('inbox')
   const isChatPage = pathname?.startsWith('/ai-chat')
   const { t } = useTranslation()
 
@@ -107,7 +109,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   // finche' non torna nel gestionale.
   useEffect(() => {
     if (!isAdmin) return
-    if (pathname?.startsWith('/admin')) {
+    if (pathname?.startsWith('/admin') || pathname?.startsWith('/whatsapp')) {
       try {
         sessionStorage.removeItem(PUBLIC_VIEW_KEY)
       } catch {}
@@ -128,6 +130,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const mainNavItems: NavItem[] = isAdmin
     ? [
         { id: 'admin-inbox', label: 'Messaggi', icon: Inbox, href: '/admin/inbox' },
+        { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, href: '/whatsapp' },
         { id: 'admin-assistant', label: 'Super chat', short: 'Super', icon: Sparkles, href: '/admin/assistant' },
         { id: 'admin-pipeline', label: 'Leads', icon: Target, href: '/admin/pipeline' },
         { id: 'admin', label: 'Gestione', icon: LayoutDashboard, href: '/admin' },
@@ -137,7 +140,11 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
         // I consumi stanno dentro la Super chat: niente voce doppia.
         ...staffPages
           .filter((page, i) => staffPages.findIndex((p) => STAFF_PAGES[p].href === STAFF_PAGES[page].href) === i)
-          .map((page) => ({ id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href })),
+          .flatMap((page): NavItem[] => {
+            const item = { id: `admin-${page}`, label: STAFF_PAGES[page].label, icon: STAFF_ICONS[page], href: STAFF_PAGES[page].href }
+            // Le chat WhatsApp hanno la loro pagina, con lo stesso permesso dei Messaggi.
+            return page === 'inbox' ? [item, { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, href: '/whatsapp' }] : [item]
+          }),
       ]
     : [
         { id: 'home', label: t('nav.home'), icon: Home, href: '/home' },
@@ -336,6 +343,18 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                         exit={{ opacity: 0, y: -10 }}
                         className="absolute right-0 top-full mt-2 w-48 bg-[var(--card-background)] border border-[var(--border-color)] rounded-lg shadow-xl z-50 overflow-hidden"
                       >
+                        {canNotify && (
+                          <button
+                            onClick={() => {
+                              setShowUserMenu(false)
+                              router.push('/admin/notifiche')
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-2 text-left text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors"
+                          >
+                            <BellRing className="w-4 h-4" />
+                            <span className="text-sm">Notifiche</span>
+                          </button>
+                        )}
                         <button
                           onClick={handleLogout}
                           className="w-full flex items-center gap-2 px-4 py-2 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors"
@@ -454,6 +473,18 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
                       <div className="px-4 py-2.5 border-b border-[var(--border-color)] text-xs text-[var(--text-secondary)] truncate">
                         {user.email}
                       </div>
+                      {canNotify && (
+                        <button
+                          onClick={() => {
+                            setShowUserMenu(false)
+                            router.push('/admin/notifiche')
+                          }}
+                          className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[var(--text-primary)] hover:bg-[var(--background-secondary)] transition-colors text-xs"
+                        >
+                          <BellRing className="w-4 h-4" />
+                          <span>Notifiche</span>
+                        </button>
+                      )}
                       <button
                         onClick={handleLogout}
                         className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-red-600 hover:bg-[var(--background-secondary)] transition-colors text-xs"

@@ -1,0 +1,1409 @@
+'use client'
+
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import {
+  ArrowLeft,
+  Bell,
+  Check,
+  Facebook,
+  Instagram,
+  MessageCircle,
+  MessageSquareText,
+  RefreshCw,
+  Search,
+  Send,
+  X,
+  Link2,
+  Unlink,
+  Mail,
+  Globe,
+  Trash2,
+  Sparkles,
+  PencilLine,
+  Loader2,
+  Paperclip,
+  FileText,
+} from 'lucide-react'
+import { uploadToSignedUrl } from '@/lib/client-image'
+import { parseMediaBody, serviceWindow, validateWaMedia, type WaMediaKind } from '@/lib/wa-media-shared'
+import Navigation from '@/components/Navigation'
+import { createClient } from '@/lib/supabase-client'
+import { getAccessToken } from '@/lib/session-token'
+import { useStaffAccess } from '@/components/useStaffAccess'
+import { DraftTranslate, TranslatableBody } from './Translate'
+
+type Platform = 'whatsapp' | 'facebook' | 'instagram' | 'email' | 'web'
+
+type Conversation = {
+  key: string
+  members: { platform: string; contactId: string; contactName: string | null }[]
+  platforms: string[]
+  contactName: string | null
+  lastMessage: string
+  lastDirection: 'in' | 'out'
+  lastStatus: string | null
+  lastAt: string
+  unread: number
+  pending: number
+  hasComments: boolean
+  linked: boolean
+  suggestion?: { key: string; name: string; platforms: string[]; reason?: string }
+  verification?: { status: string; label: string; detail: string; tone: 'pending' | 'ok' | 'bad' }
+  /** Motivi dei collegamenti automatici (si annullano con "Separa"). */
+  autoLinks?: string[]
+}
+
+// Colori del badge della verifica dell'identita'.
+const VERIFY_TONE: Record<'pending' | 'ok' | 'bad', string> = {
+  pending: 'bg-[#5856D6]/15 text-[#5856D6]',
+  ok: 'bg-[#34C759]/15 text-[#248A3D]',
+  bad: 'bg-[#FF3B30]/15 text-[#FF3B30]',
+}
+
+type Message = {
+  id: string
+  platform: string
+  kind: 'message' | 'comment'
+  direction: 'in' | 'out'
+  body: string
+  status: string | null
+  error_message: string | null
+  reply_to?: string | null
+  /** manual_app = scritto a mano dall'app di Instagram/Facebook. */
+  origin?: string | null
+  created_at: string
+}
+
+const PLATFORM: Record<Platform, { label: string; icon: typeof Instagram; color: string }> = {
+  whatsapp: { label: 'WhatsApp', icon: MessageCircle, color: '#25D366' },
+  facebook: { label: 'Messenger', icon: Facebook, color: '#0866FF' },
+  instagram: { label: 'Instagram', icon: Instagram, color: '#E1306C' },
+  email: { label: 'Email', icon: Mail, color: '#EA4335' },
+  web: { label: 'Chat sito', icon: Globe, color: '#FF6A1A' },
+}
+
+/** Risposte dell'AI che si possono correggere: bozze da approvare, o inviate dall'AI (da sola o approvate cosi' com'erano). */
+const correctable = (m: Message) =>
+  m.direction === 'out' && (m.status === 'pending' || (m.status === 'sent' && (m.origin === 'ai_auto' || m.origin === 'ai_approved')))
+
+/** Messaggi della persona a cui rispondeva la nostra risposta (gli ultimi di fila prima di lei, stesso canale). */
+function answeredTexts(messages: Message[], reply: Message): string {
+  const index = messages.findIndex((m) => m.id === reply.id)
+  const picked: string[] = []
+  for (let i = index - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.platform !== reply.platform) continue
+    if (m.direction === 'out') {
+      if (m.status === 'rejected' || m.status === 'pending') continue
+      if (picked.length) break
+      continue
+    }
+    if (reply.kind === 'comment' ? m.kind !== 'comment' : m.kind !== 'message') continue
+    picked.push(m.body)
+    if (picked.length >= 3 || reply.kind === 'comment') break
+  }
+  return picked.reverse().join('\n')
+}
+
+type CorrectionResult = {
+  rule: { rule: string; count?: number } | null
+  learned: boolean
+  how?: 'new' | 'merged' | 'replaced' | 'updated' | null
+  strong?: boolean
+  regenerated?: boolean
+  regenerateError?: string
+  message?: Message | null
+}
+
+function correctionNotice(result: CorrectionResult, draft: boolean): string {
+  const text = `«${result.rule?.rule || ''}»`
+  const n = result.rule?.count || 1
+  const head =
+    result.how === 'merged' && result.strong
+      ? `Regola rafforzata: ${text}. Corretta ${n} volte, ora vale più della Memoria.`
+      : result.how === 'merged'
+        ? `Regola rafforzata: ${text}. Corretta ${n} volte.`
+        : result.how === 'replaced'
+          ? `Regola cambiata: ${text}. Prende il posto di quella che diceva il contrario.`
+          : `Correzione salvata: ${text}.${result.learned ? '' : ' L’AI non era disponibile: resta il tuo esempio, puoi riscrivere la regola in Memoria AI.'}`
+  const tail = draft
+    ? result.regenerated
+      ? ' La bozza è stata rifatta: controllala e inviala.'
+      : ` La bozza non è stata rifatta${result.regenerateError ? ` (${result.regenerateError})` : ''}: modificala tu.`
+    : ' L’AI la seguirà nelle prossime risposte.'
+  return `${head}${tail} La trovi in Memoria AI → Correzioni imparate.`
+}
+
+const POLL_MS = 5_000
+// Con la casella aperta le email si controllano piu' spesso del cron (1 minuto).
+const EMAIL_SYNC_MS = 20_000
+
+/** Foto, video o PDF di un messaggio WhatsApp (salvato come "[immagine](link)" + didascalia). */
+function MessageBody({ body, tone }: { body: string; tone: 'in' | 'out' }) {
+  const media = parseMediaBody(body)
+  if (!media) return <TranslatableBody text={body} tone={tone} />
+  return (
+    <div className="space-y-2">
+      {media.url ? (
+        media.kind === 'image' ? (
+          <a href={media.url} target="_blank" rel="noreferrer">
+            <img src={media.url} alt="Immagine" className="max-h-72 w-full rounded-xl object-cover" />
+          </a>
+        ) : media.kind === 'video' ? (
+          <video src={media.url} controls playsInline preload="metadata" className="max-h-72 w-full rounded-xl bg-black" />
+        ) : (
+          <a href={media.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 underline">
+            <FileText className="h-4 w-4" /> Documento
+          </a>
+        )
+      ) : (
+        <p className="italic opacity-80">[{media.kind === 'image' ? 'immagine' : media.kind === 'video' ? 'video' : 'documento'}]</p>
+      )}
+      {media.caption && <TranslatableBody text={media.caption} tone={tone} />}
+    </div>
+  )
+}
+
+function formatTime(iso: string) {
+  const d = new Date(iso)
+  const today = new Date()
+  return d.toDateString() === today.toDateString()
+    ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+}
+
+async function authFetch(url: string, init: RequestInit = {}) {
+  const token = await getAccessToken()
+  return fetch(url, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers || {}) },
+  })
+}
+
+// ---------------------------------------------------------------------
+// Risposte automatiche per canale
+// ---------------------------------------------------------------------
+
+type ChannelRow = { id: string; platform: string; status: string; reply_mode?: 'auto' | 'approval' }
+
+function AutoReplyToggles({ include }: { include: (platform: string) => boolean }) {
+  const [channels, setChannels] = useState<ChannelRow[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    authFetch('/api/admin/channels')
+      .then((res) => (res.ok ? res.json() : { channels: [] }))
+      .then((data) =>
+        setChannels(
+          (data.channels || []).filter(
+            (c: ChannelRow) => c.status === 'connected' && c.platform in PLATFORM && include(c.platform)
+          )
+        )
+      )
+      .catch(() => setChannels([]))
+    // Il filtro dei canali non cambia mentre la pagina e' aperta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const toggle = async (channel: ChannelRow) => {
+    const next = channel.reply_mode === 'auto' ? 'approval' : 'auto'
+    if (
+      next === 'auto' &&
+      !window.confirm(
+        `Le risposte AI su ${PLATFORM[channel.platform as Platform].label} partiranno subito, senza approvazione. Confermi?`
+      )
+    ) {
+      return
+    }
+    setError(null)
+    setBusyId(channel.id)
+    try {
+      const res = await authFetch(`/api/admin/channels/${channel.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ reply_mode: next }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Modifica non riuscita')
+      setChannels((list) => list.map((c) => (c.id === channel.id ? { ...c, reply_mode: next } : c)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Errore')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (!channels.length) return null
+
+  // Come l'Omnichat della piattaforma clienti: un riquadro per canale con la modalita' e cosa vuol dire.
+  const MODES = [
+    { id: 'approval' as const, label: 'Bozze', hint: 'L’AI prepara la risposta, tu la controlli e la invii.' },
+    { id: 'auto' as const, label: 'Automatica', hint: 'L’AI risponde da sola, subito.' },
+  ]
+  return (
+    <div className="mt-3">
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {channels.map((channel) => {
+          const meta = PLATFORM[channel.platform as Platform]
+          const Icon = meta.icon
+          const mode = channel.reply_mode === 'auto' ? 'auto' : 'approval'
+          return (
+            <div key={channel.id} className="shrink-0 rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                <Icon className="h-4 w-4" style={{ color: meta.color }} /> {meta.label}
+              </p>
+              <div className="mt-2 flex rounded-full bg-[var(--background)] p-0.5" role="radiogroup" aria-label={`Risposte AI ${meta.label}`}>
+                {MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    role="radio"
+                    aria-checked={mode === m.id}
+                    title={m.hint}
+                    disabled={busyId === channel.id}
+                    onClick={() => mode !== m.id && toggle(channel)}
+                    className={`rounded-full px-3 py-1 text-xs disabled:opacity-50 ${mode === m.id ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)]'}`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 max-w-[15rem] text-[11px] text-[var(--text-secondary)]">{MODES.find((m) => m.id === mode)?.hint}</p>
+            </div>
+          )
+        })}
+      </div>
+      {channels.some((c) => c.platform === 'email') && (
+        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+          Email: in automatico solo per chi ci scrive per primo. Le risposte dei contatti del Motore clienti hanno sempre la controrisposta da approvare.
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-[#FF3B30]">{error}</p>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Pagina
+// ---------------------------------------------------------------------
+
+function PlatformBadge({ platform, size = 'sm' }: { platform: string; size?: 'sm' | 'xs' }) {
+  const meta = PLATFORM[platform as Platform]
+  if (!meta) return null
+  const Icon = meta.icon
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full font-medium ${
+        size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]'
+      }`}
+      style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
+    >
+      <Icon className={size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
+      {meta.label}
+    </span>
+  )
+}
+
+const SWIPE_ACTION = 88
+const LONG_PRESS_MS = 550
+
+/**
+ * Riga con swipe a sinistra come su WhatsApp: scopre il pulsante rosso
+ * "Elimina"; uno swipe lungo elimina subito. Anche una pressione lunga scopre
+ * il pulsante. Col mouse si trascina.
+ *
+ * I gesti touch usano listener nativi non passivi: cosi' appena il movimento
+ * e' orizzontale il browser non puo' prenderselo (scroll, gesti di sistema).
+ */
+function SwipeRow({
+  open,
+  onOpenChange,
+  onDelete,
+  disabled = false,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDelete: () => void
+  /** Senza permesso di eliminare: riga normale, senza swipe. */
+  disabled?: boolean
+  children: React.ReactNode
+}) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const fgRef = useRef<HTMLDivElement>(null)
+  const [dx, setDx] = useState<number | null>(null)
+  const suppressClick = useRef(false)
+  // Valori sempre aggiornati per i listener nativi (registrati una volta sola).
+  const live = useRef({ open, onOpenChange, onDelete })
+  live.current = { open, onOpenChange, onDelete }
+
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg || disabled) return
+    let start: { x: number; y: number; base: number } | null = null
+    let mode: 'idle' | 'swipe' | 'scroll' = 'idle'
+    let current = 0
+    let pressTimer: ReturnType<typeof setTimeout> | null = null
+    const width = () => rowRef.current?.offsetWidth || 320
+    const clearPress = () => {
+      if (pressTimer) clearTimeout(pressTimer)
+      pressTimer = null
+    }
+
+    const begin = (x: number, y: number) => {
+      start = { x, y, base: live.current.open ? -SWIPE_ACTION : 0 }
+      mode = 'idle'
+      suppressClick.current = false
+      current = start.base
+    }
+    // true = gesto orizzontale in corso (va bloccato lo scroll del browser)
+    const move = (x: number, y: number) => {
+      if (!start) return false
+      const mx = x - start.x
+      const my = y - start.y
+      if (mode === 'idle') {
+        if (Math.abs(mx) < 6 && Math.abs(my) < 6) return false
+        clearPress()
+        mode = Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll'
+      }
+      if (mode !== 'swipe') return false
+      current = Math.min(0, Math.max(-width(), start.base + mx))
+      setDx(current)
+      return true
+    }
+    const end = () => {
+      clearPress()
+      const wasSwipe = mode === 'swipe'
+      start = null
+      mode = 'idle'
+      if (!wasSwipe) return
+      suppressClick.current = true
+      setDx(null)
+      if (-current > width() * 0.55) {
+        live.current.onOpenChange(false)
+        live.current.onDelete()
+      } else {
+        live.current.onOpenChange(-current > SWIPE_ACTION / 3)
+      }
+    }
+
+    // Dopo un tocco i telefoni mandano anche eventi mouse "di compatibilita'": vanno ignorati.
+    let lastTouchAt = 0
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchAt = Date.now()
+      if (e.touches.length !== 1) return
+      const t = e.touches[0]
+      begin(t.clientX, t.clientY)
+      clearPress()
+      pressTimer = setTimeout(() => {
+        // Pressione lunga senza movimento: scopre "Elimina".
+        if (start && mode === 'idle') {
+          suppressClick.current = true
+          start = null
+          live.current.onOpenChange(true)
+          navigator.vibrate?.(15)
+        }
+      }, LONG_PRESS_MS)
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches[0]
+      if (t && move(t.clientX, t.clientY) && e.cancelable) e.preventDefault()
+    }
+    const onTouchEnd = () => {
+      lastTouchAt = Date.now()
+      end()
+    }
+
+    let mouseDown = false
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || Date.now() - lastTouchAt < 1000) return
+      mouseDown = true
+      begin(e.clientX, e.clientY)
+    }
+    const onMouseMove = (e: MouseEvent) => {
+      if (mouseDown) move(e.clientX, e.clientY)
+    }
+    const onMouseUp = () => {
+      if (!mouseDown) return
+      mouseDown = false
+      end()
+    }
+
+    fg.addEventListener('touchstart', onTouchStart, { passive: true })
+    fg.addEventListener('touchmove', onTouchMove, { passive: false })
+    fg.addEventListener('touchend', onTouchEnd)
+    fg.addEventListener('touchcancel', onTouchEnd)
+    fg.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      clearPress()
+      fg.removeEventListener('touchstart', onTouchStart)
+      fg.removeEventListener('touchmove', onTouchMove)
+      fg.removeEventListener('touchend', onTouchEnd)
+      fg.removeEventListener('touchcancel', onTouchEnd)
+      fg.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [disabled])
+
+  const offset = dx ?? (open ? -SWIPE_ACTION : 0)
+
+  if (disabled) return <div className="border-b border-[var(--border-color)]">{children}</div>
+
+  return (
+    <div ref={rowRef} className="relative overflow-hidden border-b border-[var(--border-color)]">
+      <button
+        type="button"
+        onClick={() => {
+          onOpenChange(false)
+          onDelete()
+        }}
+        className="absolute inset-y-0 right-0 flex flex-col items-center justify-center gap-1 bg-[#FF3B30] text-white text-xs font-medium"
+        style={{ width: Math.max(SWIPE_ACTION, -offset) }}
+        tabIndex={open ? 0 : -1}
+        aria-label="Elimina conversazione"
+      >
+        <Trash2 className="w-5 h-5" />
+        Elimina
+      </button>
+      <div
+        ref={fgRef}
+        className="relative bg-[var(--card-background)] select-none"
+        style={{
+          transform: `translateX(${offset}px)`,
+          transition: dx === null ? 'transform 0.2s ease' : 'none',
+          touchAction: 'pan-y',
+          WebkitTouchCallout: 'none',
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        onClickCapture={(e) => {
+          // Il click che chiude uno swipe o una pressione lunga non apre la chat.
+          if (suppressClick.current) {
+            e.preventDefault()
+            e.stopPropagation()
+            suppressClick.current = false
+            return
+          }
+          // Riga aperta: un tocco la richiude soltanto.
+          if (open) {
+            e.preventDefault()
+            e.stopPropagation()
+            onOpenChange(false)
+          }
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/** «inbox»: i Messaggi (tutti i canali tranne le chat solo WhatsApp); «whatsapp»: la pagina /whatsapp. */
+export type InboxScope = 'inbox' | 'whatsapp'
+
+function InboxPage({ scope }: { scope: InboxScope }) {
+  const basePath = scope === 'whatsapp' ? '/whatsapp' : '/admin/inbox'
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const supabase = createClient()
+
+  const [authorized, setAuthorized] = useState<boolean | null>(null)
+  // Permessi del dipendente (l'admin li ha tutti).
+  const staff = useStaffAccess()
+  const canReply = staff.can('inbox', 'reply')
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [totals, setTotals] = useState({ pending: 0, unread: 0 })
+  const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'unread'>('all')
+  const [query, setQuery] = useState('')
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [reply, setReply] = useState('')
+  const [replyPlatform, setReplyPlatform] = useState<string>('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [linking, setLinking] = useState(false)
+  const [linkQuery, setLinkQuery] = useState('')
+  const threadRef = useRef<HTMLDivElement>(null)
+  const [swipeOpen, setSwipeOpen] = useState<string | null>(null)
+  const [removed, setRemoved] = useState<{ name: string; previous: Record<string, string | null> } | null>(null)
+  const [correcting, setCorrecting] = useState<Message | null>(null)
+  // Foto o video da mandare su WhatsApp (gia' caricato nello spazio; la didascalia e' il testo scritto).
+  const [attachment, setAttachment] = useState<{ url: string; kind: WaMediaKind; name: string; preview: string } | null>(null)
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  useEffect(() => setAttachment(null), [selectedKey])
+  const removedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const key = searchParams.get('c')
+    const platform = searchParams.get('platform')
+    const contact = searchParams.get('contact')
+    // Link vecchi (avvisi ed email di prima) a una chat WhatsApp: ora si apre su /whatsapp.
+    if (scope === 'inbox' && (key?.startsWith('whatsapp:') || (platform === 'whatsapp' && contact))) {
+      router.replace(`/whatsapp?c=${encodeURIComponent(key || `whatsapp:${contact}`)}`)
+      return
+    }
+    if (key) setSelectedKey(key)
+    else if (platform && contact) setSelectedKey(`${platform}:${contact}`)
+  }, [searchParams, scope, router])
+
+  const loadConversations = useCallback(async () => {
+    const params = new URLSearchParams()
+    if (scope === 'whatsapp') params.set('platform', 'whatsapp')
+    else {
+      if (platformFilter !== 'all') params.set('platform', platformFilter)
+      // Le chat solo WhatsApp stanno su /whatsapp.
+      params.set('exclude', 'whatsapp')
+    }
+    if (statusFilter !== 'all') params.set('filter', statusFilter)
+    if (query.trim()) params.set('q', query.trim())
+    const res = await authFetch(`/api/admin/inbox?${params}`)
+    if (res.status === 401 || res.status === 403) return setAuthorized(false)
+    const data = await res.json()
+    if (!res.ok) return setNotice(data.error || 'Errore nel caricare i messaggi')
+    setAuthorized(true)
+    setConversations(data.conversations || [])
+    setTotals(data.totals || { pending: 0, unread: 0 })
+  }, [platformFilter, statusFilter, query, scope])
+
+  const loadThread = useCallback(async () => {
+    if (!selectedKey) return
+    const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(selectedKey)}`)
+    const data = await res.json()
+    if (res.ok) setMessages(data.messages || [])
+  }, [selectedKey])
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) router.push('/auth')
+    })
+  }, [router, supabase])
+
+  useEffect(() => {
+    const t = setTimeout(loadConversations, query ? 300 : 0)
+    return () => clearTimeout(t)
+  }, [loadConversations, query])
+
+  useEffect(() => {
+    setMessages([])
+    setReplyPlatform('')
+    setLinking(false)
+    loadThread()
+  }, [loadThread])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      loadConversations()
+      loadThread()
+    }, POLL_MS)
+    return () => clearInterval(id)
+  }, [loadConversations, loadThread])
+
+  useEffect(() => {
+    // Le email si sincronizzano solo dai Messaggi.
+    if (scope === 'whatsapp') return
+    let stopped = false
+    const sync = async () => {
+      if (document.visibilityState !== 'visible') return
+      const res = await authFetch('/api/admin/email', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'sync' }),
+      }).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => null) : null
+      // Casella non collegata: inutile continuare a chiedere.
+      if (data?.error === 'Casella non collegata') stopped = true
+      if (data?.processed) loadConversations()
+    }
+    sync()
+    const id = setInterval(() => {
+      if (!stopped) sync()
+    }, EMAIL_SYNC_MS)
+    return () => clearInterval(id)
+  }, [loadConversations, scope])
+
+  // Scorre solo l'area messaggi: scrollIntoView spostava l'intera pagina su mobile.
+  useEffect(() => {
+    const el = threadRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
+  const select = (key: string | null) => {
+    setSelectedKey(key)
+    router.replace(key ? `${basePath}?c=${encodeURIComponent(key)}` : basePath, { scroll: false })
+  }
+
+  // Swipe "Elimina": la conversazione sparisce subito; per qualche secondo si puo' annullare.
+  const removeConversation = async (c: Conversation) => {
+    setConversations((list) => list.filter((x) => x.key !== c.key))
+    if (selectedKey === c.key) select(null)
+    const res = await authFetch('/api/admin/inbox/hide', { method: 'POST', body: JSON.stringify({ key: c.key }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    if (!res?.ok) {
+      setNotice(data.error || 'Eliminazione non riuscita')
+      loadConversations()
+      return
+    }
+    if (removedTimer.current) clearTimeout(removedTimer.current)
+    setRemoved({ name: c.contactName || c.members[0]?.contactId || 'Conversazione', previous: data.previous || {} })
+    removedTimer.current = setTimeout(() => setRemoved(null), 6000)
+  }
+
+  const undoRemove = async () => {
+    if (!removed) return
+    if (removedTimer.current) clearTimeout(removedTimer.current)
+    const previous = removed.previous
+    setRemoved(null)
+    await authFetch('/api/admin/inbox/hide', { method: 'POST', body: JSON.stringify({ undo: previous }) }).catch(() => null)
+    loadConversations()
+  }
+
+  const act = async (message: Message, action: 'approve' | 'reject') => {
+    setBusyId(message.id)
+    setNotice(null)
+    try {
+      const res = await authFetch(`/api/admin/inbox/messages/${message.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ action, text: drafts[message.id] ?? message.body }),
+      })
+      const data = await res.json()
+      if (data.message) setMessages((list) => list.map((m) => (m.id === message.id ? data.message : m)))
+      if (!res.ok) setNotice(data.error || 'Operazione non riuscita')
+      else if (data.correction === 'learning') {
+        setNotice('Inviata. La tua modifica diventa una correzione: l’AI la userà come esempio nelle prossime risposte (la trovi in Memoria AI → Correzioni imparate).')
+      }
+      loadConversations()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Correzione salvata: la bozza rifatta prende il posto di quella vecchia (anche nel testo in modifica).
+  const corrected = (message: Message, result: CorrectionResult) => {
+    setCorrecting(null)
+    const fresh = result.message
+    if (fresh) setMessages((list) => list.map((m) => (m.id === message.id ? fresh : m)))
+    if (result.regenerated) {
+      setDrafts((d) => {
+        const next = { ...d }
+        delete next[message.id]
+        return next
+      })
+    }
+    setNotice(correctionNotice(result, message.status === 'pending'))
+    loadConversations()
+  }
+
+  const current = selectedKey ? conversations.find((c) => c.key === selectedKey) : undefined
+  const privatePlatforms = Array.from(
+    new Set(messages.filter((m) => m.direction === 'in' && m.kind === 'message').map((m) => m.platform))
+  )
+  const lastPrivate = [...messages].reverse().find((m) => m.direction === 'in' && m.kind === 'message')
+  // Su /whatsapp una chat unita ad altri canali risponde su WhatsApp, se non si sceglie altro.
+  const defaultReply = scope === 'whatsapp' && privatePlatforms.includes('whatsapp') ? 'whatsapp' : lastPrivate?.platform
+  const activeReplyPlatform = replyPlatform || defaultReply || ''
+
+  // WhatsApp: foto e video liberi solo entro 24 ore dall'ultimo messaggio della persona.
+  const lastWhatsApp = [...messages].reverse().find((m) => m.platform === 'whatsapp' && m.direction === 'in' && m.kind === 'message')
+  const waWindow = serviceWindow(lastWhatsApp?.created_at)
+  const canAttach = activeReplyPlatform === 'whatsapp'
+
+  const clearAttachment = () => {
+    if (attachment) URL.revokeObjectURL(attachment.preview)
+    setAttachment(null)
+  }
+
+  const pickAttachment = async (file: File | undefined) => {
+    if (!file) return
+    setNotice(null)
+    const check = validateWaMedia({ fileName: file.name, type: file.type, size: file.size }, ['image', 'video'])
+    if (!check.ok) return setNotice(check.error)
+    setUploadPct(0)
+    try {
+      const res = await authFetch('/api/admin/inbox/media', { method: 'POST', body: JSON.stringify({ fileName: file.name, type: check.contentType, size: file.size }) })
+      const ticket = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(ticket.error || 'Caricamento non disponibile')
+      await uploadToSignedUrl(ticket.signedUrl, new Blob([file], { type: ticket.contentType }), file.name, setUploadPct)
+      clearAttachment()
+      setAttachment({ url: ticket.publicUrl, kind: check.kind, name: file.name, preview: URL.createObjectURL(file) })
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Caricamento non riuscito')
+    } finally {
+      setUploadPct(null)
+    }
+  }
+
+  const sendManual = async () => {
+    if (!selectedKey || (!reply.trim() && !attachment)) return
+    const media = canAttach && attachment ? attachment : null
+    if (media && !waWindow.open) return setNotice(waWindow.reason)
+    setBusyId('manual')
+    setNotice(null)
+    try {
+      const res = await authFetch(`/api/admin/inbox/thread?c=${encodeURIComponent(selectedKey)}`, {
+        method: 'POST',
+        body: JSON.stringify(media ? { text: reply, media: { url: media.url } } : { text: reply, platform: activeReplyPlatform || undefined }),
+      })
+      const data = await res.json()
+      if (data.message) setMessages((list) => [...list, data.message])
+      if (res.ok) {
+        setReply('')
+        if (media) clearAttachment()
+      } else setNotice(data.error || 'Invio non riuscito')
+      loadConversations()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const link = async (otherKey: string) => {
+    if (!selectedKey) return
+    const res = await authFetch('/api/admin/inbox/link', {
+      method: 'POST',
+      body: JSON.stringify({ a: selectedKey, b: otherKey }),
+    })
+    const data = await res.json()
+    if (!res.ok) return setNotice(data.error || 'Collegamento non riuscito')
+    setLinking(false)
+    select(data.key)
+    loadConversations()
+  }
+
+  const resetVerification = async () => {
+    if (!selectedKey || !confirm('Azzerare la verifica dell’identità? Le risposte torneranno a seguire la modalità del canale e nella chat del sito risponderà di nuovo l’AI. I collegamenti tra conversazioni restano: per toglierli separa l’account dalla conversazione.')) return
+    const res = await authFetch(`/api/admin/inbox/verify?c=${encodeURIComponent(selectedKey)}`, { method: 'DELETE' })
+    if (!res.ok) return setNotice('Non è stato possibile azzerare la verifica')
+    loadConversations()
+  }
+
+  const unlink = async (platform: string, contactId: string) => {
+    const res = await authFetch('/api/admin/inbox/link', {
+      method: 'DELETE',
+      body: JSON.stringify({ platform, contactId }),
+    })
+    if (!res.ok) return setNotice('Separazione non riuscita')
+    select(null)
+    loadConversations()
+  }
+
+  if (authorized === false) {
+    return (
+      <main className="min-h-screen bg-[var(--background)]">
+        <Navigation />
+        <p className="pt-32 text-center text-[var(--text-secondary)]">Non hai accesso a questa pagina: chiedilo all’amministratore.</p>
+      </main>
+    )
+  }
+
+  const linkCandidates = conversations
+    .filter((c) => c.key !== selectedKey)
+    .filter((c) => !linkQuery.trim() || (c.contactName || '').toLowerCase().includes(linkQuery.trim().toLowerCase()))
+    .slice(0, 30)
+
+  // Bozza AI a richiesta (✨): resta in bozza da approvare, come nell'Omnichat.
+  const suggest = async () => {
+    if (!selectedKey) return
+    setBusyId('suggest')
+    setNotice(null)
+    try {
+      const res = await authFetch('/api/admin/inbox/suggest', {
+        method: 'POST',
+        body: JSON.stringify({ c: selectedKey, platform: activeReplyPlatform || undefined, instructions: reply.trim() || undefined }),
+      }).catch(() => null)
+      const data = res ? await res.json().catch(() => ({})) : {}
+      if (!res?.ok) setNotice(data.error || 'Bozza non preparata, riprova')
+      else {
+        if (data.warning) setNotice(data.warning)
+        setReply('')
+      }
+      await loadThread()
+      loadConversations()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Un'unica fila di filtri: stato (tutte, da approvare, non lette) e canali.
+  const filters: { id: string; label: string; active: boolean; onClick: () => void }[] = [
+    { id: 'all', label: 'Tutti', active: statusFilter === 'all' && platformFilter === 'all', onClick: () => { setStatusFilter('all'); setPlatformFilter('all') } },
+    { id: 'pending', label: totals.pending ? `Da approvare (${totals.pending})` : 'Da approvare', active: statusFilter === 'pending', onClick: () => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending') },
+    { id: 'unread', label: totals.unread ? `Non lette (${totals.unread})` : 'Non lette', active: statusFilter === 'unread', onClick: () => setStatusFilter(statusFilter === 'unread' ? 'all' : 'unread') },
+    // Canali: nei Messaggi tutti tranne WhatsApp (ha la sua pagina); su /whatsapp nessuno.
+    ...(Object.keys(PLATFORM) as Platform[]).filter((p) => scope === 'inbox' && p !== 'whatsapp').map((p) => ({
+      id: p,
+      label: PLATFORM[p].label,
+      active: platformFilter === p,
+      onClick: () => setPlatformFilter(platformFilter === p ? 'all' : p),
+    })),
+  ]
+
+  return (
+    <main className="min-h-screen bg-[var(--background)] overflow-x-hidden">
+      <Navigation />
+
+      <div className="mx-auto max-w-6xl pt-16 md:pt-20 pb-20 md:pb-4">
+        {/* Intestazione e risposte AI per canale (nascoste su telefono con una chat aperta) */}
+        <div className={`border-b border-[var(--border-color)] px-4 py-4 ${selectedKey ? 'hidden md:block' : ''}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-extrabold text-[var(--text-primary)]">{scope === 'whatsapp' ? 'WhatsApp' : 'Messaggi'}</h1>
+              {totals.pending > 0 && (
+                <p className="text-sm text-[#FF9500]">{totals.pending === 1 ? '1 risposta AI da approvare' : `${totals.pending} risposte AI da approvare`}</p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <Link href="/admin/notifiche" className="flex items-center gap-2 text-sm text-[var(--text-secondary)]" aria-label="Notifiche">
+                <Bell className="h-4 w-4" /> <span className="hidden sm:inline">Notifiche</span>
+              </Link>
+              <button
+                onClick={() => {
+                  loadConversations()
+                  loadThread()
+                }}
+                className="flex items-center gap-2 text-sm text-[var(--text-secondary)]"
+                aria-label="Aggiorna"
+              >
+                <RefreshCw className="h-4 w-4" /> <span className="hidden sm:inline">Aggiorna</span>
+              </button>
+            </div>
+          </div>
+          {staff.can('control', 'edit') && <AutoReplyToggles include={(p) => (scope === 'whatsapp' ? p === 'whatsapp' : p !== 'whatsapp')} />}
+        </div>
+
+        {removed && (
+          <div className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-50 flex items-center gap-4 px-4 py-3 rounded-xl bg-[#1c1c1e] text-white text-sm shadow-lg max-w-[calc(100vw-32px)]">
+            <span className="truncate">Eliminata: {removed.name}</span>
+            <button onClick={undoRemove} className="font-semibold text-[#0A84FF] shrink-0">
+              Annulla
+            </button>
+          </div>
+        )}
+
+        {notice && (
+          <div className="mx-4 mt-3 flex justify-between gap-2 rounded-lg bg-[#FF9500]/10 px-3 py-2 text-sm text-[var(--text-primary)]">
+            <span>{notice}</span>
+            <button onClick={() => setNotice(null)} aria-label="Chiudi">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        <div className={`flex min-h-[380px] ${selectedKey ? 'h-[calc(100dvh-8.5rem)] md:h-[calc(100dvh-13rem)]' : 'h-[calc(100dvh-15rem)] md:h-[calc(100dvh-13rem)]'}`}>
+          {/* Elenco conversazioni */}
+          <section className={`min-h-0 w-full flex-col border-r border-[var(--border-color)] md:flex md:w-80 md:shrink-0 ${selectedKey ? 'hidden' : 'flex'}`}>
+            <div className="space-y-2 px-4 pt-3 pb-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-secondary)]" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Cerca nome o testo…"
+                  className="w-full rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] py-2 pl-9 pr-3 text-[16px] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none md:text-sm"
+                />
+              </div>
+              <div className="flex gap-1 overflow-x-auto pb-0.5">
+                {filters.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={f.onClick}
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs ${f.active ? 'bg-[var(--text-primary)] text-[var(--background)]' : 'text-[var(--text-secondary)]'}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {authorized === null && <p className="p-6 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>}
+              {authorized && conversations.length === 0 && <p className="px-4 py-6 text-sm text-[var(--text-secondary)]">Nessun messaggio per ora.</p>}
+              {conversations.map((c) => {
+                const active = c.key === selectedKey
+                const first = PLATFORM[c.platforms[0] as Platform]
+                const Icon = first?.icon || MessageSquareText
+                return (
+                  <SwipeRow
+                    key={c.key}
+                    open={swipeOpen === c.key}
+                    onOpenChange={(open) => setSwipeOpen(open ? c.key : null)}
+                    onDelete={() => removeConversation(c)}
+                    disabled={!canReply}
+                  >
+                    <button
+                      onClick={() => select(c.key)}
+                      className={`flex w-full gap-3 border-b border-[var(--border-color)] px-4 py-3 text-left ${active ? 'bg-[var(--background-secondary)]' : ''}`}
+                    >
+                      <span className="relative mt-0.5 shrink-0">
+                        <Icon className="h-4 w-4" style={{ color: first?.color }} />
+                        {c.platforms.length > 1 && (
+                          <span className="absolute -bottom-2 -right-2 rounded-full bg-[var(--background-secondary)] px-1 text-[9px] text-[var(--text-secondary)]">+{c.platforms.length - 1}</span>
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline gap-2">
+                          <span className={`truncate text-[var(--text-primary)] ${c.unread ? 'font-bold' : 'font-medium'}`}>{c.contactName || c.members[0]?.contactId}</span>
+                          <span className="ml-auto shrink-0 text-[11px] text-[var(--text-secondary)]">{formatTime(c.lastAt)}</span>
+                        </span>
+                        <span className="block truncate text-xs text-[var(--text-secondary)]">
+                          {c.lastStatus === 'pending' ? 'Bozza: ' : c.lastDirection === 'out' ? 'Tu: ' : ''}
+                          {c.lastMessage}
+                        </span>
+                        {(c.unread > 0 || c.pending > 0 || c.suggestion || c.verification || c.hasComments || (c.linked && c.platforms.length > 1)) && (
+                          <span className="mt-1 flex flex-wrap gap-1.5">
+                            {c.unread > 0 && <span className="rounded-full bg-[var(--accent-blue)] px-2 text-[10px] text-white">{c.unread} nuovi</span>}
+                            {c.pending > 0 && <span className="rounded-full bg-[#FF9500] px-2 text-[10px] text-white">bozza da approvare</span>}
+                            {c.verification && <span title={c.verification.detail} className={`rounded-full px-2 text-[10px] ${VERIFY_TONE[c.verification.tone]}`}>{c.verification.label}</span>}
+                            {c.linked && c.platforms.length > 1 && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">su {c.platforms.length} canali</span>}
+                            {c.suggestion && <span className="rounded-full bg-[#AF52DE]/15 px-2 text-[10px] text-[#AF52DE]">possibile doppione</span>}
+                            {c.hasComments && <span className="rounded-full bg-[var(--background-secondary)] px-2 text-[10px] text-[var(--text-secondary)]">commenti</span>}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  </SwipeRow>
+                )
+              })}
+              {canReply && conversations.length > 0 && (
+                <p className="px-4 py-3 text-[11px] text-[var(--text-secondary)]">Per eliminare una chat scorrila verso sinistra o tienila premuta.</p>
+              )}
+            </div>
+          </section>
+
+          {/* Conversazione */}
+          <section className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${selectedKey ? 'flex' : 'hidden'}`}>
+            {!selectedKey ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[var(--text-secondary)]">
+                <MessageSquareText className="h-8 w-8" />
+                <p className="text-sm">Scegli una conversazione.</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2 border-b border-[var(--border-color)] px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <button className="-ml-1 p-1 text-[var(--text-secondary)] md:hidden" onClick={() => select(null)} aria-label="Indietro">
+                      <ArrowLeft className="h-5 w-5" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-[var(--text-primary)]">{current?.contactName || current?.members[0]?.contactId || 'Conversazione'}</p>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        {(current?.members || []).map((m) => (
+                          <span key={`${m.platform}:${m.contactId}`} className="inline-flex items-center gap-1">
+                            <PlatformBadge platform={m.platform} size="xs" />
+                            {canReply && current?.linked && current.members.length > 1 && (
+                              <button onClick={() => unlink(m.platform, m.contactId)} className="text-[var(--text-secondary)] hover:text-[#FF3B30]" title="Separa questo account" aria-label="Separa questo account">
+                                <Unlink className="h-3 w-3" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {canReply && (
+                      <>
+                        <button
+                          onClick={() => setLinking((v) => !v)}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--border-color)] px-2.5 py-1 text-xs text-[var(--text-secondary)]"
+                          title="Collega a un altro canale della stessa persona"
+                        >
+                          <Link2 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Stessa persona</span>
+                        </button>
+                        <button onClick={() => current && removeConversation(current)} className="p-1.5 text-[var(--text-secondary)] hover:text-[#FF3B30]" aria-label="Elimina conversazione" title="Elimina conversazione">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {current?.verification && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${VERIFY_TONE[current.verification.tone]}`}>{current.verification.label}</span>
+                      <span className="min-w-0 flex-1">{current.verification.detail}</span>
+                      {canReply && (
+                        <button onClick={resetVerification} className="text-[var(--text-secondary)] underline hover:text-[var(--text-primary)]">
+                          Azzera
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {current?.autoLinks && current.autoLinks.length > 0 && (
+                    <p className="flex items-start gap-1.5 text-xs text-[var(--text-secondary)]">
+                      <Link2 className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span className="min-w-0">
+                        Collegata in automatico: {current.autoLinks.join(' · ')}.{canReply && ' Se non è la stessa persona, separa l’account con l’icona accanto al canale: non verrà ricollegato.'}
+                      </span>
+                    </p>
+                  )}
+
+                  {canReply && current?.suggestion && !linking && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#AF52DE]/10 px-3 py-2 text-xs text-[var(--text-primary)]">
+                      <span>
+                        Potrebbe essere la stessa persona di <strong>{current.suggestion.name}</strong> su{' '}
+                        {current.suggestion.platforms.map((p) => PLATFORM[p as Platform]?.label || p).join(', ')}
+                        {current.suggestion.reason
+                          ? `: ${current.suggestion.reason}. Collega solo se ne sei sicuro, l'AI userà anche l'altra conversazione.`
+                          : ". Il nome da solo non è una prova: collega solo se ne sei sicuro, l'AI userà anche l'altra conversazione."}
+                      </span>
+                      <button onClick={() => link(current.suggestion!.key)} className="rounded-full bg-[#AF52DE] px-3 py-1 font-medium text-white">
+                        Collega
+                      </button>
+                    </div>
+                  )}
+
+                  {canReply && linking && (
+                    <div className="space-y-2 rounded-xl border border-[var(--border-color)] p-2">
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        Scegli la conversazione della stessa persona su un altro canale: verranno unite qui e l&apos;AI terrà conto di entrambe.
+                      </p>
+                      <input
+                        value={linkQuery}
+                        onChange={(e) => setLinkQuery(e.target.value)}
+                        placeholder="Cerca per nome…"
+                        className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--background-secondary)] px-2.5 py-1.5 text-[16px] text-[var(--text-primary)] focus:outline-none md:text-xs"
+                      />
+                      <div className="max-h-40 space-y-1 overflow-y-auto">
+                        {linkCandidates.map((c) => (
+                          <button key={c.key} onClick={() => link(c.key)} className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--background-secondary)]">
+                            <span className="truncate text-[var(--text-primary)]">{c.contactName || c.members[0]?.contactId}</span>
+                            <span className="flex shrink-0 gap-1">
+                              {c.platforms.map((p) => (
+                                <PlatformBadge key={p} platform={p} size="xs" />
+                              ))}
+                            </span>
+                          </button>
+                        ))}
+                        {linkCandidates.length === 0 && <p className="px-2 text-xs text-[var(--text-secondary)]">Nessuna altra conversazione.</p>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div ref={threadRef} className="flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-4 py-4">
+                  {messages.map((m) => {
+                    const isIn = m.direction === 'in'
+                    const isPending = m.status === 'pending' || m.status === 'failed'
+                    if (m.status === 'rejected') {
+                      return (
+                        <p key={m.id} className="text-center text-[11px] text-[var(--text-secondary)] line-through">
+                          Bozza AI scartata
+                        </p>
+                      )
+                    }
+                    // Bozza da approvare: riquadro arancione con il testo modificabile, come nell'Omnichat.
+                    if (isPending && canReply) {
+                      const value = drafts[m.id] ?? m.body
+                      return (
+                        <div key={m.id} className="ml-auto max-w-[92%] rounded-2xl border border-[#FF9500] bg-[var(--background-secondary)] p-3">
+                          <p className="flex items-center gap-1.5 text-xs font-semibold text-[#FF9500]">
+                            <PlatformBadge platform={m.platform} size="xs" />
+                            {m.status === 'failed' ? `Invio non riuscito: ${m.error_message || 'riprova'}` : 'Bozza dell’AI: controllala e inviala'}
+                          </p>
+                          <textarea
+                            value={value}
+                            onChange={(e) => setDrafts((d) => ({ ...d, [m.id]: e.target.value }))}
+                            rows={Math.min(14, Math.max(4, value.split('\n').length + 1))}
+                            className="mt-2 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] p-3 text-[16px] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none md:text-sm"
+                          />
+                          <DraftTranslate text={value} />
+                          <div className="mt-2 flex justify-end gap-2">
+                            {m.status === 'pending' && (
+                              <button
+                                onClick={() => setCorrecting(m)}
+                                disabled={busyId === m.id}
+                                title="Spiega all’AI cosa non va: rifà la bozza e lo ricorda per le prossime risposte"
+                                className="mr-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--accent-blue)] disabled:opacity-50"
+                              >
+                                <PencilLine className="h-4 w-4" /> Correggi
+                              </button>
+                            )}
+                            <button onClick={() => act(m, 'reject')} disabled={busyId === m.id} className="rounded-full px-3 py-1.5 text-sm text-[var(--text-secondary)] disabled:opacity-50">
+                              Scarta
+                            </button>
+                            <button
+                              onClick={() => act(m, 'approve')}
+                              disabled={busyId === m.id || !value.trim()}
+                              className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                            >
+                              <Send className="h-4 w-4" /> {busyId === m.id ? 'Invio…' : m.status === 'failed' ? 'Riprova' : 'Invia'}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div key={m.id} className={`max-w-[85%] ${isIn ? '' : 'ml-auto'}`}>
+                        <div
+                          className={`break-words rounded-2xl px-4 py-2.5 text-sm ${
+                            isIn ? 'bg-[var(--background-secondary)] text-[var(--text-primary)]' : isPending ? 'border border-dashed border-[#FF9500] text-[var(--text-primary)]' : 'bg-[var(--accent-blue)] text-white'
+                          }`}
+                        >
+                          <MessageBody body={m.body} tone={isIn ? 'in' : 'out'} />
+                        </div>
+                        <p className={`mt-1 flex flex-wrap items-center gap-1 text-[11px] text-[var(--text-secondary)] ${isIn ? '' : 'justify-end'}`}>
+                          <PlatformBadge platform={m.platform} size="xs" />
+                          {formatTime(m.created_at)}
+                          {m.kind === 'comment' ? (isIn ? ' · commento pubblico' : ' · risposta pubblica al commento') : ''}
+                          {m.kind === 'message' && !isIn && m.reply_to && m.platform !== 'email' ? ' · privato dal commento' : ''}
+                          {!isIn && m.origin === 'manual_app' ? ' · dall’app' : ''}
+                          {m.status === 'sending' ? ' · invio…' : ''}
+                          {isPending ? ' · bozza' : ''}
+                          {!isIn && m.origin === 'ai_auto' ? ' · AI' : ''}
+                          {canReply && correctable(m) && m.status === 'sent' && (
+                            <button
+                              onClick={() => setCorrecting(m)}
+                              title="Spiega all’AI cosa non va: lo ricorda per le prossime risposte"
+                              className="ml-1 inline-flex items-center gap-1 text-[var(--accent-blue)]"
+                            >
+                              <PencilLine className="h-3 w-3" /> Correggi
+                            </button>
+                          )}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {canReply && (
+                  <div className="border-t border-[var(--border-color)] p-3">
+                    {privatePlatforms.length > 1 && (
+                      <div className="mb-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                        Rispondi su
+                        <select
+                          value={activeReplyPlatform}
+                          onChange={(e) => setReplyPlatform(e.target.value)}
+                          className="rounded-full border border-[var(--border-color)] bg-[var(--background-secondary)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                          aria-label="Canale di risposta"
+                        >
+                          {privatePlatforms.map((p) => (
+                            <option key={p} value={p}>
+                              {PLATFORM[p as Platform]?.label || p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {canAttach && attachment && (
+                      <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border-color)] p-2 text-xs text-[var(--text-secondary)]">
+                        {attachment.kind === 'image' ? (
+                          <img src={attachment.preview} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                        ) : (
+                          <video src={attachment.preview} muted playsInline className="h-12 w-12 rounded-lg bg-black object-cover" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">
+                          {attachment.name} · il testo che scrivi diventa la didascalia
+                        </span>
+                        <button onClick={clearAttachment} aria-label="Togli il file" className="p-1">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                    {canAttach && !waWindow.open && <p className="mb-2 text-xs text-[#FF9500]">{waWindow.reason}</p>}
+                    <div className="flex items-end gap-2">
+                      {canAttach && (
+                        <>
+                          <input
+                            ref={fileRef}
+                            type="file"
+                            accept="image/jpeg,image/png,video/mp4,.jpg,.jpeg,.png,.mp4"
+                            className="hidden"
+                            onChange={(e) => {
+                              pickAttachment(e.target.files?.[0])
+                              e.target.value = ''
+                            }}
+                          />
+                          <button
+                            onClick={() => (waWindow.open ? fileRef.current?.click() : setNotice(waWindow.reason))}
+                            disabled={Boolean(busyId) || uploadPct !== null}
+                            title="Manda una foto (JPG/PNG, max 5 MB) o un video (MP4, max 16 MB)"
+                            aria-label="Allega foto o video"
+                            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-color)] text-[var(--accent-blue)] disabled:opacity-50 ${waWindow.open ? '' : 'opacity-50'}`}
+                          >
+                            {uploadPct !== null ? <span className="text-[10px] font-semibold">{uploadPct}%</span> : <Paperclip className="h-4 w-4" />}
+                          </button>
+                        </>
+                      )}
+                      <textarea
+                        value={reply}
+                        onChange={(e) => setReply(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 768px)').matches) {
+                            e.preventDefault()
+                            sendManual()
+                          }
+                        }}
+                        placeholder={activeReplyPlatform ? `Rispondi su ${PLATFORM[activeReplyPlatform as Platform]?.label || activeReplyPlatform}…` : 'Scrivi una risposta…'}
+                        rows={2}
+                        className="min-h-[44px] flex-1 resize-none rounded-2xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-4 py-2.5 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm"
+                      />
+                      <button
+                        onClick={suggest}
+                        disabled={Boolean(busyId)}
+                        title="Chiedi all’AI una bozza (se scrivi qualcosa, l’AI lo usa come indicazione)"
+                        aria-label="Chiedi all’AI una bozza"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-color)] text-[var(--accent-blue)] disabled:opacity-50"
+                      >
+                        {busyId === 'suggest' ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={sendManual}
+                        disabled={(!reply.trim() && !(canAttach && attachment)) || Boolean(busyId) || uploadPct !== null}
+                        aria-label="Invia"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--accent-blue)] text-white disabled:opacity-50"
+                      >
+                        <Send className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      </div>
+      {correcting && (
+        <CorrectionSheet
+          message={correcting}
+          current={correcting.status === 'pending' ? drafts[correcting.id] ?? correcting.body : correcting.body}
+          incoming={answeredTexts(messages, correcting)}
+          onClose={() => setCorrecting(null)}
+          onSaved={(result) => corrected(correcting, result)}
+        />
+      )}
+    </main>
+  )
+}
+
+/**
+ * Correggi: messaggio della persona e risposta dell'AI (da leggere), cosa non va / come
+ * dovrebbe rispondere e, se vuoi, la risposta giusta. Su una bozza l'AI la rifà subito;
+ * in ogni caso la correzione resta per le prossime risposte (Memoria AI).
+ */
+function CorrectionSheet({
+  message,
+  current,
+  incoming,
+  onClose,
+  onSaved,
+}: {
+  message: Message
+  /** Testo della bozza come lo vedi ora (anche se l'hai gia' ritoccato). */
+  current: string
+  incoming: string
+  onClose: () => void
+  onSaved: (result: CorrectionResult) => void
+}) {
+  const [feedback, setFeedback] = useState('')
+  const [corrected, setCorrected] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const draft = message.status === 'pending'
+  const ready = Boolean(feedback.trim() || corrected.trim())
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !saving && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [saving, onClose])
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    const res = await authFetch('/api/admin/inbox/corrections', {
+      method: 'POST',
+      body: JSON.stringify({ messageId: message.id, feedback, corrected }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({})) : {}
+    setSaving(false)
+    if (!res?.ok) return setError(data.error || 'Connessione non riuscita, riprova.')
+    onSaved(data as CorrectionResult)
+  }
+
+  const box = 'mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--background-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]'
+  const field =
+    'mt-1 w-full rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-3 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] md:text-sm'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center" onClick={() => !saving && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Correggi la risposta"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-[var(--background)] p-5 shadow-xl md:max-w-lg md:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-[var(--text-primary)]">Correggi la risposta</h2>
+            <p className="text-sm text-[var(--text-secondary)]">
+              {draft ? 'L’AI rifà la bozza e lo ricorda per i messaggi simili.' : 'L’AI lo ricorda per i messaggi simili.'}
+            </p>
+          </div>
+          <button onClick={onClose} disabled={saving} aria-label="Chiudi" className="text-[var(--text-secondary)]">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs font-semibold text-[var(--text-secondary)]">Messaggio della persona</p>
+        <div translate="no" className={box}>
+          {incoming || <span className="text-[var(--text-secondary)]">Nessun messaggio</span>}
+        </div>
+        <p className="mt-3 text-xs font-semibold text-[var(--text-secondary)]">{draft ? 'Bozza dell’AI' : 'Risposta dell’AI'}</p>
+        <div translate="no" className={box}>
+          {current}
+        </div>
+
+        <label htmlFor="correction-feedback" className="mt-4 block text-sm font-semibold text-[var(--text-primary)]">
+          Cosa non va / come dovrebbe rispondere?
+        </label>
+        <textarea
+          id="correction-feedback"
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          maxLength={1000}
+          rows={3}
+          placeholder="Es. prima saluta e chiedi il nome, poi chiedi di cosa si occupa. Niente elenco dei servizi."
+          className={field}
+        />
+
+        <label htmlFor="correction-text" className="mt-3 block text-sm font-semibold text-[var(--text-primary)]">
+          Risposta giusta <span className="font-normal text-[var(--text-secondary)]">(facoltativa)</span>
+        </label>
+        <textarea
+          id="correction-text"
+          value={corrected}
+          onChange={(e) => setCorrected(e.target.value)}
+          maxLength={2000}
+          rows={Math.min(8, Math.max(3, corrected.split('\n').length + 1))}
+          placeholder={draft ? 'Se la scrivi, la bozza diventa questa.' : 'Come avresti risposto tu.'}
+          className={field}
+        />
+
+        {error && <p className="mt-3 text-sm text-[#FF3B30]">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} disabled={saving} className="rounded-full px-4 py-2 text-sm text-[var(--text-secondary)]">
+            Annulla
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || !ready}
+            className="flex items-center gap-2 rounded-full bg-[var(--accent-blue)] px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} {draft ? 'Correggi e rifai la bozza' : 'Salva correzione'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function InboxView({ scope }: { scope: InboxScope }) {
+  return (
+    <Suspense>
+      <InboxPage scope={scope} />
+    </Suspense>
+  )
+}

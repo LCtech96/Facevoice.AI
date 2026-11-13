@@ -1,14 +1,20 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ADMIN_EMAILS } from '@/lib/admin-auth'
 import { emailLayout, escapeHtml, sendEmail } from '@/lib/email'
-import { sendPushToAdmins } from '@/lib/push'
+import { sendPushToPeople } from '@/lib/push'
+import { notifyRecipients } from '@/lib/notify-prefs'
 import { SITE_URL } from '@/lib/seo/site'
 import { conversationKeyFor } from '@/lib/meta/identities'
 
 const LABEL = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram', email: 'Email', web: 'Chat sito' } as const
 const EMAIL_QUIET_MINUTES = 10
 
-/** Avvisa gli admin di un nuovo messaggio: push sempre, email al massimo una ogni 10 minuti per contatto. */
+/** Pagina dove si apre una conversazione: WhatsApp ha la sua (/whatsapp), gli altri canali i Messaggi. */
+export const conversationPath = (platform: string, key: string) => `${platform === 'whatsapp' ? '/whatsapp' : '/admin/inbox'}?c=${encodeURIComponent(key)}`
+
+/**
+ * Avvisa chi vede i Messaggi (admin e dipendenti) di un nuovo messaggio, come ognuno ha scelto per quel
+ * canale: push sui suoi dispositivi e/o email (al massimo una ogni 10 minuti per contatto).
+ */
 export async function notifyNewMessage(input: {
   platform: keyof typeof LABEL
   kind: 'message' | 'comment'
@@ -39,7 +45,8 @@ export async function notifyNewMessage(input: {
       : LABEL[input.platform]
   const who = input.outreachName || input.contactName || 'Nuovo contatto'
   const key = await conversationKeyFor(input.platform, input.contactId)
-  const url = `${SITE_URL}/admin/inbox?c=${encodeURIComponent(key)}`
+  const url = `${SITE_URL}${conversationPath(input.platform, key)}`
+  const recipients = await notifyRecipients(input.platform)
   const preview = input.body.length > 140 ? `${input.body.slice(0, 140)}…` : input.body
   const action = input.suspicious
     ? `⚠️ Messaggio sospetto (${input.suspicious}): la risposta è in bozza, controllala prima di inviarla.`
@@ -56,7 +63,7 @@ export async function notifyNewMessage(input: {
       : ''
 
   const tasks: Promise<unknown>[] = [
-    sendPushToAdmins({
+    sendPushToPeople(recipients.push, {
       title: `${who} · ${channel}`,
       body: [preview, action].filter(Boolean).join('\n'),
       url,
@@ -75,10 +82,10 @@ export async function notifyNewMessage(input: {
     .gte('created_at', since)
 
   // Per le email niente avviso via email: arriverebbe nella stessa casella letta dall'agente.
-  if ((input.draftReady || !count) && input.platform !== 'email') {
+  if ((input.draftReady || !count) && input.platform !== 'email' && recipients.email.length) {
     tasks.push(
       sendEmail({
-        to: [...ADMIN_EMAILS],
+        to: recipients.email,
         subject: input.draftReady ? `Risposta da approvare: ${channel} da ${who}` : `Nuovo messaggio ${channel} da ${who}`,
         text: `${who} ti ha scritto su ${channel}:\n\n${input.body}\n\n${action}\nApri la casella: ${url}`,
         html: emailLayout(`

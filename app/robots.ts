@@ -16,7 +16,7 @@ import { SITE_URL } from '@/lib/seo/site'
  * per essere citati.
  */
 
-const DISALLOW = ['/auth', '/ai-chat', '/admin', '/api/']
+const DISALLOW = ['/auth', '/ai-chat', '/admin', '/whatsapp', '/api/']
 
 const AI_CRAWLERS = [
   'GPTBot',

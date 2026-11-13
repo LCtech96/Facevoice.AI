@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isAdminEmail } from '@/lib/admin-auth'
 
 type VapidKeys = { publicKey: string; privateKey: string }
 
@@ -49,13 +50,34 @@ export async function getVapidKeys(): Promise<VapidKeys> {
 
 export type PushPayload = { title: string; body: string; url: string; tag?: string }
 
+type PushSub = { id: string; endpoint: string; p256dh: string; auth: string; user_email?: string | null }
+
 /** Invia a tutti i dispositivi iscritti (o solo a `only`); restituisce quanti l'hanno ricevuta. */
 export async function sendPushToAdmins(payload: PushPayload, only?: string[]): Promise<{ sent: number; failed: number }> {
   let query = supabaseAdmin.from('push_subscriptions').select('id, endpoint, p256dh, auth')
   if (only?.length) query = query.in('id', only)
   const { data: subs } = await query
+  return deliverPush((subs || []) as PushSub[], payload)
+}
 
-  if (!subs?.length) {
+/**
+ * Invia solo ai dispositivi di queste persone (per email). I dispositivi registrati
+ * senza email (prima che la salvassimo) sono degli admin: li riceve chi e' admin.
+ */
+export async function sendPushToPeople(emails: string[], payload: PushPayload): Promise<{ sent: number; failed: number }> {
+  const wanted = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))
+  if (!wanted.size) return { sent: 0, failed: 0 }
+  const anyAdmin = Array.from(wanted).some((e) => isAdminEmail(e))
+  const { data } = await supabaseAdmin.from('push_subscriptions').select('id, endpoint, p256dh, auth, user_email')
+  const subs = ((data || []) as PushSub[]).filter((s) => {
+    const owner = (s.user_email || '').trim().toLowerCase()
+    return owner ? wanted.has(owner) : anyAdmin
+  })
+  return deliverPush(subs, payload)
+}
+
+async function deliverPush(subs: PushSub[], payload: PushPayload): Promise<{ sent: number; failed: number }> {
+  if (!subs.length) {
     console.warn('Push: nessun dispositivo iscritto, notifica non inviata:', payload.title)
     return { sent: 0, failed: 0 }
   }
@@ -194,11 +216,14 @@ export type PushDevice = {
   knownDetails: boolean
 }
 
-export async function listPushDevices(): Promise<PushDevice[]> {
-  const { data: subs } = await supabaseAdmin
+/** Dispositivi iscritti: tutti, o solo quelli di una persona (per email). */
+export async function listPushDevices(ownerEmail?: string): Promise<PushDevice[]> {
+  const { data: all } = await supabaseAdmin
     .from('push_subscriptions')
     .select('id, endpoint, user_email, created_at')
     .order('created_at', { ascending: true })
+  const owner = ownerEmail?.trim().toLowerCase()
+  const subs = owner ? (all || []).filter((s) => (s.user_email || '').trim().toLowerCase() === owner) : all
   if (!subs?.length) return []
   const { data: infos } = await supabaseAdmin
     .from('app_settings')
