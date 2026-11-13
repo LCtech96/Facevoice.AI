@@ -220,6 +220,7 @@ export const translations = {
     },
     common: {
       loading: 'Loading...',
+      more: 'More',
       error: 'Error',
       success: 'Success',
       save: 'Save',

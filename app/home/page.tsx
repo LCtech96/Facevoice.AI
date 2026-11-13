@@ -1,193 +1,91 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import EmberHero from '@/components/landing/EmberHero'
-import EmberGuides from '@/components/landing/EmberGuides'
-import BrandBanner from '@/components/BrandBanner'
-import Feed from '@/components/Feed'
-import AIToolsFeed from '@/components/AIToolsFeed'
+import HomeCta from '@/components/landing/HomeCta'
 import BlogSection from '@/components/BlogSection'
-import SemanticContent from '@/components/SEO/SemanticContent'
 import SEOHead from '@/components/SEO/SEOHead'
-import InternalLinks from '@/components/SEO/InternalLinks'
 import { createClient } from '@/lib/supabase-client'
 import type { User } from '@supabase/supabase-js'
 
-function HomeContent({ user, loading }: { user: User | null; loading: boolean }) {
-  const searchParams = useSearchParams()
+// Home del sito: si apre sulla hero (payoff e cosa facciamo: software su misura e
+// integrazioni AI per le PMI), poi il blog e la chiusura con il contatto. Le sezioni
+// si aprono con un link diretto (es. /home#blog) solo quando lo si chiede.
+
+const HOME_TITLE = 'Facevoice AI | Sviluppo software e integrazioni AI per PMI'
+const HOME_DESCRIPTION =
+  'Facevoice AI sviluppa software su misura e integra l’intelligenza artificiale nelle piccole e medie imprese: gestionali, app, automazioni e assistenti AI. Sede a Terrasini (Palermo), clienti in tutta Italia.'
+
+export default function HomePage() {
   const router = useRouter()
-  const toolIdRef = useRef<string | null>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined)
 
-  // Gestisci redirect da link condiviso
+  // Chi ha fatto l'accesso (serve al blog); la pagina non lo aspetta per mostrarsi.
   useEffect(() => {
-    const toolId = searchParams.get('tool')
-    if (toolId) {
-      toolIdRef.current = toolId
-    }
-  }, [searchParams])
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data }) => setUser(data.user))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
-  // Gestisci scroll alle sezioni quando si naviga con hash
+  // Link diretto a una sezione (es. /home#blog): ci si va; senza, si resta sulla hero.
   useEffect(() => {
     const hash = window.location.hash.replace('#', '')
     if (hash === 'lavora-con-noi') {
       router.push('/lavora-con-noi')
       return
     }
-    if (hash) {
-      setActiveSection(hash)
-      setTimeout(() => {
-        const element = document.getElementById(hash)
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }
-      }, 100)
-    }
-  }, [])
+    if (hash) setActiveSection(hash)
+  }, [router])
 
-  // Gestisci scroll quando cambia activeSection
   useEffect(() => {
-    if (activeSection) {
-      const element = document.getElementById(activeSection)
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-    }
+    if (!activeSection) return
+    const timer = setTimeout(() => document.getElementById(activeSection)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+    return () => clearTimeout(timer)
   }, [activeSection])
-
-  if (loading) {
-    return (
-      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <div className="text-[var(--text-secondary)]">Caricamento...</div>
-      </main>
-    )
-  }
 
   return (
     <main className="theme-ember min-h-screen bg-[var(--background)]">
       <SEOHead
-        title="Facevoice AI | Agenzia digitale e software house a Palermo: siti web, social, software e AI"
-        description="Facevoice AI è un'agenzia digitale e software house a Palermo: gestione social e contenuti, siti web ed e-commerce, software e gestionali su misura, integrazione dell'intelligenza artificiale. Per aziende in tutta la Sicilia e in Italia."
+        title={HOME_TITLE}
+        description={HOME_DESCRIPTION}
         keywords={[
-          'agenzia digitale Palermo',
+          'sviluppo software PMI',
+          'software su misura Palermo',
+          'integrazione intelligenza artificiale aziende',
           'software house Palermo',
-          'gestione social Palermo',
-          'realizzazione siti web Palermo',
-          'sviluppo software su misura Palermo',
-          'automazione aziendale Palermo',
-          'intelligenza artificiale e-commerce',
-          'gestione magazzino AI',
-          'consulenza SEO Shopify',
-          'consulenza SEO WooCommerce',
+          'gestionale su misura',
+          'automazione aziendale',
+          'assistenti AI per aziende',
           'chatbot AI personalizzati',
-          'assistenza clienti h24',
-          'ottimizzazione velocità e-commerce',
-          'machine learning analisi dati',
-          'soluzioni cloud Sicilia',
-          'digitalizzazione imprese'
+          'digitalizzazione imprese',
         ]}
         canonical="https://www.facevoice.ai/home"
         page="home"
       />
-      <Navigation 
-        activeSection={activeSection} 
-        setActiveSection={setActiveSection} 
-      />
-      
-      {/* Spacing per desktop navigation */}
+      <Navigation activeSection={activeSection} setActiveSection={setActiveSection} />
+
+      {/* Spazio per la barra in alto (computer) */}
       <div className="hidden md:block h-8" />
-      
-      {/* Spacing per mobile navigation */}
+
+      {/* Spazio per la barra in alto (telefono) */}
       <div className="md:hidden h-14 shrink-0" aria-hidden="true" />
-      
-      {/* Hero Section */}
+
       <div id="hero" className="scroll-mt-14">
         <EmberHero />
       </div>
 
-      {/* Guide: cosa facciamo, dai caroselli Instagram */}
-      <div id="guide" className="scroll-mt-14">
-        <EmberGuides />
-      </div>
-
-      {/* Brand Banner */}
-      <BrandBanner />
-      
-      {/* Feed Section - Stile Social Media - Solo quando c'è ricerca/filtro */}
-      {(searchQuery || categoryFilter) && (
-        <div id="ai-tools-feed" className="container mx-auto px-4 py-8 max-w-4xl">
-          <Feed 
-            user={user} 
-            highlightedToolId={toolIdRef.current}
-            searchQuery={searchQuery}
-            categoryFilter={categoryFilter}
-          />
-        </div>
-      )}
-
-      {/* Blog Section */}
       <BlogSection user={user} />
-      
-      {/* AI Tools Feed - Stile Instagram */}
-      <div id="ai-tools" className="container mx-auto px-4 py-8 max-w-7xl">
-        <div className="text-center mb-6">
-          <h2 className="text-2xl md:text-3xl font-bold text-[var(--text-primary)] mb-2">
-            AI Tools
-          </h2>
-          <p className="text-sm md:text-base text-[var(--text-secondary)] max-w-2xl mx-auto">
-            Esplora la nostra collezione di strumenti AI per potenziare il tuo business
-          </p>
-        </div>
-        <AIToolsFeed user={user} />
-      </div>
 
-      {/* Internal Links Section - SEO */}
-      <InternalLinks />
+      <HomeCta />
 
-      {/* Semantic Content - SEO */}
-      <SemanticContent page="home" />
-      
-      {/* Spacing per mobile navigation bottom */}
+      {/* Spazio per la barra in basso (telefono) */}
       <div className="md:hidden h-20" />
     </main>
-  )
-}
-
-export default function HomePage() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-  const supabase = createClient()
-
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      setLoading(false)
-    }
-
-    checkUser()
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-    })
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [])
-
-  return (
-    <Suspense fallback={
-      <main className="theme-ember min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <div className="text-[var(--text-secondary)]">Caricamento...</div>
-      </main>
-    }>
-      <HomeContent user={user} loading={loading} />
-    </Suspense>
   )
 }

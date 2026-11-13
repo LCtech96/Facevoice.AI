@@ -20,22 +20,75 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined)
 
+/** Lingua decisa in automatico alla prima visita (non scelta dalla persona). */
+const AUTO_KEY = 'language_auto'
+
+/** Paesi in cui il sito si apre in italiano; altrove in inglese. */
+const ITALIAN_COUNTRIES = new Set(['IT', 'SM', 'VA'])
+
+function languageForCountry(country: string | null): 'it' | 'en' {
+  if (country) return ITALIAN_COUNTRIES.has(country.toUpperCase()) ? 'it' : 'en'
+  const browser = typeof navigator !== 'undefined' ? navigator.language || '' : ''
+  return browser.toLowerCase().startsWith('it') ? 'it' : 'en'
+}
+
+function safeGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function safeSet(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // Archivio del browser non disponibile (es. navigazione privata): pazienza.
+  }
+}
+
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<Language>('it')
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    // Carica la lingua salvata dal localStorage solo lato client
-    const savedLang = localStorage.getItem('language') as Language
+    // Lingua scelta dal selettore (salvata): vince sempre.
+    const savedLang = safeGet('language') as Language | null
     if (savedLang && translations[savedLang]) {
       setLanguageState(savedLang)
+      setMounted(true)
+      return
     }
+    // Prima visita: lingua dal paese (Italia -> italiano, altrove -> inglese),
+    // ricordata per le visite dopo; senza paese, dalla lingua del browser.
+    const autoLang = safeGet(AUTO_KEY)
+    if (autoLang === 'it' || autoLang === 'en') setLanguageState(autoLang)
     setMounted(true)
+    if (autoLang === 'it' || autoLang === 'en') return
+    let cancelled = false
+    fetch('/api/geo', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then((data: { country?: string | null } | null) => {
+        if (cancelled || safeGet('language')) return
+        const lang = languageForCountry(data?.country ?? null)
+        safeSet(AUTO_KEY, lang)
+        setLanguageState(lang)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
+
+  // Lingua della pagina per browser, lettori di schermo e motori di ricerca.
+  useEffect(() => {
+    document.documentElement.lang = language
+  }, [language])
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang)
-    localStorage.setItem('language', lang)
+    safeSet('language', lang)
     // Trigger re-render di tutti i componenti che usano il context
     window.dispatchEvent(new Event('languagechange'))
   }

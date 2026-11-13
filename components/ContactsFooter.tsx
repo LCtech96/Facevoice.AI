@@ -6,6 +6,33 @@ import { usePathname } from 'next/navigation'
 import { FilePenLine, Gauge, ListTodo, Mail, Phone, MessageSquare, Users, type LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 import { isAdminEmail } from '@/lib/admin-auth'
+import { useTranslation } from '@/lib/i18n/LanguageContext'
+
+// Testi del footer: italiano per chi ha il sito in italiano, inglese per tutti gli altri.
+const COPY = {
+  it: {
+    contacts: 'Contatti',
+    phone: 'Telefono',
+    call: 'Chiama',
+    openWhatsapp: 'Apri WhatsApp',
+    writeTo: 'Scrivi a',
+    platform: 'Piattaforma',
+    faq: 'Domande frequenti',
+    privacy: 'Informativa Privacy',
+    terms: 'Condizioni d’uso',
+  },
+  en: {
+    contacts: 'Contacts',
+    phone: 'Phone',
+    call: 'Call',
+    openWhatsapp: 'Open WhatsApp',
+    writeTo: 'Write to',
+    platform: 'Platform',
+    faq: 'FAQ',
+    privacy: 'Privacy Policy',
+    terms: 'Terms of use',
+  },
+}
 
 // Pagine del gestionale a schermo intero (Messaggi, Super chat): un footer sotto
 // costringerebbe a scorrere per tornare alla conversazione.
@@ -60,6 +87,8 @@ function AdminButtons({ pathname }: { pathname?: string | null }) {
 export default function ContactsFooter() {
   const pathname = usePathname()
   const isAdmin = useIsAdmin()
+  const { language } = useTranslation()
+  const c = COPY[language === 'it' ? 'it' : 'en']
 
   // La chat occupa lo schermo intero: un footer sotto costringerebbe a
   // scorrere la pagina per tornare ai messaggi.
@@ -93,18 +122,18 @@ export default function ContactsFooter() {
     <footer className={`theme-ember mt-16 border-t border-[var(--border-color)] bg-[var(--background)]`}>
       <div className="container mx-auto max-w-6xl px-6 py-10">
         <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-6">
-          Contatti
+          {c.contacts}
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <a
             href={`tel:${phone.replace(/\\s/g, '')}`}
             className="flex items-center gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4 hover:bg-[var(--background-secondary)]/80 transition-colors"
-            aria-label={`Chiama ${phone}`}
+            aria-label={`${c.call} ${phone}`}
           >
             <Phone className="w-5 h-5 text-[var(--accent-blue)]" />
             <div>
-              <p className="text-sm text-[var(--text-secondary)]">Telefono</p>
+              <p className="text-sm text-[var(--text-secondary)]">{c.phone}</p>
               <p className="text-[var(--text-primary)] font-medium">{phone}</p>
             </div>
           </a>
@@ -114,7 +143,7 @@ export default function ContactsFooter() {
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4 hover:bg-[var(--background-secondary)]/80 transition-colors"
-            aria-label={`Apri WhatsApp ${whatsapp}`}
+            aria-label={`${c.openWhatsapp} ${whatsapp}`}
           >
             <MessageSquare className="w-5 h-5 text-[var(--accent-blue)]" />
             <div>
@@ -126,7 +155,7 @@ export default function ContactsFooter() {
           <a
             href={`mailto:${email}`}
             className="flex items-center gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] p-4 hover:bg-[var(--background-secondary)]/80 transition-colors"
-            aria-label={`Scrivi a ${email}`}
+            aria-label={`${c.writeTo} ${email}`}
           >
             <Mail className="w-5 h-5 text-[var(--accent-blue)]" />
             <div>
@@ -141,25 +170,25 @@ export default function ContactsFooter() {
             href="/piattaforma"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors mr-5"
           >
-            Piattaforma
+            {c.platform}
           </Link>
           <Link
             href="/faq"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors mr-5"
           >
-            Domande frequenti
+            {c.faq}
           </Link>
           <Link
             href="/privacy"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
           >
-            Informativa Privacy
+            {c.privacy}
           </Link>
           <Link
             href="/termini"
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors ml-5"
           >
-            Condizioni d&apos;uso
+            {c.terms}
           </Link>
           {isAdmin && (
             <div className="mt-4">

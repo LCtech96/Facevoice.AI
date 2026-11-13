@@ -37,16 +37,18 @@ export async function POST(req: NextRequest) {
   const email = clean(body?.email, 160).toLowerCase()
   const phone = clean(body?.phone, 40)
   const message = clean(body?.message, 3000)
+  // Errori del modulo in italiano per chi ha il sito in italiano, in inglese per gli altri.
+  const say = (it: string, en: string) => (asSiteLanguage(body?.language) === 'it' ? it : en)
 
-  if (!firstName || !lastName) return NextResponse.json({ error: 'Inserisci nome e cognome' }, { status: 400 })
-  if (!EMAIL_RE.test(email)) return NextResponse.json({ error: 'Email non valida' }, { status: 400 })
-  if (phone.replace(/[^\d]/g, '').length < 6) return NextResponse.json({ error: 'Numero di cellulare non valido' }, { status: 400 })
-  if (message.length < 5) return NextResponse.json({ error: 'Scrivi in breve il motivo del contatto' }, { status: 400 })
-  if (body?.privacy !== true) return NextResponse.json({ error: 'Serve il consenso al trattamento dei dati' }, { status: 400 })
+  if (!firstName || !lastName) return NextResponse.json({ error: say('Inserisci nome e cognome', 'Please enter your first and last name') }, { status: 400 })
+  if (!EMAIL_RE.test(email)) return NextResponse.json({ error: say('Email non valida', 'Invalid email address') }, { status: 400 })
+  if (phone.replace(/[^\d]/g, '').length < 6) return NextResponse.json({ error: say('Numero di cellulare non valido', 'Invalid mobile number') }, { status: 400 })
+  if (message.length < 5) return NextResponse.json({ error: say('Scrivi in breve il motivo del contatto', 'Please tell us briefly what you need') }, { status: 400 })
+  if (body?.privacy !== true) return NextResponse.json({ error: say('Serve il consenso al trattamento dei dati', 'Please give your consent to the processing of your data') }, { status: 400 })
 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
   if (rateLimited(ip) || rateLimited(email)) {
-    return NextResponse.json({ error: 'Hai già inviato alcune richieste: riprova tra qualche minuto.' }, { status: 429 })
+    return NextResponse.json({ error: say('Hai già inviato alcune richieste: riprova tra qualche minuto.', 'You have already sent a few requests: please try again in a few minutes.') }, { status: 429 })
   }
 
   const fullName = `${firstName} ${lastName}`
@@ -105,7 +107,7 @@ Cellulare: <a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a> · <a hre
   if (!adminSent) {
     console.error('contact: email all\'admin non inviata', fullName, email)
     return NextResponse.json(
-      { error: 'Invio non riuscito per un problema tecnico. Scrivici a info@facevoice.ai o su WhatsApp.' },
+      { error: say('Invio non riuscito per un problema tecnico. Scrivici a info@facevoice.ai o su WhatsApp.', 'Sending failed because of a technical problem. Write to us at info@facevoice.ai or on WhatsApp.') },
       { status: 502 }
     )
   }

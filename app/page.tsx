@@ -1,15 +1,6 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import { useEffect } from 'react'
-
+// facevoice.ai apre la home dall'inizio (sulla hero), senza saltare a una sezione.
 export default function RootPage() {
-  useEffect(() => {
-    window.location.replace('/home#blog')
-  }, [])
-
-  return (
-    <main className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-      <div className="text-[var(--text-secondary)]">Caricamento...</div>
-    </main>
-  )
+  redirect('/home')
 }
