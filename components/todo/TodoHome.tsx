@@ -30,9 +30,11 @@ export type HomeProps = {
   /** Riga in piu' sotto la cartella (es. chi la vede). */
   folderExtra?: (boardId: string) => ReactNode
   emptyText?: string
+  /** Pulsante accanto al calendario (es. «Aggiungi all'iPhone»). */
+  calendarAction?: ReactNode
 }
 
-export default function TodoHome({ data, onOpen, selected, onToggleSelect, folderExtra, emptyText = 'Ancora nessun progetto.' }: HomeProps) {
+export default function TodoHome({ data, onOpen, selected, onToggleSelect, folderExtra, emptyText = 'Ancora nessun progetto.', calendarAction }: HomeProps) {
   const today = romeDay(Date.now())
   const [ym, setYm] = useState(() => ({ y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) }))
   const [filter, setFilter] = useState<string | null>(null)
@@ -147,7 +149,8 @@ export default function TodoHome({ data, onOpen, selected, onToggleSelect, folde
           <h2 className="flex items-center gap-2 text-base font-semibold capitalize text-[var(--text-primary)]">
             <CalendarDays className="h-5 w-5 text-[var(--accent-blue)]" /> {monthLabel(ym.y, ym.m)}
           </h2>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            {calendarAction}
             <button type="button" onClick={() => shift(-1)} className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border-color)] text-[var(--text-primary)]" aria-label="Mese prima">
               <ChevronLeft className="h-4 w-4" />
             </button>

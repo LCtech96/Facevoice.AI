@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { AlertTriangle, Copy, FolderPlus, ListTodo, Loader2, Plus, RefreshCw, UserCheck, Users, X } from 'lucide-react'
 import TodoHome from '@/components/todo/TodoHome'
 import TodoBell from '@/components/todo/TodoBell'
+import CalendarSubscribe from '@/components/todo/CalendarSubscribe'
 import type { TodoBellItem, TodoHomeData } from '@/lib/todo-shared'
 import { useAdminGate } from '../contratti/useAdminGate'
 import AccessPanel, { Credentials, GrantDialog, PasswordField } from './AccessPanel'
@@ -214,7 +215,7 @@ export default function TodoAdminClient() {
         {boards === null ? (
           <p className="py-8 text-center text-sm text-[var(--text-secondary)]">Caricamento…</p>
         ) : (
-          !setup && <TodoHome data={home} onOpen={open} selected={selected} onToggleSelect={toggle} folderExtra={viewers} emptyText="Ancora nessun progetto: premi «Nuovo progetto»." />
+          !setup && <TodoHome data={home} onOpen={open} selected={selected} onToggleSelect={toggle} folderExtra={viewers} emptyText="Ancora nessun progetto: premi «Nuovo progetto»." calendarAction={<CalendarSubscribe load={() => adminTodoFetch('/api/admin/todo/calendar')} rotate={() => adminTodoFetch('/api/admin/todo/calendar', { method: 'POST' })} />} />
         )}
       </div>
 

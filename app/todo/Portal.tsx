@@ -6,6 +6,7 @@ import { FolderOpen, Loader2, LogOut, RefreshCw } from 'lucide-react'
 import TodoBoard from '@/components/todo/TodoBoard'
 import TodoHome from '@/components/todo/TodoHome'
 import TodoBell, { type BellRequest } from '@/components/todo/TodoBell'
+import CalendarSubscribe, { type CalendarLinkResult } from '@/components/todo/CalendarSubscribe'
 import ProjectHeader from '@/components/todo/ProjectHeader'
 import { projectApi } from '@/components/todo/todo-api'
 import { portalPath, projectColor, type TodoBellItem, type TodoHomeData } from '@/lib/todo-shared'
@@ -26,6 +27,13 @@ function go(url: string, replace = false) {
 
 const bellRequest: BellRequest = async (method) => {
   const res = await fetch('/api/todo/bell', { method, credentials: 'same-origin', cache: 'no-store', headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined }).catch(() => null)
+  const data = res ? await res.json().catch(() => ({})) : {}
+  return { ok: Boolean(res?.ok), status: res?.status || 0, data: data || {} }
+}
+
+/** Link del calendario della persona (per l'iPhone). */
+const calendarRequest = async (): Promise<CalendarLinkResult> => {
+  const res = await fetch('/api/todo/calendar', { credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
   const data = res ? await res.json().catch(() => ({})) : {}
   return { ok: Boolean(res?.ok), status: res?.status || 0, data: data || {} }
 }
@@ -146,7 +154,7 @@ export default function Portal({ name }: { name: string }) {
           </div>
           {error && <p className="mb-3 rounded-xl border border-[#FF3B30]/40 bg-[#FF3B30]/10 px-3 py-2 text-sm text-[var(--text-primary)]">{error}</p>}
           {data ? (
-            <TodoHome data={data} onOpen={open} emptyText="Non hai ancora progetti: chiedi all’admin di dartene l’accesso." />
+            <TodoHome data={data} onOpen={open} emptyText="Non hai ancora progetti: chiedi all’admin di dartene l’accesso." calendarAction={<CalendarSubscribe load={calendarRequest} onLocked={onLocked} />} />
           ) : (
             <div className="flex min-h-[40vh] items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-[var(--accent-blue)]" />

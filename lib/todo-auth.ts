@@ -219,6 +219,34 @@ export function loginCodeHash(accessId: string, nonce: string, code: string): st
 
 export const sameLoginCodeHash = (a: string, b: string) => typeof a === 'string' && typeof b === 'string' && sameSig(a, b)
 
+// ---------------------------------------------------------------------
+// Link segreto del calendario (iPhone, Google Calendar, Outlook): solo lettura
+// ---------------------------------------------------------------------
+
+export type CalendarSubject = { kind: 'person'; id: string; version: number } | { kind: 'admin'; seq: number }
+
+/**
+ * Link del calendario firmato. Persona: legato alla versione del suo accesso (password
+ * cambiata o accesso eliminato: il link smette di funzionare). Admin: legato a un
+ * numero che cambia con «Nuovo link».
+ */
+export function signCalendar(subject: CalendarSubject): string | null {
+  const payload = subject.kind === 'person' ? `p.${subject.id.toLowerCase()}.${subject.version}` : `a.${subject.seq}`
+  const sig = sign('todo-calendar', payload)
+  return sig ? `${payload}.${sig}` : null
+}
+
+export function readCalendar(value: string | undefined | null): CalendarSubject | null {
+  if (!value || typeof value !== 'string' || value.length > 200) return null
+  const parts = value.split('.')
+  let subject: CalendarSubject | null = null
+  if (parts.length === 4 && parts[0] === 'p' && ID_RE.test(parts[1]) && /^\d{1,9}$/.test(parts[2])) subject = { kind: 'person', id: parts[1].toLowerCase(), version: Number(parts[2]) }
+  else if (parts.length === 3 && parts[0] === 'a' && /^\d{1,9}$/.test(parts[1])) subject = { kind: 'admin', seq: Number(parts[1]) }
+  if (!subject) return null
+  const expected = sign('todo-calendar', parts.slice(0, -1).join('.'))
+  return expected && sameSig(expected, parts[parts.length - 1]) ? subject : null
+}
+
 export function signAdminSession(email: string, at = Date.now()): string | null {
   const exp = Math.floor(at / 1000) + ADMIN_SESSION_TTL_S
   const who = Buffer.from(email.toLowerCase()).toString('base64url')
