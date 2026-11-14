@@ -1635,7 +1635,7 @@ export async function runAssistant(
               pubblicato: rome(v.publishedAt),
               canali: v.platforms,
               didascalia: v.caption.slice(0, 200),
-              errori: [v.instagram?.error, v.facebook?.error].filter(Boolean),
+              errori: [v.instagram?.error, v.facebook?.error, v.tiktok?.error].filter(Boolean),
             })),
             ...(list.length ? {} : { nota: 'nessun video caricato: Luca lo carica dalla Overview con «Nuovo video»' }),
           }

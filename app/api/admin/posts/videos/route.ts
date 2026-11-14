@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createVideoPost, listVideoPosts, publishVideoNow } from '@/lib/video-posts'
+import { createVideoPost, listVideoPosts, publishVideoNow, videoForClient } from '@/lib/video-posts'
 import { videoErrorResponse, videoGuard } from './auth'
 
 export const dynamic = 'force-dynamic'
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const denied = await videoGuard(req, 'view')
   if (denied) return denied
   try {
-    return NextResponse.json({ videos: await listVideoPosts() })
+    return NextResponse.json({ videos: (await listVideoPosts()).map(videoForClient) })
   } catch (error) {
     return videoErrorResponse(error, 'Errore nel caricare i video')
   }
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
     const post = await createVideoPost({ ...body, scheduledAt: body?.publishNow ? null : body?.scheduledAt })
-    return NextResponse.json({ video: body?.publishNow ? await publishVideoNow(post.id) : post })
+    return NextResponse.json({ video: videoForClient(body?.publishNow ? await publishVideoNow(post.id) : post) })
   } catch (error) {
     return videoErrorResponse(error, 'Errore nel salvare il video')
   }

@@ -6,8 +6,18 @@ import { loadContentDirections } from '@/lib/content-directions'
 import { readSetting, updateSetting } from '@/lib/settings-store'
 import { createInstagramReel, instagramContainerStatus, publishInstagramContainer, publishPageVideo } from '@/lib/meta/graph'
 import { sendPushToAdmins } from '@/lib/push'
+import {
+  TikTokError,
+  getTikTokCreator,
+  getTikTokPublishStatus,
+  initTikTokUpload,
+  putTikTokChunk,
+  tiktokFailReason,
+  tiktokMessage,
+  type TikTokPostInfo,
+} from '@/lib/tiktok'
 
-// Video di Facevoice (Reel su Instagram e/o video sulla Pagina Facebook) caricati da Luca
+// Video di Facevoice (Reel su Instagram, video sulla Pagina Facebook, TikTok) caricati da Luca
 // nella Overview: didascalia scritta a mano o con l'AI, poi "Pubblica ora" o "Programma".
 //
 // Il file va dal browser direttamente nello spazio di archiviazione (Vercel non accetta
@@ -19,6 +29,10 @@ import { sendPushToAdmins } from '@/lib/push'
 // - Instagram: si crea il Reel e se ne tiene l'id; Instagram lo elabora per qualche minuto.
 //   Ogni giro del cron controlla una volta lo stato (nessuna attesa lunga): FINISHED → si
 //   pubblica; ERROR/EXPIRED o piu' di 30 minuti → errore chiaro. Alla fine arriva la notifica.
+// - TikTok: si controlla l'account (chi puo' vedere il video, durata massima), si avvia il
+//   caricamento e il server manda il file a pezzi da 10 MB (qualche pezzo per giro, il punto
+//   a cui si e' arrivati resta salvato); poi si controlla lo stato finche' TikTok ha finito.
+//   Modalita' "direct" (pubblica con le impostazioni scelte) o "inbox" (bozza nell'app TikTok).
 
 const PREFIX = 'video_post:'
 export const VIDEO_BUCKET = 'social-videos'
@@ -30,8 +44,25 @@ export const MAX_CAPTION = 2200
 export const IG_TIMEOUT_MS = 30 * 60_000
 /** Un giro di pubblicazione tiene il post per se' al massimo cosi' (le funzioni durano 60 secondi). */
 const LOCK_MS = 90_000
+/** Oltre questo tempo (caricamento o elaborazione) su TikTok si rinuncia con un errore. */
+export const TT_TIMEOUT_MS = 30 * 60_000
 
-export type VideoPlatform = 'instagram' | 'facebook'
+export type VideoPlatform = 'instagram' | 'facebook' | 'tiktok'
+export const TIKTOK_PRIVACY = ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'] as const
+
+/** Impostazioni del post su TikTok scelte da Luca (nessun valore preimpostato, come chiede TikTok). */
+export type TikTokOptions = {
+  mode: 'direct' | 'inbox'
+  privacy: string | null
+  allowComment: boolean
+  allowDuet: boolean
+  allowStitch: boolean
+  /** Promuove la propria attivita' ("Contenuto promozionale"). */
+  brandOrganic: boolean
+  /** Promuove un terzo ("Partnership retribuita"). */
+  brandContent: boolean
+  aigc: boolean
+}
 export type VideoStatus = 'draft' | 'scheduled' | 'publishing' | 'published' | 'error'
 
 export type VideoPost = {
@@ -47,6 +78,24 @@ export type VideoPost = {
   status: VideoStatus
   instagram?: { containerId?: string; startedAt?: string; id?: string; error?: string }
   facebook?: { id?: string; error?: string }
+  tiktok?: {
+    publishId?: string
+    uploadUrl?: string
+    uploadUrlAt?: string
+    chunkSize?: number
+    totalChunks?: number
+    nextChunk?: number
+    startedAt?: string
+    uploadedAt?: string
+    /** Pubblicato (id del post se pubblico, altrimenti publishId). */
+    id?: string
+    /** Mandato nelle bozze dell'app (modalita' inbox). */
+    inbox?: boolean
+    error?: string
+  }
+  tiktokOptions?: TikTokOptions
+  /** Durata in secondi (letta dal browser al caricamento). */
+  durationSec?: number
   lock?: { id: string; until: string }
   publishedAt?: string
   createdAt: string
@@ -140,10 +189,41 @@ async function checkUploaded(url: string): Promise<number> {
 export const cleanCaption = (value: unknown) => limitHashtags(String(value ?? '').replace(/\r/g, '').trim()).slice(0, MAX_CAPTION)
 
 function cleanPlatforms(value: unknown): VideoPlatform[] {
-  const list = (Array.isArray(value) ? value : []).filter((p): p is VideoPlatform => p === 'instagram' || p === 'facebook')
+  const list = (Array.isArray(value) ? value : []).filter((p): p is VideoPlatform => p === 'instagram' || p === 'facebook' || p === 'tiktok')
   const unique = [...new Set(list)]
-  if (!unique.length) throw new VideoError('Scegli Instagram, Facebook o entrambi.')
+  if (!unique.length) throw new VideoError('Scegli almeno un canale: Instagram, Facebook o TikTok.')
   return unique
+}
+
+function cleanTikTokOptions(value: unknown): TikTokOptions | undefined {
+  if (value === undefined || value === null || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const mode = v.mode === 'inbox' ? 'inbox' : 'direct'
+  const privacy = typeof v.privacy === 'string' && (TIKTOK_PRIVACY as readonly string[]).includes(v.privacy) ? v.privacy : null
+  const options: TikTokOptions = {
+    mode,
+    privacy: mode === 'direct' ? privacy : null,
+    allowComment: v.allowComment === true,
+    allowDuet: v.allowDuet === true,
+    allowStitch: v.allowStitch === true,
+    brandOrganic: v.brandOrganic === true,
+    brandContent: v.brandContent === true,
+    aigc: v.aigc === true,
+  }
+  if (mode === 'direct') {
+    if (!options.privacy) throw new VideoError('Per TikTok scegli chi può vedere il video.')
+    if (options.brandContent && options.privacy === 'SELF_ONLY') throw new VideoError('Su TikTok i contenuti sponsorizzati non possono avere visibilità «Solo io».')
+  }
+  return options
+}
+
+const cleanDuration = (value: unknown) => {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 && n < 36_000 ? Math.round(n * 10) / 10 : undefined
+}
+
+const needsTikTokOptions = (post: Pick<VideoPost, 'platforms' | 'tiktokOptions'>) => {
+  if (post.platforms.includes('tiktok') && !post.tiktokOptions) throw new VideoError('Per TikTok scegli chi può vedere il video.')
 }
 
 /** Data di programmazione: null = bozza; deve essere futura (1 minuto di tolleranza). */
@@ -174,6 +254,7 @@ function clearFailures(post: VideoPost): VideoPost {
   const next = { ...post }
   if (next.instagram?.error && !next.instagram.id) delete next.instagram
   if (next.facebook?.error && !next.facebook.id) delete next.facebook
+  if (next.tiktok?.error && !next.tiktok.id) delete next.tiktok
   return next
 }
 
@@ -192,10 +273,20 @@ export async function listVideoPosts(limit = 100): Promise<VideoPost[]> {
   })
 }
 
-export async function createVideoPost(input: { path?: unknown; fileName?: unknown; caption?: unknown; platforms?: unknown; scheduledAt?: unknown }): Promise<VideoPost> {
+export async function createVideoPost(input: {
+  path?: unknown
+  fileName?: unknown
+  caption?: unknown
+  platforms?: unknown
+  scheduledAt?: unknown
+  tiktokOptions?: unknown
+  durationSec?: unknown
+}): Promise<VideoPost> {
   const path = String(input.path || '')
   if (!validVideoPath(path)) throw new VideoError('Video non valido: caricalo di nuovo.')
   const platforms = cleanPlatforms(input.platforms)
+  const tiktokOptions = platforms.includes('tiktok') ? cleanTikTokOptions(input.tiktokOptions) : undefined
+  needsTikTokOptions({ platforms, tiktokOptions })
   const scheduledAt = cleanWhen(input.scheduledAt)
   const videoUrl = videoPublicUrl(path)
   const size = await checkUploaded(videoUrl)
@@ -208,6 +299,8 @@ export async function createVideoPost(input: { path?: unknown; fileName?: unknow
     size,
     caption: cleanCaption(input.caption),
     platforms,
+    ...(tiktokOptions ? { tiktokOptions } : {}),
+    ...(cleanDuration(input.durationSec) ? { durationSec: cleanDuration(input.durationSec) } : {}),
     scheduledAt,
     status: scheduledAt ? 'scheduled' : 'draft',
     createdAt: now,
@@ -223,12 +316,13 @@ export async function createVideoPost(input: { path?: unknown; fileName?: unknow
  */
 export async function updateVideoPost(
   id: string,
-  patch: { caption?: unknown; platforms?: unknown; scheduledAt?: unknown },
+  patch: { caption?: unknown; platforms?: unknown; scheduledAt?: unknown; tiktokOptions?: unknown },
   options: { now?: boolean } = {}
 ): Promise<VideoPost> {
   if (!validVideoId(id)) throw new VideoError('Video non trovato.', 404)
   const caption = patch.caption === undefined ? undefined : cleanCaption(patch.caption)
   const platforms = patch.platforms === undefined ? undefined : cleanPlatforms(patch.platforms)
+  const tiktokOptions = patch.tiktokOptions === undefined ? undefined : cleanTikTokOptions(patch.tiktokOptions)
   const scheduledAt = options.now ? new Date().toISOString() : patch.scheduledAt === undefined ? undefined : cleanWhen(patch.scheduledAt)
   const saved = await updateSetting(`${PREFIX}${id}`, parse, (current) => {
     if (!current) throw new VideoError('Video non trovato.', 404)
@@ -237,6 +331,8 @@ export async function updateVideoPost(
     let next: VideoPost = { ...current }
     if (caption !== undefined) next.caption = caption
     if (platforms) next.platforms = platforms
+    if (tiktokOptions) next.tiktokOptions = tiktokOptions
+    needsTikTokOptions(next)
     if (scheduledAt !== undefined) {
       next.scheduledAt = scheduledAt
       if (next.status === 'error' && scheduledAt) next = clearFailures(next)
@@ -261,7 +357,7 @@ export async function deleteVideoPost(id: string): Promise<void> {
   if (error) throw new Error(error.message)
   if (!data?.length) throw new VideoError('Il video è appena cambiato: ricarica e riprova.', 409)
   // Meta potrebbe scaricarlo ancora: il file resta se e' gia' partito qualcosa.
-  if (!post.instagram && !post.facebook) {
+  if (!post.instagram && !post.facebook && !post.tiktok) {
     await supabaseAdmin.storage.from(VIDEO_BUCKET).remove([post.path]).catch(() => undefined)
   }
 }
@@ -277,7 +373,7 @@ const due = (post: VideoPost) => post.status === 'publishing' || (post.status ==
  * waitMs: per quanto si puo' aspettare l'elaborazione di Instagram in questo giro (0 nel cron).
  * Se un altro giro sta gia' lavorando sullo stesso video non fa niente.
  */
-export async function advanceVideoPost(id: string, options: { waitMs?: number } = {}): Promise<VideoPost | null> {
+export async function advanceVideoPost(id: string, options: { waitMs?: number; until?: number } = {}): Promise<VideoPost | null> {
   const key = `${PREFIX}${id}`
   const lockId = newId()
   const claimed = await updateSetting(key, parse, (current) => {
@@ -288,13 +384,15 @@ export async function advanceVideoPost(id: string, options: { waitMs?: number } 
 
   const post: VideoPost = { ...claimed }
   const deadline = Date.now() + (options.waitMs || 0)
+  /** Fino a quando si possono caricare pezzi del video su TikTok in questo giro. */
+  const workUntil = options.until ?? Date.now() + 30_000
   /** Salva il lavoro fatto finora (senza lasciare il post): se la funzione si ferma, niente doppioni. */
   const save = async (final: boolean): Promise<VideoPost | null> => {
     let stored: VideoPost | null = null
     await updateSetting(key, parse, (current) => {
       // Eliminato o preso da un altro giro (lucchetto scaduto): non si sovrascrive.
       if (!current || current.lock?.id !== lockId) return false
-      const next: VideoPost = { ...current, instagram: post.instagram, facebook: post.facebook, updatedAt: new Date().toISOString() }
+      const next: VideoPost = { ...current, instagram: post.instagram, facebook: post.facebook, tiktok: post.tiktok, updatedAt: new Date().toISOString() }
       if (final) {
         delete next.lock
         if (next.platforms.every((p) => resolved(next, p))) {
@@ -313,6 +411,9 @@ export async function advanceVideoPost(id: string, options: { waitMs?: number } 
       const sent = await publishPageVideo(post.videoUrl, post.caption).catch((error) => ({ id: undefined, error: error instanceof Error ? error.message : String(error) }))
       post.facebook = sent.error ? { error: `Facebook: ${sent.error}` } : { id: sent.id || 'ok' }
       await save(false)
+    }
+    if (post.platforms.includes('tiktok') && !resolved(post, 'tiktok')) {
+      await stepTikTok(post, deadline, workUntil, () => save(false))
     }
     if (post.platforms.includes('instagram') && !resolved(post, 'instagram')) {
       await stepInstagram(post, deadline)
@@ -367,8 +468,120 @@ async function stepInstagram(post: VideoPost, deadline: number) {
   }
 }
 
+const contentTypeOf = (path: string) => (path.endsWith('.mov') ? 'video/quicktime' : 'video/mp4')
+
+/** Un pezzo del file dallo spazio di archiviazione (indirizzo pubblico, richiesta Range). */
+async function readRange(url: string, start: number, end: number): Promise<Uint8Array<ArrayBuffer>> {
+  const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal: AbortSignal.timeout(30_000) }).catch(() => null)
+  if (!res || (res.status !== 206 && res.status !== 200)) throw new TikTokError('Video non leggibile dallo spazio di archiviazione, riprovo al prossimo giro.', 'network', 0)
+  let bytes = new Uint8Array(await res.arrayBuffer())
+  // Server che ignora Range (risponde 200 con tutto il file): si prende il pezzo giusto.
+  if (res.status === 200 && bytes.byteLength !== end - start + 1) bytes = bytes.subarray(start, end + 1)
+  if (bytes.byteLength !== end - start + 1) throw new TikTokError('Video letto solo in parte, riprovo al prossimo giro.', 'network', 0)
+  return bytes
+}
+
+async function stepTikTok(post: VideoPost, deadline: number, workUntil: number, checkpoint: () => Promise<unknown>) {
+  const tt = { ...(post.tiktok || {}) }
+  post.tiktok = tt
+  const opts = post.tiktokOptions
+  const finish = (fields: Partial<NonNullable<VideoPost['tiktok']>>) => {
+    Object.assign(tt, fields)
+    delete tt.uploadUrl
+  }
+  if (!opts) return finish({ error: 'TikTok: mancano le impostazioni del post (chi può vederlo).' })
+  if (!post.size) return finish({ error: 'TikTok: peso del video sconosciuto, caricalo di nuovo.' })
+  tt.startedAt ||= new Date().toISOString()
+  try {
+    if (!tt.publishId) {
+      let postInfo: TikTokPostInfo | null = null
+      if (opts.mode === 'direct') {
+        // Si ricontrolla l'account ogni volta: visibilita' possibili, durata massima, limiti di oggi.
+        const creator = await getTikTokCreator()
+        if (!opts.privacy || !creator.privacyOptions.includes(opts.privacy)) return finish({ error: tiktokMessage('privacy_level_option_mismatch') })
+        if (creator.maxDurationSec && post.durationSec && post.durationSec > creator.maxDurationSec + 0.5) {
+          return finish({ error: `TikTok: il video dura ${Math.round(post.durationSec)} secondi, su questo account il massimo è ${creator.maxDurationSec}.` })
+        }
+        postInfo = {
+          title: post.caption,
+          privacy_level: opts.privacy,
+          disable_comment: creator.commentDisabled || !opts.allowComment,
+          disable_duet: creator.duetDisabled || !opts.allowDuet,
+          disable_stitch: creator.stitchDisabled || !opts.allowStitch,
+          brand_content_toggle: opts.brandContent,
+          brand_organic_toggle: opts.brandOrganic,
+          ...(opts.aigc ? { is_aigc: true } : {}),
+        }
+      }
+      const started = await initTikTokUpload(opts.mode, post.size, postInfo)
+      Object.assign(tt, {
+        publishId: started.publishId,
+        uploadUrl: started.uploadUrl,
+        uploadUrlAt: new Date().toISOString(),
+        chunkSize: started.chunkSize,
+        totalChunks: started.total,
+        nextChunk: 0,
+      })
+      await checkpoint()
+    }
+
+    const total = tt.totalChunks || 1
+    const chunk = tt.chunkSize || post.size
+    while ((tt.nextChunk ?? 0) < total) {
+      if (!tt.uploadUrl || Date.now() - Date.parse(tt.uploadUrlAt || '') > 55 * 60_000) {
+        return finish({ error: 'TikTok: il tempo per caricare il video è scaduto. Premi «Riprova ora».' })
+      }
+      // Ogni pezzo richiede qualche secondo: se il giro sta finendo si continua al prossimo.
+      if (Date.now() + 15_000 > workUntil) return
+      const i = tt.nextChunk ?? 0
+      const start = i * chunk
+      const end = i === total - 1 ? post.size - 1 : start + chunk - 1
+      const bytes = await readRange(post.videoUrl, start, end)
+      const result = await putTikTokChunk(tt.uploadUrl, bytes, start, post.size, contentTypeOf(post.path))
+      if (result === 'range') {
+        // Un giro interrotto aveva gia' mandato questo pezzo: si riparte da dove e' arrivato TikTok.
+        const state = await getTikTokPublishStatus(tt.publishId!)
+        const sent = state.uploadedBytes ?? -1
+        if (sent >= post.size) tt.nextChunk = total
+        else if (sent >= 0 && sent % chunk === 0 && sent / chunk < total) tt.nextChunk = sent / chunk
+        else return finish({ error: 'TikTok: caricamento non allineato. Premi «Riprova ora».' })
+      } else {
+        tt.nextChunk = result === 'done' ? total : i + 1
+      }
+      if ((tt.nextChunk ?? 0) >= total) {
+        tt.uploadedAt = new Date().toISOString()
+        delete tt.uploadUrl
+      }
+      await checkpoint()
+    }
+
+    tt.uploadedAt ||= new Date().toISOString()
+    for (;;) {
+      const state = await getTikTokPublishStatus(tt.publishId!)
+      if (state.status === 'PUBLISH_COMPLETE') return finish({ id: state.postIds[0] || tt.publishId })
+      if (state.status === 'SEND_TO_USER_INBOX') return finish({ id: tt.publishId, inbox: true })
+      if (state.status === 'FAILED') return finish({ error: tiktokFailReason(state.failReason) })
+      if (Date.now() - Date.parse(tt.uploadedAt) > TT_TIMEOUT_MS) {
+        return finish({ error: `TikTok non ha finito di elaborare il video in ${TT_TIMEOUT_MS / 60_000} minuti (stato ${state.status || 'sconosciuto'}).` })
+      }
+      if (Date.now() + 5000 > deadline) return
+      await sleep(5000)
+    }
+  } catch (error) {
+    // Problemi passeggeri (rete, troppe richieste, TikTok giu'): si riprova al prossimo giro, non per sempre.
+    if (error instanceof TikTokError && error.transient && Date.now() - Date.parse(tt.startedAt) < TT_TIMEOUT_MS) {
+      console.warn(`video ${post.id}: TikTok, riprovo:`, error.message)
+      return
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    finish({ error: message.startsWith('TikTok') ? message : `TikTok: ${message}` })
+  }
+}
+
+const PLATFORM_NAME: Record<VideoPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok' }
+
 async function notifyOutcome(post: VideoPost) {
-  const ok = post.platforms.filter((p) => post[p]?.id).map((p) => (p === 'instagram' ? 'Instagram' : 'Facebook'))
+  const ok = post.platforms.filter((p) => post[p]?.id).map((p) => (p === 'tiktok' && post.tiktok?.inbox ? 'TikTok (nelle bozze dell’app)' : PLATFORM_NAME[p]))
   const errors = post.platforms.map((p) => post[p]?.error).filter(Boolean) as string[]
   const snippet = post.caption.split('\n')[0].slice(0, 60) || post.fileName
   const title = !ok.length ? 'Video non pubblicato' : errors.length ? 'Video pubblicato in parte' : 'Video pubblicato'
@@ -378,7 +591,7 @@ async function notifyOutcome(post: VideoPost) {
 }
 
 /** "Pubblica ora": parte subito; se Instagram e' lento, il cron finisce il lavoro. */
-export async function publishVideoNow(id: string, patch: { caption?: unknown; platforms?: unknown } = {}, waitMs = 25_000): Promise<VideoPost> {
+export async function publishVideoNow(id: string, patch: { caption?: unknown; platforms?: unknown; tiktokOptions?: unknown } = {}, waitMs = 25_000): Promise<VideoPost> {
   await updateVideoPost(id, patch, { now: true })
   const post = (await advanceVideoPost(id, { waitMs })) || (await loadVideoPost(id))
   if (!post) throw new VideoError('Video non trovato.', 404)
@@ -389,10 +602,41 @@ export async function publishVideoNow(id: string, patch: { caption?: unknown; pl
 export async function videoPostsTick(): Promise<{ checked: number }> {
   const list = await listVideoPosts()
   const ready = list.filter((p) => due(p) && !lockActive(p)).slice(0, 5)
+  // Il cron dura al massimo 60 secondi (insieme agli altri lavori): niente video nuovi dopo 30.
+  const tickEnd = Date.now() + 40_000
+  let checked = 0
   for (const post of ready) {
-    await advanceVideoPost(post.id).catch((error) => console.error(`video ${post.id}:`, error instanceof Error ? error.message : error))
+    if (Date.now() > tickEnd - 10_000) break
+    checked++
+    await advanceVideoPost(post.id, { until: Math.min(Date.now() + 30_000, tickEnd) }).catch((error) =>
+      console.error(`video ${post.id}:`, error instanceof Error ? error.message : error)
+    )
   }
-  return { checked: ready.length }
+  return { checked }
+}
+
+/** Il video come lo vede la pagina (senza lucchetto e indirizzo di caricamento di TikTok). */
+export function videoForClient(post: VideoPost) {
+  const { lock: _lock, ...rest } = post
+  if (rest.tiktok?.uploadUrl) {
+    const { uploadUrl: _url, ...tiktok } = rest.tiktok
+    rest.tiktok = tiktok
+  }
+  return rest
+}
+
+/** Webhook di TikTok: il video con quella pubblicazione (tra gli ultimi 100). */
+export async function findVideoByTikTokPublish(publishId: string): Promise<VideoPost | null> {
+  if (!publishId) return null
+  return (await listVideoPosts()).find((p) => p.tiktok?.publishId === publishId) || null
+}
+
+/** Il post su TikTok e' diventato pubblico: se ne salva l'id. */
+export async function noteTikTokPublic(id: string, publishId: string, postId: string) {
+  await updateSetting(`${PREFIX}${id}`, parse, (current) => {
+    if (!current?.tiktok || current.tiktok.publishId !== publishId || current.tiktok.id === postId) return false
+    return { ...current, tiktok: { ...current.tiktok, id: postId }, updatedAt: new Date().toISOString() }
+  })
 }
 
 // ---------------------------------------------------------------------
@@ -400,7 +644,7 @@ export async function videoPostsTick(): Promise<{ checked: number }> {
 // ---------------------------------------------------------------------
 
 const CAPTION_PROMPT = `Sei il social media manager di Facevoice AI (agenzia digitale e software house a Terrasini, Palermo: siti, app, automazioni, chatbot e soluzioni di intelligenza artificiale per le aziende).
-Scrivi o modifichi la didascalia di un VIDEO (Reel di Instagram e video sulla Pagina Facebook) seguendo le indicazioni di Luca, il titolare.
+Scrivi o modifichi la didascalia di un VIDEO (Reel di Instagram, video sulla Pagina Facebook, TikTok) seguendo le indicazioni di Luca, il titolare.
 
 Regole:
 - Usa solo le informazioni di Luca: niente numeri, clienti, risultati o promesse inventate.

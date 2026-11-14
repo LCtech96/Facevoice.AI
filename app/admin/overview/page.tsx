@@ -25,6 +25,7 @@ import { createClient } from '@/lib/supabase-client'
 import { getAccessToken } from '@/lib/session-token'
 import { useStaffAccess } from '@/components/useStaffAccess'
 import VideoPosts from './VideoPosts'
+import TikTokConnect from './TikTokConnect'
 import PhotoLibrary from './PhotoLibrary'
 
 // ---------------------------------------------------------------------
@@ -86,7 +87,7 @@ const PLATFORM_META: Record<
     label: 'TikTok',
     icon: Music2,
     requirement:
-      'La pubblicazione è possibile (Content Posting API). La lettura/risposta automatica ai messaggi privati non è disponibile per account business normali.',
+      'Collegato con «Collega TikTok» qui sopra: profilo, video e pubblicazione dei video da «Post programmati». I messaggi privati di TikTok non sono disponibili tramite API in Europa.',
   },
   linkedin: {
     label: 'LinkedIn',
@@ -428,6 +429,7 @@ function ChannelsTab({
   return (
     <div>
       <EmailConnect authFetch={authFetch} />
+      <TikTokConnect authFetch={authFetch} />
 
       <p className="text-sm text-[var(--text-secondary)] mb-5">
         Lo stato <strong className="text-[var(--text-primary)]">Connesso</strong> è
@@ -435,8 +437,9 @@ function ChannelsTab({
         commenti) e Instagram (Direct e commenti): prepara le risposte con la Memoria
         AI e, a seconda della modalità, le invia da solo o le lascia da approvare in{' '}
         <a href="/admin/inbox" className="text-[var(--accent-blue)] hover:underline">Messaggi</a>.
-        Con qualsiasi altro stato i messaggi vengono solo salvati. LinkedIn, TikTok e X
-        non sono ancora integrati.
+        Con qualsiasi altro stato i messaggi vengono solo salvati. TikTok si collega con
+        il riquadro qui sopra (profilo e pubblicazione dei video). LinkedIn e X non sono
+        ancora integrati.
       </p>
 
       <div className="space-y-3">

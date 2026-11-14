@@ -45,7 +45,7 @@ export type ConfirmPayload =
   | { kind: 'send_emails'; drafts: DraftSnapshot[]; done?: Record<string, string> }
   | { kind: 'publish_carousel'; draftId: string; title: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
   /** Video gia' caricato nella Overview: programmato all'ora scelta (scheduledAt ISO) con questa didascalia. */
-  | { kind: 'schedule_video'; videoId: string; title: string; scheduledAt: string; caption: string; platforms: ('instagram' | 'facebook')[]; videoUrl: string }
+  | { kind: 'schedule_video'; videoId: string; title: string; scheduledAt: string; caption: string; platforms: ('instagram' | 'facebook' | 'tiktok')[]; videoUrl: string }
   /** Carosello gia' creato: esce da solo all'ora scelta (scheduledAt ISO), con le slide della scheda (base). */
   | { kind: 'schedule_carousel'; draftId: string; title: string; scheduledAt: string; platforms: ('instagram' | 'facebook')[]; base: string[]; caption: string; facebook?: string }
   /** Modifica dell'autopilota foto (solo i campi da cambiare); lines: come sara' dopo (per la scheda). */
@@ -254,7 +254,7 @@ export function cardFor(action: PendingAction, extra: Partial<ConfirmCard> = {})
         text: p.caption,
         lines: [
           `Esce il ${new Date(p.scheduledAt).toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}`,
-          `Su ${p.platforms.map((x) => (x === 'instagram' ? 'Instagram (Reel)' : 'Facebook')).join(' e ')}, con la didascalia qui sopra`,
+          `Su ${p.platforms.map((x) => (x === 'instagram' ? 'Instagram (Reel)' : x === 'tiktok' ? 'TikTok' : 'Facebook')).join(' e ')}, con la didascalia qui sopra`,
           `Video: ${p.videoUrl}`,
         ],
         confirmLabel: 'Programma',
