@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { getOTP, deleteOTP } from '../send-otp/route'
+import { getOTP, deleteOTP, failOTP } from '../send-otp/route'
 import { getRegistration, deleteRegistration } from '../store-registration/route'
 
 // Crea il client admin solo se la chiave è disponibile
@@ -43,7 +43,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (storedOTP.code !== code) {
+    if (storedOTP.code !== String(code)) {
+      failOTP(email)
       return NextResponse.json(
         { error: 'Codice non valido' },
         { status: 400 }
@@ -64,48 +65,31 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Verifica se l'utente esiste già
-      const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers()
-      
-      if (listError) {
-        throw listError
+      // Solo account nuovi: un account gia' esistente NON cambia password da qui (prima bastava
+      // il codice per sovrascriverla). Chi e' gia' registrato accede o usa «Password dimenticata».
+      const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email: registration.email,
+        password: registration.password,
+        email_confirm: true, // Email già verificata via OTP
+        user_metadata: {
+          email_verified_at: new Date().toISOString(),
+          verified_via: 'otp',
+        },
+      })
+
+      if (createError) {
+        if (/already|registered|exists/i.test(createError.message)) {
+          deleteOTP(email)
+          deleteRegistration(email)
+          return NextResponse.json(
+            { error: 'Questa email è già registrata: accedi oppure usa «Password dimenticata».' },
+            { status: 409 }
+          )
+        }
+        throw createError
       }
 
-      let user = usersList?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
-      
-      if (!user) {
-        // Crea un nuovo utente con email già confermata
-        const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
-          email: registration.email,
-          password: registration.password,
-          email_confirm: true, // Email già verificata via OTP
-          user_metadata: {
-            email_verified_at: new Date().toISOString(),
-            verified_via: 'otp',
-          },
-        })
-
-        if (createError) {
-          throw createError
-        }
-
-        user = newUserData.user
-      } else {
-        // Utente esiste già, aggiorna password e conferma email
-        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-          password: registration.password,
-          email_confirm: true,
-          user_metadata: {
-            ...user.user_metadata,
-            email_verified_at: new Date().toISOString(),
-            verified_via: 'otp',
-          },
-        })
-
-        if (updateError) {
-          throw updateError
-        }
-      }
+      const user = newUserData.user
 
       // Rimuovi il codice OTP e la registrazione dopo l'uso
       deleteOTP(email)

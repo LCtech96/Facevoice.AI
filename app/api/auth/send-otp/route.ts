@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomInt } from 'crypto'
 
 // Store temporaneo per i codici OTP (in produzione usa Redis o database)
-const otpStore = new Map<string, { code: string; expiresAt: number; email: string }>()
+const otpStore = new Map<string, { code: string; expiresAt: number; email: string; fails?: number }>()
+/** Tentativi sbagliati ammessi per codice: poi il codice non vale piu' (se ne chiede un altro). */
+const MAX_FAILS = 5
 
-// Genera un codice OTP di 6 cifre
+// Genera un codice OTP di 6 cifre (casuale crittografico)
 function generateOTP(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString()
+  return randomInt(100000, 1000000).toString()
 }
 
 export async function POST(req: NextRequest) {
@@ -136,6 +139,14 @@ export function getOTP(email: string): { code: string; expiresAt: number } | nul
     return null
   }
   return { code: stored.code, expiresAt: stored.expiresAt }
+}
+
+/** Codice sbagliato: dopo MAX_FAILS tentativi il codice si cancella. */
+export function failOTP(email: string) {
+  const stored = otpStore.get(email.toLowerCase())
+  if (!stored) return
+  stored.fails = (stored.fails || 0) + 1
+  if (stored.fails >= MAX_FAILS) otpStore.delete(email.toLowerCase())
 }
 
 // Funzione helper per rimuovere il codice OTP dopo l'uso
