@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 // solo per titolare o amministratore. Si torna alla pagina Piano.
 
 export async function POST(req: NextRequest) {
-  const access = await requireWorkspace(req, 'admin')
+  const access = await requireWorkspace(req, 'admin', { ownerOnly: true })
   if (access instanceof NextResponse) return access
   if (!billingConfigured()) return NextResponse.json({ error: 'Il pagamento online arriva presto: scrivici su WhatsApp.' }, { status: 503 })
   try {

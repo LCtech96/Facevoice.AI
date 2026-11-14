@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireWorkspace } from '@/lib/workspace'
+import { ownerOnlyResponse, requireWorkspace } from '@/lib/workspace'
 import {
   ContractError,
   applyChange,
@@ -95,6 +95,8 @@ export async function POST(req: NextRequest) {
   const id = typeof body.id === 'string' ? body.id : ''
   const op = typeof body.op === 'string' ? body.op : ''
   if (!id || !op) return json({ error: 'Richiesta non valida.' }, 400)
+  // La firma (e i termini che la accompagnano) vale a nome dell'attivita': solo il titolare, non i collaboratori.
+  if (access.shared && (op === 'sign' || op === 'terms_version')) return ownerOnlyResponse('Solo il titolare dell’account può firmare i contratti a nome dell’attività.')
   try {
     switch (op) {
       case 'share': {

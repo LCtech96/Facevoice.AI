@@ -1,230 +1,331 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
-import { Lock, ArrowRight, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CheckCircle, Eye, EyeOff, KeyRound, Loader2, Lock, XCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase-client'
 
-type Status = 'checking' | 'ready' | 'invalid' | 'done'
+// Nuova password dopo «Password dimenticata». Tre modi per arrivarci:
+// 1. il pulsante dell'email dell'area clienti (?token_hash=…&type=recovery): si usa solo
+//    quando la persona tocca «Continua», cosi' i filtri delle email che aprono i link da
+//    soli non lo consumano;
+// 2. il codice di 6 cifre della stessa email (email + codice);
+// 3. i link di recupero di Supabase (#access_token… o ?code=…) delle email del sito.
+// Il modulo della nuova password compare SOLO dopo uno di questi passaggi, mai per una
+// sessione gia' aperta. Dopo si torna all'area clienti (/app), anche dai link vecchi.
+// La nuova password non puo' essere quella dei collaboratori (controllo sul server prima di
+// salvarla); dopo il salvataggio la password dei collaboratori si spegne, e se non ci si
+// riesce lo si dice chiaramente (niente uscita automatica dalla pagina).
+
+type Step = 'checking' | 'link' | 'code' | 'ready' | 'done' | 'invalid'
+/** Password dei collaboratori dopo il salvataggio: spenta adesso, non c'era, oppure non si e' riusciti a spegnerla. */
+type SharedAfter = 'off' | 'none' | 'failed'
+
+const APP_HOME = '/app'
+
+const field =
+  'w-full rounded-xl border border-[var(--border-color)] bg-[var(--background-secondary)] px-4 py-3 text-[16px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)]'
+
+/** La sessione di questo browser viene da un recupero appena fatto (link o codice, entro 15 minuti)? */
+function isFreshRecovery(accessToken: string | undefined): boolean {
+  try {
+    const payload = JSON.parse(atob((accessToken || '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    const amr: { method?: string; timestamp?: number }[] = Array.isArray(payload?.amr) ? payload.amr : []
+    return amr.some((a) => (a.method === 'otp' || a.method === 'recovery') && Number(a.timestamp) * 1000 > Date.now() - 15 * 60_000)
+  } catch {
+    return false
+  }
+}
+
+function passwordError(message: string, code?: string): string {
+  if (code === 'same_password' || /same|different from the old/i.test(message)) return 'La nuova password deve essere diversa da quella di prima.'
+  if (code === 'weak_password' || /weak|at least|characters/i.test(message)) return 'Password troppo debole: almeno 8 caratteri, con lettere e numeri.'
+  if (/rate|too many/i.test(message)) return 'Troppi tentativi: aspetta qualche minuto e riprova.'
+  return 'Non riesco a salvare la password, riprova.'
+}
 
 export default function ResetPasswordPage() {
   const router = useRouter()
-  const [status, setStatus] = useState<Status>('checking')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const supabase = createClient()
+  const [step, setStep] = useState<Step>('checking')
+  const [tokenHash, setTokenHash] = useState<string | null>(null)
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [show, setShow] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sharedAfter, setSharedAfter] = useState<SharedAfter>('none')
+  const recovering = useRef(false)
 
-  // Il link di recupero porta con se' la sessione: in hash (#access_token)
-  // oppure come ?code= da scambiare. Gestiamo entrambi i casi.
   useEffect(() => {
     let cancelled = false
+    const params = new URLSearchParams(window.location.search)
+    const hash = window.location.hash
+    setEmail((params.get('email') || '').trim().toLowerCase())
 
-    const resolveSession = async () => {
-      const hash = window.location.hash
-      const params = new URLSearchParams(window.location.search)
-
-      const hashError = hash.includes('error_description')
-      if (hashError) {
-        if (!cancelled) setStatus('invalid')
-        return
+    // Link di Supabase (#access_token&type=recovery): quando la sessione di recupero e' pronta arriva PASSWORD_RECOVERY.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' && !cancelled) {
+        recovering.current = true
+        setStep('ready')
       }
-
-      const code = params.get('code')
-      if (code) {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
-        if (exchangeError) {
-          if (!cancelled) setStatus('invalid')
-          return
-        }
-      }
-
-      const { data } = await supabase.auth.getSession()
-      if (cancelled) return
-      setStatus(data.session ? 'ready' : 'invalid')
-    }
-
-    // detectSessionInUrl puo' arrivare un attimo dopo il primo render:
-    // l'evento ci dice quando la sessione di recupero e' pronta.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session && !cancelled) setStatus((prev) => (prev === 'done' ? prev : 'ready'))
     })
 
-    resolveSession()
-
+    const start = async () => {
+      if (hash.includes('error_description') || params.get('error_description')) return setStep('invalid')
+      const th = params.get('token_hash')
+      if (th && params.get('type') === 'recovery') {
+        setTokenHash(th)
+        return setStep('link')
+      }
+      const pkce = params.get('code')
+      if (pkce) {
+        const { error: err } = await supabase.auth.exchangeCodeForSession(pkce)
+        if (cancelled) return
+        if (err) return setStep('invalid')
+        recovering.current = true
+        return setStep('ready')
+      }
+      // Recupero gia' aperto altrove nel sito (RecoveryRedirect): vale solo se la sessione e' davvero di recupero.
+      if (params.get('recovered') === '1') {
+        await new Promise((r) => setTimeout(r, 300))
+        if (cancelled || recovering.current) return
+        const { data } = await supabase.auth.getSession()
+        if (cancelled) return
+        if (isFreshRecovery(data.session?.access_token)) {
+          recovering.current = true
+          return setStep('ready')
+        }
+        return setStep('code')
+      }
+      if (hash.includes('type=recovery') && hash.includes('access_token')) {
+        // La sessione dal link arriva un attimo dopo: se l'evento non e' gia' arrivato, si controlla.
+        await new Promise((r) => setTimeout(r, 400))
+        if (cancelled || recovering.current) return
+        const { data } = await supabase.auth.getSession()
+        if (cancelled) return
+        if (data.session) {
+          recovering.current = true
+          return setStep('ready')
+        }
+        return setStep('invalid')
+      }
+      setStep('code')
+    }
+    start()
     return () => {
       cancelled = true
       subscription.unsubscribe()
     }
   }, [supabase])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const openLink = async () => {
+    if (!tokenHash) return
+    setBusy(true)
     setError(null)
-
-    if (password.length < 6) {
-      setError('La password deve contenere almeno 6 caratteri')
-      return
-    }
-
-    if (password !== confirmPassword) {
-      setError('Le password non corrispondono')
-      return
-    }
-
-    setLoading(true)
-    try {
-      const { error: updateError } = await supabase.auth.updateUser({ password })
-      if (updateError) throw updateError
-
-      setStatus('done')
-      setTimeout(() => router.push('/ai-chat'), 1500)
-    } catch (err: any) {
-      setError(err.message || 'Impossibile aggiornare la password')
-    } finally {
-      setLoading(false)
-    }
+    const { error: err } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' })
+    setBusy(false)
+    if (err) return setStep('invalid')
+    recovering.current = true
+    setStep('ready')
   }
 
+  const submitCode = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    const cleanEmail = email.trim().toLowerCase()
+    const cleanCode = code.replace(/\D/g, '')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError('Scrivi l’email del tuo account.')
+    if (cleanCode.length < 6) return setError('Scrivi il codice di 6 cifre che ti abbiamo mandato.')
+    setBusy(true)
+    const { error: err } = await supabase.auth.verifyOtp({ email: cleanEmail, token: cleanCode, type: 'recovery' })
+    setBusy(false)
+    if (err) return setError(/rate|too many/i.test(err.message) ? 'Troppi tentativi: aspetta qualche minuto e riprova.' : 'Codice non corretto o scaduto. Controlla l’ultima email che ti abbiamo mandato, oppure chiedine una nuova.')
+    recovering.current = true
+    setStep('ready')
+  }
+
+  /** Spegne la password dei collaboratori dopo il cambio (un secondo tentativo se il primo non riesce). */
+  const switchOffShared = async (token: string): Promise<SharedAfter> => {
+    for (let round = 0; round < 2; round++) {
+      if (round) await new Promise((r) => setTimeout(r, 1200))
+      const res = await fetch('/api/app/auth/after-reset', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }).catch(() => null)
+      if (res?.ok) {
+        const data = await res.json().catch(() => null)
+        if (typeof data?.sharedDisabled === 'boolean') return data.sharedDisabled ? 'off' : 'none'
+      }
+    }
+    return 'failed'
+  }
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (!recovering.current) return setStep('code')
+    if (password.length < 8) return setError('La password deve avere almeno 8 caratteri.')
+    if (password !== confirm) return setError('Le due password non sono uguali.')
+    setBusy(true)
+    const before = (await supabase.auth.getSession()).data.session?.access_token
+    if (!before) {
+      setBusy(false)
+      return setStep('invalid')
+    }
+    // Non puo' essere la password dei collaboratori (chi la conosce entrerebbe come titolare).
+    const check = await fetch('/api/app/auth/reset-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${before}` },
+      body: JSON.stringify({ password }),
+      cache: 'no-store',
+    }).catch(() => null)
+    if (!check?.ok) {
+      const data = check ? await check.json().catch(() => null) : null
+      setBusy(false)
+      if (check?.status === 401) return setStep('invalid')
+      return setError(typeof data?.error === 'string' ? data.error : 'Non riesco a controllare la password in questo momento, riprova tra poco.')
+    }
+    const { error: err } = await supabase.auth.updateUser({ password })
+    if (err) {
+      setBusy(false)
+      return setError(passwordError(err.message, (err as { code?: string }).code))
+    }
+    // Per sicurezza si spegne anche la password dei collaboratori (se era attiva).
+    const token = (await supabase.auth.getSession()).data.session?.access_token || before
+    const after = await switchOffShared(token)
+    setBusy(false)
+    setSharedAfter(after)
+    setStep('done')
+    // Se non si e' riusciti a spegnerla si resta qui: la persona deve leggere l'avviso.
+    if (after !== 'failed') setTimeout(() => router.replace(APP_HOME), after === 'off' ? 4500 : 1500)
+  }
+
+  const askAgain = () => router.push(`${APP_HOME}?accesso=recupero${email ? `&email=${encodeURIComponent(email)}` : ''}`)
+
+  const primary = 'flex w-full items-center justify-center gap-2 rounded-full bg-[var(--accent-blue)] px-6 py-3 font-bold text-white disabled:opacity-50'
+
   return (
-    <div className="min-h-screen bg-[var(--background)] flex items-center justify-center px-4 py-12">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md"
-      >
-        <div className="bg-[var(--card-background)] border border-[var(--border-color)] rounded-2xl p-8 shadow-xl">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">
-              Nuova password
-            </h1>
-            <p className="text-[var(--text-secondary)]">
-              {status === 'checking' && 'Verifica del link in corso...'}
-              {status === 'ready' && 'Scegli una nuova password per il tuo account'}
-              {status === 'invalid' && 'Questo link non e’ piu’ valido'}
-              {status === 'done' && 'Password aggiornata'}
-            </p>
+    <div className="flex min-h-screen items-center justify-center bg-[var(--background)] px-4 py-12">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--border-color)] bg-[var(--card-background)] p-7 shadow-xl">
+        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Nuova password</h1>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          {step === 'checking' && 'Un attimo…'}
+          {step === 'link' && 'Tocca «Continua» per scegliere la nuova password.'}
+          {step === 'code' && 'Scrivi l’email del tuo account e il codice di 6 cifre che ti abbiamo mandato.'}
+          {step === 'ready' && 'Scegli la nuova password del tuo account.'}
+          {step === 'invalid' && 'Questo link non vale più.'}
+          {step === 'done' && 'Password aggiornata.'}
+        </p>
+
+        {step === 'checking' && (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-7 w-7 animate-spin text-[var(--accent-blue)]" />
           </div>
+        )}
 
-          {status === 'checking' && (
-            <div className="flex justify-center py-6">
-              <div className="w-8 h-8 border-4 border-[var(--accent-blue)]/30 border-t-[var(--accent-blue)] rounded-full animate-spin" />
+        {step === 'link' && (
+          <div className="mt-6 space-y-3">
+            <button type="button" onClick={openLink} disabled={busy} className={primary}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />} Continua
+            </button>
+            <button type="button" onClick={() => setStep('code')} className="block w-full text-center text-sm text-[var(--accent-blue)]">
+              Ho il codice di 6 cifre
+            </button>
+          </div>
+        )}
+
+        {step === 'code' && (
+          <form onSubmit={submitCode} className="mt-6 space-y-3">
+            <input className={field} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <div className="relative">
+              <KeyRound className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--text-secondary)]" />
+              <input
+                className={`${field} pl-12 text-center font-mono text-2xl tracking-[0.4em]`}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={12}
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                aria-label="Codice"
+              />
             </div>
-          )}
+            {error && <p className="text-sm text-[#ff6b6b]">{error}</p>}
+            <button type="submit" disabled={busy} className={primary}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Continua
+            </button>
+            <button type="button" onClick={askAgain} className="block w-full text-center text-sm text-[var(--text-secondary)]">
+              Non ho ricevuto niente: chiedi una nuova email
+            </button>
+          </form>
+        )}
 
-          {status === 'invalid' && (
-            <div className="space-y-4">
-              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
-                <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  Il link e&apos; scaduto o e&apos; gia&apos; stato usato. I link di recupero
-                  valgono una volta sola e per un tempo limitato.
-                </span>
-              </div>
-              <button
-                onClick={() => router.push('/auth')}
-                className="w-full bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all"
-              >
-                Richiedi un nuovo link
+        {step === 'ready' && (
+          <form onSubmit={save} className="mt-6 space-y-3">
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--text-secondary)]" />
+              <input
+                className={`${field} pl-12 pr-12`}
+                type={show ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="Nuova password (almeno 8 caratteri)"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoFocus
+              />
+              <button type="button" onClick={() => setShow(!show)} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" aria-label={show ? 'Nascondi la password' : 'Mostra la password'}>
+                {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
-          )}
+            <input className={field} type={show ? 'text' : 'password'} autoComplete="new-password" placeholder="Ripeti la password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            {error && <p className="text-sm text-[#ff6b6b]">{error}</p>}
+            <button type="submit" disabled={busy} className={primary}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Salva la nuova password
+            </button>
+          </form>
+        )}
 
-          {status === 'done' && (
-            <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-green-500 text-sm">
-              <CheckCircle className="w-4 h-4 shrink-0" />
-              <span>Password aggiornata. Ti stiamo portando alla chat...</span>
-            </div>
-          )}
+        {step === 'invalid' && (
+          <div className="mt-6 space-y-3">
+            <p className="flex items-start gap-2 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 p-3 text-sm text-[var(--text-primary)]">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#ff6b6b]" />
+              <span>Il link è scaduto o è già stato usato: link e codice valgono una volta sola e per poco tempo.</span>
+            </p>
+            <button type="button" onClick={askAgain} className={primary}>
+              Chiedi una nuova email
+            </button>
+            <button type="button" onClick={() => setStep('code')} className="block w-full text-center text-sm text-[var(--accent-blue)]">
+              Ho un codice più recente
+            </button>
+          </div>
+        )}
 
-          {status === 'ready' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label
-                  htmlFor="new-password"
-                  className="block text-sm font-medium text-[var(--text-primary)] mb-2"
-                >
-                  Nuova password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
-                  <input
-                    id="new-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Almeno 6 caratteri"
-                    autoComplete="new-password"
-                    className="w-full pl-11 pr-11 py-3 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                  >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="confirm-new-password"
-                  className="block text-sm font-medium text-[var(--text-primary)] mb-2"
-                >
-                  Conferma password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
-                  <input
-                    id="confirm-new-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Ripeti la password"
-                    autoComplete="new-password"
-                    className="w-full pl-11 pr-4 py-3 bg-[var(--background-secondary)] border border-[var(--border-color)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm"
-                >
-                  <XCircle className="w-4 h-4 shrink-0" />
-                  <span>{error}</span>
-                </motion.div>
-              )}
-
-              <motion.button
-                type="submit"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2 bg-[var(--accent-blue)] hover:bg-[var(--accent-blue-light)] text-white py-3 px-4 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Aggiornamento...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Imposta password</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </motion.button>
-            </form>
-          )}
-        </div>
-      </motion.div>
+        {step === 'done' && (
+          <p className="mt-6 flex items-center gap-2 rounded-xl border border-[#34C759]/30 bg-[#34C759]/10 p-3 text-sm text-[var(--text-primary)]">
+            <CheckCircle className="h-4 w-4 shrink-0 text-[#34C759]" />
+            {sharedAfter === 'failed' ? 'Password aggiornata.' : 'Password aggiornata. Ti stiamo portando dentro…'}
+          </p>
+        )}
+        {step === 'done' && sharedAfter === 'off' && (
+          <p className="mt-3 rounded-xl border border-[#FF9500]/40 bg-[#FF9500]/10 p-3 text-sm text-[var(--text-primary)]">
+            Per sicurezza abbiamo spento anche la password dei collaboratori: se ti serve, riattivala da Account con una password nuova.
+          </p>
+        )}
+        {step === 'done' && sharedAfter === 'failed' && (
+          <div className="mt-3 space-y-3">
+            <p className="flex items-start gap-2 rounded-xl border border-[#ff6b6b]/40 bg-[#ff6b6b]/10 p-3 text-sm text-[var(--text-primary)]" role="alert">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#ff6b6b]" />
+              <span>
+                Non sono riuscito a spegnere la password dei collaboratori. Se era attiva, è ancora attiva: apri Account e spegnila (o cambiala), soprattutto se
+                pensi che qualcuno sia entrato nel tuo account.
+              </span>
+            </p>
+            <button type="button" onClick={() => router.replace(`${APP_HOME}/account`)} className={primary}>
+              Apri Account
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

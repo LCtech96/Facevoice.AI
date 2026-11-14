@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { User } from '@supabase/supabase-js'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { checkSharedToken, isSharedToken, type SharedRevoked } from '@/lib/shared-access'
 import { workspaceDb, type WorkspaceDb } from '@/lib/workspace-db'
 import { TERMS_VERSION } from '@/lib/terms'
 import { hasCurrentAcceptance } from '@/lib/terms-acceptance'
@@ -16,17 +18,56 @@ export type WorkspaceAccess = {
   email: string
   workspace: Membership
   db: WorkspaceDb
+  /** Entrato con la password dei collaboratori (non il titolare dell'account). */
+  shared: boolean
 }
+
+/** Persona collegata; shared: entrata con la password dei collaboratori del titolare. */
+export type AppUser = User & { shared?: boolean }
+
+/** { user }: accesso valido; { revoked }: password dei collaboratori cambiata o spenta; null: nessun accesso. */
+export type AuthResult = { user: AppUser } | { revoked: SharedRevoked } | null
 
 /** Quanti spazi puo' creare la stessa persona (evita abusi della registrazione libera). */
 export const MAX_OWNED_WORKSPACES = 3
 
-export async function userFromRequest(req: NextRequest) {
+/**
+ * Chi fa la richiesta: la sessione Supabase del titolare, oppure l'accesso firmato di chi
+ * e' entrato con la password dei collaboratori (controllato adesso: password cambiata o
+ * spenta = revoked). Gli errori del database diventano eccezioni.
+ */
+export async function authFromRequest(req: NextRequest): Promise<AuthResult> {
   const header = req.headers.get('authorization')
   if (!header?.startsWith('Bearer ')) return null
-  const { data } = await supabaseAdmin.auth.getUser(header.slice(7).trim())
-  return data.user ?? null
+  const token = header.slice(7).trim()
+  if (isSharedToken(token)) {
+    const shared = await checkSharedToken(token)
+    if ('revoked' in shared) return shared
+    return { user: { ...shared.user, shared: true } }
+  }
+  const { data } = await supabaseAdmin.auth.getUser(token)
+  return data.user ? { user: data.user } : null
 }
+
+export async function userFromRequest(req: NextRequest): Promise<AppUser | null> {
+  const auth = await authFromRequest(req)
+  return auth && 'user' in auth ? auth.user : null
+}
+
+/** 401 di chi era entrato con la password dei collaboratori, cambiata o spenta: l'app lo fa uscire. */
+export function sharedRevokedResponse(reason: SharedRevoked) {
+  const error =
+    reason === 'changed'
+      ? 'La password dei collaboratori è stata cambiata: entra con quella nuova.'
+      : reason === 'disabled'
+        ? 'L’accesso con la password dei collaboratori è stato disattivato dal titolare.'
+        : 'Accesso scaduto: entra di nuovo.'
+  return NextResponse.json({ error, code: 'shared_revoked', reason }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
+}
+
+/** 403 per le cose che puo' fare solo il titolare (non chi e' entrato con la password dei collaboratori). */
+export const ownerOnlyResponse = (error = 'Solo il titolare dell’account può farlo: chiedilo a lui.') =>
+  NextResponse.json({ error, code: 'owner_only' }, { status: 403 })
 
 export async function membershipsOf(userId: string): Promise<Membership[]> {
   const { data, error } = await supabaseAdmin
@@ -58,14 +99,14 @@ export async function workspaceOwnerId(workspaceId: string): Promise<string | nu
 }
 
 /** Accesso allo spazio richiesto (o al primo dell'utente), oppure null. */
-export async function getWorkspaceAccess(req: NextRequest): Promise<WorkspaceAccess | null> {
-  const user = await userFromRequest(req)
+export async function getWorkspaceAccess(req: NextRequest, known?: AppUser | null): Promise<WorkspaceAccess | null> {
+  const user = known === undefined ? await userFromRequest(req) : known
   if (!user?.email) return null
   const memberships = await membershipsOf(user.id)
   const wanted = req.headers.get('x-workspace-id')?.trim()
   const workspace = wanted ? memberships.find((m) => m.id === wanted) : memberships[0]
   if (!workspace) return null
-  return { userId: user.id, email: user.email.toLowerCase(), workspace, db: workspaceDb(workspace.id) }
+  return { userId: user.id, email: user.email.toLowerCase(), workspace, db: workspaceDb(workspace.id), shared: Boolean(user.shared) }
 }
 
 /** Chi ha accettato i termini in vigore (solo i si', per 60 s in questa istanza: per persona e versione). */
@@ -90,10 +131,15 @@ async function acceptedCurrentTerms(userId: string): Promise<boolean> {
  */
 export async function requireWorkspace(
   req: NextRequest,
-  minRole: WorkspaceRole = 'member'
+  minRole: WorkspaceRole = 'member',
+  options: { ownerOnly?: boolean } = {}
 ): Promise<WorkspaceAccess | NextResponse> {
-  const access = await getWorkspaceAccess(req).catch(() => null)
+  const auth = await authFromRequest(req).catch(() => null)
+  if (auth && 'revoked' in auth) return sharedRevokedResponse(auth.revoked)
+  const access = auth ? await getWorkspaceAccess(req, auth.user).catch(() => null) : null
   if (!access) return NextResponse.json({ error: 'Accesso non consentito' }, { status: 401 })
+  // Pagamenti, piano e simili: solo il titolare, non chi e' entrato con la password dei collaboratori.
+  if (options.ownerOnly && access.shared) return ownerOnlyResponse()
   const rank: Record<WorkspaceRole, number> = { member: 0, admin: 1, owner: 2 }
   if (rank[access.workspace.role] < rank[minRole]) {
     return NextResponse.json({ error: 'Serve il ruolo di amministratore dello spazio' }, { status: 403 })

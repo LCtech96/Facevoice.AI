@@ -7,6 +7,7 @@ import { processDueReplies } from '@/lib/saas/reply-queue'
 import { processDueAutomations } from '@/lib/saas/automations'
 import { processDueProspects } from '@/lib/saas/prospects'
 import { processDuePhotoAutopilot } from '@/lib/saas/photo-autopilot'
+import { cleanupLimiterRows } from '@/lib/limiter'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -32,6 +33,12 @@ export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   // Risposta subito (chi chiama non aspetta): il lavoro prosegue dopo.
   after(async () => {
+    // Ogni 15 minuti: via le righe dei limiti di accesso e recupero password non toccate da un giorno.
+    if (new Date().getUTCMinutes() % 15 === 0) {
+      await cleanupLimiterRows()
+        .then((removed) => removed && console.log(`saas cron: ${removed} righe dei limiti tolte`))
+        .catch((error) => console.error('saas cron pulizia limiti:', error instanceof Error ? error.message : error))
+    }
     const [posts, mail, renewed, replies, automations, prospects, carousels] = await Promise.all([
       publishDuePosts().catch((error) => (console.error('saas cron post:', error), 0)),
       syncAllWorkspaces(4).catch((error) => (console.error('saas cron email:', error), null)),

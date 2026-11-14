@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createWorkspace, membershipsOf, renameWorkspace, requireWorkspace, userFromRequest } from '@/lib/workspace'
+import { authFromRequest, createWorkspace, membershipsOf, ownerOnlyResponse, renameWorkspace, requireWorkspace, sharedRevokedResponse } from '@/lib/workspace'
 import { assistantAccess } from '@/lib/assistant-access'
 import { automationsAccess } from '@/lib/automations-access'
 import { videoRepliesAccess } from '@/lib/video-replies-access'
@@ -12,7 +12,9 @@ export const dynamic = 'force-dynamic'
 // se vede la pagina Automazioni (automations, stesse regole) e la Video automazione (videoReplies).
 
 export async function GET(req: NextRequest) {
-  const user = await userFromRequest(req)
+  const auth = await authFromRequest(req).catch(() => null)
+  if (auth && 'revoked' in auth) return sharedRevokedResponse(auth.revoked)
+  const user = auth?.user
   if (!user?.email) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
   try {
     const workspaces = await membershipsOf(user.id)
@@ -37,7 +39,7 @@ export async function GET(req: NextRequest) {
           return null
         }),
     ])
-    return NextResponse.json({ email: user.email, workspaces, assistant, automations, videoReplies })
+    return NextResponse.json({ email: user.email, workspaces, assistant, automations, videoReplies, shared: Boolean(user.shared) })
   } catch (error) {
     console.error('app workspaces:', error)
     return NextResponse.json({ error: 'Spazi di lavoro non disponibili, riprova.' }, { status: 500 })
@@ -45,8 +47,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await userFromRequest(req)
+  const auth = await authFromRequest(req).catch(() => null)
+  if (auth && 'revoked' in auth) return sharedRevokedResponse(auth.revoked)
+  const user = auth?.user
   if (!user?.email) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
+  if (user.shared) return ownerOnlyResponse('Solo il titolare dell’account può creare un nuovo spazio di lavoro.')
   if (!user.email_confirmed_at && !user.confirmed_at) {
     return NextResponse.json({ error: 'Conferma prima la tua email.' }, { status: 403 })
   }

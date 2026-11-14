@@ -15,8 +15,7 @@ import { useWorkspace } from './WorkspaceContext'
 type Status = 'checking' | 'ok' | 'needed' | 'error'
 
 export default function TermsGate({ children }: { children: ReactNode }) {
-  const { ready, session, appFetch, signOut, email } = useWorkspace()
-  const userId = session?.user.id ?? null
+  const { ready, userId, isShared, appFetch, signOut, email } = useWorkspace()
   // Esito valido solo per la persona per cui si e' controllato (cambio di account: si ricontrolla).
   const [result, setResult] = useState<{ user: string | null; status: Status }>({ user: null, status: 'checking' })
   const status: Status = result.user === userId ? result.status : 'checking'
@@ -85,7 +84,7 @@ export default function TermsGate({ children }: { children: ReactNode }) {
     else setError(saved.error || 'Connessione non riuscita, riprova.')
   }
 
-  if (!ready || !session) return <>{children}</>
+  if (!ready || !userId) return <>{children}</>
   if (status === 'ok') return <>{children}</>
 
   if (status === 'checking') {
@@ -105,6 +104,26 @@ export default function TermsGate({ children }: { children: ReactNode }) {
         </button>
         <button onClick={signOut} className="text-sm text-[var(--text-secondary)]">
           Esci
+        </button>
+      </div>
+    )
+  }
+
+  // Chi e' entrato con la password dei collaboratori non accetta i termini per il titolare.
+  if (isShared) {
+    return (
+      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-center px-4 py-10">
+        <LanguageSwitch className="mb-8 self-end" />
+        <p translate="no" className="text-sm font-semibold tracking-widest text-[var(--accent-blue)]">FACEVOICE AI</p>
+        <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[var(--text-primary)]">{previous ? 'Termini aggiornati' : 'Prima di continuare'}</h1>
+        <p className="mt-3 text-[var(--text-secondary)]">
+          Il titolare dell’account deve leggere e accettare i termini e condizioni, entrando con il suo accesso. Avvisalo, poi riprova.
+        </p>
+        <button onClick={check} className="mt-8 rounded-full bg-[var(--accent-blue)] px-6 py-3 font-bold text-white">
+          Riprova
+        </button>
+        <button onClick={signOut} className="mt-6 text-left text-sm text-[var(--text-secondary)]">
+          Esci {email ? <span translate="no">({email})</span> : null}
         </button>
       </div>
     )

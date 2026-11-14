@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Bot, CalendarClock, CreditCard, FilePen, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal, Zap } from 'lucide-react'
+import { Bot, CalendarClock, CreditCard, FilePen, KeyRound, LayoutGrid, Loader2, LogOut, Menu, MessageSquareText, MessagesSquare, SlidersHorizontal, Zap } from 'lucide-react'
 import AppAuth from './AppAuth'
 import ContractsBell from './ContractsBell'
 import LanguageSwitch from './LanguageSwitch'
@@ -17,6 +17,7 @@ import { UsageBlockedBanner, UsageProvider, UserUsageBadge, useUsage } from './U
 // gettoni del consumo AI; se l'AI del piano e' finita, l'avviso in cima a ogni pagina.
 // "Assistente AI" e "Automazioni" compaiono solo a chi ce li ha attivi (li accende Facevoice).
 // "Contratti" (nel menu) e la campanella dei contratti: solo per titolare e amministratori.
+// "Account": accesso con la password per i collaboratori (la gestisce il titolare).
 
 const NAV = [
   { href: '/app', label: 'Panoramica', icon: LayoutGrid },
@@ -96,7 +97,7 @@ function useSaveDashboardLanguage() {
 }
 
 function Frame({ children }: { children: ReactNode }) {
-  const { ready, session, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant, automations, videoReplies } = useWorkspace()
+  const { ready, session, isShared, sessionNotice, lastEmail, workspace, workspaces, selectWorkspace, signOut, error, reload, assistant, automations, videoReplies } = useWorkspace()
   const pathname = usePathname()
   useSaveDashboardLanguage()
   // "Piano" solo con i pagamenti online attivi: prima del lancio tutto resta com'era.
@@ -109,13 +110,16 @@ function Frame({ children }: { children: ReactNode }) {
       </div>
     )
   }
-  if (!session) return <AppAuth />
+  if (!session && !isShared) return <AppAuth notice={sessionNotice} initialEmail={lastEmail} />
   if (error) {
     return (
       <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 px-4 text-center">
         <p className="text-[var(--text-secondary)]">{error}</p>
         <button onClick={reload} className="rounded-full bg-[var(--accent-blue)] px-5 py-2 font-semibold text-white">
           Riprova
+        </button>
+        <button onClick={signOut} className="text-sm text-[var(--text-secondary)]">
+          Esci
         </button>
       </div>
     )
@@ -194,6 +198,14 @@ function Frame({ children }: { children: ReactNode }) {
             <CreditCard className="h-4 w-4" /> Piano
           </Link>
         )}
+        <Link
+          href="/app/account"
+          className={`mt-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
+            active('/app/account') ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+          }`}
+        >
+          <KeyRound className="h-4 w-4" /> Account
+        </Link>
         <LanguageSwitch className="mt-auto self-start" />
         <button onClick={signOut} className="mt-3 flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
           <LogOut className="h-4 w-4" /> Esci
@@ -245,7 +257,7 @@ function Frame({ children }: { children: ReactNode }) {
   )
 }
 
-/** Menu ☰ della barra in alto (telefono): contenuti programmati, contratti, piano (con i pagamenti online attivi) ed esci. */
+/** Menu ☰ della barra in alto (telefono): contenuti programmati, contratti, piano (con i pagamenti online attivi), account ed esci. */
 function HeaderMenu({ onSignOut, showPlan, showContracts }: { onSignOut: () => void; showPlan: boolean; showContracts: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -285,6 +297,9 @@ function HeaderMenu({ onSignOut, showPlan, showContracts }: { onSignOut: () => v
               <CreditCard className="h-4 w-4 text-[var(--accent-blue)]" /> Piano
             </Link>
           )}
+          <Link href="/app/account" className="flex items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-sm text-[var(--text-primary)] hover:bg-[var(--background-secondary)]">
+            <KeyRound className="h-4 w-4 text-[var(--accent-blue)]" /> Account
+          </Link>
           <button onClick={onSignOut} className="flex w-full items-center gap-3 border-t border-[var(--border-color)] px-4 py-3 text-left text-sm text-[var(--text-secondary)] hover:bg-[var(--background-secondary)]">
             <LogOut className="h-4 w-4" /> Esci
           </button>

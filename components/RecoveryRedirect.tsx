@@ -48,7 +48,8 @@ export default function RecoveryRedirect() {
     // l'evento resta l'unico segnale disponibile.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') {
-        router.replace(RESET_PATH)
+        // La pagina di reset accetta la sessione gia' aperta solo con questo segno (e solo se e' di recupero).
+        router.replace(`${RESET_PATH}?recovered=1`)
       }
     })
 

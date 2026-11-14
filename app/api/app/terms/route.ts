@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { userFromRequest } from '@/lib/workspace'
+import { authFromRequest, sharedRevokedResponse } from '@/lib/workspace'
 import { TERMS_VERSION } from '@/lib/terms'
 import { acceptanceError, latestAcceptance, recordAcceptance, requestIp, requestUserAgent } from '@/lib/terms-acceptance'
 
@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic'
 const SIGNUP_WINDOW_MS = 30 * 60_000
 
 export async function GET(req: NextRequest) {
-  const user = await userFromRequest(req).catch(() => null)
+  const auth = await authFromRequest(req).catch(() => null)
+  if (auth && 'revoked' in auth) return sharedRevokedResponse(auth.revoked)
+  const user = auth?.user
   if (!user) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
   try {
     const latest = await latestAcceptance(user.id)
@@ -35,8 +37,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await userFromRequest(req).catch(() => null)
+  const auth = await authFromRequest(req).catch(() => null)
+  if (auth && 'revoked' in auth) return sharedRevokedResponse(auth.revoked)
+  const user = auth?.user
   if (!user?.email) return NextResponse.json({ error: 'Accedi per continuare' }, { status: 401 })
+  // I termini li accetta il titolare (per se'), non chi e' entrato con la password dei collaboratori.
+  if (user.shared) {
+    return NextResponse.json({ error: 'I termini e condizioni li deve accettare il titolare dell’account, entrando con il suo accesso.', code: 'terms_owner_required' }, { status: 403 })
+  }
   const body = await req.json().catch(() => null)
   const invalid = acceptanceError(body)
   if (invalid) return NextResponse.json({ error: invalid, code: 'terms_invalid' }, { status: 400 })

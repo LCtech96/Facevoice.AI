@@ -7,7 +7,9 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 // l'indirizzo contiene il token del link, che non deve finire nelle statistiche.
 const isPrivate = (url: string) => {
   try {
-    return /^\/(c|v)\//.test(new URL(url, 'https://x').pathname)
+    const path = new URL(url, 'https://x').pathname
+    // Anche il recupero della password: l'indirizzo contiene il permesso per cambiarla e l'email.
+    return /^\/(c|v)\//.test(path) || path.startsWith('/auth/reset-password') || path.startsWith('/auth/callback')
   } catch {
     return false
   }

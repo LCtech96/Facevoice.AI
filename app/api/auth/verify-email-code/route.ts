@@ -91,20 +91,14 @@ export async function POST(req: NextRequest) {
 
         user = newUserData.user
       } else {
-        // Utente esiste già, aggiorna password e conferma email
-        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-          password: registration.password,
-          email_confirm: true,
-          user_metadata: {
-            ...user.user_metadata,
-            email_verified_at: new Date().toISOString(),
-            verified_via: 'otp',
-          },
-        })
-
-        if (updateError) {
-          throw updateError
-        }
+        // Account gia' esistente: qui non si cambia MAI la sua password (basterebbe un codice
+        // indovinato per prendersi l'account). Per una nuova password c'e' «Password dimenticata».
+        deleteOTP(email)
+        deleteRegistration(email)
+        return NextResponse.json(
+          { error: 'Esiste già un account con questa email: accedi, oppure usa «Password dimenticata».' },
+          { status: 409 }
+        )
       }
 
       // Rimuovi il codice OTP e la registrazione dopo l'uso

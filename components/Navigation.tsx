@@ -86,7 +86,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   }, [showUserMenu, showDropdownMenu])
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
+    // Solo questo dispositivo: con la password dei collaboratori un'uscita globale farebbe uscire tutti.
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined)
     setShowUserMenu(false)
     router.push('/home')
   }
