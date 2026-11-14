@@ -84,6 +84,18 @@ export function isDoneListTitle(title: string): boolean {
   return /^(fatt[oaie]|completat[oaie]|done)$/.test(nameKey(title).replace(/[^a-z ]/g, '').trim())
 }
 
+/**
+ * Spunta dopo uno spostamento: portata in «Fatto» diventa fatta (e i solleciti email si
+ * fermano); riportata fuori da «Fatto» torna da fare. Tra altre colonne non cambia.
+ */
+export function doneAfterMove(done: boolean, fromTitle: string | null | undefined, toTitle: string): boolean {
+  const from = !!fromTitle && isDoneListTitle(fromTitle)
+  const to = isDoneListTitle(toTitle)
+  if (to && !from) return true
+  if (from && !to) return false
+  return done
+}
+
 export const PRIORITIES = [
   { value: 0, label: 'Nessuna', chip: 'border border-[var(--border-color)] text-[var(--text-secondary)]', bar: 'transparent' },
   { value: 1, label: 'Bassa', chip: 'bg-[#34C759]/15 text-[#34C759]', bar: '#34C759' },

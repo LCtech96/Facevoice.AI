@@ -4,7 +4,7 @@ import { SITE_URL } from '@/lib/seo/site'
 import { hashPassword, newToken, openToken, passwordProblem, sealToken, tokenHashOf, TOKEN_RE } from '@/lib/todo-auth'
 import { fetchLinkPreview } from '@/lib/todo-preview'
 import { updateSetting } from '@/lib/settings-store'
-import { EMAIL_RE, IMAGE_TYPES, LIMITS, extractLinks, isDoneListTitle, positionAt, type TodoBoardState, type TodoCalendarTask, type TodoHomeBoard, type TodoHomeData, type TodoLinkPreview, type TodoTask } from '@/lib/todo-shared'
+import { EMAIL_RE, IMAGE_TYPES, LIMITS, doneAfterMove, extractLinks, isDoneListTitle, positionAt, type TodoBoardState, type TodoCalendarTask, type TodoHomeBoard, type TodoHomeData, type TodoLinkPreview, type TodoTask } from '@/lib/todo-shared'
 
 // Dati delle todo list condivise. Ogni funzione che tocca liste, attivita' o foto
 // riceve la todo list gia' verificata (dal link + cookie, o dall'admin) e filtra
@@ -434,18 +434,21 @@ export async function moveTask(board: BoardRow, taskId: unknown, listId: unknown
   const task = await taskOf(board.id, taskId)
   const target = await listOf(board.id, listId)
   const position = await placeAt('todo_tasks', board.id, listId as string, taskId as string, Number(index) || 0)
+  // Cambio di colonna: in «Fatto» l'attivita' diventa fatta (solleciti fermi), fuori torna da fare.
+  let fromTitle: string | null = null
+  if (task.list_id !== target.id) {
+    const { data: from } = await supabaseAdmin.from('todo_lists').select('title').eq('id', task.list_id).eq('board_id', board.id).maybeSingle()
+    fromTitle = (from as { title: string } | null)?.title ?? null
+  }
+  const done = task.list_id !== target.id ? doneAfterMove(task.done, fromTitle, target.title) : task.done
   const { error } = await supabaseAdmin
     .from('todo_tasks')
-    .update({ list_id: listId, position, updated_at: nowIso() })
+    .update({ list_id: listId, position, updated_at: nowIso(), ...(done !== task.done ? { done, done_at: done ? nowIso() : null } : {}) })
     .eq('id', taskId as string)
     .eq('board_id', board.id)
   check(error, 'spostamento attività')
-  let intoDoneList = false
-  if (task.list_id !== target.id && isDoneListTitle(target.title)) {
-    // Da «Fatto» a «Fatte» non e' una cosa finita adesso.
-    const { data: from } = await supabaseAdmin.from('todo_lists').select('title').eq('id', task.list_id).eq('board_id', board.id).maybeSingle()
-    intoDoneList = !(from && isDoneListTitle((from as { title: string }).title))
-  }
+  // Avviso «finita» solo se diventa fatta adesso (da «Fatto» a «Fatte», o gia' spuntata, no).
+  const intoDoneList = done && !task.done
   return { fromListId: task.list_id, toListId: target.id, intoDoneList }
 }
 

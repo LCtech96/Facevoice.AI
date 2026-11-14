@@ -1,6 +1,6 @@
 'use client'
 
-import { IMAGE_TYPES, LIMITS, positionAt, type TodoBoardState, type TodoTask } from '@/lib/todo-shared'
+import { IMAGE_TYPES, LIMITS, doneAfterMove, positionAt, type TodoBoardState, type TodoTask } from '@/lib/todo-shared'
 
 // Chiamate della pagina di un progetto verso le sue route: /api/todo/<link> (chi ha il
 // link del progetto) o /api/todo/p/<id> (admin e persone dalla schermata generale).
@@ -51,7 +51,12 @@ export function moveLocally(state: TodoBoardState, taskId: string, listId: strin
   const others = state.tasks.filter((t) => t.list_id === listId && t.id !== taskId).sort((a, b) => a.position - b.position)
   let pos = positionAt(others.map((t) => t.position), index)
   if (pos === null) pos = (others[Math.max(0, index - 1)]?.position ?? 0) + 1e-9
-  const tasks = state.tasks.map((t) => (t.id === taskId ? { ...t, list_id: listId, position: pos as number } : t))
+  const title = (id: string) => state.lists.find((l) => l.id === id)?.title
+  const tasks = state.tasks.map((t) => {
+    if (t.id !== taskId) return t
+    const done = t.list_id !== listId ? doneAfterMove(t.done, title(t.list_id), title(listId) || '') : t.done
+    return { ...t, list_id: listId, position: pos as number, done }
+  })
   return { ...state, tasks }
 }
 
